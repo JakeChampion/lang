@@ -5248,6 +5248,8 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
 // A lambda's declared result, through the sidecars a function-valued result
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  if (lm.ret_str) { return t_str(); }
+  if (lm.ret_str_elem) { return t_array(t_str()); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
     return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }

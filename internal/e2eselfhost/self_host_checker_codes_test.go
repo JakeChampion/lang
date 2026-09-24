@@ -1853,6 +1853,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
 		{"str-array-element-into-str-clean", "function f(xs: str[]): i32 { var t: str = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A lambda's `str` / `str[]` result keeps its views as a function's does (#10212).
+		{"e003-lambda-str-array-result-element-into-string", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str[] => { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); return o; }; var t: string = f(s)[0]; return t.len(); }\n", []string{"E003"}},
+		{"e003-lambda-str-result-into-string", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str => { return slice_unchecked(x, 0, 1); }; var t: string = f(s); return t.len(); }\n", []string{"E003"}},
+		{"lambda-str-result-clean", "function main(): i32 { var s: string = \"ab\"; var f = (x: string): str => { return slice_unchecked(x, 0, 1); }; var t: str = f(s); return t.len(); }\n", nil},
+		// A nested function declaration desugars to the same lambda.
+		{"e003-nested-fn-str-result-into-string", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str { return slice_unchecked(x, 0, 1); } var t: string = f(s); return t.len(); }\n", []string{"E003"}},
+		{"e003-nested-fn-str-array-result-element-into-string", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); return o; } var t: string = f(s)[0]; return t.len(); }\n", []string{"E003"}},
+		{"nested-fn-str-result-clean", "function main(): i32 { var s: string = \"ab\"; function f(x: string): str { return slice_unchecked(x, 0, 1); } var t: str = f(s); return t.len(); }\n", nil},
 		// A builtin that stores its argument is an owning sink, so a `str` view
 		// is not lent there: append, with, and a map insert's key and value.
 		// Native's storesArgument; a `str[]` still takes the view.

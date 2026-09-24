@@ -486,8 +486,8 @@ function e_field_access_at(obj: ast.Expr, field: string, line: i32, col: i32): a
 // ExprLambda.line. It takes the #5986 sidecar pair because a source lambda can
 // be annotated `: (i32) => i32` too, and fn_contract_of at the parse site hands
 // it both halves.
-function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string): ast.Expr {
-    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types };
+function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string, line: i32, col: i32, ret_fn_ret: string, ret_fn_param_types: string, ret_str: boolean, ret_str_elem: boolean): ast.Expr {
+    return ast.ExprLambda { params: params, ret_type: ret_type, body: body, use_infer: false, origin: origin, line: line, col: col, captures: [], captures_known: false, ret_fn_ret: ret_fn_ret, ret_fn_param_types: ret_fn_param_types, ret_str: ret_str, ret_str_elem: ret_str_elem };
 }
 
 // e_lambda_fn builds a lambda the PARSER synthesised for a declaration that
@@ -496,14 +496,14 @@ function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]
 // `fn_tag_spelling` reads the result to decide whether it can rebuild the
 // spelling at all, and a result with no parameter list would rebuild `() => R`
 // for a function that takes arguments.
-function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string): ast.Expr {
-    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys);
+function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string, ret_str: boolean, ret_str_elem: boolean): ast.Expr {
+    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys, ret_str, ret_str_elem);
 }
 // e_lambda_origin builds a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
 // is a value-position `{ … }`; see ExprLambda.origin.
 function e_lambda_origin(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], origin: string): ast.Expr {
-    return e_lambda_at(params, ret_type, body, origin, 0, 0, "", "");
+    return e_lambda_at(params, ret_type, body, origin, 0, 0, "", "", false, false);
 }
 pub function e_unknown(kind: string): ast.Expr { return ast.ExprUnknown { kind: kind, line: 0, col: 0 }; }
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr { return ast.ExprUnknown { kind: kind, line: line, col: col }; }
@@ -890,7 +890,7 @@ function maybe_desugar_array_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: arrty, body: stmts, use_infer: false, origin: ORIGIN_ARR_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -957,7 +957,7 @@ function maybe_desugar_map_build(base: ast.Expr): ast.Expr {
                                         ri = ri + 1;
                                     }
                                     stmts = stmts.append(s_return(e_ident(bname)));
-                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+                                    var iife: ast.Expr = ast.ExprLambda { params: [], ret_type: mapty, body: stmts, use_infer: false, origin: ORIGIN_MAP_COMP, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
                                     return ast.ExprCall { callee: iife, args: [], line: call.line, col: call.col, type_argc: 0, ty: "" };
                                 },
                                 _ => { return base; },
@@ -1702,6 +1702,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     var ret_type: string = "";
     var lam_fn_ret: string = "";
     var lam_fn_ptys: string = "";
+    var lam_written: string = "";
     if (p.peek_punct() == ":") {
         p = p.advance();
         // A parenthesised annotation is ambiguous with a function type:
@@ -1725,6 +1726,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
             // half a signature is worse than none, since fn_tag_spelling would
             // rebuild `() => R` for a function that takes arguments.
             var (gw, gwa, gwr, gwe) = parse_type_name(Par { ...saved, verbatim: true });
+            lam_written = gw;
             var (g_ret, g_ptys) = fn_contract_of(rtr_name, gw);
             lam_fn_ret = g_ret;
             lam_fn_ptys = g_ptys;
@@ -1733,6 +1735,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
             p = ra_p;
             ret_type = ra_name;
             var (rw, rwa, rwr, rwe) = parse_type_name_reserving_arrow(Par { ...saved, verbatim: true });
+            lam_written = rw;
             var (r_ret, r_ptys) = fn_contract_of(ra_name, rw);
             lam_fn_ret = r_ret;
             lam_fn_ptys = r_ptys;
@@ -1756,7 +1759,11 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         body = [s_return(ber_expr)];
     }
     body = prepend_param_destrs(body, apd);
-    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys));
+    // `str` and `str[]` erase to "string" and "string[]"; the written spelling
+    // keeps the result's views, as it does for a function's.
+    var lam_ret_str: boolean = ret_type == "string" && lam_written == "str";
+    var lam_ret_str_elem: boolean = ret_type == "string[]" && lam_written == "str[]";
+    return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col, lam_fn_ret, lam_fn_ptys, lam_ret_str, lam_ret_str_elem));
 }
 
 // Parse results are `(parsed_thing…, Par)` tuple returns — both pieces
@@ -4439,7 +4446,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
             // no `: TYPE` — the checker's E032 rule verifies the binding
             // type is inferrable from the callee's signature (native
             // inferUseParam). An annotated `use n: T <- …` never draws E032.
-            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
+            var cb: ast.Expr = ast.ExprLambda { params: cbparams, ret_type: "", body: rest_body, use_infer: utype.len() == 0, origin: ORIGIN_USE, line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
             match (usrc_expr) {
                 ast.ExprCall(c) => {
                     var newargs: ast.Expr[] = c.args.append(cb);
@@ -5779,9 +5786,9 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             // itself (the name binds after the lambda captures), so this
             // needs top-level hoisting (closureconv), not yet ported.
             // Surface it rather than miscompile silently.
-            return (s_var(fr_func.name, "", e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types)), p);
+            return (s_var(fr_func.name, "", e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types, fr_func.ret_str, fr_func.ret_str_elem)), p);
         }
-        var lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types);
+        var lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types, fr_func.ret_str, fr_func.ret_str_elem);
         // `-fmt` records which of the two spellings was written, the way a
         // struct destructure uses the same field ("@sd:…"): both parse to a
         // lambda-valued local, so without the marker a nested declaration came
@@ -14939,7 +14946,7 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                                 name: v.name, receiver_name: "", receiver_type: "",
                                 type_params: notp, params: new_params, ret_type: lam.ret_type,
                                 body: lifted_body, line: v.line, col: v.col,
-                                import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false,
+                                import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false,
                                 is_pub: true
                            , is_const: false, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" });
                             if (caps.len() > 0) { acc_lifts = acc_lifts.append(CapLift { name: v.name, caps: caps }); }
