@@ -13,6 +13,7 @@ import (
 // binding. The return now retains the handle when it is unchanged.
 
 // The issue's program: a callee returning its borrowed Map param's insert.
+// The insert copies, so the caller's `a` keeps its one entry (#9834).
 const returnedBorrowedMapInsertSrc = `import "core/map";
 function add(m: Map[string, i32]): Map[string, i32] {
     var s: string = "z";
@@ -29,7 +30,7 @@ function main(): i32 {
     var t: i32 = 0;
     var k: i32 = 0;
     while (k < 10) { t = t + mk(); k = k + 1; }
-    return t - 30;
+    return t - 20;
 }`
 
 // The same return over a local the callee owns: the exit sweep releases the
@@ -71,7 +72,7 @@ function main(): i32 {
     var t: i32 = 0;
     var k: i32 = 0;
     while (k < 10) { t = t + mk(); k = k + 1; }
-    return t - 30;
+    return t - 20;
 }`
 
 var returnedMapInsertCases = []struct {

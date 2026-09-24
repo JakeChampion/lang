@@ -2102,7 +2102,7 @@ func builtinMapGet(_ *Interp, args []Value) (Value, error) {
 	return optionNone(), nil
 }
 
-func builtinMapSet(_ *Interp, args []Value) (Value, error) {
+func builtinMapSet(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_set", args)
 	if err != nil {
 		return nil, err
@@ -2110,7 +2110,7 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("__method_Map_set: expected 3 args (m, k, v), got %d", len(args))
 	}
-	t := cowTarget(m)
+	t := ip.cowTarget(m)
 	// A map in-place set stores through the receiver, so the entry gains
 	// the paths the receiver has; the entry it displaces loses them. The
 	// assignment that follows cannot do this accounting — it sees the
@@ -2130,18 +2130,30 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 	return t, nil // value-returning; t is m (in-place) or a fresh copy (shared)
 }
 
-// cowTarget returns the map a mutating method should write to: the
-// receiver itself when it has at most one owner (mutate in place), or a
-// fresh copy when it is shared (rc > 1) so the mutation can't reach into
-// an aliased holder. Mirrors core/map.fern's __map_cow_inplace.
-func cowTarget(m *Map) *Map {
-	if m.rc <= 1 {
+// cowTarget returns the map a mutating method should write to: the receiver
+// itself when no slot but the one being reassigned holds it (`m = m.insert(..)`,
+// or a temporary), else a fresh copy — a collection operation returns a new
+// value, so a receiver still bound elsewhere must come out unchanged.
+func (i *Interp) cowTarget(m *Map) *Map {
+	if m.rc <= i.movingHolds(m) {
 		return m
 	}
 	return m.clone()
 }
 
-func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
+// movingHolds counts the slots being reassigned that still hold m: their
+// count is released once the right-hand side is done, so it is not a reader.
+func (i *Interp) movingHolds(m *Map) int {
+	n := 0
+	for _, v := range i.moving {
+		if v == Value(m) {
+			n++
+		}
+	}
+	return n
+}
+
+func builtinMapDelete(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_delete", args)
 	if err != nil {
 		return nil, err
@@ -2153,7 +2165,7 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	if idx < 0 {
 		return arrayOf(m, Bool(false)), nil // unchanged; in-place receiver is fine
 	}
-	t := cowTarget(m)
+	t := ip.cowTarget(m)
 	if t != m {
 		idx = t.findKey(args[1]) // re-find in the copy (same order, but be explicit)
 	}
@@ -2170,7 +2182,7 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	return arrayOf(t, Bool(true)), nil
 }
 
-func builtinMapClear(_ *Interp, args []Value) (Value, error) {
+func builtinMapClear(ip *Interp, args []Value) (Value, error) {
 	m, err := mapReceiver("__method_Map_clear", args)
 	if err != nil {
 		return nil, err
@@ -2178,8 +2190,8 @@ func builtinMapClear(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_Map_clear: expected 1 arg (receiver), got %d", len(args))
 	}
-	if m.rc > 1 {
-		return &Map{}, nil // shared: hand back a fresh empty map, leave the holders intact
+	if m.rc > ip.movingHolds(m) {
+		return &Map{}, nil
 	}
 	m.keys = m.keys[:0]
 	m.vals = m.vals[:0]
@@ -5178,9 +5190,8 @@ func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 // ---------- evaluation core ----------
 
 type env struct {
-	parent       *env
-	vars         map[string]Value
-	borrowedMaps bool
+	parent *env
+	vars   map[string]Value
 }
 
 type binding struct {
@@ -5226,9 +5237,6 @@ func (e *env) captureCell(name string) (*binding, bool) {
 				return slot, true
 			}
 			slot := &binding{value: v}
-			if cur.borrowedMaps {
-				retain(v)
-			}
 			cur.captureBinding(name, slot)
 			return slot, true
 		}
@@ -5285,9 +5293,7 @@ func (e *env) releaseScope() {
 		if _, captured := v.(*binding); captured {
 			continue
 		}
-		if !e.borrowedMaps {
-			release(v)
-		}
+		release(v)
 		arrDisown(v)
 	}
 }
@@ -5338,17 +5344,8 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 		return nil, fmt.Errorf("%s: expected %d args, got %d", fn.Name, len(fn.Params), len(args))
 	}
 	e := newEnv(nil)
-	e.borrowedMaps = true
 	for k, p := range fn.Params {
-		// A map parameter is BORROWED, not owned: the backends pass a map
-		// to a function without bumping its COW refcount, so a mutation
-		// through the param (e.g. `p = p.set(...)`) hits the caller's map
-		// in place (rc stays 1). Bind directly, bypassing declare's
-		// retain, so the interp matches. See docs/INTERP-MAP-COW-PLAN.md.
-		// An ARRAY parameter is owned — the backends dup an array whose
-		// caller still needs it, and copy the `with` that follows.
-		e.bindValue(p.Name, args[k])
-		arrOwn(args[k])
+		e.declare(p.Name, args[k])
 	}
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)

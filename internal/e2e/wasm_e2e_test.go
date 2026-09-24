@@ -1327,7 +1327,9 @@ function main(): i32 {
     if (!m.has(7i64)) { return 1; }
     if (!m.has(42i64)) { return 2; }
     if (m.has(99i64)) { return 3; }
-    if (!m.without(7i64).1) { return 4; }
+    var (m7, had7) = m.without(7i64);
+    if (!had7) { return 4; }
+    m = m7;
     if (m.has(7i64)) { return 5; }
     if (m.without(7i64).1) { return 6; }
     return 0;
@@ -1465,7 +1467,9 @@ function main(): i32 {
     m = m.insert(2, 20);
     m = m.insert(3, 30);
     if (m.len() != 3) { return 1; }
-    if (!m.without(2).1) { return 2; }   // present → true
+    var (m2, had2) = m.without(2);
+    if (!had2) { return 2; }   // present → true
+    m = m2;
     if (m.len() != 2) { return 3; }
     if (m.has(2)) { return 4; }
     if let Some(_) = m.get(2) { return 5; }
@@ -2314,7 +2318,9 @@ function main(): i32 {
     if let Some(v) = m.get("GET") {
         if (v != 30) { return 22; }
     } else { return 23; }
-    if (!m.without("GET").1) { return 24; }
+    var (mg, hadg) = m.without("GET");
+    if (!hadg) { return 24; }
+    m = mg;
     if (m.has("GET")) { return 25; }
     if (m.without("GET").1) { return 26; }
     if (m.len() != 5) { return 27; }
@@ -2363,7 +2369,9 @@ function main(): i32 {
         return 12;
     }
     // Delete.
-    if (!m.without("foo").1) { return 13; }
+    var (mf, hadf) = m.without("foo");
+    if (!hadf) { return 13; }
+    m = mf;
     if (m.has("foo")) { return 14; }
     if (m.len() != 2) { return 15; }
     if (m.without("foo").1) { return 16; }
@@ -2442,7 +2450,9 @@ function main(): i32 {
     // miss and odd keys must still hit.
     var d: i32 = 0;
     while (d < 100) {
-        if (!m.without(d).1) { return 300 + d; }
+        var (md, hadd) = m.without(d);
+        if (!hadd) { return 300 + d; }
+        m = md;
         d = d + 2;
     }
     if (m.len() != 50) { return 3; }
@@ -17359,7 +17369,9 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    if (!m.without("b").1) { return 1; }
+    var (mb, hadb) = m.without("b");
+    if (!hadb) { return 1; }
+    m = mb;
     if (m.without("z").1)  { return 2; }
     var (m2, ok) = m.without("a");
     if (!ok) { return 3; }

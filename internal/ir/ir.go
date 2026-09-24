@@ -11905,7 +11905,7 @@ func (b *builder) expr(e ast.Expr) error {
 			// (live-after) ident would still be exit-dec'd — cloning there would
 			// free the aliased buffer early — so it is left to the Perceus port.
 			if isMapType(fieldType(sd.Fields, f.Name)) &&
-				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
+				(isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) && !b.freshMapMutatorResult(f.Value) {
 				b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
 			}
 			return nil
@@ -14513,10 +14513,58 @@ func (b *builder) call(n *ast.Call) error {
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
 	}
+	if b.rc.mapCowForced[n] || b.rc.mapCowForcedUntilOwned[n] {
+		return b.callWithForcedMapCopy(n)
+	}
 	if recv := b.mapCowRetainReceiver(n); recv != nil && !isMapDeleteCall(n) {
 		return b.callWithMapCowRetain(n, recv)
 	}
 	return b.callBody(n)
+}
+
+// callWithForcedMapCopy lowers a Map mutator whose receiver outlives the call
+// (computeMapCowForcedCopies): the receiver is retained across it, so the
+// COW sees a second holder and hands back a copy, and the retain is given back
+// once the call returns. For a cow-threaded param both are skipped once its
+// ownership bit is set, when the handle is the frame's own copy.
+func (b *builder) callWithForcedMapCopy(n *ast.Call) error {
+	recv := n.Args[0]
+	var flagSlot int32
+	gated := false
+	if b.rc.mapCowForcedUntilOwned[n] {
+		flagSlot, gated = b.locals[ownFlagName(recv.(*ast.Ident).Name)]
+	}
+	adjust := func(op Op) error {
+		if gated {
+			b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+			b.emit(Op{Kind: OpConstI32, I32: 0})
+			b.emit(Op{Kind: OpEq})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		}
+		if err := b.expr(recv); err != nil {
+			return err
+		}
+		b.emit(op)
+		b.emit(Op{Kind: OpDrop})
+		if gated {
+			b.emit(Op{Kind: OpEnd})
+		}
+		return nil
+	}
+	if err := adjust(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1}); err != nil {
+		return err
+	}
+	if err := b.callBody(n); err != nil {
+		return err
+	}
+	resSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__mapcopy_res_%d", resSlot)] = resSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: resSlot})
+	if err := adjust(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1}); err != nil {
+		return err
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+	return nil
 }
 
 // callWithMapCowRetain lowers a Map COW mutator whose result is the map
@@ -17406,7 +17454,7 @@ func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t
 		// of its own, which an array push leaves behind and the map COW
 		// does not. The decline branch needs the copy for the original
 		// #2763 reason, the old box surviving as an alias of the field.
-		if isMapType(ft) && (isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) {
+		if isMapType(ft) && (isMapMutatorCall(f.Value) || b.isBorrowedMapFieldResultMove(f.Value)) && !b.freshMapMutatorResult(f.Value) {
 			b.emit(Op{Kind: OpCallDirect, Str: "__map_clone", I32: 1})
 		}
 		ts := b.allocSlot()
@@ -20113,7 +20161,7 @@ func (b *builder) mapCowRetainReceiver(e ast.Expr) ast.Expr {
 	if !ok || !isMapMutatorCall(call) || len(call.Args) == 0 {
 		return nil
 	}
-	if !b.rc.mapCowBindSites[call] {
+	if !b.rc.mapCowBindSites[call] || b.rc.mapCowForced[call] || b.rc.mapCowForcedUntilOwned[call] {
 		return nil
 	}
 	recv := call.Args[0]

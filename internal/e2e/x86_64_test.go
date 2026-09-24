@@ -3165,7 +3165,9 @@ function main(): i32 {
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
-    if (!m.without("b").1) { return 1; }
+    var (mb, hadb) = m.without("b");
+    if (!hadb) { return 1; }
+    m = mb;
     if (m.without("z").1)  { return 2; }
     var (m2, ok) = m.without("a");
     if (!ok) { return 3; }
