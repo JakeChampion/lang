@@ -54,10 +54,9 @@ import (
 // so the returned box carries a counted reference of its own, the source's
 // drop releases only the source's count, and the caller's deep drop decs the
 // literal's. __fern_str_arr_free walks elements only at rc 1, so every holder
-// that outlives the frame — a parameter source, a second literal, a source that
-// escaped and was never dropped — leaves the count above 1 and costs a leak,
-// never a free. The `escaping_holder_*` rows below pin each of those; the
-// parameter source and the shadowed holder balance since #10175.
+// that outlives the frame — a second literal, a source that escaped and was
+// never dropped — leaves the count above 1 and costs a leak, never a free. The
+// `escaping_holder_*` rows below pin each case, leaking or balanced.
 //
 // Every want was confirmed against native x86-64 AND `bin/fern -interp`, which
 // agree on every exit, and every row was re-run under FERN_SANITIZE=1 with
@@ -160,8 +159,7 @@ function main(): i32 {
 			// The source is a PARAMETER the caller keeps reading after the
 			// returned holder has been dropped. The read is admitted — the
 			// literal retained it, so the caller's drop decs to the parameter's
-			// own count. The caller's `q` leaked until #10175 let a borrowing
-			// caller release a counted-return call's result. Exit 76 on every
+			// own count, and the caller's `q` is reclaimed too. Exit 76 on every
 			// engine, and `q.f[1]` reads back intact.
 			name: "escaping_holder_param_source",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P { return P { f: q.f, n: i }; }
@@ -178,10 +176,8 @@ function round(i: i32): i32 {
 			want: 76, balance: true,
 		},
 		{
-			// A local holder SHADOWS a parameter of the same name. The holder
-			// type is refused as ambiguous and `make` earns no credit; the
-			// returned box, which leaked until #10175, is released as a
-			// counted-return call's result. Exit 76.
+			// A local holder SHADOWS a parameter of the same name, and the
+			// returned box is still reclaimed. Exit 76.
 			name: "escaping_holder_shadowed_holder",
 			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P {
     var q: P = P { f: mkv(i), n: i };
