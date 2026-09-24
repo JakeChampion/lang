@@ -54,12 +54,10 @@ func TestDeferTryOpRefused(t *testing.T) {
 		// both directions — with `firstTryOp`'s lambda arm deleted this program
 		// gains E079 and the bound-local spelling does not change at all.
 		//
-		// This spelling is not a clean accept for an unrelated reason: the
-		// lambda reaches `out.set`, which takes an i32 (E038). The assertion is
-		// only that the pruning keeps E079 away.
-		//
-		// Native only: the self-host reports nothing at all for this program
-		// (#9518), so the codes differential cannot carry it yet.
+		// This spelling is not a clean accept for unrelated reasons: the
+		// lambda's exits conflict (E002) and it reaches `out.set`, which takes
+		// an i32 (E038). The assertion is only that the pruning keeps E079
+		// away. The self-host's half is the codes row of the same name.
 		{"try_in_lambda_literal_in_defer_is_not_this_rule", `function f(out: Cell[i32]): i32 {
 	defer out.set((x: i32) => g(x)?);
 	return 0;
