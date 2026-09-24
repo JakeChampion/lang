@@ -1,0 +1,32 @@
+// A fresh array handed to a function that may return it bare is released
+// after the call: the callee's return takes its own count, so the caller's
+// temp is either the result's second owner or garbage (#10140).
+function first(x: i32[]): i32[] { return x; }
+function or_default(x: i32[], d: boolean): i32[] {
+    if (d) { return [9, 9, 9]; }
+    return x;
+}
+function pick(a: i32[], b: i32[], c: boolean): i32[] {
+    if (c) { return a; }
+    return b;
+}
+function id[T](x: T): T { return x; }
+function sum(xs: i32[]): i32 {
+    var t: i32 = 0;
+    for v in xs { t = t + v; }
+    return t;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var a: i32[] = first([1, 2]);
+        a = a.append(i);
+        var b: i32[] = or_default([4], i == 1);
+        var c: i32[] = pick([10], [20, 30], i == 2);
+        var d: i32[] = id([100, i]);
+        t = t + sum(a) + sum(b) + sum(c) + sum(d);
+        i = i + 1;
+    }
+    return t % 100;
+}

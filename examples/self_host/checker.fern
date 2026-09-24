@@ -400,8 +400,28 @@ function t_union_g(name: string, args: typeinfo.Type[]): typeinfo.Type {
   return typeinfo.TypeUnion { name: name, args: args };
 }
 
+// canon_trait_set sorts and dedupes a dyn trait set, so two spellings of one
+// set are one type. Native normalises at construction (ast.NewDynTraitType)
+// and type_eq compares the traits string exactly, so without this the SPELLING
+// is the identity: `dyn B + A` would not match `dyn A + B`, nor `dyn A + A`
+// match `dyn A` (#10147).
+function canon_trait_set(traits: string): string {
+  var names: string[] = [];
+  for n in parser.dyn_trait_set("dyn " + traits) {
+    names = push_str_unique_sorted(names, n);
+  }
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < names.len()) {
+    if (i > 0) { out = out + " + "; }
+    out = out + names[i];
+    i = i + 1;
+  }
+  return out;
+}
+
 function t_dyn(traits: string): typeinfo.Type {
-  return typeinfo.TypeDyn { traits: traits };
+  return typeinfo.TypeDyn { traits: canon_trait_set(traits) };
 }
 
 function t_void(): typeinfo.Type {
@@ -15774,24 +15794,6 @@ function e060_dyn_set_of(type_name: string): string {
   return t + "";
 }
 
-// e060_split_traits splits "A + B [+ C…]" into trait names (trimmed on the
-// literal " + " separator the parser's dyn annotation spelling uses).
-function e060_split_traits(set: string): string[] {
-  var out: string[] = [];
-  var start: i32 = 0;
-  var i: i32 = 0;
-  while (i + 3 <= set.len()) {
-    if (slice_unchecked(set, i, i + 3) == " + ") {
-      out = out.append(slice_unchecked(set, start, i) + "");
-      start = i + 3;
-      i = i + 3;
-    } else {
-      i = i + 1;
-    }
-  }
-  return out.append(slice_unchecked(set, start, set.len()) + "");
-}
-
 // e060_trait_known: the trait appears in trait_reqs (declared in the merged
 // module) — the gate that keeps both checks silent when any trait in the set
 // is unknown here (an impl could exist beyond what mod records).
@@ -15915,7 +15917,7 @@ function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, 
                   return out.append(dg_at("E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got " + tgt, u.line, u.col));
                 }
                 if (e060_decl_is_plain_struct(mod, tgt) || e060_decl_is_enum(mod, tgt)) {
-                  var trs: string[] = e060_split_traits(set);
+                  var trs: string[] = parser.dyn_trait_set("dyn " + set);
                   var all_known: boolean = true;
                   var missing: string = "";
                   for tr in trs {
@@ -15946,7 +15948,7 @@ function e060_e062_stmts(stmts: ast.Stmt[], dyns: string[], mod: parser.Module, 
               ast.ExprIdent(rid) => {
                 var rset: string = e060_set_of_name(dyns, rid.name);
                 if (rset.len() > 0) {
-                  var rtrs: string[] = e060_split_traits(rset);
+                  var rtrs: string[] = parser.dyn_trait_set("dyn " + rset);
                   var declaring: string = "";
                   var n_decl: i32 = 0;
                   for rtr in rtrs {

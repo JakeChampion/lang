@@ -942,6 +942,60 @@ func findReturnsParamProjection(prog *ast.Program) map[string]bool {
 	return out
 }
 
+// findReturnedArrayParams answers, per user function declared to return an
+// array, which parameters it hands back bare — or leaves the function out when
+// some return may alias a parameter any other way. A return qualifies when
+// exprNoParamEscape proves it param-free, or when it is a parameter declared
+// with the function's own array type, which the Return lowering hands back with
+// the transfer inc. resultIsCountedParamAlias reads it.
+func findReturnedArrayParams(prog *ast.Program, info *checker.Info, returnsNoParamEscape map[string]bool) map[string][]bool {
+	variantPayloads := map[string][]ast.Type{}
+	for _, en := range info.Enums {
+		for _, v := range en.Variants {
+			variantPayloads[v.Name] = v.Payloads
+		}
+	}
+	q := newSummaryTable[bool](len(returnsNoParamEscape))
+	for name, v := range returnsNoParamEscape {
+		q.vals[name] = v
+	}
+	out := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		rt, isArr := fn.ReturnType.(ast.ArrayType)
+		if !isArr || fn.Body == nil {
+			continue
+		}
+		shadowed := shadowingNames(fn, info)
+		index := map[string]int{}
+		for i, p := range fn.Params {
+			if pt, ok := p.Type.(ast.ArrayType); ok && ast.Equal(pt, rt) && !shadowed[p.Name] {
+				index[p.Name] = i
+			}
+		}
+		freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
+		bare := make([]bool, len(fn.Params))
+		ok := true
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil || !ok {
+				return ok
+			}
+			if id, isIdent := r.Value.(*ast.Ident); isIdent {
+				if i, isParam := index[id.Name]; isParam {
+					bare[i] = true
+					return true
+				}
+			}
+			ok = exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals)
+			return ok
+		})
+		if ok {
+			out[fn.Name] = bare
+		}
+	}
+	return out
+}
+
 func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string][]bool {
 	variantPayloads := map[string][]ast.Type{}
 	for _, en := range info.Enums {
@@ -1455,6 +1509,55 @@ func copyingBuiltinArg(name string, i int) bool {
 	return false
 }
 
+// stringStoresCounted reports whether every store into string local `name`
+// hands it a reference of its own: a literal, a fresh owned value, or an alias
+// the store retains. Only then may the exit sweep release a local it has not
+// proven owns its buffer. One bound to an alias no store retained, like a
+// block's tail value, holds nothing to give back.
+func (b *builder) stringStoresCounted(name string) bool {
+	if b.strStoresFn != b.fn {
+		b.strStoresFn, b.strStoresCounted = b.fn, map[string]bool{}
+	}
+	if v, ok := b.strStoresCounted[name]; ok {
+		return v
+	}
+	counted := func(v ast.Expr) bool {
+		if v == nil {
+			return true
+		}
+		if _, ok := v.(*ast.StringLit); ok {
+			return true
+		}
+		if _, ok := b.freshOwnedRcTempType(v); ok {
+			return true
+		}
+		if _, ok := b.ownedCallResultType(v); ok {
+			return true
+		}
+		return needsRcIncOnAlias(v, b)
+	}
+	stores, all := 0, b.fn.Body != nil
+	if all {
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Var:
+				if x.Name == name {
+					stores++
+					all = all && counted(x.Init)
+				}
+			case *ast.Assign:
+				if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+					stores++
+					all = all && counted(x.Value)
+				}
+			}
+			return all
+		})
+	}
+	b.strStoresCounted[name] = all && stores > 0
+	return b.strStoresCounted[name]
+}
+
 // stringParamCounted reports whether string parameter `pn` of fn is retained
 // only through counted constructions or non-retaining reads — every appearance
 // is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, the receiver
@@ -1821,6 +1924,14 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// + s; … }` stranded base's whole buffer, one per local, with no
 			// dependence on how often it was called.
 			mark(x.Target)
+			// The parameter as the VALUE stored into a local, `out = x`: a
+			// counted store. The Assign lowering retains an ident source
+			// unless it is a move, and a frame-bound alias is never moved,
+			// so the local holds a reference of its own, which the exit
+			// sweep releases (#10117).
+			if _, ok := x.Target.(*ast.Ident); ok {
+				mark(x.Value)
+			}
 		case *ast.Return:
 			// `return p` on a CONSUMED-THREADED param hands out the frame's
 			// OWN reference: the entry retain is the count move-on-return

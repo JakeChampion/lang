@@ -25,10 +25,6 @@
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
 #
-# array_literal_takes_its_sibling_float_width passes a fresh array literal
-# through a generic identity function, and native never releases a fresh
-# temp whose callee returns its parameter bare (#10140). The self-host
-# builds it clean.
 # field_read_off_a_call_through_a_function_field reads a field off the
 # result of a call through a function-typed struct field, which native
 # never releases (#10149). The self-host builds it clean.
@@ -157,7 +153,7 @@ array_chunks_windows_methods                         0
 array_find_last_rposition                            0
 array_generic_reductions                             0
 array_join                                           0
-array_literal_takes_its_sibling_float_width          2
+array_literal_takes_its_sibling_float_width          0
 array_methods                                        0
 array_of_structs                                     0
 array_pair_truncates                                 0
@@ -271,7 +267,7 @@ enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_struct_enum                                       0
-erased_typevar_ret                                   50
+erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
 exit                                                 0
@@ -300,6 +296,7 @@ foreach_binding_trailing_comma                       2
 foreach_pattern_binding                              1
 format_placeholders                                  0
 format_specs                                         0
+fresh_array_through_a_pass_through_callee            0
 fresh_local_return                                   0
 from_empty_bytes                                     0
 fstring_reassign_releases_old                        0
@@ -332,8 +329,8 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
-http_content_type                                    5
-http_cookies                                         8
+http_content_type                                    0
+http_cookies                                         7
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
