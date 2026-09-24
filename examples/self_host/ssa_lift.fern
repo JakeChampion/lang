@@ -562,12 +562,15 @@ function lift_opt_make_prod(tag: i32, has_payload: boolean, lv: LiftVals): LiftV
 // selects them: a pointer-width extend or wrap moves nothing, so the value
 // flows through; the rest become one unary carrying the op (and the cast's
 // target type) in `str` and the unsigned flag in `imm`.
-function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], prior: ssa.SInst[], ok: boolean): LiftVals {
     if (stack.len() < 1) { return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: false }; }
     if ((k == "int_extend" || k == "int_wrap") && op.width == ir.width_ptr()) {
         return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
     }
     var a: i32 = stack[stack.len() - 1];
+    if ((k == "int_extend" || k == "int_wrap") && !op.unsigned && sign_extended32(prior, a)) {
+        return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+    }
     stack = drop_last(stack);
     var what: string = k;
     if (k == "int_cast") { what = "int_cast:" + op.str; }
@@ -577,6 +580,22 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
     cur_insts = cur_insts.append(ssa.SInst { kind_tag: 10, result: v, args: [a], imm: flag, str: what });
     stack = stack.append(v);
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
+}
+
+// sign_extended32 says `v` was defined in this block by a signed 32-bit wrap,
+// extend, cast or load, so its register already holds what a further signed
+// 32-bit wrap or extend would produce.
+function sign_extended32(insts: ssa.SInst[], v: i32): boolean {
+    var i: i32 = insts.len() - 1;
+    while (i >= 0) {
+        var ins: ssa.SInst = insts[i];
+        if (ins.result == v) {
+            if (ins.kind_tag != 10 || ins.imm != 0) { return false; }
+            return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32" || ins.str == "load_i32";
+        }
+        i = i - 1;
+    }
+    return false;
 }
 
 // lift_const_text_prod lifts a literal carried as source text to the text
@@ -707,7 +726,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             var lv: LiftVals = lift_const_text_prod(k, op, nvals, stack, []);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts);
         } else if ((tag == t_int_extend || tag == t_int_wrap || tag == t_int_cast || tag == t_u32_wrap)) {
-            var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], ok);
+            var lv: LiftVals = lift_int_narrow_prod(k, op, nvals, stack, [], cur_insts, ok);
             nvals = lv.nvals; stack = lv.stack; cur_insts = splice(cur_insts, lv.insts); ok = lv.ok;
         } else if ((cls & 2) != 0) {
             var lv: LiftVals = lift_prod_mem(k, op, nvals, stack, []);
