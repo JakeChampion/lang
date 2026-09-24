@@ -281,14 +281,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e079-defer-try-op", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(): Option[i32] { var n: i32 = 0; defer n = g(n)?; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E079"}},
 		{"e079-defer-inside-lambda-body", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h: (i32) => i32 = (x: i32) => { var n: i32 = x; defer n = g(n)?; return n; }; return h(1); }\n", []string{"E042", "E079"}},
 		// The complementary shape — a lambda LITERAL in the action, whose `?`
-		// leaves the lambda — belongs here too, and both compilers do prune for
-		// it (neither reports E079). It is absent because the self-host reports
-		// NOTHING for that program where the Go checker reports E038 and E042
-		// (#9518), and the differential below compares the full code set with no
-		// listing escape — lambdaBodyDivergences gates only the in-lambda sweep,
-		// so there is no way to land the row before #9518 is fixed. #9518 carries
-		// the row to add once it is. Native's half is pinned by
-		// TestDeferTryOpRefused, which fails if the prune is removed.
+		// leaves the lambda. Neither compiler reports E079; both report the
+		// lambda's conflicting exits (the `?`'s Option and the i32 it yields)
+		// and the lambda handed to an i32 parameter (#9518).
+		{"e079-try-in-lambda-literal-in-defer", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(out: Cell[i32]): i32 {\n    defer out.set((x: i32) => g(x)?);\n    return 0;\n}\nfunction main(): i32 { var c: Cell[i32] = cell_new(0); f(c); return c.get(); }\n", []string{"E002", "E038"}},
+		// An unannotated lambda's result is inferred from every exit: each
+		// value return and each `?` must agree, and a bare `return;` beside a
+		// value is E012.
+		{"lambda-exits-conflict", "function main(): i32 { var k: i32 = 3; var h = (b: boolean) => { if (b) { return k; } return true; }; return 0; }\n", []string{"E002"}},
+		{"lambda-try-exit-conflict", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h = (x: i32) => { var y: i32 = g(x)?; return y; }; return 0; }\n", []string{"E002"}},
+		{"lambda-try-exit-clean", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { var h = (x: i32) => { var y: i32 = g(x)?; if (y > 5) { return None; } return Some(y); }; var r: Option[i32] = h(1); return 0; }\n", nil},
+		{"lambda-exits-bare-and-value", "function main(): i32 { var k: i32 = 3; var h = (b: boolean) => { if (b) { return; } return k; }; return 0; }\n", []string{"E012"}},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a

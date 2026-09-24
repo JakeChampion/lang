@@ -3124,6 +3124,8 @@ function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
   if let typeinfo.TypeUnion(tu) = ot {
     var same_ret: boolean = false;
     if let typeinfo.TypeUnion(ru) = s.ret_type { same_ret = ru.name == tu.name; }
+    // An inferred result takes the operand's enum from this `?` (#9515).
+    if let typeinfo.TypeUnknown(ru) = s.ret_type { same_ret = ru.reason == INFERRED_RESULT; }
     if (!same_ret) {
       return t_unknown("`?` outside a function returning " + tu.name);
     }
@@ -5339,9 +5341,13 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
   return rt;
 }
 
+// The result of a lambda that spells none, until its body's exits settle it.
+const INFERRED_RESULT: string = "inferred lambda result";
+
 // A lambda's declared result, through the sidecars a function-valued result
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  if (lm.ret_type.len() == 0) { return t_unknown(INFERRED_RESULT); }
   if (lm.ret_str) { return t_str(); }
   if (lm.ret_str_elem) { return t_array(t_str()); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
@@ -7403,9 +7409,117 @@ function must_consume_diags(fn: parser.FuncDecl, s: Scope, structs: parser.Struc
   return out;
 }
 
+// The results an unannotated lambda's body leaves with: every value `return`
+// and every `?`, whose failure edge is a return of the lambda too (#9515).
+struct LambdaExits { types: typeinfo.Type[], bare: boolean }
+
+// lambda_exit_diags is native's return inference for an unannotated lambda:
+// its exits must agree on one type (E002), and a bare `return;` beside a value
+// return is E012. An exit whose type is not fully known, or an integer literal
+// that adapts to its context, constrains nothing here.
+function lambda_exit_diags(lm: ast.ExprLambda, lsc: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  var exits: LambdaExits = lambda_exits(lm.body, lsc.with_ret_type(lambda_ret_type(lm, lsc)), LambdaExits { types: [], bare: false });
+  var have: boolean = false;
+  var unified: typeinfo.Type = t_unknown("no exit yet");
+  for t in exits.types {
+    if (!exit_type_known(t)) { continue; }
+    if (!have) {
+      unified = t;
+      have = true;
+    } else {
+      if (!exits_unify(unified, t)) {
+        out = out.append(dg_at("E002", "cannot infer return type for \"\": conflicting return types " + type_label(unified) + " and " + type_label(t) + "; add an explicit return type", lm.line, lm.col));
+      } else {
+        if (!type_eq(unified, t)) { unified = t; }
+      }
+    }
+  }
+  if (have && exits.bare) {
+    out = out.append(dg_at("E012", "function \"\" returns a value on some paths but not others; add an explicit return type", lm.line, lm.col));
+  }
+  return out;
+}
+
+// A `defer` action's `?` is E079's, not an exit; a nested lambda's exits are
+// its own.
+function lambda_exits(body: ast.Stmt[], scope: Scope, own acc: LambdaExits): LambdaExits {
+  var cur: Scope = scope;
+  for st in body {
+    if (!is_defer_stmt(st)) { acc = lambda_try_exits(st, cur, acc); }
+    match (st) {
+      ast.StmtReturn(r) => {
+        if (bare_return(r.value)) {
+          acc = LambdaExits { ...acc, bare: true };
+        } else {
+          if (!int_literal_tree(r.value)) { acc = LambdaExits { ...acc, types: acc.types.append(check_expr(r.value, cur)) }; }
+        }
+      },
+      ast.StmtIf(f) => {
+        acc = lambda_exits(f.then_body, cur, acc);
+        acc = lambda_exits(f.else_body, cur, acc);
+      },
+      ast.StmtWhile(w) => { acc = lambda_exits(w.body, cur, acc); },
+      ast.StmtFor(fo) => { acc = lambda_exits(fo.body, for_body_scope(fo, cur), acc); },
+      ast.StmtMatch(m) => {
+        var whole: typeinfo.Type = expr_type(m.scrutinee, cur);
+        for a in m.arms { acc = lambda_exits(a.body, arm_scope(a, cur, whole), acc); }
+      },
+      _ => {}
+    }
+    cur = bind_stmt(st, cur);
+  }
+  return acc;
+}
+
+function is_defer_stmt(st: ast.Stmt): boolean {
+  if let ast.StmtDefer(_) = st { return true; }
+  return false;
+}
+
+// The `?`s one statement's own expressions hold, value blocks included: those
+// inline into the lambda, so their `?` leaves it.
+function lambda_try_exits(st: ast.Stmt, cur: Scope, own acc: LambdaExits): LambdaExits {
+  for e in stmt_exprs(st) {
+    acc = astwalk.fold_expr_pruned(e, acc, (x: ast.Expr, own a: LambdaExits): LambdaExits => {
+      if let ast.ExprUnary(u) = x {
+        if (u.op == "try_") { return LambdaExits { ...a, types: a.types.append(check_expr(u.operand, cur)) }; }
+      }
+      return a;
+    }, e079_not_lambda);
+  }
+  return acc;
+}
+
+function exit_type_known(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      for a in u.args { if (!exit_type_known(a)) { return false; } }
+      return true;
+    },
+    typeinfo.TypeFloat(f) => { return !f.polymorphic; },
+    typeinfo.TypeVoid(_) => { return false; },
+    _ => { return !type_contains_unknown(t); }
+  }
+  return true;
+}
+
+// Native's unifyReturnType: equal types, or one enum written with its
+// arguments and once without (a bare `None`).
+function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if (type_eq(a, b)) { return true; }
+  if let typeinfo.TypeUnion(ua) = a {
+    if let typeinfo.TypeUnion(ub) = b {
+      return ua.name == ub.name && (ua.args.len() == 0 || ub.args.len() == 0);
+    }
+  }
+  return false;
+}
+
 // lret_expr walks an expression looking for lambdas and, for each one
 // that declares a return type, checks the lambda body's `return`s against
-// THAT type (not the enclosing function's) by reusing ret_diags. This is
+// THAT type (not the enclosing function's) by reusing ret_diags; one that
+// declares none has its exits unified instead (lambda_exit_diags). This is
 // the lambda-body counterpart of the top-level ret_diags pass: ret_diags
 // itself recurses through if/while/for/match/defer sub-bodies but stops at
 // a lambda boundary (a nested function has its own return contract), so
@@ -7436,6 +7550,8 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
       }
       if (lm.ret_type.len() > 0) {
         out = util.append_diags(out, ret_diags(lm.body, lsc, rt, unions));
+      } else {
+        out = util.append_diags(out, lambda_exit_diags(lm, lsc));
       }
       out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
     },
@@ -11029,7 +11145,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
 // lambda_body_scope is the scope a lambda's body is checked in: the enclosing
 // scope (lexical capture) plus the lambda's own parameters, so a reference to
 // one is not an undefined name, with the return type the lambda declares — or
-// unknown when it declares none — so a `return` inside it is checked against
+// INFERRED_RESULT when it declares none — so a `return` inside it is checked against
 // the lambda rather than the enclosing function. The semantic phase reads the
 // type of what the body returns in it when the lambda spells no result.
 pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
@@ -11037,10 +11153,7 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
   for param in lm.params {
     lsc = lsc.bind(param.name, s.resolve_param(param));
   }
-  if (lm.ret_type.len() > 0) {
-    return lsc.with_ret_type(lambda_ret_type(lm, s));
-  }
-  return lsc.with_ret_type(t_unknown("no enclosing function"));
+  return lsc.with_ret_type(lambda_ret_type(lm, s));
 }
 
 function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
