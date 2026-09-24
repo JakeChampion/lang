@@ -4442,18 +4442,17 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	}
 	structLocals := b.structLiteralLocalRoots()
 	order := b.curIdentOrder()
-	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
-	// overwritten by the result, so reuse is sound (no inc).
+	// reassign-to-self: `A = A.with(...)`, or a chain rooted at A
+	// (selfArraySetRoot) — the receiver's old value is overwritten by the
+	// result, so reuse is sound (no inc).
 	reassignSelf := map[*ast.Call]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		a, ok := n.(*ast.Assign)
 		if !ok {
 			return true
 		}
-		tid, tok := a.Target.(*ast.Ident)
-		c, cok := a.Value.(*ast.Call)
-		if tok && cok && isArraySetCall(c) {
-			if rid, rok := c.Args[0].(*ast.Ident); rok && rid.Name == tid.Name {
+		if tid, tok := a.Target.(*ast.Ident); tok {
+			if c := selfArraySetRoot(a.Value, tid.Name); c != nil {
 				reassignSelf[c] = true
 			}
 		}
@@ -7547,7 +7546,9 @@ func (b *builder) computeMapCowForcedCopies() (forced, untilOwned map[*ast.Call]
 
 // mapMutatorChainRoot returns the innermost Map mutator of e, looking through
 // a tuple projection (`m.without(k).0`) and a chain of mutators
-// (`m.insert(a, 1).insert(b, 2)`), or nil when e is not one.
+// (`m.insert(a, 1).insert(b, 2)`), or nil when e is not one. A chain whose
+// outer link reads the root's receiver is nil too: that read runs after the
+// root has written, so the root may not take the receiver's table in place.
 func mapMutatorChainRoot(e ast.Expr) *ast.Call {
 	if fa, ok := e.(*ast.FieldAccess); ok {
 		e = fa.Target
@@ -7556,10 +7557,31 @@ func mapMutatorChainRoot(e ast.Expr) *ast.Call {
 	if !ok || !isMapMutatorCall(c) || len(c.Args) == 0 {
 		return nil
 	}
-	if inner := mapMutatorChainRoot(c.Args[0]); inner != nil {
-		return inner
+	if !isMapMutatorLink(c.Args[0]) {
+		return c
 	}
-	return c
+	root := mapMutatorChainRoot(c.Args[0])
+	if root == nil {
+		return nil
+	}
+	if rid, ok := root.Args[0].(*ast.Ident); ok {
+		for _, a := range c.Args[1:] {
+			if exprMentionsIdent(a, rid.Name) {
+				return nil
+			}
+		}
+	}
+	return root
+}
+
+// isMapMutatorLink reports whether e is a Map mutator call, or a tuple
+// projection of one, so a chain continues through it.
+func isMapMutatorLink(e ast.Expr) bool {
+	if fa, ok := e.(*ast.FieldAccess); ok {
+		e = fa.Target
+	}
+	c, ok := e.(*ast.Call)
+	return ok && isMapMutatorCall(c) && len(c.Args) > 0
 }
 
 // statementValue returns the value a `var`, destructure or assignment

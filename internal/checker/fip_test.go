@@ -203,12 +203,9 @@ function main(): i32 { return 0; }`)
 // made structure-of-arrays — the shape `fbip` exists for — E053 there and
 // clean here (#9699).
 //
-// The walk stops at a CALL, so a chain stays out. It reads as though it should
-// be admitted, since the second link holds the array the first returned, but in
-// assignment position the lowering materialises that intermediate: one fresh
-// box per evaluation (#9702). Admitting it would let a `fip` function allocate
-// while claiming it does not. When #9702 lands, the chain rows below become
-// `wantNoErr`.
+// It reaches through an earlier `.with` link too: a chain writes one array in
+// place, in assignment position as in return position (#9702). Any other call
+// stops it.
 func TestFipWithReceiverRootWalk(t *testing.T) {
 	wantNoErr(t, "with on an own struct's array field", `struct S { xs: i32[] }
 fip function f(own s: S): i32[] { return s.xs.with(0, 1); }`)
@@ -225,12 +222,18 @@ fbip function f(own s: S): S { return S { ...s, xs: s.xs.with(0, 1), n: s.n + 1 
 	wantE053(t, "with on a non-own struct's array field", `struct S { xs: i32[] }
 fip function f(s: S): i32[] { return s.xs.with(0, 1); }`)
 
-	// #9702: allocating, so not admitted.
-	wantE053(t, "chained with on an own array",
+	wantNoErr(t, "chained with on an own array",
 		`fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
 
-	wantE053(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
+	wantNoErr(t, "chained with on an own array in assignment position",
+		`fip function f(own b: i32[]): i32[] { b = b.with(0, 1).with(1, 2); return b; }`)
+
+	wantNoErr(t, "chained with on an own struct's array field", `struct S { xs: i32[] }
 fip function f(own s: S): i32[] { return s.xs.with(0, 1).with(1, 2); }`)
+
+	// The claim still follows ownership through the chain.
+	wantE053(t, "chained with on a borrowed array",
+		`fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }`)
 
 	// A chain rooted at a call that is not `.with` reaches no owner either.
 	// `pick` is itself allocation-free, so the only thing left to report is

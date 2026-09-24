@@ -10966,6 +10966,12 @@ func fipRootIdent(e ast.Expr) string {
 			e = x.Array
 		case *ast.FieldAccess:
 			e = x.Target
+		case *ast.Call:
+			// An earlier `.with` link: the chain writes one array in place.
+			if x.Method == nil || x.Method.Field != "with" || len(x.Args) == 0 {
+				return ""
+			}
+			e = x.Args[0]
 		default:
 			return ""
 		}

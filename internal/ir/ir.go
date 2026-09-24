@@ -20071,21 +20071,41 @@ func isSelfMapMutation(value ast.Expr, targetName string) bool {
 }
 
 // isSelfArraySetReassign reports whether `value` is `name.with(i, v)` — the
-// desugared `__method_Array_set` — reassigned back to `name`. Split out of
-// isSelfMapMutation because __fern_arr_cow_inplace self-balances the
-// receiver's refcount and __map_cow_inplace does not, so the two shapes owe
-// opposite things at the assignment site.
+// desugared `__method_Array_set` — reassigned back to `name`, directly or as
+// a chain (selfArraySetRoot). Split out of isSelfMapMutation because
+// __fern_arr_cow_inplace self-balances the receiver's refcount and
+// __map_cow_inplace does not, so the two shapes owe opposite things at the
+// assignment site.
 func isSelfArraySetReassign(value ast.Expr, targetName string) bool {
-	call, ok := value.(*ast.Call)
-	if !ok {
-		return false
+	return selfArraySetRoot(value, targetName) != nil
+}
+
+// selfArraySetRoot returns the `.with` call that takes `name`'s buffer when
+// `value` is `name.with(…)` or a chain `name.with(…).with(…)`: the innermost
+// link, whose receiver is `name`. The outer links write the result it hands
+// them. A chain whose outer link reads `name` is nil, since that read runs
+// after the innermost store and must see the old elements (#9702).
+func selfArraySetRoot(value ast.Expr, name string) *ast.Call {
+	c, ok := value.(*ast.Call)
+	if !ok || !isArraySetCall(c) {
+		return nil
 	}
-	callee, ok := call.Callee.(*ast.Ident)
-	if !ok || callee.Name != "__method_Array_set" || len(call.Args) == 0 {
-		return false
+	for {
+		inner, chained := c.Args[0].(*ast.Call)
+		if !chained || !isArraySetCall(inner) {
+			break
+		}
+		for _, arg := range c.Args[1:] {
+			if exprMentionsIdent(arg, name) {
+				return nil
+			}
+		}
+		c = inner
 	}
-	recv, ok := call.Args[0].(*ast.Ident)
-	return ok && recv.Name == targetName
+	if rid, ok := c.Args[0].(*ast.Ident); ok && rid.Name == name {
+		return c
+	}
+	return nil
 }
 
 // isMapMutatorCall reports whether e is a call to one of the Map COW
