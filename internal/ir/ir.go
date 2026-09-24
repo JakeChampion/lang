@@ -5720,7 +5720,7 @@ func (b *builder) emitDeferCleanupKind(onError bool) error {
 			return err
 		}
 		if b.exprLeavesValue(b.defers[i].Expr) {
-			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpDrop, Width: b.discardWidth(b.defers[i].Expr)})
 		}
 		b.closeScope()
 	}
@@ -5767,7 +5767,7 @@ func (b *builder) emitIterDeferCleanup(idxs []int) error {
 				return err
 			}
 			if b.exprLeavesValue(b.defers[i].Expr) {
-				b.emit(Op{Kind: OpDrop})
+				b.emit(Op{Kind: OpDrop, Width: b.discardWidth(b.defers[i].Expr)})
 			}
 		}
 		b.emit(Op{Kind: OpConstI32, I32: 0})
@@ -9173,8 +9173,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 			return err
 		}
 		// Stash the value in a synthetic local so we can run
-		// defers after it's evaluated.
+		// defers after it's evaluated. A returned alias takes its transfer
+		// retain before the defers run: a deferred reassignment of the local
+		// must see a second holder, or it reuses the cell the stash still
+		// names and the caller reads the replacement (#10027).
+		aliasInced := false
 		if len(b.defers) > 0 {
+			if needsRcIncOnAlias(n.Value, b) {
+				b.emitAliasInc(n.Value)
+				aliasInced = true
+			}
 			slot := b.allocSlot()
 			b.scratchType[slot] = b.fn.ReturnType
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
@@ -9265,7 +9273,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpEnd})
 			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
-		if needsRcIncOnAlias(n.Value, b) {
+		if needsRcIncOnAlias(n.Value, b) && !aliasInced {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
 			// closure-via-Ident already took the move-on-return path
@@ -9609,30 +9617,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emitOwnedTempStackDrop(t)
 				break
 			}
-			// WidthString marks a TWO-SLOT drop, not a string one: the
-			// backends emit a second pop for it. Two types are two slots
-			// where the discard has to say so — an SSO string (data, len),
-			// and a `dyn Trait` in wasm's inline [data, vtable] form. The
-			// boxed native `dyn` is one word and takes the default.
-			//
-			// Missing the dyn case leaked one operand slot per discarded
-			// `dyn`-typed statement — `d = Concrete{...};` is an assignment
-			// EXPRESSION whose value lands here. It went unseen because such
-			// a statement is nearly always inside a loop, and a loop used to
-			// end in an unconditional back edge, which makes the rest of the
-			// block unreachable and stops wasm validating the stack there.
-			w := 0
-			switch b.exprType(n.Expr).(type) {
-			case ast.StringType:
-				if b.twoWordStrings() {
-					w = WidthString
-				}
-			case ast.DynTraitType:
-				if !b.dynBoxed() {
-					w = WidthString
-				}
-			}
-			b.emit(Op{Kind: OpDrop, Width: w})
+			b.emit(Op{Kind: OpDrop, Width: b.discardWidth(n.Expr)})
 		}
 	case *ast.Match:
 		// Tuple-pattern match: the scrutinee is a tuple (the checker
@@ -19115,7 +19100,11 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	// this it fell to the flat `__fern_rc_dec` below, which decrements
 	// without freeing and stranded the box every time a reused container
 	// replaced a cell field.
-	if _, isArr := t.(ast.ArrayType); isArr || isCellType(t) {
+	//
+	// A `Map` has no generated drop fn either, and the flat dec left a map
+	// field a spread rebuild replaced stranded (#10228); the ladder's Map arm
+	// is the full column chain the owning struct's own drop runs.
+	if _, isArr := t.(ast.ArrayType); isArr || isCellType(t) || isMapType(t) {
 		b.dropStructField(t)
 		return
 	}
@@ -20808,6 +20797,24 @@ func unwrapFString(e ast.Expr) ast.Expr {
 		return fs.Desugared
 	}
 	return e
+}
+
+// discardWidth is the OpDrop width that discards e's value. WidthString marks
+// a two-slot drop, not a string one: an SSO string (data, len) on the two-word
+// ABIs and a `dyn Trait` in wasm's inline [data, vtable] form. The boxed native
+// `dyn` is one word and takes the default.
+func (b *builder) discardWidth(e ast.Expr) int {
+	switch b.exprType(e).(type) {
+	case ast.StringType:
+		if b.twoWordStrings() {
+			return WidthString
+		}
+	case ast.DynTraitType:
+		if !b.dynBoxed() {
+			return WidthString
+		}
+	}
+	return 0
 }
 
 func (b *builder) exprLeavesValue(e ast.Expr) bool {

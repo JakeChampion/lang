@@ -61,6 +61,17 @@ fip(1) function make(n: i32): State {
 }
 function main(): i32 { return make(3).count; }
 `
+	// An `own` struct with an ARRAY field, rebuilt by a spread on two
+	// branches. The self-host found no donor for this shape and reported
+	// E068 where native pairs both sites (#9700); examples/fip/
+	// event_loop_fbip.fern, below, is the program that found it.
+	fipArrayFieldSpreadSrc = `struct S { xs: i64[], n: i32 }
+fbip function two(own s: S, k: i32): S {
+	if (k > 0) { return S { ...s, n: s.n + k }; }
+	return S { ...s, n: s.n - 1 };
+}
+function main(): i32 { var s: S = two(S { xs: [1, 2], n: 0 }, 1); return s.n; }
+`
 	fipNoClaimSrc = `struct State { count: i32, total: i64 }
 function make(n: i32): State {
 	return State { count: n, total: 0 as i64 };
@@ -140,8 +151,14 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 				})
 			}
 
+			eventLoop, err := os.ReadFile("../../examples/fip/event_loop_fbip.fern")
+			if err != nil {
+				t.Fatalf("read event_loop_fbip: %v", err)
+			}
 			for _, tc := range []struct{ name, src string }{
 				{"paired rebuild", fipPairedSrc},
+				{"paired array-field spread", fipArrayFieldSpreadSrc},
+				{"event_loop_fbip", string(eventLoop)},
 				{"graded claim", fipGradedSrc},
 				// Guard against the check becoming a blanket refusal of
 				// anything that allocates: an unannotated function may

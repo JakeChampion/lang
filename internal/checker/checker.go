@@ -11619,6 +11619,91 @@ func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
 func (c *checker) checkEscapes(prog *ast.Program) {
 	c.checkSliceEscapes(prog)
 	c.checkStrEscapes(prog)
+	c.checkCursorEscapes(prog)
+}
+
+// checkCursorEscapes is E065 for a `MapIter`: the cursor reads its map's
+// columns through a raw pointer, so returning one over a map this frame owns
+// hands the caller a view of storage reclaimed at the return (#9920). That
+// includes a cursor carried out inside an array or tuple literal. A cursor
+// over a map the caller lent, directly or through a field, stays anchored to
+// the caller's map and may be returned.
+func (c *checker) checkCursorEscapes(prog *ast.Program) {
+	envs, order := c.escapeEnvs(prog, mentionsMapIter)
+	for _, fn := range order {
+		env := envs[fn]
+		forEachReturn(fn, func(ret *ast.Return) {
+			if returnsLocalCursor(ret.Value, env) {
+				c.errfCode(ret.P, "E065", "returning a `MapIter` over a function-local map: the map is reclaimed when %q returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", fn.Name)
+			}
+		})
+	}
+}
+
+func mentionsMapIter(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name == "MapIter"
+	case ast.ArrayType:
+		return mentionsMapIter(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if mentionsMapIter(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// returnsLocalCursor reports whether e is `m.iter()` over a map this frame
+// owns, a local initialised from one, or an array or tuple literal holding one.
+func returnsLocalCursor(e ast.Expr, env *escapeEnv) bool {
+	switch x := e.(type) {
+	case *ast.Call:
+		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Map_iter" && len(x.Args) == 1 {
+			return !lentPlace(x.Args[0], env)
+		}
+	case *ast.ArrayLit:
+		return anyLocalCursor(x.Elems, env)
+	case *ast.TupleLit:
+		return anyLocalCursor(x.Elems, env)
+	case *ast.Ident:
+		if env.visiting[x.Name] {
+			return false
+		}
+		if v, ok := env.locals[x.Name]; ok && v.Init != nil {
+			env.visiting[x.Name] = true
+			defer delete(env.visiting, x.Name)
+			return returnsLocalCursor(v.Init, env)
+		}
+	}
+	return false
+}
+
+func anyLocalCursor(es []ast.Expr, env *escapeEnv) bool {
+	for _, e := range es {
+		if returnsLocalCursor(e, env) {
+			return true
+		}
+	}
+	return false
+}
+
+// lentPlace reports whether e names storage the caller owns: a parameter, or
+// a field chain off one.
+func lentPlace(e ast.Expr, env *escapeEnv) bool {
+	for {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Ident:
+			_, ok := env.params[x.Name]
+			return ok
+		default:
+			return false
+		}
+	}
 }
 
 // escapeEnv is the scope a returned view is resolved against: the
@@ -18349,7 +18434,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// initialised with `next: None` (which checks
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
-				if unifyIfArms(expected, vt) == nil {
+				//
+				// A field is a destination like a `var`, so what a `var`
+				// accepts is accepted here too: `m: map_new(4)` takes its
+				// key and value types from the field.
+				c.stampStructTypeArgs(f.Value, expected)
+				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}

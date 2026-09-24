@@ -2049,6 +2049,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E065 for a MapIter cursor (#9920): the cursor reads its map's columns
+		// through a raw pointer, so one over a map this frame built dangles
+		// once returned. A cursor over a parameter, or a parameter's field,
+		// is anchored to the caller's map and stays accepted.
+		{"e065-cursor-local-map", "import \"core/map\";\nfunction f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-cursor-through-local", "import \"core/map\";\nfunction f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); var it = m.iter(); return it; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-cursor-in-array-literal", "import \"core/map\";\nfunction f(): MapIter[i32, i32][] { var m: Map[i32, i32] = map_new(4); return [m.iter()]; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-cursor-param-ok", "import \"core/map\";\nfunction f(m: Map[i32, i32]): MapIter[i32, i32] { return m.iter(); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-cursor-param-field-ok", "import \"core/map\";\nstruct B { m: Map[i32, i32] }\nfunction f(b: B): MapIter[i32, i32] { var it = b.m.iter(); return it; }\nfunction main(): i32 { return 0; }\n", nil},
 		// An owned `T[]` return MOVES its storage to the caller, so a
 		// function handing a local array back THROUGH A CALLEE that passes
 		// one through is not returning a view and must stay accepted.
