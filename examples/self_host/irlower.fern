@@ -47552,7 +47552,9 @@ function fieldmove_expr(e: ast.Expr, name: string, sty: string, structs: StructT
     match (e) {
         ast.ExprCall(c) => {
             // Free calls only: method-param borrowability is not in the
-            // (free-function-keyed) registry, so a method arg keeps marking.
+            // (free-function-keyed) registry, so a method arg keeps marking. A
+            // counted-retain position ("CNT:") is no move either: the callee
+            // takes a count of its own, so the deep drop stays balanced (#9203).
             var callee_name: string = "";
             match (c.callee) {
                 ast.ExprIdent(cid) => { callee_name = cid.name; },
@@ -47560,7 +47562,8 @@ function fieldmove_expr(e: ast.Expr, name: string, sty: string, structs: StructT
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (callee_name.len() == 0 || !param_is_borrowable(borrowable, callee_name, ai)) {
+                if (callee_name.len() == 0 || !(param_is_borrowable(borrowable, callee_name, ai)
+                        || param_is_borrowable(borrowable, "CNT:" + callee_name, ai))) {
                     if (fieldmove_is_move_value(c.args[ai], name, sty, structs, borrowable)) { return true; }
                 }
                 if (fieldmove_expr(c.args[ai], name, sty, structs, borrowable)) { return true; }
