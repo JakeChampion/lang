@@ -1236,8 +1236,8 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // `type U = P | Q` alias's variant IS a declared struct. The struct table is
 // keyed by the bare name alone, so without this a plain struct sharing a
 // payloadless variant's name is read as that variant's payload (#9900).
-// module is the bundle prefix of the import that declared an enum, "" for the
-// entry module and for a union alias.
+// module is the bundle prefix of the import that declared the enum or alias,
+// "" for the entry module.
 pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string }
 
 // A flat name → type map plus the function signature table
@@ -1476,7 +1476,8 @@ pub struct UnionTable {
   names: string[],
   head: i32[],
   next: i32[],
-  // lib_head / lib_next index the same entries minus the entry module's enums.
+  // lib_head / lib_next index the same entries minus the entry module's enums
+  // and union aliases.
   // An import cannot name the entry, and the entry's variants are the only
   // ones the bundler leaves unmangled, so a bare `Ok` in std/json would
   // otherwise resolve to a program's `enum Reply { Ok, … }` (#10120).
@@ -1547,7 +1548,7 @@ function union_table(unions: UnionSig[]): UnionTable {
 }
 
 function declared_by_entry(u: UnionSig): boolean {
-  return u.is_enum && u.module.len() == 0;
+  return u.module.len() == 0;
 }
 
 // seen_from is the table as the function `fd` reads the variant namespace.
@@ -1556,7 +1557,7 @@ function (ut: UnionTable) seen_from(fd: parser.FuncDecl): UnionTable {
 }
 
 // variant_chain_head / variant_chain_next walk the variant index this scope
-// sees: every enum, or, from an import, every enum but the entry's.
+// sees: every union, or, from an import, every union but the entry's.
 function (ut: UnionTable) variant_chain_head(name: string): i32 {
   if (ut.from_import) { return ut.lib_head[sig_name_bucket(name)]; }
   return ut.head[sig_name_bucket(name)];
@@ -3088,8 +3089,7 @@ function is_variant_of(struct_name: string, union_name: string, unions: UnionSig
       return false;
     }
   }
-  // The built-in enums are not in the table (mx_builtin_enum_of).
-  return mx_builtin_enum_of(struct_name) == union_name && union_name.len() > 0;
+  return false;
 }
 
 // type_assignable: is `from` usable where `to` is expected?
@@ -4681,8 +4681,10 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           ast.PatVariant(pv) => {
             var pvn: string = variant_pattern_name(pv.type_name);
             var ss: StructSig = s.lookup_variant(pvn);
-            // Option's and Result's variants have no struct sig at all.
-            if (ss.name.len() == 0 && !is_variant_of(pvn, union_name, s.unions.unions)) {
+            // Option's and Result's variants have no struct sig, and no
+            // built-in enum is in the union table.
+            var builtin_arm: boolean = union_name.len() > 0 && mx_builtin_enum_of(pvn) == union_name;
+            if (ss.name.len() == 0 && !builtin_arm) {
               ok = false;
             } else {
               // Variant must be compatible with
@@ -4692,7 +4694,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
               // scrutinee: variant must match the
               // struct's name.
               if (union_name.len() > 0) {
-                if (!is_variant_of(pvn, union_name, s.unions.unions)) {
+                if (!builtin_arm && !is_variant_of(pvn, union_name, s.unions.unions)) {
                   ok = false;
                 }
               } else if (struct_name.len() > 0) {
@@ -5446,7 +5448,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
       k = k + 1;
     }
     if (!dup) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: "" });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module });
     }
   }
   return out;

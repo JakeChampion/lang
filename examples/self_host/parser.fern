@@ -104,7 +104,7 @@ pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: st
 // optional and currently consumed and discarded, since
 // the self-host pipeline doesn't yet distinguish exported
 // from private decls.
-pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean }
+pub struct TypeAlias { name: string, variants: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
 // Top-level import: `import "./path";`. The path is captured
 // verbatim (including the quotes-stripped value). Resolution
@@ -7999,12 +7999,12 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
         var empty: string[] = [];
-        return (TypeAlias { name: "", variants: empty, line: taline, col: tacol , is_pub: true , is_package: false }, p);
+        return (TypeAlias { name: "", variants: empty, line: taline, col: tacol , is_pub: true , is_package: false, module: "" }, p);
     }
     p = p.advance();
     if (p.peek_punct() != "=") {
         var empty2: string[] = [];
-        return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol , is_pub: true , is_package: false }, p);
+        return (TypeAlias { name: name, variants: empty2, line: taline, col: tacol , is_pub: true , is_package: false, module: "" }, p);
     }
     p = p.advance();  // consume `=`
     var variants: string[] = [];
@@ -8022,7 +8022,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
         break;
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (TypeAlias { name: name, variants: variants, line: taline, col: tacol , is_pub: true , is_package: false }, p);
+    return (TypeAlias { name: name, variants: variants, line: taline, col: tacol , is_pub: true , is_package: false, module: "" }, p);
 }
 
 // parse_enum_decl consumes a Rust-style `enum Name { V1, V2(T), V3 { f: U }, … }`
@@ -20366,7 +20366,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ai: i32 = 0;
     while (ai < from.aliases.len()) {
         var ad: TypeAlias = from.aliases[ai];
-        naliases = naliases.append(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col , is_pub: true , is_package: false });
+        naliases = naliases.append(TypeAlias { name: prefix + "." + ad.name, variants: ad.variants, line: ad.line, col: ad.col , is_pub: true , is_package: false, module: ad.module });
         ai = ai + 1;
     }
     var nresources: ResourceDecl[] = into.resources;
