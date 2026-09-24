@@ -52,8 +52,8 @@ function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
 // itself: an element update through a helper's parameter copies the whole
 // array, since the caller's reference keeps it shared, and on the compiler's
 // largest functions that copy per store made the lift quadratic. The scope
-// rows never shrink; a scope exit leaves its row and the next entry at that
-// depth overwrites it.
+// stacks and rows never shrink: `sc_n` is the depth, a scope exit lowers it,
+// and the next entry at that depth overwrites what the exit left.
 
 function drop_last(a: i32[]): i32[] {
     var out: i32[] = [];
@@ -67,12 +67,15 @@ function drop_last2(a: i32[]): i32[] {
     while (i < a.len() - 2) { out = out.append(a[i]); i = i + 1; }
     return out;
 }
-// drop_last_s is drop_last for a string[] (the scope-kind stack).
-function drop_last_s(a: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < a.len() - 1) { out = out.append(a[i]); i = i + 1; }
-    return out;
+// put_at / put_at_s write v at depth d of a scope stack, growing it only past
+// its length.
+function put_at(own xs: i32[], d: i32, v: i32): i32[] {
+    if (d < xs.len()) { return xs.with(d, v); }
+    return xs.append(v);
+}
+function put_at_s(own xs: string[], d: i32, v: string): string[] {
+    if (d < xs.len()) { return xs.with(d, v); }
+    return xs.append(v);
 }
 
 // ---- IR binary-op kind -> SSA `binary`/`unary` op string ----------------
@@ -631,6 +634,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
     // sc_edge_from: the edge count when the scope opened; its edges are the
     // ones recorded from there on, so an exit scans those rather than all.
     var sc_edge_from: i32[] = [];
+    var sc_n: i32 = 0;
     // Per-scope stride-nslots rows (kept for EVERY scope so positions align):
     var sc_snap: i32[] = [];          // if: pre-if slots; else: unused
     var sc_then_slots: i32[] = [];     // if: then-arm exit slots
@@ -769,16 +773,17 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 cur_term = STerm_brif(cond, then_id, else_id);
                 blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
                 // push an if-scope
-                sc_kind = sc_kind.append("if");
-                sc_uid = sc_uid.append(next_uid); next_uid = next_uid + 1;
-                sc_target = sc_target.append(merge_id);
-                sc_else = sc_else.append(else_id);
-                sc_seen_else = sc_seen_else.append(0);
-                sc_then_blk = sc_then_blk.append(0 - 1);
-                sc_then_reaches = sc_then_reaches.append(0);
-                sc_parent = sc_parent.append(parent_id);
-                sc_edge_from = sc_edge_from.append(edge_owner.len());
-                var rd_if: i32 = sc_kind.len() - 1;
+                sc_kind = put_at_s(sc_kind, sc_n, "if");
+                sc_uid = put_at(sc_uid, sc_n, next_uid); next_uid = next_uid + 1;
+                sc_target = put_at(sc_target, sc_n, merge_id);
+                sc_else = put_at(sc_else, sc_n, else_id);
+                sc_seen_else = put_at(sc_seen_else, sc_n, 0);
+                sc_then_blk = put_at(sc_then_blk, sc_n, 0 - 1);
+                sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
+                sc_parent = put_at(sc_parent, sc_n, parent_id);
+                sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len());
+                sc_n = sc_n + 1;
+                var rd_if: i32 = sc_n - 1;
                 var rs_rd_if: i32 = 0;
                 while (rs_rd_if < nslots) {
                     var at_rd_if: i32 = rd_if * nslots + rs_rd_if;
@@ -792,7 +797,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 cur_id = then_id; cur_insts = []; cur_preds = [parent_id]; cur_term = STerm_none(); cur_dead = false;
             }
         } else if (k == "else") {
-            var top: i32 = sc_kind.len() - 1;
+            var top: i32 = sc_n - 1;
             if (top < 0 || sc_kind[top] != "if" || sc_seen_else[top] == 1) { ok = false; }
             else {
                 var merge_id2: i32 = sc_target[top];
@@ -815,16 +820,17 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             }
         } else if (k == "block") {
             var exit_id: i32 = next_blk; next_blk = next_blk + 1;
-            sc_kind = sc_kind.append("block");
-            sc_uid = sc_uid.append(next_uid); next_uid = next_uid + 1;
-            sc_target = sc_target.append(exit_id);
-            sc_else = sc_else.append(0);
-            sc_seen_else = sc_seen_else.append(0);
-            sc_then_blk = sc_then_blk.append(0);
-            sc_then_reaches = sc_then_reaches.append(0);
-            sc_parent = sc_parent.append(0);
-            sc_edge_from = sc_edge_from.append(edge_owner.len());
-            var rd_blk: i32 = sc_kind.len() - 1;
+            sc_kind = put_at_s(sc_kind, sc_n, "block");
+            sc_uid = put_at(sc_uid, sc_n, next_uid); next_uid = next_uid + 1;
+            sc_target = put_at(sc_target, sc_n, exit_id);
+            sc_else = put_at(sc_else, sc_n, 0);
+            sc_seen_else = put_at(sc_seen_else, sc_n, 0);
+            sc_then_blk = put_at(sc_then_blk, sc_n, 0);
+            sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
+            sc_parent = put_at(sc_parent, sc_n, 0);
+            sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len());
+            sc_n = sc_n + 1;
+            var rd_blk: i32 = sc_n - 1;
             var rs_rd_blk: i32 = 0;
             while (rs_rd_blk < nslots) {
                 var at_rd_blk: i32 = rd_blk * nslots + rs_rd_blk;
@@ -856,16 +862,17 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 slots = slots.with(hs, ph);
                 hs = hs + 1;
             }
-            sc_kind = sc_kind.append("loop");
-            sc_uid = sc_uid.append(luid);
-            sc_target = sc_target.append(hdr_id);
-            sc_else = sc_else.append(0);
-            sc_seen_else = sc_seen_else.append(0);
-            sc_then_blk = sc_then_blk.append(0);
-            sc_then_reaches = sc_then_reaches.append(0);
-            sc_parent = sc_parent.append(entry_blk);
-            sc_edge_from = sc_edge_from.append(edge_owner.len() - 1);
-            var rd_loop: i32 = sc_kind.len() - 1;
+            sc_kind = put_at_s(sc_kind, sc_n, "loop");
+            sc_uid = put_at(sc_uid, sc_n, luid);
+            sc_target = put_at(sc_target, sc_n, hdr_id);
+            sc_else = put_at(sc_else, sc_n, 0);
+            sc_seen_else = put_at(sc_seen_else, sc_n, 0);
+            sc_then_blk = put_at(sc_then_blk, sc_n, 0);
+            sc_then_reaches = put_at(sc_then_reaches, sc_n, 0);
+            sc_parent = put_at(sc_parent, sc_n, entry_blk);
+            sc_edge_from = put_at(sc_edge_from, sc_n, edge_owner.len() - 1);
+            sc_n = sc_n + 1;
+            var rd_loop: i32 = sc_n - 1;
             var rs_rd_loop: i32 = 0;
             while (rs_rd_loop < nslots) {
                 var at_rd_loop: i32 = rd_loop * nslots + rs_rd_loop;
@@ -879,8 +886,8 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
             cur_id = hdr_id; cur_insts = hdr_insts; cur_preds = [entry_blk]; cur_term = STerm_none(); cur_dead = false;
         } else if (k == "br" || k == "brif") {
             var depth: i32 = op.i32_imm;
-            var pos: i32 = sc_kind.len() - 1 - depth;
-            if (pos < 0 || pos >= sc_kind.len()) { ok = false; }
+            var pos: i32 = sc_n - 1 - depth;
+            if (pos < 0 || pos >= sc_n) { ok = false; }
             else {
                 var cond_b: i32 = 0;
                 var ok_b: boolean = true;
@@ -910,7 +917,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 }
             }
         } else if (k == "end") {
-            var t2: i32 = sc_kind.len() - 1;
+            var t2: i32 = sc_n - 1;
             if (t2 < 0) { ok = false; }
             else if (sc_kind[t2] == "if") {
                 var merge3: i32 = sc_target[t2];
@@ -968,9 +975,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                         s3 = s3 + 1;
                     }
                 }
-                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
-                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
+                sc_n = sc_n - 1;
             } else if (sc_kind[t2] == "loop") {
                 // A body whose last statement returns reaches the loop's end
                 // as a live, terminated block; it is appended here. One that
@@ -1034,9 +1039,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                     var rsl: i32 = 0;
                     while (rsl < nslots) { slots = slots.with(rsl, sc_header_phis[t2 * nslots + rsl]); rsl = rsl + 1; }
                 }
-                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
-                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
+                sc_n = sc_n - 1;
             } else {
                 // block: open the exit, merging all br/brif-out edges (+ a
                 // fall-through edge if the current block reaches `end` live).
@@ -1087,9 +1090,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 }
                 cur_id = eid; cur_insts = eo_insts; cur_preds = bpreds; cur_term = STerm_none();
                 cur_dead = (bpreds.len() == 0);
-                sc_kind = drop_last_s(sc_kind); sc_uid = drop_last(sc_uid); sc_target = drop_last(sc_target);
-                sc_else = drop_last(sc_else); sc_seen_else = drop_last(sc_seen_else); sc_then_blk = drop_last(sc_then_blk);
-                sc_then_reaches = drop_last(sc_then_reaches); sc_parent = drop_last(sc_parent); sc_edge_from = drop_last(sc_edge_from);
+                sc_n = sc_n - 1;
             }
         } else {
             ok = false;   // outside the slice — caller falls back.
@@ -1105,7 +1106,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
         i = i + 1;
     }
 
-    if (ok && sc_kind.len() != 0) { ok = false; bail = "unbalanced-scope"; }   // unbalanced scopes
+    if (ok && sc_n != 0) { ok = false; bail = "unbalanced-scope"; }   // unbalanced scopes
 
     if (ok) {
         if (cur_term.kind_tag == 0 && stack.len() >= 1) {
