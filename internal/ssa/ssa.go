@@ -196,7 +196,8 @@ const (
 	// Indirect function call. Args[0] is the callee (a Value
 	// holding a function-table index); Args[1..] are the
 	// call's arguments. Used for OpCallIndirect / closure
-	// dispatch / function-pointer values.
+	// dispatch / function-pointer values. A callee returning a
+	// two-word value defines Result2 as well, as OpCallPair does.
 	OpCallIndirect
 
 	// Pair-returning direct call — produces two Values (tag
@@ -847,11 +848,22 @@ func (f *Func) AddOpNoResult(b *Block, kind OpKind, args ...Value) *Op {
 // after this call. Used for the pair-form lowering of
 // Option/Result returns.
 func (f *Func) AddCallPair(b *Block, args ...Value) (Value, Value) {
-	tag := f.NewValue()
-	payload := f.NewValue()
-	op := &Op{Kind: OpCallPair, Result: tag, Result2: payload, Args: args, SrcOp: f.curSrcOp}
+	return f.addPair(b, OpCallPair, args)
+}
+
+// AddCallIndirectPair appends an OpCallIndirect whose callee returns a
+// two-word value, and returns its two Values. Args[0] is the callee, as for
+// the one-result form.
+func (f *Func) AddCallIndirectPair(b *Block, args ...Value) (Value, Value) {
+	return f.addPair(b, OpCallIndirect, args)
+}
+
+func (f *Func) addPair(b *Block, kind OpKind, args []Value) (Value, Value) {
+	first := f.NewValue()
+	second := f.NewValue()
+	op := &Op{Kind: kind, Result: first, Result2: second, Args: args, SrcOp: f.curSrcOp}
 	b.Ops = append(b.Ops, op)
-	return tag, payload
+	return first, second
 }
 
 // AddPhi prepends a Phi Op to block `b` and returns the
