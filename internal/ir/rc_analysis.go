@@ -4453,6 +4453,28 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		return true
 	})
+	// `return A.with(...)`: nothing on the returning path reads A again, so a
+	// sibling branch's `.with` on A — textually later, never on this path —
+	// does not keep it live (#9844). A defer runs after the value is taken and
+	// could read the consumed slot, so a function with one keeps the retain.
+	returnPos := map[*ast.Call]bool{}
+	hasDefer := false
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Defer:
+			hasDefer = true
+		case *ast.Return:
+			if c, ok := x.Value.(*ast.Call); ok && isArraySetCall(c) {
+				if _, rok := c.Args[0].(*ast.Ident); rok {
+					returnPos[c] = true
+				}
+			}
+		}
+		return true
+	})
+	if hasDefer {
+		returnPos = nil
+	}
 	// `.with` calls whose receiver outlives an enclosing loop's back edge.
 	// The last-occurrence test below is TEXTUAL, and a name declared OUTSIDE
 	// the loop is read again by the next iteration, so its textually-last
@@ -4563,7 +4585,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		// index / value arguments does not keep it live: emitArraySet
 		// lowers both arguments before the receiver, so those reads have
 		// completed by the time the store runs (`a.with(i, a[i] + 1)`).
-		incs[c] = !(order.isLast(rid) || receiverDeadAfterArgs(c, rid, order)) || liveAcrossBackEdge[c]
+		incs[c] = !(returnPos[c] || order.isLast(rid) || receiverDeadAfterArgs(c, rid, order)) || (liveAcrossBackEdge[c] && !returnPos[c])
 		// No inc means cow_inplace consumes this receiver's reference (see
 		// arraySetConsumed) — record the site so emitArraySet zeroes the
 		// slot. Every role the sweep releases qualifies: a declared owned
