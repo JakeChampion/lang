@@ -56,7 +56,7 @@ deep-dropped, the loop case leaked one 32-byte box per replaced iteration.
 A struct with a closure field is still not deep-drop wired, so its locals take
 the leak-mode drops. The generated `__drop_struct_*` already releases a closure
 field through `__drop_closure_value` on every backend, which is what admitting
-`*ast.FuncType` to `typeDeepDropWired` would rest on. The self-host's runtime
-helper routing needs it: with the field on `EmitState` and this fix alone, the
-natively built compiler takes 16.5 s and 1,000 MB on `checker.fern` against
-12.0 s and 654 MB.
+`*ast.FuncType` to `typeDeepDropWired` would rest on. With a function-typed
+field on `EmitState` and this fix alone, the natively built compiler peaks at
+1,000 MB on `checker.fern` against main's 942 MB, at the same 16.8 s; with the
+closure field wired as well, it is 942 MB, and its output is byte-identical.
