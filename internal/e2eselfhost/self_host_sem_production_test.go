@@ -3983,6 +3983,8 @@ function main(): i32 {
     __raw_store_ptr(sc, 0, __raw_data(t));
     if (__raw_load8(__raw_load_ptr(sc, 0), 1) != 98) { return 90; }
     if (__syscall3(4000, 0, 0, 0) != -38) { return 91; }
+    if (__syscall4(4000, 1, 2, 3, 4) != -38) { return 95; }
+    if (__syscall5(4000, 1, 2, 3, 4, 5) != -38) { return 96; }
     if (__syscall6(4000, 1, 2, 3, 4, 5, 6) != -38) { return 92; }
     if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 93; }
     var kept: u8[] = __rc_inc(__alloc_u8(8));

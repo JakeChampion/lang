@@ -303,13 +303,14 @@ each backend lowers it, and the migration order.
 
 ## The intrinsic set
 
-All pointers are machine words carried as `i32` in the source-level signature
-(the self-host surface has no `i64`/pointer type; the backends already treat a
-heap "pointer" as an 8-byte slot on arm64 / a 4-byte one on wasm via the
-`WidthPtr` sentinel — see `CLAUDE.md`). The intrinsic lowering uses the native
-pointer width, not the i32 the signature advertises; callers only ever pass
-values that came out of `__raw_alloc` / a box field, so the narrowing is
-nominal.
+The checker types the floor from one table, `checker.raw_floor_sigs`: an
+address is a `usize`, an offset, byte or length an `i32`, and a syscall's
+operands and result are `i64` words. That is the spelling a checked program
+uses, and the typed lowering accepts only it. The helper sources are not
+checked yet and still carry every address as an `i32`, which the table below
+shows; the lowering uses the native pointer width either way, so the narrowing
+there is nominal until they are retyped (`SELFHOST-SEMANTIC-SOURCE.md`,
+"Retiring the AST lowering").
 
 The set is register-backend only, apart from `__raw_load_ptr` /
 `__raw_store_ptr` (and the two type-only bridges, `__raw_data` and
