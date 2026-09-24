@@ -10896,7 +10896,7 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 					// is what lets the value-returning collection API
 					// (`arr = arr.with(i, v)`, post-E056) stay fip — e.g. the
 					// in-place insertion sorts.
-					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
+					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] && !fipLinkReadsRoot(x) {
 						return true
 					}
 					// `recv.map(f)` on an `own` array is the in-place map
@@ -10957,6 +10957,31 @@ func fipWriteAllocates(target ast.Expr, own map[string]bool) bool {
 // fipRootIdent unwraps nested index / field accesses to the base identifier
 // name (the container being written through), or "" if the base isn't a bare
 // identifier.
+// fipLinkReadsRoot reports whether a `.with` link whose receiver is an
+// earlier `.with` link reads the chain's root in its own arguments. Those run
+// after the earlier link's write and must see the old elements, so the root
+// link copies and the chain allocates (#9702).
+func fipLinkReadsRoot(c *ast.Call) bool {
+	inner, ok := c.Args[0].(*ast.Call)
+	if !ok || inner.Method == nil || inner.Method.Field != "with" {
+		return false
+	}
+	root := fipRootIdent(c.Args[0])
+	for _, a := range c.Args[1:] {
+		mentioned := false
+		ast.Walk(a, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == root {
+				mentioned = true
+			}
+			return !mentioned
+		})
+		if mentioned {
+			return true
+		}
+	}
+	return false
+}
+
 func fipRootIdent(e ast.Expr) string {
 	for {
 		switch x := e.(type) {
@@ -10967,7 +10992,8 @@ func fipRootIdent(e ast.Expr) string {
 		case *ast.FieldAccess:
 			e = x.Target
 		case *ast.Call:
-			// An earlier `.with` link: the chain writes one array in place.
+			// An earlier `.with` link, whose result this link writes in place
+			// unless it reads the root (fipLinkReadsRoot).
 			if x.Method == nil || x.Method.Field != "with" || len(x.Args) == 0 {
 				return ""
 			}

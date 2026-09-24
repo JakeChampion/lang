@@ -802,7 +802,7 @@ same code(s) the Go checker does — restricted to
   missing. New passes (`mx_stmts` / `mx_expr`, scope-threaded like
   `ret_diags`) recognise that IIFE shape (a 0-arg call of a 0-param lambda
   whose body is a single `StmtMatch` / `StmtIf`), type each arm's result
-  expression — binding match-payload names via `variant_binding_type`, and
+  expression — binding match-payload names via `variant_payload_type_at`, and
   recursing an `else if` chain — and emit E031 when the arms aren't
   mutually compatible. The compatibility predicate (`mx_arm_compatible`)
   mirrors the Go checker's `unifyIfArms`: arms coexist when they're equal
@@ -842,7 +842,7 @@ same code(s) the Go checker does — restricted to
   ("argument type"), and an assignment to it would have mis-fired **E003**
   (the `stmts_assign_diags` site already worked around this by binding the
   payload to `unknown`, suppressing the check entirely). New helper
-  `variant_binding_type(s, name)` reads the real payload type off the
+  `variant_payload_type_at(s, name, 0)` reads the real payload type off the
   `__ev` marker field when present, falling back to `t_struct(name)` for a
   struct-union member (`type U = A | B`, which is a genuine struct with no
   marker — its binding stays the whole struct, matching Go). Applied at all

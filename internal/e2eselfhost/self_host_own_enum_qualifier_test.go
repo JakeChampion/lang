@@ -247,7 +247,7 @@ pub function probe(n: i32): i32 {
 	})
 
 	// The 2nd+ payload goes through variant_payload_type_at rather than
-	// variant_binding_type; it missed on a qualified name the same way.
+	// variant_payload_type_at; it missed on a qualified name the same way.
 	t.Run("qualified-extra-payload-type-is-checked", func(t *testing.T) {
 		out, code := check(t, `enum E { Pair(i32, i32), Nil }
 

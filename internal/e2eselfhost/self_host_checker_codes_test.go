@@ -188,6 +188,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e053-with-on-an-own-structs-field", "struct S { xs: i32[] }\nfip function f(own s: S): i32[] { return s.xs.with(0, 1); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", nil},
 		{"e053-with-on-a-borrowed-structs-field", "struct S { xs: i32[] }\nfip function f(s: S): i32[] { return s.xs.with(0, 1); }\nfunction main(): i32 { return f(S { xs: [1, 2] })[0]; }\n", []string{"E053"}},
 		{"e053-with-chain-on-own", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", nil},
+		{"e053-with-chain-reads-receiver", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, b[0]); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
 		{"e053-with-chain-on-borrowed", "fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
 		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
 		// inside ITS OWN scope: a block-local from its declaration to the end of
@@ -1808,7 +1809,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// marker field `__ev: T`; the pattern `V(n)` binds the PAYLOAD value
 		// (type T), not the wrapper struct. Typing it as the wrapper struct
 		// false-positived E038 when the payload was passed to a typed
-		// function. variant_binding_type reads the real payload type.
+		// function. variant_payload_type_at reads the real payload type.
 		{"enum-payload-i32-arg-ok", "enum O { Has(i32), Nil }\nfunction f(n: i32): i32 { return n; }\nfunction main(): i32 { var o: O = Nil; match (o) { Has(n) => { var r: i32 = f(n); }, Nil => { } } return 0; }\n", nil},
 		{"enum-payload-string-arg-ok", "enum S { Tag(string), Non }\nfunction h(s: string): i32 { return 0; }\nfunction main(): i32 { var x: S = Non; match (x) { Tag(t) => { var r: i32 = h(t); }, Non => { } } return 0; }\n", nil},
 		// Regression direction: a real payload-type mismatch still fires E038

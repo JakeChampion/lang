@@ -2692,38 +2692,15 @@ function field_index(ssig: StructSig, name: string): i32 {
   return 0 - 1;
 }
 
-// variant_binding_type returns the type to bind a variant pattern's
-// payload name to. A payload-bearing ENUM variant `V(T)` is lowered (in
-// the parser) to a struct `V` carrying a single marker field `__ev: T`, so
-// the pattern `V(n)` binds the PAYLOAD value of type T — read T off the
-// `__ev` field, NOT the wrapper struct. (Binding it as `t_struct("V")`
-// false-positived E038 when the payload was passed to a typed function,
-// and E003 on assignment to it.) A struct-union member `type U = A | B` is
-// a genuine user struct with no `__ev` marker, so its binding is the whole
-// struct — `t_struct(name)`, matching the Go checker.
-//
-// Builtin generic payloads need the scrutinee's instantiation arguments;
-// variant_pattern_payload_type resolves those before this declaration lookup.
-function variant_binding_type(s: Scope, type_name: string): typeinfo.Type {
-  var ss: StructSig = variant_payload_struct(s, type_name);
-  if (ss.name.len() == 0) {
-    return t_unknown("built-in variant payload `" + type_name + "`");
-  }
-  var i: i32 = 0;
-  while (i < ss.field_names.len()) {
-    if (ss.field_names[i] == "__ev") {
-      return ss.field_types[i];
-    }
-    i = i + 1;
-  }
-  return t_struct(ss.name);
-}
-
-// variant_payload_type_at returns the type of a variant's idx-th payload —
-// field `__ev` (idx 0), `__ev1` (idx 1), `__ev2` (idx 2), … — the multi-payload
-// naming variant_payload_count relies on. Falls back to the wrapper struct type
-// when the field is absent (a bare / struct-union variant), exactly like
-// variant_binding_type (which is the idx==0 case).
+// variant_payload_type_at returns the type to bind a variant pattern's
+// idx-th payload name to. A payload-bearing ENUM variant `V(T, U)` is lowered
+// (in the parser) to a struct `V` with marker fields `__ev: T`, `__ev1: U`,
+// …, so the pattern binds the PAYLOAD value, read off the marker field, NOT
+// the wrapper struct (binding it as `t_struct("V")` false-positived E038 and
+// E003). A struct-union member `type U = A | B` is a genuine user struct with
+// no marker, so its binding is the whole struct — `t_struct(name)`, matching
+// the Go checker. Builtin and generic payloads need the scrutinee's
+// instantiation arguments; variant_pattern_payload_type resolves those first.
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): typeinfo.Type {
   var ss: StructSig = variant_payload_struct(s, type_name);
   if (ss.name.len() == 0) {
@@ -2765,11 +2742,8 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
       return t_unknown("unresolved generic pattern payload");
     }
   }
-  if let typeinfo.TypeUnion(u) = whole {
-    var g: typeinfo.Type = generic_variant_payload_type(s, name, u, index);
-    if (!is_unknown(g)) { return g; }
-  }
-  if (index == 0) { return variant_binding_type(s, name); }
+  var g: typeinfo.Type = generic_variant_payload_type(s, name, whole, index);
+  if (!is_unknown(g)) { return g; }
   return variant_payload_type_at(s, name, index);
 }
 
@@ -2777,7 +2751,9 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 // spelling with the enum's type parameters replaced by the scrutinee's
 // arguments, as a generic struct's field is. Unknown when the enum is not
 // generic or the scrutinee names no arguments for it.
-function generic_variant_payload_type(s: Scope, name: string, u: typeinfo.TypeUnion, index: i32): typeinfo.Type {
+function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Type, index: i32): typeinfo.Type {
+  var u: typeinfo.TypeUnion = typeinfo.TypeUnion { name: "", args: [] };
+  if let typeinfo.TypeUnion(wu) = whole { u = wu; } else { return t_unknown("not a union"); }
   var us: UnionSig = s.lookup_union(u.name);
   if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) { return t_unknown("not a generic enum instance"); }
   var ss: StructSig = variant_payload_struct(s, name);
@@ -7517,13 +7493,7 @@ function lambda_exits(body: ast.Stmt[], scope: Scope, own acc: LambdaExits): Lam
   for st in body {
     if (!is_defer_stmt(st)) { acc = lambda_try_exits(st, cur, acc); }
     match (st) {
-      ast.StmtReturn(r) => {
-        if (bare_return(r.value)) {
-          acc = LambdaExits { ...acc, bare: true };
-        } else {
-          if (!int_literal_tree(r.value)) { acc = LambdaExits { ...acc, types: acc.types.append(check_expr(r.value, cur)) }; }
-        }
-      },
+      ast.StmtReturn(r) => { acc = lambda_return_exit(r, cur, acc); },
       ast.StmtIf(f) => {
         acc = lambda_exits(f.then_body, cur, acc);
         acc = lambda_exits(f.else_body, cur, acc);
@@ -7539,6 +7509,14 @@ function lambda_exits(body: ast.Stmt[], scope: Scope, own acc: LambdaExits): Lam
     cur = bind_stmt(st, cur);
   }
   return acc;
+}
+
+// A value return adds its type; a bare one marks the lambda as having one;
+// an integer literal adapts to its context and constrains nothing.
+function lambda_return_exit(r: ast.StmtReturn, cur: Scope, own acc: LambdaExits): LambdaExits {
+  if (bare_return(r.value)) { return LambdaExits { ...acc, bare: true }; }
+  if (int_literal_tree(r.value)) { return acc; }
+  return LambdaExits { ...acc, types: acc.types.append(check_expr(r.value, cur)) };
 }
 
 function is_defer_stmt(st: ast.Stmt): boolean {
@@ -14802,6 +14780,28 @@ function fip_recv_root(e: ast.Expr): string {
   return "";
 }
 
+// fip_link_reads_root is native's fipLinkReadsRoot: a `.with` link whose
+// receiver is an earlier `.with` link and whose own arguments read the chain's
+// root runs after that link's write, so the root copies and the chain
+// allocates (#9702).
+// An own-rooted `.with` writes in place unless an earlier link's write would
+// be read through the root.
+function fip_with_in_place(c: ast.ExprCall, fa: ast.ExprFieldAccess, root_own: boolean, root: string): boolean {
+  return root_own && !fip_link_reads_root(c, fa, root);
+}
+
+function fip_link_reads_root(c: ast.ExprCall, fa: ast.ExprFieldAccess, root: string): boolean {
+  if let ast.ExprCall(inner) = fa.obj {
+    if let ast.ExprFieldAccess(link) = inner.callee {
+      if (link.field != "with") { return false; }
+      for a in c.args {
+        if (astwalk.count_ident_expr(a, root) > 0) { return true; }
+      }
+    }
+  }
+  return false;
+}
+
 // e053_at_node flags, at ONE expression node, the constructs a `fip` / `fbip`
 // function may not contain: array / tuple / struct literals and payload-carrying
 // enum construction, string concatenation, a method call outside the
@@ -14844,7 +14844,7 @@ function e053_at_node(n: ast.Expr, fx: E053Ctx, cur: Scope, own out: util.Diag[]
               root_own = true;
             }
           }
-          if (fa.field == "with" && root_own) {
+          if (fa.field == "with" && fip_with_in_place(c, fa, root_own, recv_root)) {
             return out;
           }
           // `recv.map(f)` on an `own` array is admitted as native admits it
@@ -15396,16 +15396,20 @@ function cursor_over_local(e: ast.Expr, sc: CursorScan, depth: i32): boolean {
         _ => {}
       }
     },
-    ast.ExprIdent(id) => {
-      var i: i32 = 0;
-      while (i < sc.var_names.len()) {
-        if (sc.var_names[i] == id.name && cursor_over_local(sc.var_inits[i], sc, depth + 1)) { return true; }
-        i = i + 1;
-      }
-    },
+    ast.ExprIdent(id) => { return cursor_source_over_local(id.name, sc, depth + 1); },
     ast.ExprArray(al) => { return any_cursor_over_local(al.elements, sc, depth + 1); },
     ast.ExprTuple(tl) => { return any_cursor_over_local(tl.elements, sc, depth + 1); },
     _ => {}
+  }
+  return false;
+}
+
+// Whether any value bound or assigned to `name` is a cursor over a local map.
+function cursor_source_over_local(name: string, sc: CursorScan, depth: i32): boolean {
+  var i: i32 = 0;
+  while (i < sc.var_names.len()) {
+    if (sc.var_names[i] == name && cursor_over_local(sc.var_inits[i], sc, depth)) { return true; }
+    i = i + 1;
   }
   return false;
 }
