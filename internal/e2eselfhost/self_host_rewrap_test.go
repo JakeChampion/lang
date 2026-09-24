@@ -11,9 +11,14 @@ import (
 // `(j - i) as i64` wraps the i32 difference and then extends it. The wrap
 // already leaves the register sign-extended, so the extend flows through the
 // lift (ssa_lift.sign_extended32) and the difference is sign-extended once.
-// `f(9, 4, 10)` is 15 and `f(3, 8, 100)`, a negative difference, is 95.
+// `f(9, 4, 10)` is 15 and `f(3, 8, 100)`, a negative difference, is 95. The
+// negative case is compared at i64: a zero-extended wrap is off by 2^32, which
+// a truncation to the exit code would discard.
 const rewrapProg = `@noinline function f(j: i32, i: i32, p: i64): i64 { return p + (j - i) as i64; }
-function main(): i32 { return (f(9, 4, 10i64) + f(3, 8, 100i64)) as i32; }
+function main(): i32 {
+    if (f(3, 8, 100i64) == 95i64) { return f(9, 4, 10i64) as i32; }
+    return 1;
+}
 `
 
 func TestSelfHostRedundantWrapFlowsThrough(t *testing.T) {
@@ -48,8 +53,8 @@ func TestSelfHostRedundantWrapFlowsThrough(t *testing.T) {
 			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
 		}
 		_ = run.Run()
-		if got := run.ProcessState.ExitCode(); got != 110 {
-			t.Errorf("%s: exit %d, want 110 (15 + 95)", tg.target, got)
+		if got := run.ProcessState.ExitCode(); got != 15 {
+			t.Errorf("%s: exit %d, want 15 (1 means f(3, 8, 100) was not 95)", tg.target, got)
 		}
 	}
 }

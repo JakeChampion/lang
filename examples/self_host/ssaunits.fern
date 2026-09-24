@@ -832,8 +832,10 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     var reflow: boolean = false;
     i = 0;
     while (i < takes.len()) {
-        // A taken record field reflows too: the values read through it still
-        // chain to the record, which has to die at the read.
+        // A taken record field reflows, as a taken payload does: the values
+        // read through it still chain to the record, which has to die at the
+        // read. option_layout already admits a record (it is not an enum), so
+        // the record_get test states that rather than widening the gate.
         if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || option_layout(f, f.values[defs[i].args[0]]))) { reflow = true; }
         if (takes[i] >= 0 || held[i] || payloads[i]) {
             owned = owned.with(i, true);
