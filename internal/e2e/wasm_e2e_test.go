@@ -2857,26 +2857,22 @@ function main(): i32 {
 // enclosing function exits. Multiple defers run in LIFO
 // order; conditionally-registered defers (inside an if-branch
 // that didn't fire) are no-ops via per-defer "active" flags.
-// Side-effect observation goes through a Map passed by ref.
+// Side effects are observed through a Cell, which a callee writes in place.
 func TestWASMDeferBasic(t *testing.T) {
 	src := `
-import "core/map";
-function inner(trace: Map[string, i32]): i32 {
-    trace = trace.insert("body-start", 1);
-    defer trace.insert("first-defer", 10);
-    defer trace.insert("second-defer", 20);
-    trace = trace.insert("body-end", 2);
+function inner(trace: Cell[i32]): i32 {
+    trace.set(trace.get() * 10 + 1);
+    defer trace.set(trace.get() * 10 + 3);
+    defer trace.set(trace.get() * 10 + 4);
+    trace.set(trace.get() * 10 + 2);
     return 42;
 }
 function main(): i32 {
-    var trace: Map[string, i32] = map_new(8);
+    var trace: Cell[i32] = cell_new(0);
     var r: i32 = inner(trace);
     if (r != 42) { return 1; }
-    if (trace.len() != 4) { return 2; }
-    if (trace.get_or("body-start", 0) != 1) { return 3; }
-    if (trace.get_or("body-end", 0) != 2) { return 4; }
-    if (trace.get_or("first-defer", 0) != 10) { return 5; }
-    if (trace.get_or("second-defer", 0) != 20) { return 6; }
+    // Body steps 1 and 2, then the defers in LIFO order: 4, then 3.
+    if (trace.get() != 1243) { return 2; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2888,23 +2884,20 @@ function main(): i32 {
 // if-branch that doesn't run shouldn't fire at function exit.
 func TestWASMDeferConditional(t *testing.T) {
 	src := `
-import "core/map";
-function run(fired: Map[i32, i32], taken: boolean): i32 {
+function run(fired: Cell[i32], taken: boolean): i32 {
     if (taken) {
-        defer fired.insert(1, 100);
+        defer fired.set(fired.get() + 1);
     }
-    defer fired.insert(2, 200);
+    defer fired.set(fired.get() + 2);
     return 0;
 }
 function main(): i32 {
-    var fired: Map[i32, i32] = map_new(4);
+    var fired: Cell[i32] = cell_new(0);
     run(fired, false);
-    if (fired.has(1)) { return 1; }
-    if (!fired.has(2)) { return 2; }
-    fired = fired.cleared();
+    if (fired.get() != 2) { return 1; }
+    fired.set(0);
     run(fired, true);
-    if (!fired.has(1)) { return 3; }
-    if (!fired.has(2)) { return 4; }
+    if (fired.get() != 3) { return 3; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
@@ -2915,9 +2908,8 @@ function main(): i32 {
 // Defer fires before each return, even early returns.
 func TestWASMDeferEarlyReturn(t *testing.T) {
 	src := `
-import "core/map";
-function early(counts: Map[string, i32], branch: i32): i32 {
-    defer counts.insert("count", counts.get_or("count", 0) + 1);
+function early(counts: Cell[i32], branch: i32): i32 {
+    defer counts.set(counts.get() + 1);
     if (branch == 1) {
         return 10;
     }
@@ -2927,11 +2919,11 @@ function early(counts: Map[string, i32], branch: i32): i32 {
     return 30;
 }
 function main(): i32 {
-    var counts: Map[string, i32] = map_new(4);
+    var counts: Cell[i32] = cell_new(0);
     if (early(counts, 1) != 10) { return 1; }
     if (early(counts, 2) != 20) { return 2; }
     if (early(counts, 0) != 30) { return 3; }
-    if (counts.get_or("count", 0) != 3) { return 4; }
+    if (counts.get() != 3) { return 4; }
     return 0;
 }`
 	if got := runWasm(t, src); got != 0 {
