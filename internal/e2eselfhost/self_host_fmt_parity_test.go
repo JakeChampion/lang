@@ -1376,6 +1376,35 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 	// leading comments above a line and a trailing one after its comma. Before,
 	// both printers collapsed the list and moved every comment to the next
 	// statement.
+	{"block-end-comments", `function f(x: i32): i32 {
+  if (x > 0) {
+    x = x + 1;
+    // end of then
+  } else if (x < -5) {
+    x = 0;
+    // end of middle
+  } else {
+    x = x - 1;
+    // end of else
+  }
+  while (x > 10) { x = x - 1; }  // shrink
+  for i in 0..3 {
+    x = x + i;
+    // end of for
+  }
+  match (x) {
+    0 => {
+      x = 1;
+      // end of arm
+    },
+    _ => {}
+  }
+  return x;
+  // end of f
+}
+function g(): i32 { return 1; }  // one
+function main(): i32 { return f(3) + g(); }
+`},
 	{"list-interior-comments", `struct S { a: i32, b: i32 }
 const NAMES: string[] = [
   // group one
