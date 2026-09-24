@@ -1581,6 +1581,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		// An unannotated `?` binding takes the success payload's type.
+		{"try-binding-typed-sink", "function g(): Option[string] { return Some(\"a\"); }\nfunction f(): Option[i32] { var s = g()?; var n: i32 = s; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		{"try-binding-typed-clean", "function g(): Result[string, i32] { return Ok(\"a\"); }\nfunction f(): Result[i32, i32] { var s = g()?; return Ok(s.len()); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E042 return-shape (#4363 item 1): `?` on a known Option/Result
 		// operand inside a function whose declared return type is a known
 		// primitive draws the return-shape E042 ("requires the surrounding
