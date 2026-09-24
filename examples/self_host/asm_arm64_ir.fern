@@ -5871,78 +5871,48 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write(".globl __fern_buf_push\n");
         s = s.write(".type __fern_buf_push, %function\n");
         s = s.write("__fern_buf_push:\n");
-        s = s.write("    stp x29, x30, [sp, #-16]!\n");
-        s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    ldr x21, [x20, #8]\n");                // src len
-        s = s.write("    cbz x21, .Lbufpush_done\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x21\n");                   // len after this push
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufpush_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
-        s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufpush_fits:\n");
-        s = s.write("    ldr x1, [x20]\n");                     // src data
-        s = s.write("    ldr x3, [x19]\n");
-        s = s.write("    ldr x4, [x19, #8]\n");
-        s = s.write("    add x3, x3, x4\n");                    // dst = data + len
-        s = s.write("    mov x2, x21\n");
-        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufpush_loop_w", ".Lbufpush_loop_t", ".Lbufpush_loop_b", ".Lbufpush_loop_d");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x21\n");
-        s = s.write("    str x0, [x19, #8]\n");
-        s = s.write(".Lbufpush_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
-        s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x3, [x1, #8]\n");
+        s = s.write("    mov x2, #0\n");
+        s = s.write("    b __fern_buf_push_range\n");
         s = s.write(".size __fern_buf_push, .-__fern_buf_push\n");
         // __fern_buf_push_range(x0 = H, x1 = box, x2 = lo, x3 = hi): append
         // s[lo:hi] with no intermediate string. An empty or inverted range is a
-        // no-op; the bounds are the caller's, as with slice_unchecked.
+        // no-op; the bounds are the caller's, as with slice_unchecked. A push
+        // that fits is a leaf with no frame; only a growth saves the operands
+        // across the reserve.
         s = s.write(".globl __fern_buf_push_range\n");
         s = s.write(".type __fern_buf_push_range, %function\n");
         s = s.write("__fern_buf_push_range:\n");
+        s = s.write("    sub x3, x3, x2\n");
+        s = s.write("    cmp x3, #0\n");
+        s = s.write("    b.le .Lbufrange_done\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, x3\n");
+        s = s.write("    ldr x6, [x0, #16]\n");
+        s = s.write("    cmp x5, x6\n");
+        s = s.write("    b.hi .Lbufrange_grow\n");
+        s = s.write(".Lbufrange_copy:\n");
+        s = s.write("    str x5, [x0, #8]\n");
+        s = s.write("    ldr x1, [x1]\n");
+        s = s.write("    add x1, x1, x2\n");
+        s = s.write("    ldr x6, [x0]\n");
+        s = s.write("    add x6, x6, x4\n");
+        s = s.write("    mov x2, x3\n");
+        s = arm64_copy_bytes(s, CopyRegs { dst: "x6", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufrange_loop_w", ".Lbufrange_loop_t", ".Lbufrange_loop_b", ".Lbufrange_done");
+        s = s.write("    ret\n");
+        s = s.write(".Lbufrange_grow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    stp x21, x22, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    mov x21, x2\n");                       // lo
-        s = s.write("    sub x22, x3, x2\n");                   // n = hi - lo
-        s = s.write("    cmp x22, #0\n");
-        s = s.write("    b.le .Lbufrange_done\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x22\n");
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufrange_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    stp x2, x3, [sp, #-16]!\n");
+        s = s.write("    mov x1, x5\n");
         s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufrange_fits:\n");
-        s = s.write("    ldr x1, [x20]\n");
-        s = s.write("    add x1, x1, x21\n");                   // src = data + lo
-        s = s.write("    ldr x3, [x19]\n");
-        s = s.write("    ldr x4, [x19, #8]\n");
-        s = s.write("    add x3, x3, x4\n");
-        s = s.write("    mov x2, x22\n");
-        s = arm64_copy_bytes(s, CopyRegs { dst: "x3", src: "x1", n: "x2", tmp: "x9", src_end: "x10", dst_end: "x11" }, ".Lbufrange_loop_w", ".Lbufrange_loop_t", ".Lbufrange_loop_b", ".Lbufrange_loop_d");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, x22\n");
-        s = s.write("    str x0, [x19, #8]\n");
-        s = s.write(".Lbufrange_done:\n");
-        s = s.write("    ldp x21, x22, [sp], #16\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x2, x3, [sp], #16\n");
+        s = s.write("    ldp x0, x1, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, x3\n");
+        s = s.write("    b .Lbufrange_copy\n");
         s = s.write(".size __fern_buf_push_range, .-__fern_buf_push_range\n");
         // __fern_buf_push_mapped(x0 = H, x1 = box, x2 = table): append
         // table[c] for each byte c of the box's data, or c itself when it is
@@ -6144,33 +6114,32 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_buf_push_expanded, .-__fern_buf_push_expanded\n");
-        // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x.
+        // __fern_buf_push_byte(x0 = H, x1 = x): append the low byte of x, as a
+        // leaf unless the buffer grows.
         s = s.write(".globl __fern_buf_push_byte\n");
         s = s.write(".type __fern_buf_push_byte, %function\n");
         s = s.write("__fern_buf_push_byte:\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, #1\n");
+        s = s.write("    ldr x6, [x0, #16]\n");
+        s = s.write("    cmp x5, x6\n");
+        s = s.write("    b.hi .Lbufbyte_grow\n");
+        s = s.write(".Lbufbyte_fits:\n");
+        s = s.write("    ldr x6, [x0]\n");
+        s = s.write("    strb w1, [x6, x4]\n");
+        s = s.write("    str x5, [x0, #8]\n");
+        s = s.write("    ret\n");
+        s = s.write(".Lbufbyte_grow:\n");
         s = s.write("    stp x29, x30, [sp, #-16]!\n");
         s = s.write("    mov x29, sp\n");
-        s = s.write("    stp x19, x20, [sp, #-16]!\n");
-        s = s.write("    mov x19, x0\n");
-        s = s.write("    mov x20, x1\n");
-        s = s.write("    ldr x0, [x19, #8]\n");
-        s = s.write("    add x0, x0, #1\n");
-        s = s.write("    ldr x1, [x19, #16]\n");
-        s = s.write("    cmp x0, x1\n");
-        s = s.write("    b.ls .Lbufbyte_fits\n");
-        s = s.write("    mov x1, x0\n");
-        s = s.write("    mov x0, x19\n");
+        s = s.write("    stp x0, x1, [sp, #-16]!\n");
+        s = s.write("    mov x1, x5\n");
         s = s.write("    bl __fern_buf_reserve\n");
-        s = s.write(".Lbufbyte_fits:\n");
-        s = s.write("    ldr x0, [x19]\n");
-        s = s.write("    ldr x1, [x19, #8]\n");
-        s = s.write("    add x0, x0, x1\n");
-        s = s.write("    strb w20, [x0]\n");
-        s = s.write("    add x1, x1, #1\n");
-        s = s.write("    str x1, [x19, #8]\n");
-        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x0, x1, [sp], #16\n");
         s = s.write("    ldp x29, x30, [sp], #16\n");
-        s = s.write("    ret\n");
+        s = s.write("    ldr x4, [x0, #8]\n");
+        s = s.write("    add x5, x4, #1\n");
+        s = s.write("    b .Lbufbyte_fits\n");
         s = s.write(".size __fern_buf_push_byte, .-__fern_buf_push_byte\n");
         // __fern_buf_push_u64(x0 = H, x1 = v): append the eight bytes of v,
         // least significant first.

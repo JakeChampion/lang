@@ -3418,87 +3418,47 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         // __fern_buf_push(%rdi = H, %rsi = string box): append every byte of
         // the box's data. Box form only, like __fern_strbuf_append's operand.
         s = s.write("__fern_buf_push:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq 8(%r12), %r13\n");               // src len
-        s = s.write("    testq %r13, %r13\n");
-        s = s.write("    jz .Lbufpush_done\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r13, %rax\n");                  // len after this push
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbufpush_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
-        s = s.write(".Lbufpush_fits:\n");
-        s = s.write("    movq (%r12), %rsi\n");                // src data
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %rax, %rdx\n");                  // dst = data + len
-        s = s.write("    movq %r13, %rcx\n");
-        s = s.write("    movq %rdx, %rdi\n");
-        s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    call __fern_memcpy\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r13, %rax\n");
-        s = s.write("    movq %rax, 8(%rbx)\n");
-        s = s.write(".Lbufpush_done:\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
+        s = s.write("    movq 8(%rsi), %rcx\n");
+        s = s.write("    xorl %edx, %edx\n");
+        s = s.write("    jmp __fern_buf_push_range\n");
         // __fern_buf_push_range(%rdi = H, %rsi = box, %rdx = lo, %rcx = hi):
         // append s[lo:hi] with no intermediate string. An empty or inverted
         // range is a no-op; the bounds are the caller's, as with
-        // slice_unchecked.
+        // slice_unchecked. A push that fits keeps no frame: it sets the new
+        // length and tail-calls the copy. Only a growth saves the operands
+        // across the reserve.
         s = s.write("__fern_buf_push_range:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq %rdx, %r13\n");                  // lo
-        s = s.write("    movq %rcx, %r14\n");
-        s = s.write("    subq %r13, %r14\n");                  // n = hi - lo
-        s = s.write("    cmpq $0, %r14\n");
+        s = s.write("    subq %rdx, %rcx\n");
         s = s.write("    jle .Lbufrange_done\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r14, %rax\n");
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbufrange_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
-        s = s.write(".Lbufrange_fits:\n");
-        s = s.write("    movq (%r12), %rsi\n");
-        s = s.write("    addq %r13, %rsi\n");                  // src = data + lo
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %rax, %rdx\n");
-        s = s.write("    movq %r14, %rcx\n");
-        s = s.write("    movq %rdx, %rdi\n");
+        s = s.write("    movq 8(%rdi), %rax\n");
+        s = s.write("    leaq (%rax,%rcx), %r8\n");
+        s = s.write("    cmpq 16(%rdi), %r8\n");
+        s = s.write("    ja .Lbufrange_grow\n");
+        s = s.write(".Lbufrange_copy:\n");
+        s = s.write("    movq %r8, 8(%rdi)\n");
+        s = s.write("    movq (%rsi), %rsi\n");
+        s = s.write("    addq %rdx, %rsi\n");
+        s = s.write("    movq (%rdi), %rdi\n");
+        s = s.write("    addq %rax, %rdi\n");
         s = s.write("    movq %rcx, %rdx\n");
-        s = s.write("    call __fern_memcpy\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r14, %rax\n");
-        s = s.write("    movq %rax, 8(%rbx)\n");
+        s = s.write("    jmp __fern_memcpy\n");
+        s = s.write(".Lbufrange_grow:\n");
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    pushq %rdx\n");
+        s = s.write("    pushq %rcx\n");
+        s = s.write("    subq $8, %rsp\n");
+        s = s.write("    movq %r8, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    popq %rcx\n");
+        s = s.write("    popq %rdx\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    movq 8(%rdi), %rax\n");
+        s = s.write("    leaq (%rax,%rcx), %r8\n");
+        s = s.write("    jmp .Lbufrange_copy\n");
         s = s.write(".Lbufrange_done:\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         // __fern_buf_push_mapped(%rdi = H, %rsi = box, %rdx = table): append
         // table[c] for each byte c of the box's data, or c itself when it is
@@ -3717,35 +3677,30 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rbx\n");
         s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
-        // __fern_buf_push_byte(%rdi = H, %rsi = x): append the low byte of x.
+        // __fern_buf_push_byte(%rdi = H, %rsi = x): append the low byte of x,
+        // with no frame unless the buffer grows.
         s = s.write("__fern_buf_push_byte:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq $1, %rax\n");
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbufbyte_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write("    movq 8(%rdi), %rax\n");
+        s = s.write("    leaq 1(%rax), %rcx\n");
+        s = s.write("    cmpq 16(%rdi), %rcx\n");
+        s = s.write("    ja .Lbufbyte_grow\n");
         s = s.write(".Lbufbyte_fits:\n");
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    movq 8(%rbx), %rcx\n");
-        s = s.write("    addq %rcx, %rdx\n");
-        s = s.write("    movq %r12, %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq $1, %rax\n");
-        s = s.write("    movq %rax, 8(%rbx)\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
+        s = s.write("    movq (%rdi), %rdx\n");
+        s = s.write("    movb %sil, (%rdx,%rax)\n");
+        s = s.write("    movq %rcx, 8(%rdi)\n");
         s = s.write("    ret\n");
+        s = s.write(".Lbufbyte_grow:\n");
+        s = s.write("    pushq %rdi\n");
+        s = s.write("    pushq %rsi\n");
+        s = s.write("    subq $8, %rsp\n");
+        s = s.write("    movq %rcx, %rsi\n");
+        s = s.write("    call __fern_buf_reserve\n");
+        s = s.write("    addq $8, %rsp\n");
+        s = s.write("    popq %rsi\n");
+        s = s.write("    popq %rdi\n");
+        s = s.write("    movq 8(%rdi), %rax\n");
+        s = s.write("    leaq 1(%rax), %rcx\n");
+        s = s.write("    jmp .Lbufbyte_fits\n");
         // __fern_buf_push_u64(%rdi = H, %rsi = v): append the eight bytes of
         // v, least significant first.
         s = s.write("__fern_buf_push_u64:\n");

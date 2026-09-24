@@ -68,7 +68,7 @@ func TestSelfHostBufCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	bulk := map[string]*regexp.Regexp{
-		"x86-64-linux": regexp.MustCompile(`\n\s+call __fern_memcpy\n`),
+		"x86-64-linux": regexp.MustCompile(`\n\s+(call|jmp) __fern_memcpy\n`),
 		"arm64-linux":  regexp.MustCompile(`\n\s+ldr x9, \[x1\], #8\n`),
 	}
 	helpers := []string{"__fern_buf_reserve", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_take",
