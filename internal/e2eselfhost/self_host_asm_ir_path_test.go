@@ -1156,8 +1156,6 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-strval-values", `function main(): i32 { var m = Map { "a": "bb", "c": "ddd" }; var n = 0; for v in m.values() { n = n + v.len(); } return n; }`},
 		{"map-strval-getor-miss", `function main(): i32 { var m = Map { 1: "hi" }; return m.get_or(9, "zzzz").len(); }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
-		// `.set` is the PUBLIC map mutator (the existing cases above use the
-		// internal `.insert`); it lowers through the IR path identically (#2926).
 		{"map-insert-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }`},
 		{"map-insert-i32-getor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m = m.insert(9, 13); return m.get_or(7, 0) + m.get_or(9, 0); }`},
 		{"map-insert-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`},

@@ -37,7 +37,7 @@ func TestSelfHostClosureWasmIR(t *testing.T) {
 		// the map (the lift method-callee arm fires for a lambda in a generic
 		// builtin map-value slot), `m.get` returns it, and the `Some(f) => f()`
 		// match-binding dispatches it env-first — on wasm too.
-		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
+		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

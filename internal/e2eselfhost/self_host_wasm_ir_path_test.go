@@ -664,8 +664,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"map-forkv-keys", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); m = m.insert(3, 30); var s = 0; for (k, v) in m { s = s + k; } return s; }`},
 		{"map-forkv-pair", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); var s = 0; for (k, v) in m { s = s + k * v; } return s; }`},
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
-		// `.set` (the public map mutator) lowers through the wasm IR path the
-		// same as the internal `.insert` (#2926).
 		{"map-insert-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }`},
 		{"map-insert-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
 		{"map-insert-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`},
