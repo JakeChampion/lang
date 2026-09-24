@@ -2003,8 +2003,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
 // `memory` and `_start` — the binding silently dropped. Both halves close
 // together, because both were the one missing emit.
 
-// component_needs_ok reports whether a lowered module's need set is inside the
-// component-mode IR subset. Unlike the command core — which imports whatever
+// component_refused_need names the first need of a lowered module outside the
+// component-mode IR subset, or "" when every need is inside it. Unlike the command core — which imports whatever
 // preview1 op it likes — a component core may only import what its framing
 // supplies, and the framings (watbin.component_full / component_full_io /
 // _eprint / _exit) wire a FIXED import list: nothing at all for the no-I/O
@@ -2023,14 +2023,14 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
 // producing a core whose imports the framing cannot satisfy. `@`-prefixed needs
 // are the pure predicates (heap / strings / maps / arithmetic), which import
 // nothing; @uses_random is the sole WASI-backed one and is named explicitly.
-pub function component_needs_ok(needs: string[], io: boolean): boolean {
+pub function component_refused_need(needs: string[], io: boolean): string {
     var i: i32 = 0;
     while (i < needs.len()) {
         var n: string = needs[i];
         // @uses_random is the one WASI-backed `@` predicate: it gates the byte
         // source's IMPORT. Under io that is wasi:random's get-random-u64,
         // which mode 2 emits; with no io there is no import to satisfy it.
-        if (n == "@uses_random") { if (io) { i = i + 1; continue; } return false; }
+        if (n == "@uses_random") { if (io) { i = i + 1; continue; } return n; }
         if (n[0] == 64) { i = i + 1; continue; }   // 64 = '@': a pure predicate
         if (io && (n == "print_int" || n == "print_i64" || n == "print_str"
             || n == "eprint_str" || n == "putchar" || n == "exit")) { i = i + 1; continue; }
@@ -2052,9 +2052,9 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
             || n == "map_iter" || n == "str_split"
             || n == "str_bytes" || n == "str_from_bytes" || n == "fexp"
             || n == "flog" || n == "fpow" || n == "fsin" || n == "fcos") { i = i + 1; continue; }
-        return false;
+        return n;
     }
-    return true;
+    return "";
 }
 
 // clock_imports_p2 emits the preview2 clock imports actually used: wall-clock
@@ -2692,7 +2692,7 @@ pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean): bo
 // deferral scan (ops the bare core-wasm+preview1 backend does not wire) and, in
 // component mode, the framing's need set.
 pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io: boolean): boolean {
-    return wasm_ir_deferrals_ok(cache) && (!component || component_needs_ok(needs_of(cache), io));
+    return wasm_ir_deferrals_ok(cache) && (!component || component_refused_need(needs_of(cache), io) == "");
 }
 
 // emit_module_mode_or_error is the wasm emit entry for every driver now that
@@ -2704,7 +2704,7 @@ pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io
 // `component` / `io` select the framing exactly as before: mode 0 is the preview1
 // command core, 1 the component run core, 2 the component run + stdout core. `fs`
 // is deliberately absent — it never selected an EMITTER, only which component
-// wrapper the caller builds around the mode-2 core, and component_needs_ok is the
+// wrapper the caller builds around the mode-2 core, and component_refused_need is the
 // gate that admits the filesystem ops. Callers that used emit_module_run_io_fs
 // pass component=true, io=true and wrap the result themselves.
 //
@@ -2748,6 +2748,13 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
         var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
         if (g.ok && ir_route_final(cache, component, io)) {
             return emit_ir_module_mode(lm, cache, mode, base);
+        }
+        // A module the lowering took whole but the component framing cannot
+        // import for is not an IR bail, so name the op rather than blame the IR.
+        if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
+            eprint("error: " + component_refused_need(needs_of(cache), io)
+                + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)\n");
+            exit(1);
         }
     }
     ircore.eprint_ir_ineligible();
