@@ -4704,6 +4704,14 @@ function closure_body_produced(p: Produced): boolean {
     return semtypes.is_env(p.func.params[0]);
 }
 
+// A builtin consumes exactly the slots its contract counts, and the rounds
+// never revise that.
+function builtin_row(c: ssasem.Contract): ownership.Escapes {
+    var bits: boolean[] = [];
+    for m in c.modes { bits = bits.append(m == ssaunits.counted_mode()); }
+    return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) };
+}
+
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
     var taken: string[] = pinned;
     var k: i32 = 0;
@@ -4716,12 +4724,15 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     var i: i32 = 0;
     while (i < all.len() && i < names.len()) {
         if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !ownership.names_has(taken, names[i])) {
-            rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()) });
+            rows = rows.append(ownership.Escapes { name: names[i], bits: seed_bits(all[i].func.params.len()), lends: true });
             analyses = analyses.append(ssasem.analyze(all[i].func));
         } else {
             analyses = analyses.append(ssasem.refused_analysis("not produced"));
         }
         i = i + 1;
+    }
+    for c in builtin_contracts() {
+        if (ownership.find(rows, c.name) < 0) { rows = rows.append(builtin_row(c)); }
     }
     var changed: boolean = true;
     var round: i32 = 0;
@@ -4733,7 +4744,7 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
             if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
                 var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows);
                 if (!same_bits(rows[at].bits, next)) {
-                    rows = rows.with(at, ownership.Escapes { name: names[i], bits: next });
+                    rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next });
                     changed = true;
                 }
             }
