@@ -12570,12 +12570,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// `Span.Empty` — a qualified payload-less variant stays a
 			// FieldAccess rather than being rewritten to an Ident, so it is
 			// recognised here (#9517).
-			if tid, ok := x.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
-					if _, vrOk, _ := c.resolveVariant(x.Field, tid.Name); vrOk {
-						return true
-					}
-				}
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
+				return true
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
@@ -16581,7 +16577,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+				if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
 				}
 			}
@@ -18410,7 +18406,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// variant-call shape (`Color.Red(payload)`) is handled in
 		// the *ast.Call branch.
 		if tid, ok := n.Target.(*ast.Ident); ok {
-			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+			if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
 						en := c.enumHintName(tid.Name)
