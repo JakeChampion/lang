@@ -124,6 +124,7 @@ function rc_release_helpers(): string[] {
     return [
         "__fern_rc_dec",
         "__fern_str_dec",
+        "__fern_str_rc_dec",
         "__fern_arr_dec",
         "__fern_box_free",
         "__fern_cell_free",
