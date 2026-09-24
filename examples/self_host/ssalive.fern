@@ -7,18 +7,26 @@ import "./ssa";
 // The sets are bit rows, one per block POSITION (block ids need not be
 // contiguous after CFG simplification), `words` i64s each, value id v at bit
 // v % 64 of word v / 64. Read them through live_in_has / live_out_has.
+// `at` maps a block id to its position in the graph the flow was computed
+// over (position).
 pub struct Flow {
     ok: boolean,
     why: string,
     words: i32,
     live_in: i64[],
-    live_out: i64[]
+    live_out: i64[],
+    at: i32[]
 }
 
 function failed(why: string): Flow {
-    return Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] };
+    return Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] };
 }
 
+// position is block id's position, -1 for an id the graph does not carry.
+pub function position(fl: Flow, id: i32): i32 {
+    if (id < 0 || id >= fl.at.len()) { return 0 - 1; }
+    return fl.at[id];
+}
 pub function live_in_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_in, bi * fl.words, v); }
 pub function live_out_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_out, bi * fl.words, v); }
 
@@ -262,7 +270,7 @@ pub function compute(f: ssa.SFunc, dependencies: i32[][]): Flow {
             bi = bi - 1;
         }
     }
-    return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out };
+    return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, at: at };
 }
 
 // position_of maps a block id to its position in f.blocks, -1 for an id no

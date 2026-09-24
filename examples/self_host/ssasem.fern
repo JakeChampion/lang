@@ -172,7 +172,7 @@ pub function is_map_iter_op(kind: i32): boolean {
 pub function refused_analysis(why: string): Analysis { return failed(why); }
 
 function failed(why: string): Analysis {
-    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [] } };
+    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {

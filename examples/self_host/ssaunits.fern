@@ -543,8 +543,9 @@ function return_supplies(f: ssasem.Func, b: ssa.SBlock): Supply[] {
     if (b.term.kind_tag == 1 && b.term.value >= 0 && ssasem.reference(f.values[b.term.value])) { return [Supply { value: b.term.value, slot: 0, mode: 0 }]; }
     return [];
 }
-function edge_supplies(f: ssasem.Func, b: ssa.SBlock, target: i32, owned: boolean[]): Supply[] {
-    var succ: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+// The edge from b into the block at position si.
+function edge_supplies(f: ssasem.Func, b: ssa.SBlock, si: i32, owned: boolean[]): Supply[] {
+    var succ: ssa.SBlock = f.graph.blocks[si];
     var pi: i32 = 0;
     while (succ.preds[pi] != b.id) { pi = pi + 1; }
     var out: Supply[] = [];
@@ -900,8 +901,8 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
         }
         var targets: i32[] = successors(b);
         for target in targets {
-            var si: i32 = block_index(f.graph, target);
-            var along: Supply[] = edge_supplies(f, b, target, owned);
+            var si: i32 = ssalive.position(a.flow, target);
+            var along: Supply[] = edge_supplies(f, b, si, owned);
             for got in along {
                 if (owned[got.value]) { out = outliving(f, a, defs, out, got.value, bi, 0, si); }
             }
@@ -1215,9 +1216,9 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 steps = steps.append(choose(step(b.id, return_point(), 0 - 1), return_supplies(f, b), dead, owned));
             }
             for target in successors(b) {
-                var si: i32 = block_index(f.graph, target);
+                var si: i32 = ssalive.position(analysis.flow, target);
                 var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
-                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
+                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned));
             }
         }
         bi = bi + 1;
@@ -1418,9 +1419,9 @@ function enter_phis(b: ssa.SBlock, state: boolean[], owned: boolean[]): Ledger {
 function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i32[][], state: boolean[], owned: boolean[], analysis: ssasem.Analysis): string {
     var at: i32 = find_step(p, idx, b.id, edge_point(), target);
     if (at < 0) { return "missing or duplicate edge step"; }
-    var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, target, owned), 0 - 1, owned, analysis.dependencies);
+    var si: i32 = ssalive.position(analysis.flow, target);
+    var done: Ledger = replay(state, p.steps[at], edge_supplies(f, b, si, owned), 0 - 1, owned, analysis.dependencies);
     if (!done.ok) { return done.why; }
-    var si: i32 = block_index(f.graph, target);
     var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
     if (!entered.ok) { return entered.why; }
     if (!holds_invariant(entered.bits, f, si, owned, analysis.flow)) { return "edge unit invariant mismatch"; }
