@@ -4005,9 +4005,9 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
 		for _, ld := range vd.loads {
-			// A CLOSURE payload is a DOCUMENTED SAFE LEAK, the same shape as
-			// the Map payload below. A variant's payloads are stored without
-			// a retain unless the enum is EnumRcPayloads-eligible, and a
+			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A variant's
+			// payloads are stored without a retain unless the enum is
+			// EnumRcPayloads-eligible, and a
 			// matched arm's binding takes the reference out of the box under
 			// the move model — so deep-releasing one here frees an env the
 			// binding is still calling through. `async.Future[T]`'s
@@ -4019,21 +4019,6 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			// its env leak, which is what they did before container-held
 			// closures were released at all (#6443).
 			if _, isFn := ld.typ.(*ast.FuncType); isFn {
-				continue
-			}
-			if isMapType(ld.typ) {
-				// Map-in-enum is a DOCUMENTED SAFE LEAK (see enumRcPayloadsEligible,
-				// ~ir.go:9085): a Map-payload variant's box carries an un-inc'd map
-				// (the enum is excluded from EnumRcPayloads), and __map_drop_values —
-				// the value-column reclaimer this drop would call via appendChildDrop
-				// — lives in core/map.fern, which a program can use the enum WITHOUT
-				// importing (e.g. a `JsonValue[]` built from `JString` values: the
-				// whole-enum drop glue still emits the JObject arm, but core/map was
-				// never loaded, so the call was to an absent symbol — the wasm
-				// "unknown callee __map_drop_values" build error, #4425). Skip the
-				// map reclaim entirely: the map's buffer + values leak (safe — nothing
-				// dangles), consistent with the enum's leak-mode exclusion. The box
-				// itself is still freed by __fern_box_free below.
 				continue
 			}
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})

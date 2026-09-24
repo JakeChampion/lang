@@ -259,62 +259,6 @@ func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) boo
 	return false
 }
 
-func typeTransitivelyContainsMap(info *checker.Info, t ast.Type, seen map[string]bool) bool {
-	switch ty := t.(type) {
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return true
-		}
-		if seen["s:"+ty.Name] {
-			return false
-		}
-		seen["s:"+ty.Name] = true
-		sd, ok := info.Structs[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, f := range sd.Fields {
-			if typeTransitivelyContainsMap(info, f.Type, seen) {
-				return true
-			}
-		}
-		return false
-	case ast.EnumType:
-		return enumTransitivelyContainsMap(info, ty.Name, seen)
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if typeTransitivelyContainsMap(info, e, seen) {
-				return true
-			}
-		}
-		return false
-	case ast.ArrayType:
-		return typeTransitivelyContainsMap(info, ty.Elem, seen)
-	case ast.SliceType:
-		return typeTransitivelyContainsMap(info, ty.Elem, seen)
-	}
-	return false
-}
-
-func enumTransitivelyContainsMap(info *checker.Info, enumName string, seen map[string]bool) bool {
-	if seen["e:"+enumName] {
-		return false
-	}
-	seen["e:"+enumName] = true
-	ed, ok := info.Enums[enumName]
-	if !ok {
-		return true // unknown / generic-erased — conservative (exclude)
-	}
-	for _, v := range ed.Variants {
-		for _, pl := range v.Payloads {
-			if typeTransitivelyContainsMap(info, pl, seen) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // isOwnedByDefaultType reports whether a parameter of type `t` is owned by the
 // callee under Slice 2 (OwnedByDefault): the callee reclaims such a parameter
 // at exit; the caller retains it with an inc at the call site.
@@ -411,12 +355,8 @@ func typeMemo(info *checker.Info, key string, compute func() bool) bool {
 }
 
 // enumRcPayloadsEligible reports whether the Slice-1b EnumRcPayloads model
-// applies to enum `enumName`: the flag is on AND the enum's deep drop is fully
-// wired on every backend. Enums whose payloads transitively contain a Map are
-// excluded — a Map-in-enum deep drop calls `__map_drop_values`, a runtime helper
-// the wasm helper-inclusion pass doesn't pull in for a generated `__drop_enum_`
-// body, and Map key/value reclamation is itself an open gap. Excluded enums keep
-// the move model (flag-off behaviour) at every site, a documented safe leak.
+// applies to enum `enumName`: payloads are retained at construction and the
+// deep drop releases them.
 func (b *builder) enumRcPayloadsEligible(enumName string) bool {
 	return enumRcPayloadsEligibleIn(b.info, enumName)
 }
@@ -424,12 +364,7 @@ func (b *builder) enumRcPayloadsEligible(enumName string) bool {
 // enumRcPayloadsEligibleIn is enumRcPayloadsEligible for a pass that runs
 // before any builder exists (inferParamCountedRetain).
 func enumRcPayloadsEligibleIn(info *checker.Info, enumName string) bool {
-	if !ast.EnumRcPayloads {
-		return false
-	}
-	return !typeMemo(info, "emap:"+enumName, func() bool {
-		return enumTransitivelyContainsMap(info, enumName, map[string]bool{})
-	})
+	return ast.EnumRcPayloads
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
