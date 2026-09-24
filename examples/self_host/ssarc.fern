@@ -128,7 +128,9 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (supported_leaf(t)) { return true; }
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeFloat(_) = t { return ssasem.is_float(t); }
-    if let typeinfo.TypeArray(a) = t { return element_supported(a.elem, f); }
+    // A `str[]` the typed path builds holds only literals (semsource refuses
+    // every other view an array would store), whose boxes are immortal.
+    if let typeinfo.TypeArray(a) = t { return ssasem.is_view(a.elem) || element_supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     return supported_nominal(t, f);

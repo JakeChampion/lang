@@ -2194,7 +2194,7 @@ function mk(): i32 {
     var short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
     var short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
     var m: Map[string, string] = map_new(8);
-    m = m.insert(short_key, short_val);    // aliased inline K + V — retains must skip tagged
+    m = m.insert(short_key.to_owned(), short_val.to_owned());    // inline K + V — retains must skip tagged
     var n = m.len();
     return short_key.len() + short_val.len();
 }

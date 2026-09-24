@@ -169,9 +169,9 @@ function main(): i32 {
 	// ESCAPE negative — the view is passed to a callee that KEEPS it, in an array
 	// outliving the frame that made the view. This is why a call argument is refused
 	// even though the caller's frame is still alive at the call itself.
-	{"strview-escape-arg-safe", `function keep(v: str, xs: string[]): string[] { return xs.append(v); }
-function build(s: string, k: i32): string[] {
-    var xs: string[] = [];
+	{"strview-escape-arg-safe", `function keep(v: str, xs: str[]): str[] { return xs.append(v); }
+function build(s: string, k: i32): str[] {
+    var xs: str[] = [];
     var i: i32 = 0;
     while (i < k) { var t: str = slice_unchecked(s, i, i + 2); xs = keep(t, xs); i = i + 1; }
     return xs;
@@ -179,7 +179,7 @@ function build(s: string, k: i32): string[] {
 function churn(n: i32): i32 { var a: i32 = n * 3; var b: i32 = a + 7; var c: i32 = b * 2; return a + b + c; }
 function main(): i32 {
     var s: string = "abcdefgh";
-    var xs: string[] = build(s, 5);
+    var xs: str[] = build(s, 5);
     var acc: i32 = churn(5) % 251;
     var j: i32 = 0;
     while (j < xs.len()) {
@@ -193,8 +193,8 @@ function main(): i32 {
 }`, 0},
 	// ESCAPE negative — the views are stored in a container the BUILDING frame returns,
 	// so every one of them outlives the frame that would have held its box.
-	{"strview-escape-store-safe", `function collect(s: string, k: i32): string[] {
-    var xs: string[] = [];
+	{"strview-escape-store-safe", `function collect(s: string, k: i32): str[] {
+    var xs: str[] = [];
     var i: i32 = 0;
     while (i < k) { var t: str = slice_unchecked(s, i, i + 2); xs = xs.append(t); i = i + 1; }
     return xs;
@@ -209,7 +209,7 @@ function churn(n: i32): i32 {
 }
 function main(): i32 {
     var s: string = "abcdefgh";
-    var xs: string[] = collect(s, 5);
+    var xs: str[] = collect(s, 5);
     var acc: i32 = churn(3) % 251;
     var j: i32 = 0;
     while (j < xs.len()) {
@@ -284,8 +284,8 @@ function main(): i32 {
 	// argument whose callee stores it) keeps its heap box. `churn` reuses the dead
 	// frame's slots before the views are read, so a wrongly-placed box is a wrong
 	// answer and not just a lucky read.
-	{"strview-temp-escape-arg-safe", `function collect(s: string, k: i32): string[] {
-    var xs: string[] = [];
+	{"strview-temp-escape-arg-safe", `function collect(s: string, k: i32): str[] {
+    var xs: str[] = [];
     var i: i32 = 0;
     while (i < k) { xs = xs.append(slice_unchecked(s, i, i + 2)); i = i + 1; }
     return xs;
@@ -300,7 +300,7 @@ function churn(n: i32): i32 {
 }
 function main(): i32 {
     var s: string = "abcdefgh";
-    var xs: string[] = collect(s, 5);
+    var xs: str[] = collect(s, 5);
     var acc: i32 = churn(4) % 251;
     var j: i32 = 0;
     while (j < xs.len()) {

@@ -10036,6 +10036,21 @@ func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	return gotStr && wantString
 }
 
+// storesArgument reports whether builtin `name` keeps argument i in the value
+// it returns, which makes that position an owning sink: a `str` there would
+// outlive the bytes it views, so argAssignable's borrow carve-out is off.
+func storesArgument(name string, i int) bool {
+	switch name {
+	case "__method_Array_push":
+		return i == 1
+	case "__method_Array_set":
+		return i == 2
+	case "__method_Map_set":
+		return i == 1 || i == 2
+	}
+	return false
+}
+
 // argOK is argAssignable at a real argument position: it decides the argument
 // AND materialises whatever implicit borrow the lowering needs, so no accepted
 // argument reaches the IR in a shape the parameter's ABI doesn't match.
@@ -17147,7 +17162,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// even when it is "no own positions" — the consumers must not re-derive
 		// it by name, having no scope of their own.
 		calleeIsValue := false
+		calleeName := ""
 		if cid, ok := n.Callee.(*ast.Ident); ok {
+			calleeName = cid.Name
 			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
 				calleeIsValue = true
 			} else {
@@ -17276,7 +17293,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
 				}
-				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
+				own := i < len(calleeOwnFlags) && calleeOwnFlags[i] ||
+					!calleeIsValue && storesArgument(calleeName, i)
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how

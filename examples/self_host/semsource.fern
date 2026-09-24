@@ -599,6 +599,13 @@ function destination_type(e: ast.Expr, s: State, expected: typeinfo.Type): typei
     return checked(e, s);
 }
 
+// A string literal's box is `.rodata` under the immortal rc: as a view it has
+// no source to outlive, so a `str[]` can hold it.
+function static_text(e: ast.Expr): boolean {
+    if let ast.ExprString(st) = e { return true; }
+    return false;
+}
+
 function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type): Value {
     var ty: typeinfo.Type = destination_type(e, s, expected);
     if (!semtypes.concrete(ty, false)) { return refused(s, "unresolved array literal type"); }
@@ -608,7 +615,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         var v: Value = expr(e, s, elem);
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
-        if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
+        if (ssasem.is_view(s.values[v.id]) && !static_text(e)) { return refused(s, "view element escapes its source"); }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
         ids = ids.append(v.id);
     }
