@@ -1581,6 +1581,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		// `0o` / `0b` literals are numerals like any other (#9091): in range
+		// clean, out of range E047, suffixed or not.
+		{"radix-literal-clean", "function main(): i32 { var m: i32 = 0o755; var b: u8 = 0b11111111u8; return m + (b as i32); }\n", nil},
+		{"radix-literal-range", "function main(): i32 { var x: u8 = 0o777; return x as i32; }\n", []string{"E047"}},
+		{"radix-literal-suffix-range", "function main(): i32 { var y: u8 = 0b111111111u8; return y as i32; }\n", []string{"E047"}},
 		// An unannotated `?` binding takes the success payload's type.
 		{"try-binding-typed-sink", "function g(): Option[string] { return Some(\"a\"); }\nfunction f(): Option[i32] { var s = g()?; var n: i32 = s; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"try-binding-typed-clean", "function g(): Result[string, i32] { return Ok(\"a\"); }\nfunction f(): Result[i32, i32] { var s = g()?; return Ok(s.len()); }\nfunction main(): i32 { return 0; }\n", nil},

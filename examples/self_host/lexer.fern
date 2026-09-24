@@ -441,6 +441,9 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
         if (l.i == hex_start) {
             return NumResult { lex: l, tok: error_tok("hex literal needs at least one digit after 0x", start_line, start_col) };
         }
+    } else if (radix_prefix(l.src, l.i, l.n) != 0) {
+        // `0o` octal / `0b` binary integer literal: no float upgrades either.
+        return scan_radix_number(l, radix_prefix(l.src, l.i, l.n), start_line, start_col);
     } else {
         var de: i32 = l.i;
         while (de < l.n && is_digit((l.src[de] as i32))) {
@@ -512,6 +515,75 @@ function scan_number(l: Lex, after_dot: boolean, start_line: i32, start_col: i32
     }
     var tok: Token = number_tok(text, suffix, is_float, start_line, start_col);
     return NumResult { lex: l, tok: tok };
+}
+
+// radix_prefix is 8 for a `0o` / `0O` literal at src[i], 2 for a `0b` / `0B`
+// one, and 0 for anything else.
+function radix_prefix(src: string, i: i32, n: i32): i32 {
+    if (src[i] != b'0' || i + 1 >= n) { return 0; }
+    var c: u8 = src[i + 1];
+    if (c == b'o' || c == b'O') { return 8; }
+    if (c == b'b' || c == b'B') { return 2; }
+    return 0;
+}
+
+// scan_radix_number lexes a `0o` / `0b` literal. Every consumer of a number's
+// text already reads hex, so the token's text is the value in hex and its
+// `raw` the spelling as written, suffix included, for the printer. A value
+// past 64 bits keeps growing the hex digits, so the range checks still see it.
+function scan_radix_number(l0: Lex, base: i32, start_line: i32, start_col: i32): NumResult {
+    var l: Lex = l0;
+    var begin: i32 = l.i;
+    var prefix: string = slice_unchecked(l.src, l.i, l.i + 2) + "";
+    l = l.advance_to(l.i + 2);
+    var digits: i32[] = [];
+    var e: i32 = l.i;
+    while (e < l.n && is_digit((l.src[e] as i32)) && (l.src[e] as i32) - 48 < base) {
+        digits = digits.append((l.src[e] as i32) - 48);
+        e = e + 1;
+    }
+    l = l.advance_to(e);
+    if (digits.len() == 0) {
+        return NumResult { lex: l, tok: error_tok("integer literal needs at least one digit after " + prefix, start_line, start_col) };
+    }
+    if (!l.at_end() && is_digit(l.peek_byte())) {
+        return NumResult { lex: l, tok: error_tok("invalid digit in a " + prefix + " literal", start_line, start_col) };
+    }
+    var suffix: string = "";
+    if (!l.at_end() && is_suffix_start(l.peek_byte())) {
+        var s_begin: i32 = l.i;
+        l = l.advance_to(l.i + 1);
+        var se: i32 = l.i;
+        while (se < l.n && is_digit((l.src[se] as i32))) { se = se + 1; }
+        l = l.advance_to(se);
+        suffix = slice_unchecked(l.src, s_begin, l.i) + "";
+        if (!is_valid_numeric_suffix(suffix) || suffix[0] == b'f') {
+            return NumResult { lex: l, tok: error_tok("unknown numeric suffix", start_line, start_col) };
+        }
+    }
+    var raw: string = slice_unchecked(l.src, begin, l.i) + "";
+    return NumResult { lex: l, tok: TokNumber { text: radix_digits_hex(digits, base), suffix: suffix, raw: raw, is_float: false, line: start_line, col: start_col } };
+}
+
+// radix_digits_hex renders base-`base` digits (most significant first) as a
+// `0x` literal, by repeated division of the digit string by 16.
+function radix_digits_hex(digits: i32[], base: i32): string {
+    var cur: i32[] = digits;
+    var hex: string = "";
+    var hexch: string = "0123456789abcdef";
+    while (cur.len() > 0) {
+        var next: i32[] = [];
+        var rem: i32 = 0;
+        for d in cur {
+            var acc: i32 = rem * base + d;
+            var q: i32 = acc / 16;
+            rem = acc % 16;
+            if (next.len() > 0 || q != 0) { next = next.append(q); }
+        }
+        hex = slice_unchecked(hexch, rem, rem + 1) + hex;
+        cur = next;
+    }
+    return "0x" + hex;
 }
 
 // ident_end returns the offset just past the identifier run starting at l.i.

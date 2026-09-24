@@ -1008,6 +1008,10 @@ function mask(): i32 {
   return 0xFF00 | 0xdead;
 }
 
+function modes(): i32 {
+  return 0o755 | 0O17 | 0b1010 | 0B11;
+}
+
 function drop_first(): i32 {
   let (_, b) = (1, 2);
   return b;
