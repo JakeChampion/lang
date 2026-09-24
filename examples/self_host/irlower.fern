@@ -22178,6 +22178,18 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // (non-loop) local is unaffected: old is null, so only the store happens, and
     // the exit sweep still frees the final value.
     if (slot_is_reclaimable_struct(sb, slot) && !slot_nodeep(sb, slot) && sb.struct_routes_field_reclaim(vt.struct_ty)) {
+        // An aliasing bind (`var prev = s`) is a counted share: retain the new
+        // box, and let the gated reclaim release the one the last iteration's
+        // alias held, fields included when it is now the sole owner (#8644).
+        if (vt.alias_inc) {
+            var ascr: string = "$fra" + util.i32_to_string(sb.locals.len());
+            var sa: LowerState = sb.add_local(ascr);
+            var atmp: i32 = sa.slot_of(ascr);
+            sa = sa.emit(ir.op_store_local(atmp));
+            sa = sa.retain(atmp, "struct-alias-bind");
+            sa = sa.emit(ir.op_load_local(atmp));
+            return emit_field_reclaim_store(sa, slot, vt.struct_ty, 0 - 1, true);
+        }
         return emit_field_reclaim_store(sb, slot, vt.struct_ty, 0 - 1, false);
     }
     // Reclaimable arr-of-arr LOOP-LOCAL (#4355 slice 9): the re-declaration
@@ -79330,23 +79342,25 @@ while (i < fresh.len()) {
     }
     if (gates_ok && !struct_returned_bare(body, fnm)) {
         out = out.append(fresh[i]);
-        // THE ALIAS TAKES A BOX-ONLY RELEASE, NEVER THE DEEP ONE. A struct's
-        // release is a DEEP FIELD DROP plus a box dec, and only the box was
-        // retained at the bind. Two deep drops free every field buffer twice:
-        // measured as exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`,
-        // with allocs == frees at live_bytes 0, so only the underflow counter
-        // reported it.
-        //
-        // "NODEEP:" is exactly the marker for "keep this slot's free BOX-ONLY"
-        // (#3425), so the alias takes the box dec and the source keeps the one
-        // field walk. The box is freed once at rc 0 whichever sweep runs last,
-        // and the fields are dropped exactly once.
+        // The alias and its source are two owners of one box: the bind
+        // retained only the box, and a struct's release is a DEEP FIELD DROP
+        // plus a box dec. Two unconditional deep drops free every field buffer
+        // twice (exit 99 on `var t: P = P { xs: [..] }; var v: P = t;`).
+        // Nor can one side stay box-only: a rebind of the source while the
+        // alias holds the old box (`var prev = s; s = S { ...s, ops: … }` in a
+        // loop) hands the deep work to the alias, and a box-only alias then
+        // strands every field the old box owned (#8644). So both take the
+        // rc-gated walk ("SINKSHARE:"): whichever owner releases last finds
+        // rc 1 and drops the fields, exactly once, in either order.
         //
         // This is the per-type difference the array, tuple and string classes
         // do not have: their release IS the box dec, so sharing the credit
         // shares the whole release.
         out = credit_alias_sites(out, "", sal);
-        out = credit_alias_sites(out, "NODEEP:", sal);
+        if (sal.len() > 0) {
+            out = credit_alias_sites(out, "SINKSHARE:", sal);
+            out = push_str_unique(out, "SINKSHARE:" + fresh[i]);
+        }
         // "SINKSHARE:" marks the names this gate admits BECAUSE their box is
         // a counted share at a struct-literal field — the class the sink
         // refusal used to reject wholesale. Only they take the rc-gated field
