@@ -1,0 +1,26 @@
+// A parametric impl on a generic enum, reached only through a trait bound:
+// nothing calls `count` directly, so the bound call is the only site that
+// can instantiate it (#9308). Two instantiations, one reading its payload.
+import "core/int";
+import "std/i32";
+
+trait Count { function count(self: Self): i32; }
+enum Bag[T] { Items(T[]), Empty }
+impl[T] Count for Bag[T] {
+    function count(self: Self): i32 {
+        match (self) {
+            Items(xs) => { return xs.len(); },
+            Empty => { return 0; }
+        }
+        return 0;
+    }
+}
+function total[C: Count](a: C, b: C): i32 { return a.count() + b.count(); }
+
+function main(): i32 {
+    var ints: i32 = total(Items([1, 2, 3]), Empty);
+    var words: Bag[string] = Items(["a", "b"]);
+    var strs: i32 = total(words, Empty);
+    print(ints.to_string() + " " + strs.to_string());
+    return ints * 10 + strs;
+}

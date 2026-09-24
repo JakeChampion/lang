@@ -2194,7 +2194,7 @@ function mk(): i32 {
     var short_key: str = slice_unchecked(src, 0, 1);   // inline (1 byte, tagged)
     var short_val: str = slice_unchecked(src, 2, 4);   // inline (2 bytes, tagged)
     var m: Map[string, string] = map_new(8);
-    m = m.insert(short_key, short_val);    // aliased inline K + V — retains must skip tagged
+    m = m.insert(short_key.to_owned(), short_val.to_owned());    // inline K + V — retains must skip tagged
     var n = m.len();
     return short_key.len() + short_val.len();
 }
@@ -7507,6 +7507,134 @@ function main(): i32 {
 }`,
 	},
 	{
+		// An enum's drop recursed once per level of its own type, so the last
+		// reference to a 300k-node list overflowed the stack on every backend.
+		// A variant's last self-typed payload is now the next turn of a loop
+		// in the drop (#9046). The shared tail checks that loop stops at a
+		// node someone else still holds, and the tree that a non-tail child
+		// still recurses.
+		name: "recursive_enum_drop_constant_stack",
+		src: `
+enum L { Nil, Cons(i32, L) }
+enum T { Leaf, Node(T, i32, T) }
+@noinline
+function build(n: i32): L {
+    var l: L = Nil;
+    var i: i32 = 0;
+    while (i < n) { l = Cons(i, l); i = i + 1; }
+    return l;
+}
+@noinline
+function head(l: L): i32 {
+    match (l) { Cons(h, t) => { return h; }, Nil => { return 0 - 1; } }
+}
+@noinline
+function mid(t: T): i32 {
+    match (t) { Node(a, v, b) => { return v; }, Leaf => { return 0 - 1; } }
+}
+function main(): i32 {
+    var shared: L = build(1000);
+    var a: L = Cons(7, shared);
+    var b: L = Cons(9, shared);
+    var long: L = build(300000);
+    var tr: T = Node(Node(Leaf, 1, Leaf), 2, Node(Leaf, 3, Node(Leaf, 4, Leaf)));
+    return (head(a) - 7) + (head(b) - 9) + (head(shared) - 999) + (head(long) - 299999) + (mid(tr) - 2) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A Map reached through an enum payload is counted like any other
+		// payload and released through the map's own chain when the enum
+		// dies — here an Option[Map] field carried through fifty spread
+		// updates (#8854).
+		name: "option_map_struct_field_reclaimed",
+		src: `
+import "core/map";
+struct H { buf: string, m: Option[Map[string, i32]], n: i32 }
+function (h: H) grow(s: string): H {
+    return H { ...h, buf: h.buf + s, n: h.n + 1 };
+}
+function main(): i32 {
+    var mm: Map[string, i32] = map_new(8);
+    mm = mm.insert("k", 3);
+    var h: H = H { buf: "", m: Some(mm), n: 0 };
+    var i: i32 = 0;
+    while (i < 50) { h = h.grow("cccc"); i = i + 1; }
+    var got: i32 = 0;
+    match (h.m) { Some(m) => { got = m.len(); }, None => { got = 9; } }
+    return (got - 1) + (h.n - 50) + __rc_underflow_count();
+}`,
+	},
+	{
+		// An array whose elements are Maps drops each through the map's own
+		// chain — value column, string keys, buf and handle — not the flat
+		// element dec, which took each handle to zero and stranded all four
+		// (#8845).
+		name: "map_array_elements_reclaimed",
+		src: `
+import "core/map";
+import "std/i32";
+struct P { name: string, n: i32 }
+function main(): i32 {
+    var ms: Map[string, string][] = [];
+    var ps: Map[i32, P][] = [];
+    var i: i32 = 0;
+    while (i < 5) {
+        var m: Map[string, string] = map_new(2);
+        m = m.insert("k" + i.to_string(), "v" + i.to_string());
+        ms = ms.append(m);
+        var q: Map[i32, P] = map_new(2);
+        q = q.insert(i, P { name: "p" + i.to_string(), n: i });
+        ps = ps.append(q);
+        i = i + 1;
+    }
+    return (ms[2].len() - 1) + (ps[3].len() - 1) + (ms.len() - 5) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A match over a fresh call result reclaims the box even when an
+		// arm moves the payload into a new construction — here a struct
+		// field and a local — because the construction takes a count of its
+		// own. Neither arm runs its move on most iterations, which is
+		// BufWriter.flush's shape (#9180).
+		name: "match_payload_moved_into_construction_reclaimed",
+		src: `
+import "std/i32";
+struct E { msg: string }
+struct Acc { n: i32, last: Option[E] }
+@noinline
+function mk(k: i32): Result[i32, E] {
+    if (k % 3 == 0) { return Err(E { msg: "bad" + k.to_string() }); }
+    return Ok(k);
+}
+@noinline
+function put(a: Acc, k: i32): Acc {
+    match (mk(k)) {
+        Err(e) => { return Acc { ...a, last: Some(e) }; },
+        Ok(v) => { return Acc { ...a, n: a.n + v }; }
+    }
+}
+@noinline
+function wrap(k: i32): Result[i32, E] {
+    match (mk(k)) {
+        Err(e) => { var r: Result[i32, E] = Err(e); return r; },
+        Ok(v) => { return Ok(v + 1); }
+    }
+}
+function main(): i32 {
+    var a: Acc = Acc { n: 0, last: None };
+    var m: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        a = put(a, i);
+        match (wrap(i)) { Err(e) => { m = m + e.msg.len(); }, Ok(v) => { m = m + v; } }
+        i = i + 1;
+    }
+    var tail: i32 = 0;
+    match (a.last) { Some(e) => { tail = e.msg.len(); }, None => {} }
+    return (a.n - 1200) + (m - 1336) + (tail - 5) + __rc_underflow_count();
+}`,
+	},
+	{
 		// #8833: the third state of that same store. #8441 released the
 		// superseded element UNCONDITIONALLY, and a consuming update that
 		// finds its receiver uniquely held mutates in place and hands the
@@ -7527,12 +7655,6 @@ function main(): i32 {
 		// a genuinely different handle and must still release it — that is
 		// #8441's property, and without it this case leaks 50 maps rather
 		// than one. `m = m.insert("k", i)` supersedes ITSELF and must not.
-		//
-		// The pinned leak is the map the cell still holds at exit: a cell
-		// whose element is a Map reclaims through the buffer-only array
-		// ladder, which flat-dec's the handle and strands its columns
-		// (#8845). Unrelated to the store — `m = map_new(4)` alone under a
-		// capture leaks the same 144 with this whole case reverted.
 		name: "closure_capture_rebind_map_in_place_not_over_released",
 		src: `
 import "core/map";
@@ -7554,12 +7676,8 @@ function main(): i32 {
 		// same pointer it already named, but the return-transfer inc means
 		// the reference DID change hands and the release is owed. Guarding
 		// the release on pointer identity alone reads this as a self-store
-		// and strands one map a round (7344 bytes here against the 144
-		// pinned below) — green on every other gate, which is how the wide
-		// guard nearly shipped.
-		//
-		// The pin is the map the cell still holds at exit (#8845), the same
-		// one closure_capture_rebind_map_in_place_not_over_released carries.
+		// and strands one map a round — green on every other gate, which is
+		// how the wide guard nearly shipped.
 		name: "closure_capture_rebind_identity_call_not_stranded",
 		src: `
 import "core/map";

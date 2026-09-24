@@ -1,0 +1,168 @@
+name: Cancel runs on conflict
+
+# A push to main can leave an open pull request conflicting with it. CI already
+# queued or running for that PR is then testing a merge that can no longer
+# happen, while it holds the PR queue's lock (ci-suite.yml) that every other PR
+# waits behind. GitHub starts no `pull_request` run while a PR conflicts, so no
+# newer run will supersede it either. This cancels those runs and tells the PR
+# which files conflict.
+#
+# Conflicts are found with `git merge-tree` against main's tip as fetched here,
+# not with the API's `mergeable` field: GitHub recomputes that lazily after a
+# push, so right after one it reads null or the pre-push value, and it never
+# names the files.
+#
+# Only ci.yml runs at the conflicting head SHA are cancelled. A push that
+# resolves the conflict gets a new SHA, so its run is never touched.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: write
+
+# No concurrency group, for the reason reap-stale-runs.yml gives: GitHub keeps
+# only the newest pending run per group, so under steady merges a grouped run is
+# replaced before it reaches a runner and never runs. Overlapping runs are
+# harmless: a repeated cancel returns 409, and a comment already posted for the
+# head is not posted again.
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # merge-tree needs each PR's merge base with main, and reads blobs
+          # only for paths both sides changed; git fetches those on demand.
+          fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: .github
+
+      - uses: actions/github-script@v9
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const base = process.env.BASE_BRANCH || "main";
+            const git = (...args) => exec.getExecOutput("git", args, { ignoreReturnCode: true, silent: true });
+
+            // main's tip now, not the pushed commit: a run that waited for a
+            // runner would otherwise test against a main that has moved on.
+            const fetched = await git("fetch", "--quiet", "origin", base);
+            if (fetched.exitCode !== 0) {
+              core.setFailed(`could not fetch ${base}: ${fetched.stderr}`);
+              return;
+            }
+            const baseSha = (await git("rev-parse", "FETCH_HEAD")).stdout.trim();
+
+            const prs = (await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", base, per_page: 100,
+            }));
+
+            const rows = [];
+            for (const pr of prs) {
+              const head = pr.head.sha;
+              const ref = `refs/conflict-check/${pr.number}`;
+              // The pull ref resolves for a fork PR too.
+              const f = await git("fetch", "--quiet", "--force", "origin", `refs/pull/${pr.number}/head:${ref}`);
+              if (f.exitCode !== 0 || (await git("rev-parse", ref)).stdout.trim() !== head) {
+                // Missing, or pushed since the listing; that push is checked by its own run.
+                rows.push({ pr, status: "skipped", files: [] });
+                continue;
+              }
+              const m = await git("merge-tree", "--write-tree", "-z", "--name-only", "--no-messages", baseSha, head);
+              if (m.exitCode === 0) {
+                rows.push({ pr, status: "clean", files: [] });
+              } else if (m.exitCode === 1) {
+                // The merged tree's id, then one NUL-terminated path per conflict.
+                const files = [...new Set(m.stdout.split("\0").slice(1).filter(Boolean))];
+                rows.push({ pr, status: "conflict", files });
+              } else {
+                core.warning(`#${pr.number}: merge-tree exited ${m.exitCode}: ${m.stderr.trim()}`);
+                rows.push({ pr, status: "skipped", files: [] });
+              }
+            }
+
+            // Plain text, not an HTML comment: GitHub strips anything that
+            // reads as a tag out of a posted body. Keyed on the PR's head, so
+            // main moving does not re-post and a new conflicting push does.
+            const marker = (sha) =>
+              `Automated by \`.github/workflows/cancel-on-conflict.yml\` — conflict at \`${sha.slice(0, 8)}\`.`;
+            const shown = 50;
+
+            for (const row of rows.filter((r) => r.status === "conflict")) {
+              const { pr, files } = row;
+              const head = pr.head.sha;
+
+              const runs = (await github.rest.actions.listWorkflowRuns({
+                owner, repo, workflow_id: "ci.yml", event: "pull_request", head_sha: head, per_page: 100,
+              })).data.workflow_runs.filter((r) => r.status !== "completed");
+              row.cancelled = [];
+              for (const run of runs) {
+                try {
+                  await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+                  row.cancelled.push(run);
+                  core.info(`#${pr.number}: cancelled run ${run.id} [${run.status}]`);
+                } catch (e) {
+                  // 409: the run reached a terminal state on its own.
+                  if (e.status !== 409) core.warning(`#${pr.number}: could not cancel run ${run.id}: ${e.message}`);
+                }
+              }
+
+              const key = marker(head);
+              const existing = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: pr.number, per_page: 100,
+              });
+              if (existing.some((c) => c.body?.includes(key))) {
+                core.info(`#${pr.number} was already told: ${key}`);
+                continue;
+              }
+              const lines = [
+                `**This pull request conflicts with \`${base}\`.**`,
+                ``,
+                `\`${base}\` is now at \`${baseSha.slice(0, 8)}\`, and merging \`${head.slice(0, 8)}\` into it ` +
+                  (files.length ? `conflicts in:` : `conflicts.`),
+                ...(files.length ? [``, ...files.slice(0, shown).map((p) => `- \`${p}\``)] : []),
+                ...(files.length > shown ? [`- …and ${files.length - shown} more`] : []),
+                ``,
+                row.cancelled.length
+                  ? `The CI run${row.cancelled.length > 1 ? "s" : ""} for this commit ` +
+                    `(${row.cancelled.map((r) => `[${r.id}](${r.html_url})`).join(", ")}) ` +
+                    `${row.cancelled.length > 1 ? "were" : "was"} cancelled. ` +
+                    `CI starts again on the push that resolves the conflict:`
+                  : `GitHub runs no CI on a conflicting pull request. It starts again on the push that resolves the conflict:`,
+                ``,
+                "```",
+                `git fetch origin ${base}`,
+                `git rebase origin/${base}   # or: git merge origin/${base}`,
+                `# resolve, git add, continue`,
+                `git push --force-with-lease`,
+                "```",
+                ``,
+                key,
+              ];
+              await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body: lines.join("\n") });
+              row.commented = true;
+            }
+
+            const conflicts = rows.filter((r) => r.status === "conflict");
+            core.notice(`${conflicts.length} of ${rows.length} open pull request(s) conflict with ${base} at ${baseSha.slice(0, 8)}`);
+            await core.summary
+              .addHeading(`Conflicts with ${base} at ${baseSha.slice(0, 8)}`, 3)
+              .addTable([
+                [{ data: "PR", header: true }, { data: "Result", header: true }, { data: "Runs cancelled", header: true }, { data: "Files", header: true }],
+                ...rows.map((r) => [
+                  `#${r.pr.number}`,
+                  r.status + (r.commented ? ", commented" : ""),
+                  String(r.cancelled?.length ?? ""),
+                  r.files.join(", "),
+                ]),
+              ])
+              .write();

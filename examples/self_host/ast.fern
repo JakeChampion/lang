@@ -340,7 +340,7 @@ pub function expr_col(e: Expr): i32 {
 // only names half the signature; wasm needs all of it, because a funcref
 // type is structural and dispatching a `(f64) => f64` element through an
 // all-i32 `$fn1` is a runtime `indirect call type mismatch`.
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, is_view: boolean, fn_ret: string, fn_param_types: string }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, is_view: boolean, str_elem: boolean, fn_ret: string, fn_param_types: string }
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
@@ -522,7 +522,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, is_str: boolean, is_view: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, is_str: boolean, is_view: boolean, str_elem: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`

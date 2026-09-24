@@ -183,6 +183,22 @@ func (b *builder) appendCopyTempType(e ast.Expr) (ast.Type, bool) {
 	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
 }
 
+// withCopyTempType classifies a call ARGUMENT that is a `.with` whose receiver
+// took the forced-copy retain (arraySetInc): __fern_arr_cow_inplace then hands
+// back a fresh rc 1 buffer, with every pointer element retained by the copy,
+// that only this argument holds. A `.with` that ran in place is left out; its
+// result is the receiver's own buffer.
+func (b *builder) withCopyTempType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	c, ok := e.(*ast.Call)
+	if !ok || !isArraySetCall(c) || !b.rc.arraySetInc[c] || len(c.TypeArgs) != 1 {
+		return nil, false
+	}
+	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
+}
+
 func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false
@@ -270,6 +286,15 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// buffer per call that nothing else releases (#8403).
 		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "slice_unchecked" || cid.Name == "string_from_bytes_unchecked") {
 			if t, ok := b.exprType(x).(ast.StringType); ok {
+				return t, true
+			}
+		}
+		// `random_bytes(n)` and `tcp_recv(fd, n)` allocate a fresh rc=1 u8[]
+		// on every backend (rc_analysis's exprNoParamEscape arm says so: every
+		// argument is a scalar), so `random_bytes(n).len()`'s receiver is one
+		// owned buffer nothing else releases.
+		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "random_bytes" || cid.Name == "tcp_recv") {
+			if t, ok := b.exprType(x).(ast.ArrayType); ok {
 				return t, true
 			}
 		}
@@ -366,22 +391,29 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return nil, false
+	id, isIdent := call.Callee.(*ast.Ident)
+	var rt ast.Type
+	indirect := false
+	if isIdent {
+		_, indirect = b.locals[id.Name]
+		rt = b.exprType(e)
+	} else if ft := b.indirectCalleeFuncType(call.Callee); ft != nil {
+		indirect, rt = true, ft.Result
 	}
-	if _, isLocal := b.locals[id.Name]; isLocal {
+	if indirect {
 		// Address-taken functions are never pair-form, so every indirect
 		// target has the user-function return shape; the fact below says
 		// each one hands back a box the caller owns.
 		if !b.indirectCallsReturnOwnBox() {
 			return nil, false
 		}
-		t := b.exprType(e)
-		if t == nil || !ast.IsPointerType(t) {
+		if rt == nil || !ast.IsPointerType(rt) {
 			return nil, false
 		}
-		return t, true
+		return rt, true
+	}
+	if !isIdent {
+		return nil, false
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
@@ -826,21 +858,8 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				if !ok || id.Name != name {
 					continue
 				}
-				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) {
-					excused[id] = true
-				}
-			}
-		case *ast.Return:
-			// `return Some(c)`: the construction retains an alias payload, so
-			// the returned value holds a count of its own. The gate is
-			// emitEnumNew's, the stricter of the two constructors' (the pair
-			// form's emitPairFormPayloadRetain drops the eligibility and reuse
-			// terms), so a construction that does not retain is never
-			// excused. A move site hands over the binding's reference instead.
-			if c, ok := x.Value.(*ast.Call); ok && countedAliasOK && len(c.Args) == 1 {
-				if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == name && c.IsVariantCall &&
-					b.enumRcPayloadsEligibleForValue(c) && !b.rc.consumingMatchReuse[c] &&
-					needsRcIncOnAlias(id, b) && !b.rc.moveSites[id] {
+				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
+					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
 					excused[id] = true
 				}
 			}
@@ -855,6 +874,19 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 		return true
 	})
 	return confined
+}
+
+// variantRetainsPayload reports whether the variant construction `c` retains
+// its alias payload `id`, so the box it builds holds a count of its own —
+// wherever the construction sits: `return Some(c)`, `var r = Err(c)`, or a
+// struct field `{ ...s, err: Some(c) }`. The gate is emitEnumNew's, the
+// stricter of the two constructors' (the pair form's emitPairFormPayloadRetain
+// drops the eligibility and reuse terms). A move site hands over the
+// binding's reference instead, and so is not counted. `bt` is the binding's
+// type, which exprType cannot supply before the arm is in scope.
+func (b *builder) variantRetainsPayload(c *ast.Call, id *ast.Ident, bt ast.Type) bool {
+	return c.IsVariantCall && b.enumRcPayloadsEligibleForValue(c) &&
+		!b.rc.consumingMatchReuse[c] && b.retainsOnAlias(bt) && !b.rc.moveSites[id]
 }
 
 // assignTakesAliasInc reports whether an assignment's lowering will retain its
@@ -2524,6 +2556,13 @@ func mangleTupleInst(tt ast.TupleType) string {
 // site shares (the exit sweep's slot form, struct fields, tuple elements,
 // closure captures), so the column coverage cannot drift between them.
 func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) []Op {
+	dropValues, strKeys := mapDropChainParts(st, info, reg, tupleReg, ptrW)
+	return appendMapDropChainOf(ops, dropValues, strKeys)
+}
+
+// mapDropChainParts is what determines a map's drop chain: its value-column
+// drop, and whether its keys are strings.
+func mapDropChainParts(st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
 	dropValues := "__map_drop_values"
 	if name, ok := mapValDropName(st, info, reg, tupleReg, ptrW); ok {
 		dropValues = name
@@ -2532,13 +2571,49 @@ func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map
 			dropValues = "__drop_map_str_values"
 		}
 	}
-	ops = append(ops, Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	strKeys := false
 	if len(st.Args) >= 1 {
-		if _, isStr := st.Args[0].(ast.StringType); isStr {
-			ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-		}
+		_, strKeys = st.Args[0].(ast.StringType)
+	}
+	return dropValues, strKeys
+}
+
+func appendMapDropChainOf(ops []Op, dropValues string, strKeys bool) []Op {
+	ops = append(ops, Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	if strKeys {
+		ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
 	}
 	return append(ops, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
+}
+
+// mapChainDropName names the one-argument function that runs st's drop chain
+// on a map handle: `__drop_mapchain_<s|n>_<value-column drop>`, `s` for string
+// keys. The name carries the whole chain, so the worklist regenerates the body
+// from it (genMapChainDropFn). It is the per-element drop of a Map[] (#8845).
+func mapChainDropName(st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) string {
+	dropValues, strKeys := mapDropChainParts(st, info, reg, tupleReg, ptrW)
+	k := "n"
+	if strKeys {
+		k = "s"
+	}
+	return "__drop_mapchain_" + k + "_" + dropValues
+}
+
+// genMapChainDropFn builds the function mapChainDropName names: the map
+// handle through its drop chain, every helper self-guarding on the map's own
+// rc==1, returning the handle.
+func genMapChainDropFn(name string) *Func {
+	rest, ok := strings.CutPrefix(name, "__drop_mapchain_")
+	if !ok || len(rest) < 3 || (rest[0] != 's' && rest[0] != 'n') || rest[1] != '_' {
+		return nil
+	}
+	ops := appendMapDropChainOf([]Op{{Kind: OpLoadLocal, I32: 0}}, rest[2:], rest[0] == 's')
+	return &Func{
+		Name:       name,
+		Params:     []ast.Param{{Name: "__mc", Type: dropThunkParamType}},
+		ReturnType: ast.NumberType{},
+		Ops:        append(ops, Op{Kind: OpReturn}),
+	}
 }
 
 // substituteEnumDecl returns a copy of ed with each variant payload's
@@ -2650,7 +2725,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	}
 	if v, ok := elem.(ast.StructType); ok {
 		if v.Name == "Map" {
-			return "", false
+			return "__drop_arr_of_" + mapChainDropName(v, info, reg, tupleReg, ptrW), true
 		}
 		if _, ok := info.Structs[v.Name]; !ok {
 			return "", false
@@ -3913,17 +3988,46 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // otherwise it dec's. Payloadless / sentinel values fail the is_unique
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
-// capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
+// capture can route to it.
+//
+// A variant's last payload of the enum's own type is not a recursive
+// call: the arm keeps it, frees the box, and the body loops on it, so a
+// list drops in constant stack however long it is (#9046). An enum with
+// no such payload keeps the flat, inlineable body. Slots: 0=ptr (param,
+// then the node the loop is on), 1=tag, and with the loop 2=the ptr to
+// return, 3=the next node.
 func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	plan, ok := enumVariantDropPlan(ed, ptrW, dynRcSupported)
 	if !ok {
 		return nil
 	}
-	ops := []Op{
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpIf, I32: BlockTypeVoid},
+	self := "__drop_enum_" + name
+	// tails[i] is the load of variant i that continues the loop, or -1.
+	tails := make([]int, len(plan))
+	chain := false
+	for i, vd := range plan {
+		tails[i] = -1
+		for k, ld := range vd.loads {
+			if dn, ok := dropFnNameFor(ld.typ, info, reg, tupleReg, ptrW, dynRcSupported); ok && dn == self {
+				tails[i] = k
+				chain = true
+			}
+		}
 	}
+	var ops []Op
+	if chain {
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpStoreLocal, I32: 2},
+			Op{Kind: OpBlock, I32: BlockTypeVoid},
+			Op{Kind: OpLoop, I32: BlockTypeVoid},
+			Op{Kind: OpConstI32, I32: 0},
+			Op{Kind: OpStoreLocal, I32: 3})
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		Op{Kind: OpIf, I32: BlockTypeVoid})
 	ops = appendUserDrop(ops, info, name)
 	ops = append(ops, []Op{
 		// tag = mem[ptr+0] → slot 1 (stashed so arms read it after a
@@ -3932,19 +4036,19 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		{Kind: OpLoad},
 		{Kind: OpStoreLocal, I32: 1},
 	}...)
-	for _, vd := range plan {
+	for i, vd := range plan {
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 1},
 			Op{Kind: OpConstI32, I32: int32(vd.tag)},
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
-		for _, ld := range vd.loads {
-			// A CLOSURE payload is a DOCUMENTED SAFE LEAK, the same shape as
-			// the Map payload below. A variant's payloads are stored without
-			// a retain unless the enum is EnumRcPayloads-eligible, and a
-			// matched arm's binding takes the reference out of the box under
-			// the move model — so deep-releasing one here frees an env the
-			// binding is still calling through. `async.Future[T]`'s
+		for k, ld := range vd.loads {
+			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A variant's
+			// payloads are stored without a retain unless the enum is
+			// EnumRcPayloads-eligible, and a matched arm's binding takes
+			// the reference out of the box under the move model — so
+			// deep-releasing one here frees an env the binding is still
+			// calling through. `async.Future[T]`'s
 			// `Pending(i32, (i32) => Future[T])` is exactly that: the
 			// combinators match a Pending, call its `resume`, and build the
 			// next Future from the result (SIGSEGV on both natives, wasm
@@ -3955,26 +4059,15 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 			if _, isFn := ld.typ.(*ast.FuncType); isFn {
 				continue
 			}
-			if isMapType(ld.typ) {
-				// Map-in-enum is a DOCUMENTED SAFE LEAK (see enumRcPayloadsEligible,
-				// ~ir.go:9085): a Map-payload variant's box carries an un-inc'd map
-				// (the enum is excluded from EnumRcPayloads), and __map_drop_values —
-				// the value-column reclaimer this drop would call via appendChildDrop
-				// — lives in core/map.fern, which a program can use the enum WITHOUT
-				// importing (e.g. a `JsonValue[]` built from `JString` values: the
-				// whole-enum drop glue still emits the JObject arm, but core/map was
-				// never loaded, so the call was to an absent symbol — the wasm
-				// "unknown callee __map_drop_values" build error, #4425). Skip the
-				// map reclaim entirely: the map's buffer + values leak (safe — nothing
-				// dangles), consistent with the enum's leak-mode exclusion. The box
-				// itself is still freed by __fern_box_free below.
-				continue
-			}
 			ops = append(ops, Op{Kind: OpLoadLocal, I32: 0})
 			if ld.off != 0 {
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
+			if k == tails[i] {
+				ops = append(ops, Op{Kind: OpStoreLocal, I32: 3})
+				continue
+			}
 			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg, dynRcSupported)
 		}
 		ops = append(ops,
@@ -3989,13 +4082,31 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop},
-		Op{Kind: OpEnd},
-		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpEnd})
+	scratch := []ast.Type{ast.NumberType{}}
+	ret := int32(0)
+	if chain {
+		// Continue with the kept child, or leave when there is none.
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 3},
+			Op{Kind: OpStoreLocal, I32: 0},
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpConstI32, I32: 0},
+			Op{Kind: OpEq, Width: WidthPtr},
+			Op{Kind: OpBrIf, I32: 1},
+			Op{Kind: OpBr, I32: 0},
+			Op{Kind: OpEnd}, // loop
+			Op{Kind: OpEnd}) // block
+		scratch = append(scratch, ast.NumberType{}, ast.NumberType{})
+		ret = 2
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: ret},
 		Op{Kind: OpReturn})
 	return &Func{
-		Name:         "__drop_enum_" + name,
+		Name:         self,
 		Params:       []ast.Param{{Name: "__de", Type: dropThunkParamType}},
-		ScratchTypes: []ast.Type{ast.NumberType{}},
+		ScratchTypes: scratch,
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
 	}

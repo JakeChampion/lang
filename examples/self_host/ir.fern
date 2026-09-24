@@ -149,7 +149,7 @@ pub function op_const_i32_text(t: string): Op {
     return Op { decl: 0 - 1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 pub function op_const_i64(v: i64): Op {
-    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+    return Op { decl: 0 - 1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 // int_extend widens an i32 to i64 (`as i64` / `as u64`); int_wrap narrows an
 // i64 to i32 (`as i32` / `as u32`). `unsigned` picks zero- vs sign-extension on
@@ -172,6 +172,21 @@ pub function op_const_i64_text(t: string): Op {
 }
 pub function op_const_f64(v: f64): Op {
     return Op { decl: 0 - 1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+}
+
+// A constant is built either from source text (the _text constructors) or
+// from a value (op_const_i64 / op_const_f64); consumers read it through these
+// two so they cannot tell which. const_i64_text is the decimal immediate;
+// const_f64_bits is the exact IEEE bit pattern, which no decimal text carries
+// for an infinity or a NaN payload.
+pub function const_i64_text(o: Op): string {
+    if (o.str.len() > 0) { return o.str; }
+    return util.i64_to_string(o.i64_imm);
+}
+
+pub function const_f64_bits(o: Op): i64 {
+    if (o.str.len() > 0) { return util.parse_f64_bits(o.str); }
+    return f64_bits(o.f64_imm);
 }
 pub function op_const_str(s: string): Op {
     return Op { decl: 0 - 1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
@@ -1254,14 +1269,6 @@ pub function op_read_int(): Op { return op0("read_int"); }
 // wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
 // idiom read_line uses), so every IR backend covers it.
 pub function op_read_all_stdin(): Op { return op0("read_all_stdin"); }
-// `arg_at` pops an i32 index and pushes argv[index] as a fresh string box. It is
-// the O(1) sibling of `args`, which allocates the WHOLE argv as a string[] per
-// call — so `args()[i]` in a loop is quadratic, which is why arg_at gets a real
-// op rather than the args().len() desugar args_count uses. Lowers on every IR
-// backend: the register backends call __fern_arg_at (the rc-headered box
-// __fern_args builds its elements from); wasm calls $__fern_arg_at, which shares
-// the wasi args_get imports with $__fern_args but copies only the one entry.
-pub function op_arg_at(): Op { return op0("arg_at"); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
 // is a bare eprint_str; `eprint_int(n)` is i32_to_string(n) then eprint_str.
@@ -2234,7 +2241,6 @@ function kind_id_len5_s(name: string): i32 {
 function kind_id_len6(name: string): i32 {
     var c: u8 = name[0];
     if (c == b'a' && name == "arr_rc") { return 91; }
-    if (c == b'a' && name == "arg_at") { return 210; }
     if (c == b'a' && name == "access") { return 237; }
     if (c == b'f') { return kind_id_len6_f(name); }
     if (c == b'c' && name == "chroot") { return 316; }
@@ -2899,7 +2905,6 @@ function kind_name_4(id: i32): string {
     if (id == 331) { return "raw_splice_pipe"; }
     if (id == 208) { return "udp_send"; }
     if (id == 209) { return "read_all_stdin"; }
-    if (id == 210) { return "arg_at"; }
     if (id == 211) { return "proc_fork"; }
     if (id == 212) { return "proc_waitpid"; }
     if (id == 213) { return "proc_exec"; }
@@ -3125,7 +3130,7 @@ function pops1_io(t: i32): boolean {
         || t == 283                                                      // set_priority (nice)
         || t == 270 || t == 271                                          // statfs, process_alive
         || t == 276 || t == 312                                          // window_size, termios_get
-        || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
+        || t == 185 || t == 212                                          // random_bytes, proc_waitpid
         || t == 286                                                      // proc_waitpid_nohang
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
         || t == 116 || t == 112 || t == 200 || t == 201 || t == 203     // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
@@ -4969,8 +4974,7 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 185 || tag == 104 || tag == 105) { return true; }
     // args() materialises a fresh string[] (the arr box + a string block per
     // argv entry), so it needs the heap runtime like any other allocator.
-    // arg_at(i) boxes the one entry it reads, so it needs it too.
-    if (tag == 180 || tag == 210) { return true; }
+    if (tag == 180) { return true; }
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Result[(), IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }

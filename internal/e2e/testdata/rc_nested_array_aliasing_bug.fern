@@ -46,8 +46,8 @@ type Res = ExOk | ExErr;
 
 function split_lines(src: string): string[] {
     var out: string[] = []; var n: i32 = src.len(); var start: i32 = 0; var i: i32 = 0;
-    while (i < n) { if (src[i] == 10) { out = out.append(slice_unchecked(src, start, i)); start = i + 1; } i = i + 1; }
-    if (start < n) { out = out.append(slice_unchecked(src, start, n)); }
+    while (i < n) { if (src[i] == 10) { out = out.append(slice_unchecked(src, start, i) + ""); start = i + 1; } i = i + 1; }
+    if (start < n) { out = out.append(slice_unchecked(src, start, n) + ""); }
     return out;
 }
 function trim(s: string): string {

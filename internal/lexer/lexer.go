@@ -240,6 +240,21 @@ func validNumericSuffix(s string) bool {
 	return false
 }
 
+// radixPrefix is 8 for a `0o` / `0O` literal at src[i], 2 for a `0b` / `0B`
+// one, and 0 for anything else.
+func radixPrefix(src string, i int) int {
+	if src[i] != '0' || i+1 >= len(src) {
+		return 0
+	}
+	switch src[i+1] {
+	case 'o', 'O':
+		return 8
+	case 'b', 'B':
+		return 2
+	}
+	return 0
+}
+
 func isHexDigit(r rune) bool {
 	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
 }
@@ -462,9 +477,9 @@ func (l *lexer) next() (Token, error) {
 		begin := l.i
 		// `0x` / `0X` hex integer literal: consume hex digits and skip
 		// the float (fractional / exponent) upgrades below.
-		isHex := false
+		prefixed := false
 		if l.src[l.i] == '0' && l.i+1 < len(l.src) && (l.src[l.i+1] == 'x' || l.src[l.i+1] == 'X') {
-			isHex = true
+			prefixed = true
 			l.advance() // '0'
 			l.advance() // 'x' / 'X'
 			hexDigits := l.i
@@ -473,6 +488,23 @@ func (l *lexer) next() (Token, error) {
 			}
 			if l.i == hexDigits {
 				return Token{}, &Error{Pos: start, Msg: "hex literal needs at least one digit after 0x"}
+			}
+		} else if base := radixPrefix(l.src, l.i); base != 0 {
+			// `0o` octal / `0b` binary integer literal: no float upgrades
+			// either.
+			prefixed = true
+			prefix := l.src[l.i : l.i+2]
+			l.advance() // '0'
+			l.advance() // 'o' / 'b'
+			digits := l.i
+			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) && int(l.src[l.i]-'0') < base {
+				l.advance()
+			}
+			if l.i == digits {
+				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("integer literal needs at least one digit after %s", prefix)}
+			}
+			if l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
+				return Token{}, &Error{Pos: start, Msg: fmt.Sprintf("invalid digit %q in a %s literal", l.src[l.i], prefix)}
 			}
 		} else {
 			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
@@ -486,7 +518,7 @@ func (l *lexer) next() (Token, error) {
 		// field-access, not a fractional part — suppress the float
 		// upgrade so the second `.0` lands as `.` `0` instead of
 		// being eaten as a continuation of `1`.
-		if !isHex && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && asciiDigit(rune(l.src[l.i+1])) {
+		if !prefixed && !l.afterDot && l.i+1 < len(l.src) && l.src[l.i] == '.' && asciiDigit(rune(l.src[l.i+1])) {
 			isFloat = true
 			l.advance() // '.'
 			for l.i < len(l.src) && asciiDigit(rune(l.src[l.i])) {
@@ -500,7 +532,7 @@ func (l *lexer) next() (Token, error) {
 		// the `e` for the next token. Suppressed right after a `.`
 		// so a chained tuple index like `t.1e3` keeps `1` as the
 		// selector (same rationale as the fractional-dot guard).
-		if !isHex && !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
+		if !prefixed && !l.afterDot && l.i < len(l.src) && (l.src[l.i] == 'e' || l.src[l.i] == 'E') {
 			j := l.i + 1
 			if j < len(l.src) && (l.src[j] == '+' || l.src[j] == '-') {
 				j++

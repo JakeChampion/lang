@@ -23,7 +23,7 @@ import (
 //     is no __c_call runtime on any wasm path; before this it deferred to the AST
 //     emitter, which emitted a call against an undefined $__c_call<n>.
 //   - the raw-memory / syscall floor (#6946) — __raw_alloc, __raw_store8,
-//     __raw_load8, __raw_string, __raw_scratch, __raw_environ,
+//     __raw_string, __raw_scratch, __raw_environ,
 //     __raw_splice_pipe, __raw_addr,
 //     __raw_arr_box, __syscall3, __syscall4, __syscall5. They exist so the
 //     register backends' runtime helpers can be written in Fern; wasm has

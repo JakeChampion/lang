@@ -38,6 +38,10 @@ var mapCoreIRCases = []struct {
 	// 0 a silently-empty answer would also produce. Annotating the destination
 	// hid the bug, so the case must NOT annotate.
 	{"cleared-unannotated", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var c = m.cleared(); return c.len() + 7; }\n"},
+	// UNANNOTATED `var g = m.get(k)`, matched. The binding carried no Option
+	// type, so the match could not recover its payload and the module stopped
+	// lowering at `did not lower: match` (#9038). 2 + 40 = 42.
+	{"get-unannotated", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); m = m.insert(\"b\", 2); var g = m.get(\"b\"); match (g) { Some(v) => { return v + 40; }, None => { return 9; } } }\n"},
 	// delete via without (returns (Map, removed)). get_or(\"x\",99)+get_or(\"y\",0) = 99+7 = 106.
 	{"delete", "import \"core/map\";\nfunction main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"x\", 5); m = m.insert(\"y\", 7); var r = m.without(\"x\"); m = r.0; return m.get_or(\"x\", 99) + m.get_or(\"y\", 0); }\n"},
 }

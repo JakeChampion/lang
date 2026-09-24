@@ -124,9 +124,9 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
             if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) { bxi = 0 - 1; }
             if (bxi >= 0) {
                 var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: v.line, col: v.col, ty: "" }, args: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], line: v.line, col: v.col, type_argc: 0, ty: "" };
-                return ast.StmtVar { name: cell_name(v.name), type_name: "Cell[" + btypes[bxi] + "]", init: cell, line: v.line, col: v.col, is_str: false, is_view: false, fn_ret: "", fn_param_types: "" };
+                return ast.StmtVar { name: cell_name(v.name), type_name: "Cell[" + btypes[bxi] + "]", init: cell, line: v.line, col: v.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
             }
-            return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         ast.StmtAssign(a) => {
             if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {

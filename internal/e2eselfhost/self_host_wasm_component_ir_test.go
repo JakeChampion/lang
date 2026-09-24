@@ -154,12 +154,6 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
 		{"io-args", true, `function main(): i32 { var a: string[] = args(); write(a[0]); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
-		// arg_at shares the get-arguments import with args() — a program using
-		// only arg_at still pulls it in, and one using both imports it once.
-		{"io-arg-at", true, `function main(): i32 { write(arg_at(1)); return 0; }`, true,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
-		{"io-args-and-arg-at", true, `function main(): i32 { var a: string[] = args(); write(a[0]); write(arg_at(1)); return 0; }`, true,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.
 		// Their mode-2 bodies box a real IoError variant rather than the raw

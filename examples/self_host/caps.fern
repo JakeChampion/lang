@@ -193,12 +193,10 @@ pub function ungated(): string[] {
 // the shared half to an exact match and still see these named.
 //
 // Every one is a channel or a pure computation, by the same rules as the list
-// above: print_int / eprint_int are print with an integer argument, arg_at /
-// args_count read the argv the invoker passed, read_int / read_all_stdin are
-// stdin reads, and map_new_i32 / chr / len allocate or compute.
+// above: print_int / eprint_int are print with an integer argument, read_int /
+// read_all_stdin are stdin reads, and map_new_i32 / chr / len allocate or compute.
 pub function frontend_ungated(): string[] {
-    return ["print_int", "eprint_int", "arg_at", "args_count",
-            "read_int", "read_all_stdin", "map_new_i32", "chr", "len"];
+    return ["print_int", "eprint_int", "read_int", "read_all_stdin", "map_new_i32", "chr", "len"];
 }
 
 // capability_of returns the capability a builtin reaches, or "" when the name

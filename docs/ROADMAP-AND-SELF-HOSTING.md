@@ -213,7 +213,7 @@ The self-host emitters have since grown the surface a real compiler
 driver needs, all gated by `internal/e2e/self_host_*_test.go` and
 cross-checked against the Go backend (both x86-64 and arm64):
 
-- **argv + file I/O**: `args(): string[]`, `arg_at` / `args_count`,
+- **argv + file I/O**: `args(): string[]`,
   `read_file(path): Result[string, IoError]` (`openat` + `lseek`-sized
   read + `Ok`/`Err` match), `write` (no-newline output).
 - **integer ops**: `expr as Type` casts (mask / sign-extend per width),

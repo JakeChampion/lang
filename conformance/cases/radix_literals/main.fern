@@ -1,0 +1,22 @@
+// `0o` octal and `0b` binary integer literals, suffixed and not, in both
+// letter cases, beside the hex and decimal spellings of the same values.
+import "core/int";
+import "std/i32";
+
+function main(): i32 {
+    var mode: i32 = 0o755;
+    var mask: u32 = 0o170000u32;
+    var bits: i32 = 0b1010;
+    var wide: i64 = 0o777777777777i64;
+    var byte: u8 = 0b11111111u8;
+    var bad: i32 = 0;
+    if (mode != 493 || mode != 0x1ed) { bad = bad + 1; }
+    if (mask != 61440u32) { bad = bad + 2; }
+    if (bits != 10) { bad = bad + 4; }
+    if (wide != 68719476735i64) { bad = bad + 8; }
+    if (byte != 255u8) { bad = bad + 16; }
+    if (0O17 + 0B11 != 18) { bad = bad + 32; }
+    if ((mode & 0o700) >> 6 != 7) { bad = bad + 64; }
+    print(mode.to_string() + " " + bits.to_string());
+    return 40 + bad;
+}

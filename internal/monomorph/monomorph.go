@@ -206,6 +206,11 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		// mangles the call; append any newly-seen keys to the
 		// worklist.
 		before := len(instantiations)
+		for mk, margs := range boundEnumImplMethods(prog, info, gen, args) {
+			if _, seen := instantiations[mk]; !seen {
+				instantiations[mk] = margs
+			}
+		}
 		collectCalls(c.Body)
 		if len(instantiations) != before {
 			// Sort before appending, for the same reason the initial
@@ -773,6 +778,72 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	}
 	*info = *newInfo
 	return nil
+}
+
+// boundEnumImplMethods: the method instantiations a clone of `gen` at `args`
+// needs through its trait bounds on a GENERIC ENUM argument (#9308). A call on
+// a bound type parameter (`x.show()` in `tell[X: Show]`) has no concrete call
+// site to instantiate the method from, and a generic enum that stays generic
+// gets no concrete impl either — step 4c drops the parametric one — so unless
+// something also called the method directly, the re-check found no method on
+// `MyOpt[i32]`. Each parametric impl of a bound trait whose `for` type unifies
+// with the argument contributes its methods, keyed exactly as a direct call
+// would key them.
+func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDecl, args []ast.Type) map[instKey][]ast.Type {
+	out := map[instKey][]ast.Type{}
+	for i, tp := range gen.TypeParams {
+		if i >= len(args) {
+			break
+		}
+		et, isEnum := args[i].(ast.EnumType)
+		if !isEnum || len(et.Args) == 0 || hasParamType(et.Args) {
+			continue
+		}
+		ed, ok := info.Enums[et.Name]
+		if !ok || len(ed.TypeParams) == 0 || enumNeedsClone(ed, info) {
+			continue
+		}
+		for _, trait := range gen.Bounds[tp] {
+			for _, impl := range prog.Impls {
+				if impl.Trait != trait || len(impl.TypeParams) == 0 {
+					continue
+				}
+				pset := map[string]bool{}
+				for _, itp := range impl.TypeParams {
+					pset[itp] = true
+				}
+				psub := map[string]ast.Type{}
+				if !unifyImplType(impl.Type, et, pset, psub) {
+					continue
+				}
+				for _, mn := range impl.MethodNames {
+					genName, _, _ := info.ResolveMethod(et.Name, mn, []string{trait})
+					mgen, isGen := info.GenericFuncs[genName]
+					if !isGen {
+						genName = "__method_" + et.Name + "_" + mn
+						if mgen, isGen = info.GenericFuncs[genName]; !isGen {
+							continue
+						}
+					}
+					margs := make([]ast.Type, len(mgen.TypeParams))
+					complete := true
+					for k, mtp := range mgen.TypeParams {
+						v, found := psub[mtp]
+						if !found {
+							complete = false
+							break
+						}
+						margs[k] = v
+					}
+					if !complete || hasParamType(margs) {
+						continue
+					}
+					out[instKey{name: genName, mang: mangle(genName, margs)}] = margs
+				}
+			}
+		}
+	}
+	return out
 }
 
 // hasDiagnosticCode reports whether err carries a checker diagnostic code —

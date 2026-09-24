@@ -203,7 +203,6 @@ syscall4=206
 raw_environ=207
 udp_send=208
 read_all_stdin=209
-arg_at=210
 proc_fork=211
 proc_waitpid=212
 proc_exec=213

@@ -2227,9 +2227,7 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 				// reference either way and p's own count is untouched. That
 				// is exactly the "rc 2 on the escaping path, rc 1 on the
 				// non-escaping one" contract the caller's post-call dec
-				// relies on, so `return p.append(v)` credits. `.with` is not
-				// its sibling here: __fern_arr_cow_inplace returns the
-				// receiver at rc 1 unbumped, an uncounted identity.
+				// relies on, so `return p.append(v)` credits.
 				mark(x.Args[0])
 				if eid := paramIndex(x.Args[1]); eid != nil {
 					safe[eid] = true
@@ -2239,6 +2237,13 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 			// terms: emitArraySet's element inc counts the store for a
 			// pointer-shaped element, so a `p[j]` read handed to it is a
 			// counted occurrence rather than a live reference handed out.
+			// `p.with(i, v)` on the parameter itself copies: an array is never
+			// owned by default and an `own` one is not summarised, so p is
+			// borrowed and computeArraySetIncs forces __fern_arr_cow_inplace's
+			// copy path. The result is a fresh buffer and p's count is untouched.
+			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_set" && len(x.Args) == 3 {
+				mark(x.Args[0])
+			}
 			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_set" &&
 				len(x.Args) == 3 && len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
 				mark(x.Args[2])
@@ -3789,6 +3794,8 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			if isLocal && b.indirectCallsReturnOwnBox() {
 				return false
 			}
+		} else if b.indirectCalleeFuncType(x.Callee) != nil && b.indirectCallsReturnOwnBox() {
+			return false
 		}
 		// Map builtins return the MAP HANDLE, which aliases only the
 		// receiver (cow) — never the stored key/value args. The generic
@@ -10168,6 +10175,31 @@ func (b *builder) matchBindingTypes() map[string]ast.Type {
 		return true
 	})
 	return out
+}
+
+// indirectArgCounted is countedArgTemp's question for a call through a function
+// value, where no name says which function runs: may the caller release a
+// fresh temp passed at position ai once the call returns? Yes when every
+// function an indirect call could reach retains it only by counted
+// constructions (paramCountedRetain), returns no parameter at all
+// (returnsNoParamEscape), or returns nothing that could hold it. A lifted
+// lambda's env is a trailing parameter, so its position ai is the caller's. A
+// builtin taken as a value has no body to prove it and answers false.
+func (b *builder) indirectArgCounted(ai int) bool {
+	for name := range b.addressTaken {
+		sig := b.info.FuncSigs[name]
+		if sig == nil {
+			return false
+		}
+		if ai >= len(sig.Params) || resultCannotAliasArg(sig.Result) || b.returnsNoParamEscape[name] {
+			continue
+		}
+		counted := b.paramCountedRetain[name]
+		if ai >= len(counted) || !counted[ai] {
+			return false
+		}
+	}
+	return true
 }
 
 // indirectCallsReturnOwnBox reports whether every function an indirect call

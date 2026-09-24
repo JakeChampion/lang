@@ -14,10 +14,23 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-23: 528 fixtures, 458 clean, 70 leaking, 6606
-# unpaired allocations. The distribution is heavily skewed — the median
-# leaking fixture is 2, and regex_captures_assert alone is 5220 of the
-# total.
+# Measured 2026-09-24: 541 fixtures, 482 clean, 59 leaking, 318
+# unpaired allocations. The median leaking fixture is 1, and the largest,
+# json_error_location, is 51.
+#
+# The regex_* rows fell in two steps. An array rebind stopped refusing
+# string elements, so the program emitter's `pg = __rx_emit(pg, n)` frees
+# the buffer it replaces. Then a call with a pointer result released an
+# argument temp its callee retains only by counted stores (#10168), which
+# was the capture engine's inline `.with` argument.
+#
+# closure_field_match fell from 550 when every function-value callee, not
+# just a named local, released its argument temps and its result box, and
+# field_read_off_a_call_through_a_function_field reached 0 with it. It and
+# try_op_in_closure reach 0 with #10168.
+#
+# chained_array_methods reaches 0 once `xs.with(i, v).append(w)` releases
+# the copy the `.with` made for its still-live receiver.
 #
 # shadowed_builtin_variant and tuple_elem_variant_pattern reach 0 with
 # #9313: a GENERIC enum construction typed as the bare enum, losing the
@@ -25,9 +38,9 @@
 # the box nor its payload. Both fixtures build one and their rows were the
 # box each stranded.
 #
-# field_read_off_a_call_through_a_function_field reads a field off the
-# result of a call through a function-typed struct field, which native
-# never releases (#10149). The self-host builds it clean.
+# f64_tryop_widen and try_binding_takes_its_success_payload try a variant
+# literal with `?` (`Some(3.25)?`), and native never releases the literal's
+# box (#10200). The self-host builds both clean.
 #
 # fstring_reassign_releases_old is #8697's fixture: an f-string RHS now
 # releases the destination's superseded string, so the row registers a
@@ -94,7 +107,7 @@
 # all release it. stdin_double and multiline_stdin are the two that reach 0.
 # What every other row keeps is exactly its HANDLE — one stdin() for
 # alloc_flat_read_chunk (5 -> 1), read_all_stdin_chunks (3 -> 1), read_line
-# and stdin_line (2 -> 1) and audit_env_time_random (2 -> 1), two stdout()
+# and stdin_line (2 -> 1), two stdout()
 # for alloc_flat_writer_accumulator (4 -> 2), and the three io_error_other_*
 # rows the IoError their name is about. The handle is per-stream rather than
 # per-call and keeps its static sentinel — the residual half of #8398, which
@@ -165,14 +178,14 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
-audit_env_time_random                                1
+audit_env_time_random                                0
 audit_generics_traits_closures                       0
 audit_io_builtins                                    0
 audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
-audit_std_json                                       25
+audit_std_json                                       13
 audit_std_numeric                                    2
 audit_std_path_numeric                               0
 audit_std_string                                     0
@@ -201,14 +214,14 @@ cast_narrow_binding                                  0
 cell_in_container                                    0
 cell_string_accumulate                               2
 cell_struct_field_wide                               0
-chained_array_methods                                50
+chained_array_methods                                0
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
-closure_field_match                                  550
+closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
@@ -248,8 +261,8 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     34
-derive_from_json_i64                                 14
+derive_from_json                                     23
+derive_from_json_i64                                 11
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -282,7 +295,7 @@ f64_sqrt                                             0
 f64_tryop_widen                                      1
 factorial_print                                      0
 fib_recursion                                        0
-field_read_off_a_call_through_a_function_field       1
+field_read_off_a_call_through_a_function_field       0
 fizzbuzz                                             0
 float_arith_ops                                      0
 float_bit_reinterpret                                0
@@ -312,6 +325,7 @@ generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
+generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -368,8 +382,8 @@ io_error_other_is_a_directory                        2
 io_error_other_not_a_directory                       1
 iter_build_consume                                   0
 json_array_field                                     0
-json_error_location                                  51
-json_object                                          8
+json_error_location                                   0
+json_object                                          0
 labeled_loops                                        0
 lambda_returning_a_capturing_lambda                  6
 lambda_tuple_return                                  0
@@ -487,7 +501,8 @@ pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
 question_op                                          0
-random_bytes                                         1
+radix_literals                                       0
+random_bytes                                         0
 range_for                                            0
 range_value                                          0
 rc_borrowed_box_field                                0
@@ -496,22 +511,23 @@ read_all_stdin_chunks                                1
 read_line                                            1
 recursive_tree                                       0
 regex_basic                                          0
-regex_captures                                       109
-regex_captures_all                                   104
-regex_captures_assert                                5220
+regex_captures                                       0
+regex_captures_all                                   0
+regex_captures_assert                                0
 regex_ci                                             0
 regex_convenience                                    0
 regex_counts                                         0
 regex_escapes                                        0
 regex_find                                           0
 regex_groups                                         0
-regex_named_groups                                   124
+regex_named_groups                                   7
 regex_ops                                            0
 regex_replace_edge                                   0
-regex_replace_groups                                 77
+regex_replace_groups                                 0
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
+result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
 scalar_edge_cases                                    0
 scalar_sum_reassign                                  0
@@ -612,7 +628,8 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    1
+try_op_in_closure                                    0
+try_binding_takes_its_success_payload                2
 try_result_struct_payload                            1
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0

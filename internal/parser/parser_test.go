@@ -1092,6 +1092,33 @@ func TestHexLiteralValue(t *testing.T) {
 	}
 }
 
+// `0o` and `0b` literals parse to their value in base 8 and 2, and keep the
+// spelling for -fmt (#9091).
+func TestRadixLiteralValue(t *testing.T) {
+	cases := map[string]int64{
+		"0o755":   493,
+		"0O17":    15,
+		"0o0":     0,
+		"0b1010":  10,
+		"0B11111": 31,
+	}
+	for src, wantVal := range cases {
+		prog, err := Parse(`function f(): i32 { return ` + src + `; }`)
+		if err != nil {
+			t.Errorf("%s: parse: %v", src, err)
+			continue
+		}
+		lit, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return).Value.(*ast.NumberLit)
+		if !ok {
+			t.Errorf("%s: not a *NumberLit", src)
+			continue
+		}
+		if lit.Value != wantVal || lit.Raw != src {
+			t.Errorf("%s: Value = %d, Raw = %q, want %d, %q", src, lit.Value, lit.Raw, wantVal, src)
+		}
+	}
+}
+
 // Typed numeric literal suffixes: lexer captures the suffix, the
 // parser stamps Width / IsUnsigned at parse time so the checker
 // sees a non-polymorphic type from the start.

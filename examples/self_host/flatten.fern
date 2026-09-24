@@ -715,7 +715,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
                 name: v.name,
                 type_name: rewrite_type_name(v.type_name, ctx),
                 init: rewrite_expr(v.init, ctx),
-                line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view,
+                line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem,
                 fn_ret: rewrite_type_name(v.fn_ret, ctx),
                 fn_param_types: rewrite_type_name_list(v.fn_param_types, ctx) };
         },
@@ -772,7 +772,7 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
         out = out.append(ast.ParamDecl {
             name: params[i].name,
             type_name: rewrite_type_name(params[i].type_name, ctx),
-            is_str: params[i].is_str, is_view: params[i].is_view, own: params[i].own,
+            is_str: params[i].is_str, is_view: params[i].is_view, str_elem: params[i].str_elem, own: params[i].own,
             has_default: params[i].has_default,
             default_value: params[i].default_value,
             ret_arr: params[i].ret_arr,
@@ -797,6 +797,27 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
         if (i > 0) { out = out + ","; }
         out = out + rewrite_type_name(parts[i], ctx);
         i = i + 1;
+    }
+    return out;
+}
+
+// canon_derives spells each `@derive` trait by the bundle prefix of the module
+// that must declare it: a bare name by the deriving module's own prefix ("" for
+// the entry, so it stays bare), a qualified one by the prefix of the import it
+// names. A qualifier naming no import is left as written, and resolves nothing.
+function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
+    var out: string[] = [];
+    for d in derives {
+        var dot: i32 = d.len() - 1;
+        while (dot >= 0 && d[dot] != b'.') { dot = dot - 1; }
+        if (dot < 0) {
+            if (ctx.prefix.len() == 0) { out = out.append(d); }
+            else { out = out.append(ctx.prefix + "." + d); }
+        } else {
+            var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+            if (k < 0) { out = out.append(d); }
+            else { out = out.append(ctx.modprefixes[k] + "." + slice_unchecked(d, dot + 1, d.len())); }
+        }
     }
     return out;
 }
@@ -868,7 +889,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             name: mangle_bare(mod.structs[j].name, ctx),
             fields: rewrite_struct_fields(mod.structs[j].fields, ctx),
             type_params: mod.structs[j].type_params,
-            derives: mod.structs[j].derives,
+            derives: canon_derives(mod.structs[j].derives, ctx),
             line: mod.structs[j].line,
             col: mod.structs[j].col,
             enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
@@ -1221,7 +1242,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         var mii: i32 = 0;
         while (mii < m.impls.len()) { impls = impls.append(m.impls[mii]); mii = mii + 1; }
         var mti: i32 = 0;
-        while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(m.trait_reqs[mti]); mti = mti + 1; }
+        while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx }); mti = mti + 1; }
         var mdi: i32 = 0;
         while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;

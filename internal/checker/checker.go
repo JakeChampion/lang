@@ -109,6 +109,11 @@ type Info struct {
 	// contributes no entry, so a missing key means "not from a trait"
 	// and a multi-entry value means the flat `Methods` key is ambiguous.
 	MethodOwners map[string][]string
+	// MethodInsts lists every function registered under one
+	// MethodDeclSites key. It holds more than one only for a generic
+	// enum, whose instantiated methods all share the unmangled receiver
+	// name (`Bag`) and differ in their receiver parameter.
+	MethodInsts map[string][]string
 	// MethodDeclSites is where each registration was written, keyed like
 	// TraitMethods (`<Trait>.<Type>.<MethodName>`) for an impl-provided
 	// method and like Methods (`<Type>.<MethodName>`) for an inherent
@@ -1075,6 +1080,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			Methods:             map[string]string{},
 			TraitMethods:        map[string]string{},
 			MethodOwners:        map[string][]string{},
+			MethodInsts:         map[string][]string{},
 			MethodDeclSites:     map[string]ast.Position{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
@@ -5052,6 +5058,9 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	if _, exists := c.info.MethodDeclSites[site]; !exists {
 		c.info.MethodDeclSites[site] = pos
 	}
+	if !slices.Contains(c.info.MethodInsts[site], mangled) {
+		c.info.MethodInsts[site] = append(c.info.MethodInsts[site], mangled)
+	}
 	if _, exists := c.info.Methods[key]; !exists {
 		c.info.Methods[key] = mangled
 		c.info.MethodSources[mangled] = srcModule
@@ -5068,6 +5077,22 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	owners := append(c.info.MethodOwners[key], trait)
 	slices.Sort(owners)
 	c.info.MethodOwners[key] = owners
+}
+
+// instForReceiver picks, among the instantiations of a generic enum's method
+// registered under one key, the one whose receiver parameter is `recv`.
+// Anything else keeps `mangled`.
+func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
+	et, ok := recv.(ast.EnumType)
+	if !ok || len(et.Args) == 0 {
+		return mangled
+	}
+	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
+			return inst
+		}
+	}
+	return mangled
 }
 
 // declSiteKey is the MethodDeclSites key for one registration: the
@@ -10036,6 +10061,21 @@ func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
 	return gotStr && wantString
 }
 
+// storesArgument reports whether builtin `name` keeps argument i in the value
+// it returns, which makes that position an owning sink: a `str` there would
+// outlive the bytes it views, so argAssignable's borrow carve-out is off.
+func storesArgument(name string, i int) bool {
+	switch name {
+	case "__method_Array_push":
+		return i == 1
+	case "__method_Array_set":
+		return i == 2
+	case "__method_Map_set":
+		return i == 1 || i == 2
+	}
+	return false
+}
+
 // argOK is argAssignable at a real argument position: it decides the argument
 // AND materialises whatever implicit borrow the lowering needs, so no accepted
 // argument reaches the IR in a shape the parameter's ABI doesn't match.
@@ -12570,12 +12610,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// `Span.Empty` — a qualified payload-less variant stays a
 			// FieldAccess rather than being rewritten to an Ident, so it is
 			// recognised here (#9517).
-			if tid, ok := x.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
-					if _, vrOk, _ := c.resolveVariant(x.Field, tid.Name); vrOk {
-						return true
-					}
-				}
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
+				return true
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
@@ -14371,6 +14407,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	if tagT == nil {
 		return
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// A pattern-binding desugar (`if let V(x) = e`) destructuring a
@@ -14547,6 +14584,20 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 	}
 	stampRemainderStmtArms(n.Arms, ed)
+}
+
+// widenGenericScrutinee settles a generic call in scrutinee position the way
+// an unannotated `var` initialiser settles one: a type parameter bound only by
+// literal arguments, one of which has no i32 reading, takes i64
+// (widenGenericCallByLiterals). Without it `match (pick(1, 2^62))` bound `T`
+// at the i32 default and the arm's payload compared at the wrong width (#8722).
+func (c *checker) widenGenericScrutinee(tag ast.Expr, tagT ast.Type) ast.Type {
+	if call, ok := tag.(*ast.Call); ok {
+		if widened := c.widenGenericCallByLiterals(call); widened != nil {
+			return widened
+		}
+	}
+	return tagT
 }
 
 // settlePolymorphicScrutinee commits a still-polymorphic integer scrutinee to
@@ -15237,6 +15288,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	if tagT == nil {
 		return nil
 	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		// Tuple scrutinee: arms are tuple patterns + a wildcard.
@@ -16581,7 +16633,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			if tid, ok := fa.Target.(*ast.Ident); ok {
-				if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+				if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
 				}
 			}
@@ -16906,6 +16958,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						Receiver:   tt,
 						OwnerTrait: ownerTrait,
 					}
+					mangled = c.instForReceiver(typeName, fa.Field, ownerTrait, mangled, tt)
 					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
 					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
 					recvIsArg0 = true
@@ -17135,7 +17188,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// even when it is "no own positions" — the consumers must not re-derive
 		// it by name, having no scope of their own.
 		calleeIsValue := false
+		calleeName := ""
 		if cid, ok := n.Callee.(*ast.Ident); ok {
+			calleeName = cid.Name
 			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
 				calleeIsValue = true
 			} else {
@@ -17264,7 +17319,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if sub == nil {
 					c.refineCallTypeArgsFromDest(n.Args[i], expected)
 				}
-				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
+				own := i < len(calleeOwnFlags) && calleeOwnFlags[i] ||
+					!calleeIsValue && storesArgument(calleeName, i)
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
@@ -18410,7 +18466,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// variant-call shape (`Color.Red(payload)`) is handled in
 		// the *ast.Call branch.
 		if tid, ok := n.Target.(*ast.Ident); ok {
-			if _, isEnum := c.info.Enums[tid.Name]; isEnum {
+			if _, shadowed := s.lookup(tid.Name); !shadowed && c.info.Enums[tid.Name] != nil {
 				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
 					if len(vr.payloads) > 0 {
 						en := c.enumHintName(tid.Name)

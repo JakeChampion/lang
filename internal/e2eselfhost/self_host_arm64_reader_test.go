@@ -142,7 +142,7 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
 
 	catSrc := "function main(): i32 {\n" +
-		"    var path: string = arg_at(1);\n" +
+		"    var path: string = args()[1];\n" +
 		"    match (read_file(path)) {\n" +
 		"        Ok(contents) => { write(contents); return 0; },\n" +
 		"        Err(e) => { return 7; },\n" +

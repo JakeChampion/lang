@@ -2895,28 +2895,7 @@ func emitAccessHelper(w func(string, ...any)) {
 	w("\tstr x21, [sp, #32]")
 	w("\tmov x19, x0") // path
 	w("\tmov w21, w1") // mode — callee-saved: the heap guard is a bl
-	// NUL-terminate the path into a fresh heap buffer (x20).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_acc_cp:")
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_acc_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_acc_cp")
-	w(".Lssa_acc_cpd:")
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x20, x4")
+	emitSsaPathz(w, "x20", "x19", "acc")
 	// faccessat2(AT_FDCWD, path_nul, mode, AT_EACCESS).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -2925,6 +2904,7 @@ func emitAccessHelper(w func(string, ...any)) {
 	w("\tmov x3, #512") // AT_EACCESS
 	w("\tmov x8, #439") // faccessat2
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_acc_err")
 	// Ok(()): box {rc=1, tag=0, unit@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -3558,28 +3538,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a fresh heap buffer (x20).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_%s_cp:", lbl)
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_%s_cpd", lbl)
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_%s_cp", lbl)
-	w(".Lssa_%s_cpd:", lbl)
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x20, x4") // pathz
+	emitSsaPathz(w, "x20", "x19", lbl)
 	// openat(AT_FDCWD, pathz, flags, mode).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -3588,6 +3547,7 @@ func emitOpenHandleHelper(w func(string, ...any), name, lbl string, flags, mode 
 	w("\tmov x3, #%d", mode)
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
 	// A descriptor below 3 is a standard stream the program was exec'd
 	// without: move it up (fcntl F_DUPFD 3) and close the original, so
@@ -3682,28 +3642,7 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\tstr x21, [sp, #32]")
 	w("\tmov x19, x0") // path
 	w("\tmov x21, x1") // flags
-	// NUL-terminate the path into a fresh heap buffer (x20).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_%s_cp:", lbl)
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_%s_cpd", lbl)
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_%s_cp", lbl)
-	w(".Lssa_%s_cpd:", lbl)
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x20, x4") // pathz
+	emitSsaPathz(w, "x20", "x19", lbl)
 	// openat(AT_FDCWD, pathz, access | creat | nonblock, 0666).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -3718,6 +3657,7 @@ func emitOpenWithHelper(w func(string, ...any), name, lbl string, access int) {
 	w("\tmov x3, #438")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_%s_err", lbl)
 	// A descriptor below 3 is moved up, as in emitOpenHandleHelper (#8823).
 	w("\tcmp x0, #3")
@@ -4567,7 +4507,7 @@ var runtimeHelperDeps = map[string][]string{
 	"chown_at":                        {"__fern_io_error", "__fern_rc_inc"},
 	"set_file_times":                  {"__fern_io_error", "__fern_rc_inc"},
 	"remove_dir_all":                  {"__fern_io_error"},
-	"temp_dir":                        {"__fern_io_error", "__fern_rc_inc"},
+	"temp_dir":                        {"__fern_io_error", "__free", "__fern_rc_inc"},
 	"read_dir":                        {"__fern_io_error", "__fern_rc_inc"},
 	"read_dir_all":                    {"__fern_io_error", "__fern_rc_inc"},
 	"open_writer":                     {"__fern_io_error", "__fern_rc_inc"},
@@ -6854,28 +6794,7 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tmov x19, x0") // path
 	w("\tmov x20, x1") // content
-	// NUL-terminate the path into a fresh heap buffer (x21).
-	w("\tldur w2, [x19, #-4]") // path len
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16") // base
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]") // bump
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_wf_cp%s:", sfx)
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_wf_cpd%s", sfx)
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_wf_cp%s", sfx)
-	w(".Lssa_wf_cpd%s:", sfx)
-	w("\tstrb wzr, [x4, x2]") // NUL
-	w("\tmov x21, x4")        // path_nul
+	emitSsaPathz(w, "x21", "x19", "wf"+sfx)
 	// openat(AT_FDCWD, path_nul, O_WRONLY|O_CREAT|O_TRUNC, 0644).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0") // AT_FDCWD = -100
@@ -6884,6 +6803,7 @@ func emitWriteFileBody(w func(string, ...any), name, sfx string, mode, fixup int
 	w("\tmov x3, #%d", mode)
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x21")
 	w("\ttbnz x0, #63, .Lssa_wf_err%s", sfx) // fd < 0 → error
 	w("\tmov x22, x0")                       // fd
 	// Write until the whole payload is out. One write(2) is not enough: a
@@ -6984,28 +6904,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
 	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a heap buffer (x24).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_rf_cp:")
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_rf_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_rf_cp")
-	w(".Lssa_rf_cpd:")
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x24, x4") // path_nul
+	emitSsaPathz(w, "x24", "x19", "rf")
 	// openat(AT_FDCWD, path_nul, O_RDONLY, 0).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -7014,6 +6913,7 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tmov x3, #0")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x24")
 	w("\ttbnz x0, #63, .Lssa_rf_err_open")
 	w("\tmov x20, x0") // fd
 	// fstat(fd, statbuf@sp+64); st_size at statbuf+48 → [sp+112].
@@ -7159,28 +7059,7 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
 	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a heap buffer (x24).
-	w("\tldur w2, [x19, #-4]")
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_rfb_cp:")
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_rfb_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_rfb_cp")
-	w(".Lssa_rfb_cpd:")
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x24, x4") // path_nul
+	emitSsaPathz(w, "x24", "x19", "rfb")
 	// openat(AT_FDCWD, path_nul, O_RDONLY, 0).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -7189,6 +7068,7 @@ func emitReadFileBytesHelper(w func(string, ...any)) {
 	w("\tmov x3, #0")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x24")
 	w("\ttbnz x0, #63, .Lssa_rfb_err_open")
 	w("\tmov x20, x0") // fd
 	// fstat(fd, statbuf@sp+64); st_size at statbuf+48 → [sp+112].
@@ -7328,6 +7208,16 @@ func emitSsaPathz(w func(string, ...any), dstX, srcX, tag string) {
 	w("\tmov %s, x4", dstX)
 }
 
+// emitSsaPathzRewind hands the NUL-terminated path copies back once the
+// syscall has read them: `baseX` holds the first copy, the lowest block the
+// helper bumped, and nothing may have allocated since. Clobbers x3 only, so
+// the kernel's answer in x0 survives.
+func emitSsaPathzRewind(w func(string, ...any), baseX string) {
+	w("\tadrp x3, %s", heapPtrSym)
+	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
+	emitHeapRewind(w, "x3", baseX)
+}
+
 // emitSsaResultBox appends "allocate a 24-byte rc box and leave its DATA
 // pointer in x0", the shape both arms of a Result[_, IoError] use:
 // {rc@0, tag@8, payload@16} with x0 pointing at the tag.
@@ -7395,6 +7285,7 @@ func emitPathOpHelperSys(name, tag string, paths, scalars int, body func(w func(
 			emitSsaPathz(w, "x22", "x21", tag+"2")
 		}
 		body(w)
+		emitSsaPathzRewind(w, "x20")
 		w("\ttbnz x0, #63, .Lssa_%s_err", tag)
 		emitSsaResultBox(w)
 		w("\tstr wzr, [x0]")     // tag = 0 (Ok)
@@ -7495,6 +7386,7 @@ func emitReadLinkHelper(w func(string, ...any)) {
 	w("\tmov x3, #4096")
 	w("\tmov x8, #78") // readlinkat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_rlnk_err")
 	w("\tmov x21, x0") // target length
 	w("\tcmp x21, #4096")
@@ -7710,6 +7602,7 @@ func emitSetFileTimesHelper(w func(string, ...any)) {
 	w(".Lssa_sft_go:")
 	w("\tmov x8, #88") // utimensat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_sft_err")
 	emitSsaResultBox(w)
 	w("\tstr wzr, [x0]")     // tag = 0 (Ok)
@@ -7817,28 +7710,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a fresh heap buffer (x20).
-	w("\tldur w2, [x19, #-4]") // path len
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16") // base
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]") // bump
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_rmf_cp:")
-	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_rmf_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_rmf_cp")
-	w(".Lssa_rmf_cpd:")
-	w("\tstrb wzr, [x4, x2]") // NUL
-	w("\tmov x20, x4")        // path_nul
+	emitSsaPathz(w, "x20", "x19", "rmf")
 	// unlinkat(AT_FDCWD, path_nul, 0).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0") // AT_FDCWD = -100
@@ -7846,6 +7718,7 @@ func emitRemoveFileHelper(w func(string, ...any)) {
 	w("\tmov x2, #0")  // flags
 	w("\tmov x8, #35") // unlinkat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\ttbnz x0, #63, .Lssa_rmf_err") // < 0 → error
 	// return Ok(()): a box of {rc=1, tag=0, unit payload}.
 	w("\tadrp x3, %s", heapPtrSym)
@@ -7902,29 +7775,9 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
 	w("\tstp x21, x22, [sp, #32]")
-	w("\tmov x19, x0") // path
-	// NUL-terminate the path into a fresh heap buffer (x20).
+	w("\tmov x19, x0")          // path
 	w("\tldur w21, [x19, #-4]") // path len
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16") // base
-	w("\tadd x5, x21, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]") // bump
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w(".Lssa_cda_cp:")
-	w("\tcmp w7, w21")
-	w("\tb.hs .Lssa_cda_cpd")
-	w("\tldrb w8, [x19, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_cda_cp")
-	w(".Lssa_cda_cpd:")
-	w("\tstrb wzr, [x4, x21]") // NUL
-	w("\tmov x20, x4")         // path_nul
+	emitSsaPathz(w, "x20", "x19", "cda")
 	// Parents: every '/' at index 1..len-1 not itself preceded by one. Index 0
 	// is skipped so a leading '/' does not ask for the empty path.
 	w("\tmov x22, #1")
@@ -7958,6 +7811,7 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 	w("\tmov x2, #511")
 	w("\tmov x8, #34")
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x20")
 	w("\tcmp x0, #0")
 	w("\tb.eq .Lssa_cda_ok")
 	w("\tcmn x0, #17") // -EEXIST is success
@@ -8014,10 +7868,11 @@ func emitCreateDirAllHelper(w func(string, ...any)) {
 // (not propagated), mirroring the self-host. Non-leaf + self-recursive; callee-
 // saved x19=pathz / x20=fd / x21=buf / x22=total / x23=offset / x24=name-or-errno.
 //
-// NOTE: each recursion level bump-allocates a 1 KiB getdents buffer the heap
-// never reclaims, so remove_dir_all is bounded to directories whose entries fit
-// in 1 KiB per level — sufficient for the CLI use case. The native backend uses
-// a 64 KiB buffer.
+// Nothing a level allocates outlives it — the pathz copy, its 1 KiB getdents
+// buffer, the child path strings and whatever the recursion left — so each exit
+// rewinds the cursor to pathz before boxing the result. The buffer bounds
+// remove_dir_all to directories whose entries fit in 1 KiB per level; the
+// native backend uses 64 KiB.
 func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("remove_dir_all"))
@@ -8028,27 +7883,7 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tstp x23, x24, [sp, #-16]!")
 	w("\tmov x20, x0")         // path data (single-word string)
 	w("\tldur w21, [x0, #-4]") // path len
-	// NUL-terminate the path into a heap buffer (x19 = pathz).
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x21, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov x19, x4")
-	w("\tmov x9, #0")
-	w(".Lssa_rda_cp:")
-	w("\tcmp x9, x21")
-	w("\tb.hs .Lssa_rda_cpd")
-	w("\tldrb w10, [x20, x9]")
-	w("\tstrb w10, [x19, x9]")
-	w("\tadd x9, x9, #1")
-	w("\tb .Lssa_rda_cp")
-	w(".Lssa_rda_cpd:")
-	w("\tstrb wzr, [x19, x21]")
+	emitSsaPathz(w, "x19", "x20", "rda")
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY=16384, 0).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -8191,9 +8026,11 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 	w("\tmov x8, #35")  // unlinkat
 	w("\tsvc #0")
 	w(".Lssa_rda_none:")
+	emitSsaPathzRewind(w, "x19")
 	emitResultUnitBox(w, true, "")
 	w("\tb .Lssa_rda_ret")
 	w(".Lssa_rda_some:")
+	emitSsaPathzRewind(w, "x19")
 	w("\tneg x24, x0") // errno
 	emitEmptyString(w, "x1")
 	w("\tmov x0, x24")
@@ -8215,10 +8052,10 @@ func emitRemoveDirAllHelper(w func(string, ...any)) {
 // the interpreter does) and returns Err(IoError). The base is always /tmp — the
 // arm64-ssa backend doesn't honour $TMPDIR (a documented simplification vs the
 // interpreter's os.TempDir()), which is sufficient for the edge/CLI use case.
-// The path is built into a scratch heap buffer; on EEXIST (a suffix collision) a
-// fresh random suffix is drawn and mkdirat retried. On success a single-word rc
-// string of the path is allocated and wrapped in the Result Ok box (tag 0,
-// string@8). Non-leaf (calls __fern_io_error); 128-byte frame with callee-saved
+// The path is built straight into the single-word rc string the Ok result
+// carries; on EEXIST (a suffix collision) a fresh random suffix is drawn and
+// mkdirat retried. On success that string is wrapped in the Result Ok box
+// (tag 0, string@8); on failure it is freed before the IoError is built. Non-leaf (calls __fern_io_error); 128-byte frame with callee-saved
 // x19=prefix / x20=pathbuf / x21=path_len / x22=hex_start / x24=string. x0=prefix.
 func emitTempDirHelper(w func(string, ...any)) {
 	w("")
@@ -8229,21 +8066,16 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tstp x21, x22, [sp, #32]")
 	w("\tstp x23, x24, [sp, #48]")
 	w("\tmov x19, x0") // prefix
-	// Allocate a scratch path buffer of prefix_len + 15 bytes:
-	// "/tmp/"(5) + prefix + "-"(1) + 8 hex + NUL(1).
+	// The path is built straight into the result string, whose length is
+	// known up front: "/tmp/"(5) + prefix + "-"(1) + 8 hex = prefix_len + 14.
 	w("\tldur w2, [x19, #-4]") // prefix_len
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #15")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov x20, x4") // pathbuf
-	// path_len = prefix_len + 14; hex_start = pathbuf + 6 + prefix_len.
-	w("\tadd x21, x2, #14")
+	w("\tadd x21, x2, #14")    // path_len
+	emitAllocBlock(w, "x4", "x21", strBlockBytes)
+	w("\tmov w7, #1")
+	w("\tstr w7, [x4]")      // rc = 1
+	w("\tstr w21, [x4, #4]") // len = path_len
+	w("\tadd x20, x4, #8")   // pathbuf = the string's data
+	// hex_start = pathbuf + 6 + prefix_len.
 	w("\tadd x22, x20, #6")
 	w("\tadd x22, x22, x2")
 	// Write the "/tmp/" prefix.
@@ -8312,8 +8144,13 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tcbz x0, .Lssa_td_ok")
 	w("\tcmn x0, #17") // -EEXIST → retry with a fresh suffix
 	w("\tb.eq .Lssa_td_retry")
-	// Other error: map -errno through __fern_io_error(errno, prefix).
-	w("\tneg x0, x0")
+	// Other error: give the string back, then map -errno through
+	// __fern_io_error(errno, prefix).
+	w("\tneg x23, x0")
+	w("\tsub x0, x20, #8")
+	w("\tadd x1, x21, #%d", strBlockBytes)
+	w("\tbl %s", fnLabel("__free"))
+	w("\tmov x0, x23")
 	emitIoErrorOwningPath(w, "x19")
 	w("\tmov x19, x0") // IoError box
 	// Result.Err(IoError): box {rc=1, tag=1, ioerr@8}.
@@ -8333,23 +8170,7 @@ func emitTempDirHelper(w func(string, ...any)) {
 	w("\tstr x19, [x0, #8]")
 	w("\tb .Lssa_td_ret")
 	w(".Lssa_td_ok:")
-	// Allocate a single-word rc string of path_len bytes (+ NUL).
-	emitAllocBlock(w, "x4", "x21", strBlockBytes)
-	w("\tmov w7, #1")
-	w("\tstr w7, [x4]")      // rc = 1
-	w("\tstr w21, [x4, #4]") // len = path_len
-	w("\tadd x24, x4, #8")   // string data ptr
-	// Copy path_len bytes from pathbuf to the string.
-	w("\tmov w9, #0")
-	w(".Lssa_td_scp:")
-	w("\tcmp w9, w21")
-	w("\tb.hs .Lssa_td_scpd")
-	w("\tldrb w10, [x20, x9]")
-	w("\tstrb w10, [x24, x9]")
-	w("\tadd w9, w9, #1")
-	w("\tb .Lssa_td_scp")
-	w(".Lssa_td_scpd:")
-	w("\tstrb wzr, [x24, x21]") // trailing NUL
+	w("\tmov x24, x20") // the string, NUL already in place
 	// Result.Ok(string): box {rc=1, tag=0, string@8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -8386,9 +8207,8 @@ func emitReadDirAllHelper(w func(string, ...any)) {
 
 // emitReadDirLike is the body both share. It NUL-terminates the path, opens it
 // with O_DIRECTORY (16384 — the arm64 Linux arch-specific value, NOT the
-// asm-generic 65536), then makes two getdents64 passes over a small 4 KiB
-// scratch buffer (the buffer is never reclaimed, so it stays far smaller than
-// the native backend's 1 MiB one): pass 1 counts the kept entries to size the
+// asm-generic 65536), then makes two getdents64 passes over a 4 KiB buffer in
+// the frame (the native backend's is 1 MiB): pass 1 counts the kept entries to size the
 // array, an lseek rewinds the directory, and pass 2 allocates a single-word rc
 // string per base name and stores it into the string[] container (16-byte
 // header: cap@[data-12], rc@[data-8], len@[data-4]; element pointers at
@@ -8412,29 +8232,10 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tstp x23, x24, [sp, #48]")
 	w("\tstp x25, x26, [sp, #64]")
 	w("\tstp x27, x28, [sp, #80]")
+	w("\tsub sp, sp, #4096") // the dirent buffer, reused across both passes
+	w("\tmov x21, sp")
 	w("\tmov x25, x0") // path
-	// NUL-terminate the path into a fresh heap buffer (x26).
-	w("\tldur w2, [x25, #-4]") // path len
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x5, x2, #1")
-	w("\tadd x6, x4, x5")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov w7, #0")
-	w("%s:", L("cp"))
-	w("\tcmp w7, w2")
-	w("\tb.hs %s", L("cpd"))
-	w("\tldrb w8, [x25, x7]")
-	w("\tstrb w8, [x4, x7]")
-	w("\tadd w7, w7, #1")
-	w("\tb %s", L("cp"))
-	w("%s:", L("cpd"))
-	w("\tstrb wzr, [x4, x2]")
-	w("\tmov x26, x4") // pathz
+	emitSsaPathz(w, "x26", "x25", strings.TrimPrefix(lb, ".Lssa_")+"pz")
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0).
 	w("\tmov x0, #100")
 	w("\tneg x0, x0")
@@ -8443,18 +8244,9 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tmov x3, #0")
 	w("\tmov x8, #56") // openat
 	w("\tsvc #0")
+	emitSsaPathzRewind(w, "x26")
 	w("\ttbnz x0, #63, %s", L("err_open"))
 	w("\tmov x20, x0") // fd
-	// Allocate a 4 KiB dirent scratch buffer (x21), reused across both passes.
-	w("\tadrp x3, %s", heapPtrSym)
-	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
-	w("\tldr x4, [x3]")
-	w("\tadd x4, x4, #15")
-	w("\tand x4, x4, #-16")
-	w("\tadd x6, x4, #4096")
-	w("\tstr x6, [x3]")
-	emitHeapGuardCall(w)
-	w("\tmov x21, x4") // buffer
 	// Pass 1: getdents loop counting kept entries (excluding "." / "..") into x23.
 	w("\tmov x23, #0")
 	w("%s:", L("g1"))
@@ -8622,6 +8414,7 @@ func emitReadDirLike(w func(string, ...any), name string, lb string, skipDots bo
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x25, [x0, #8]")
 	w("%s:", L("ret"))
+	w("\tadd sp, sp, #4096")
 	w("\tldp x27, x28, [sp, #80]")
 	w("\tldp x25, x26, [sp, #64]")
 	w("\tldp x23, x24, [sp, #48]")

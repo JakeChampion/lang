@@ -58,55 +58,48 @@ func optionOf(t ast.Type) ast.EnumType {
 func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 	b := capsTestBuilder()
 	cases := []struct {
-		name     string
-		t        ast.Type
-		wantFree bool // typeIsStringArrayFree
-		wantMap  bool // typeTransitivelyContainsMap
+		name string
+		t    ast.Type
+		want bool // typeIsStringArrayFree
 	}{
-		{"scalar", ast.NumberType{}, true, false},
-		{"string", ast.StringType{}, false, false},
-		{"array of i32", ast.ArrayType{Elem: ast.NumberType{}}, false, false},
-		// The Map fact recurses through array / slice elements even though
-		// the string/array-free fact is already decided at the array.
-		{"array of Map-holder", ast.ArrayType{Elem: ast.StructType{Name: "Holder"}}, false, true},
-		{"slice of Map-holder", ast.SliceType{Elem: ast.StructType{Name: "Holder"}}, false, true},
-		{"Map itself", ast.StructType{Name: "Map"}, false, true},
-		{"scalar struct", ast.StructType{Name: "Point"}, true, false},
-		{"string-bearing struct", ast.StructType{Name: "Named"}, false, false},
-		{"Map-bearing struct", ast.StructType{Name: "Holder"}, false, true},
-		// Unknown struct decl (runtime handles: Reader / Writer / MapIter):
-		// not string/array-free, but no Map either.
-		{"unknown struct", ast.StructType{Name: "Reader"}, false, false},
-		// Unknown enum decl (generic-erased): the worst verdict on BOTH
-		// axes — not free AND Map-containing.
-		{"unknown enum", ast.EnumType{Name: "Ghost"}, false, true},
-		{"scalar enum", ast.EnumType{Name: "Scalar"}, true, false},
-		{"Map-bearing enum", ast.EnumType{Name: "WithMap"}, false, true},
-		// Recursive enum/struct cycle: back-edges are assumed clean on both
-		// axes, so a scalar list/tree stays free and Map-less.
-		{"recursive list", ast.EnumType{Name: "List"}, true, false},
-		{"tuple of scalar+struct", ast.TupleType{Elems: []ast.Type{ast.NumberType{}, ast.StructType{Name: "Point"}}}, true, false},
-		{"tuple with string", ast.TupleType{Elems: []ast.Type{ast.NumberType{}, ast.StringType{}}}, false, false},
-		// Closures / unresolved generics: not free, no Map.
-		{"func type", &ast.FuncType{}, false, false},
-		{"param type", ast.ParamType{Name: "T"}, false, false},
+		{"scalar", ast.NumberType{}, true},
+		{"string", ast.StringType{}, false},
+		{"array of i32", ast.ArrayType{Elem: ast.NumberType{}}, false},
+		{"array of Map-holder", ast.ArrayType{Elem: ast.StructType{Name: "Holder"}}, false},
+		{"slice of Map-holder", ast.SliceType{Elem: ast.StructType{Name: "Holder"}}, false},
+		{"Map itself", ast.StructType{Name: "Map"}, false},
+		{"scalar struct", ast.StructType{Name: "Point"}, true},
+		{"string-bearing struct", ast.StructType{Name: "Named"}, false},
+		{"Map-bearing struct", ast.StructType{Name: "Holder"}, false},
+		// Unknown struct decl (runtime handles: Reader / Writer / MapIter).
+		{"unknown struct", ast.StructType{Name: "Reader"}, false},
+		// Unknown enum decl (generic-erased): the worst verdict.
+		{"unknown enum", ast.EnumType{Name: "Ghost"}, false},
+		{"scalar enum", ast.EnumType{Name: "Scalar"}, true},
+		{"Map-bearing enum", ast.EnumType{Name: "WithMap"}, false},
+		// Recursive enum/struct cycle: back-edges are assumed clean, so a
+		// scalar list/tree stays free.
+		{"recursive list", ast.EnumType{Name: "List"}, true},
+		{"tuple of scalar+struct", ast.TupleType{Elems: []ast.Type{ast.NumberType{}, ast.StructType{Name: "Point"}}}, true},
+		{"tuple with string", ast.TupleType{Elems: []ast.Type{ast.NumberType{}, ast.StringType{}}}, false},
+		// Closures / unresolved generics: not free.
+		{"func type", &ast.FuncType{}, false},
+		{"param type", ast.ParamType{Name: "T"}, false},
 		// A generic enum INSTANTIATION answers about its type arguments, not
 		// about the ParamType its shared decl carries: Option[i32] holds no
 		// buffer, Option[string] does.
-		{"Option[i32]", optionOf(ast.NumberType{}), true, false},
-		{"Option[string]", optionOf(ast.StringType{}), false, false},
-		{"Option[i32[]]", optionOf(ast.ArrayType{Elem: ast.NumberType{}}), false, false},
-		{"Option[Point]", optionOf(ast.StructType{Name: "Point"}), true, false},
-		// Un-instantiated, so the payload stays a ParamType and each axis
-		// keeps its conservative answer.
-		{"bare Option", ast.EnumType{Name: "Option"}, false, false},
+		{"Option[i32]", optionOf(ast.NumberType{}), true},
+		{"Option[string]", optionOf(ast.StringType{}), false},
+		{"Option[i32[]]", optionOf(ast.ArrayType{Elem: ast.NumberType{}}), false},
+		{"Option[Point]", optionOf(ast.StructType{Name: "Point"}), true},
+		// Un-instantiated, so the payload stays a ParamType and keeps the
+		// conservative answer.
+		{"bare Option", ast.EnumType{Name: "Option"}, false},
 	}
 	for _, tc := range cases {
 		free := b.typeIsStringArrayFree(tc.t, map[string]bool{})
-		hasMap := typeTransitivelyContainsMap(b.info, tc.t, map[string]bool{})
-		if free != tc.wantFree || hasMap != tc.wantMap {
-			t.Errorf("%s: (stringArrayFree=%v, containsMap=%v), want (%v, %v)",
-				tc.name, free, hasMap, tc.wantFree, tc.wantMap)
+		if free != tc.want {
+			t.Errorf("%s: stringArrayFree=%v, want %v", tc.name, free, tc.want)
 		}
 	}
 }

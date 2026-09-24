@@ -591,6 +591,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// both sides.
 		{"derive-debug-impl-ok", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nimpl Debug for Bare { function to_debug(self: Self): string { return \"b\"; } }\n@derive(Debug)\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }\n", nil},
 		{"derive-json-impl-ok", "trait Json { function to_json(self: Self): string; }\nimpl Json for i32 { function to_json(self: Self): string { return \"0\"; } }\n@derive(Json)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
+		// A value-block arm that always leaves the function hands the block no
+		// value, so its unreachable filler is not an arm type (#9326).
+		{"value-block-arm-returns-early", "function probe(n: i32): boolean {\n  var s: string = match (n) { 0 => \"zero\", _ => { return false; } };\n  return s.len() > 0;\n}\nfunction main(): i32 { if (probe(0)) { return 1; } return 0; }\n", nil},
+		// A derive resolves its trait by the name as written (#9322): with no
+		// prelude, a bare `Eq` names nothing unless the program declares it,
+		// and a declared trait outside the derivable set is refused. A
+		// qualified derive through an import this single-module driver never
+		// loaded is declined; the bundle differential covers the loaded case.
+		{"derive-unknown-trait", "@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-not-derivable", "trait Frob { function frob(self: Self): i32; }\n@derive(Frob)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-unloaded-import", "import \"core/cmp\";\n@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", nil},
 		// The broken path, one per field-wise kind: a nominal field with no
 		// impl of the derived trait. Each is E021 ALONE — an E043 here means
 		// the synthesised body escaped suppression.
@@ -1087,6 +1098,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"len-method-ok", "function main(): i32 { var s: string = \"hello\"; var xs: i32[] = [1, 2]; return s.len() + xs.len(); }\n", nil},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
+		// The rc detector intrinsics type as native registers them.
+		{"rc-intrinsics-clean", "function main(): i32 { var n: i32 = __rc_underflow_count() + __arr_push_shared_count(); var b: i64 = __arr_push_shared_bytes(); return n; }\n", nil},
+		{"rc-intrinsic-sink", "function main(): i32 { var b: boolean = __rc_underflow_count(); return 0; }\n", []string{"E003"}},
+		// A tuple has no methods: a method-call callee takes the field rule.
+		{"tuple-method-call", "function main(): i32 { var t = (1, 2); return t.len(); }\n", []string{"E046"}},
+		{"tuple-method-call-builtin", "function main(): i32 { var t = (1, 2); print(t.to_string()); return 0; }\n", []string{"E046"}},
+		{"tuple-element-fn-call-clean", "function one(): i32 { return 1; }\nfunction main(): i32 { var t: (() => i32, i32) = (one, 4); return t.0() + t.1; }\n", nil},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
 		// E003 (tuple var annotation): a tuple-literal init must match the
 		// annotation element-wise (and in arity). Matching tuples — including
@@ -1574,6 +1592,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-i32", "function f(): Option[i32] { var x: i32 = 5; return x?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-string", "function f(): Option[i32] { var s: string = \"x\"; return s?; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-option-ok", "function g(): Option[i32] { return Some(1); }\nfunction f(): Option[i32] { var o: Option[i32] = g(); var v: i32 = o?; return Some(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		// `0o` / `0b` literals are numerals like any other (#9091): in range
+		// clean, out of range E047, suffixed or not.
+		{"radix-literal-clean", "function main(): i32 { var m: i32 = 0o755; var b: u8 = 0b11111111u8; return m + (b as i32); }\n", nil},
+		{"radix-literal-range", "function main(): i32 { var x: u8 = 0o777; return x as i32; }\n", []string{"E047"}},
+		{"radix-literal-suffix-range", "function main(): i32 { var y: u8 = 0b111111111u8; return y as i32; }\n", []string{"E047"}},
+		// An unannotated `?` binding takes the success payload's type.
+		{"try-binding-typed-sink", "function g(): Option[string] { return Some(\"a\"); }\nfunction f(): Option[i32] { var s = g()?; var n: i32 = s; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		{"try-binding-typed-clean", "function g(): Result[string, i32] { return Ok(\"a\"); }\nfunction f(): Result[i32, i32] { var s = g()?; return Ok(s.len()); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E042 return-shape (#4363 item 1): `?` on a known Option/Result
 		// operand inside a function whose declared return type is a known
 		// primitive draws the return-shape E042 ("requires the surrounding
@@ -1838,6 +1864,31 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// supports). Map programs need `import "core/map";` (Go reports E001
 		// otherwise — a Go-only rule the self-host doesn't model, so kept out
 		// of the corpus). Cross-checked against the Go checker.
+		// A declared `str[]` keeps its view elements (#10201): the parser erases
+		// the spelling to `string[]`, and the str_elem sidecar puts them back, so
+		// an element read into a `string` is E003 as it is natively. Local,
+		// parameter and function result each have their own sidecar.
+		{"e003-str-array-local-element-into-string", "function main(): i32 { var s: string = \"ab\"; var xs: str[] = [slice_unchecked(s, 0, 1)]; var t: string = xs[0]; return t.len(); }\n", []string{"E003"}},
+		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
+		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
+		{"str-array-element-into-str-clean", "function f(xs: str[]): i32 { var t: str = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", nil},
+		// A builtin that stores its argument is an owning sink, so a `str` view
+		// is not lent there: append, with, and a map insert's key and value.
+		// Native's storesArgument; a `str[]` still takes the view.
+		{"e038-str-appended-to-string-array", "function main(): i32 { var s: string = \"ab\"; var out: string[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }\n", []string{"E038"}},
+		{"e038-str-with-into-string-array", "function main(): i32 { var s: string = \"ab\"; var out: string[] = [\"x\"]; out = out.with(0, slice_unchecked(s, 0, 1)); return out.len(); }\n", []string{"E038"}},
+		{"e038-str-as-map-key", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len(); }\n", []string{"E038"}},
+		{"e038-str-as-map-value", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, string] = map_new(2); m = m.insert(\"k\", slice_unchecked(s, 0, 1)); return m.len(); }\n", []string{"E038"}},
+		{"str-appended-to-str-array-clean", "function main(): i32 { var s: string = \"ab\"; var out: str[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }\n", nil},
+		// An array literal of views is a `str[]`, and its elements agree only
+		// when their string tags do, in either order. The literal keeps its
+		// first element's type, so the declared `string[]` is E003 exactly when
+		// the view comes first. A map READ keeps nothing and still takes a view.
+		{"str-view-array-literal-e003", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [slice_unchecked(t, 0, 3)]; return xs.len(); }\n", []string{"E003"}},
+		{"str-view-array-literal-after-string-e034", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [\"a\", slice_unchecked(t, 0, 3)]; return xs.len(); }\n", []string{"E034"}},
+		{"str-view-array-literal-before-string-e034", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [slice_unchecked(t, 0, 3), \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
+		{"mixed-array-literal-keeps-first-type", "function main(): i32 { var xs: string[] = [1, \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
+		{"str-view-map-read-get-or-clean", "import \"core/map\";\nfunction main(): i32 { var t: string = \"abcdef\"; var m: Map[string, i32] = map_new(4); return m.get_or(slice_unchecked(t, 0, 3), 0); }\n", nil},
 		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},
@@ -2433,6 +2484,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.
+		// A builtin typed from builtin_sigs checks its arguments, not just
+		// their count, for a free call and for a Reader method alike.
+		{"builtin-arg-type-mismatch", `function main(): i32 { var r = chdir(42); return 0; }`},
+		{"builtin-arg-literal-mismatch", `function main(): i32 { var b: usize = buf_new("x"); return 0; }`},
+		{"builtin-method-arg-type-mismatch", `function main(): i32 { var r = stdin().read_chunk("x"); return 0; }`},
+		{"builtin-args-ok", `function main(): i32 { var r = chdir("/"); var b: usize = buf_new(4); var c = cell_new(3); var rr = stdin().read_chunk(16); return 0; }`},
 		{"mixed-width-narrow-left-ok", `function f(a: i32, v: i64): i64 { return a + v; }`},
 		{"mixed-width-narrow-right-ok", `function f(a: i32, v: i64): i64 { return v + a; }`},
 		{"mixed-width-narrow-left-mismatch", `function f(a: i32, v: i64): i32 { return a + v; }`},
@@ -2853,6 +2910,16 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// Here rather than in the codes table because std/array has to be
 		// in scope for the call to be a method call at all.
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
+		// A derive resolves against the traits of the module its qualifier
+		// names (#9322): the import makes `cmp.Eq` resolve and a bare `Eq`
+		// still unknown, and a qualified derive's field conformance is
+		// checked against the imported trait.
+		{"derive-bare-with-cmp-imported", "import \"core/cmp\";\n@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-qualified-ok", "import \"core/cmp\";\n@derive(cmp.Eq, cmp.Hash)\nstruct P { n: i32, s: string }\nfunction main(): i32 { var p: P = P { n: 1, s: \"x\" }; if (p.eq(p)) { return 3; } return 0; }\n"},
+		{"derive-aliased-import-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
+		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
 		{"e053-map-on-a-borrowed-array", "import \"std/array\";\nfip function f(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		{"char-not-from-int-literal", "function main(): i32 { var c: char = 65; return 0; }\n"},
 		{"char-not-to-i32-return", "function f(c: char): i32 { return c; }\nfunction main(): i32 { return 0; }\n"},
