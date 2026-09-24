@@ -622,6 +622,7 @@ var generatedDropPrefixes = []string{
 	"__drop_arr_arr_",
 	"__drop_arr_of_",
 	"__drop_map_",
+	"__drop_mapchain_",
 }
 
 // generatedDropNames are the generated drops whose name carries no type

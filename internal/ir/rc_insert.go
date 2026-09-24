@@ -2547,6 +2547,13 @@ func mangleTupleInst(tt ast.TupleType) string {
 // site shares (the exit sweep's slot form, struct fields, tuple elements,
 // closure captures), so the column coverage cannot drift between them.
 func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) []Op {
+	dropValues, strKeys := mapDropChainParts(st, info, reg, tupleReg, ptrW)
+	return appendMapDropChainOf(ops, dropValues, strKeys)
+}
+
+// mapDropChainParts is what determines a map's drop chain: its value-column
+// drop, and whether its keys are strings.
+func mapDropChainParts(st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) (string, bool) {
 	dropValues := "__map_drop_values"
 	if name, ok := mapValDropName(st, info, reg, tupleReg, ptrW); ok {
 		dropValues = name
@@ -2555,13 +2562,49 @@ func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map
 			dropValues = "__drop_map_str_values"
 		}
 	}
-	ops = append(ops, Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	strKeys := false
 	if len(st.Args) >= 1 {
-		if _, isStr := st.Args[0].(ast.StringType); isStr {
-			ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-		}
+		_, strKeys = st.Args[0].(ast.StringType)
+	}
+	return dropValues, strKeys
+}
+
+func appendMapDropChainOf(ops []Op, dropValues string, strKeys bool) []Op {
+	ops = append(ops, Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	if strKeys {
+		ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
 	}
 	return append(ops, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
+}
+
+// mapChainDropName names the one-argument function that runs st's drop chain
+// on a map handle: `__drop_mapchain_<s|n>_<value-column drop>`, `s` for string
+// keys. The name carries the whole chain, so the worklist regenerates the body
+// from it (genMapChainDropFn). It is the per-element drop of a Map[] (#8845).
+func mapChainDropName(st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) string {
+	dropValues, strKeys := mapDropChainParts(st, info, reg, tupleReg, ptrW)
+	k := "n"
+	if strKeys {
+		k = "s"
+	}
+	return "__drop_mapchain_" + k + "_" + dropValues
+}
+
+// genMapChainDropFn builds the function mapChainDropName names: the map
+// handle through its drop chain, every helper self-guarding on the map's own
+// rc==1, returning the handle.
+func genMapChainDropFn(name string) *Func {
+	rest, ok := strings.CutPrefix(name, "__drop_mapchain_")
+	if !ok || len(rest) < 3 || (rest[0] != 's' && rest[0] != 'n') || rest[1] != '_' {
+		return nil
+	}
+	ops := appendMapDropChainOf([]Op{{Kind: OpLoadLocal, I32: 0}}, rest[2:], rest[0] == 's')
+	return &Func{
+		Name:       name,
+		Params:     []ast.Param{{Name: "__mc", Type: dropThunkParamType}},
+		ReturnType: ast.NumberType{},
+		Ops:        append(ops, Op{Kind: OpReturn}),
+	}
 }
 
 // substituteEnumDecl returns a copy of ed with each variant payload's
@@ -2673,7 +2716,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	}
 	if v, ok := elem.(ast.StructType); ok {
 		if v.Name == "Map" {
-			return "", false
+			return "__drop_arr_of_" + mapChainDropName(v, info, reg, tupleReg, ptrW), true
 		}
 		if _, ok := info.Structs[v.Name]; !ok {
 			return "", false

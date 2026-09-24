@@ -7507,6 +7507,32 @@ function main(): i32 {
 }`,
 	},
 	{
+		// An array whose elements are Maps drops each through the map's own
+		// chain — value column, string keys, buf and handle — not the flat
+		// element dec, which took each handle to zero and stranded all four
+		// (#8845).
+		name: "map_array_elements_reclaimed",
+		src: `
+import "core/map";
+import "std/i32";
+struct P { name: string, n: i32 }
+function main(): i32 {
+    var ms: Map[string, string][] = [];
+    var ps: Map[i32, P][] = [];
+    var i: i32 = 0;
+    while (i < 5) {
+        var m: Map[string, string] = map_new(2);
+        m = m.insert("k" + i.to_string(), "v" + i.to_string());
+        ms = ms.append(m);
+        var q: Map[i32, P] = map_new(2);
+        q = q.insert(i, P { name: "p" + i.to_string(), n: i });
+        ps = ps.append(q);
+        i = i + 1;
+    }
+    return (ms[2].len() - 1) + (ps[3].len() - 1) + (ms.len() - 5) + __rc_underflow_count();
+}`,
+	},
+	{
 		// #8833: the third state of that same store. #8441 released the
 		// superseded element UNCONDITIONALLY, and a consuming update that
 		// finds its receiver uniquely held mutates in place and hands the
@@ -7527,12 +7553,6 @@ function main(): i32 {
 		// a genuinely different handle and must still release it — that is
 		// #8441's property, and without it this case leaks 50 maps rather
 		// than one. `m = m.insert("k", i)` supersedes ITSELF and must not.
-		//
-		// The pinned leak is the map the cell still holds at exit: a cell
-		// whose element is a Map reclaims through the buffer-only array
-		// ladder, which flat-dec's the handle and strands its columns
-		// (#8845). Unrelated to the store — `m = map_new(4)` alone under a
-		// capture leaks the same 144 with this whole case reverted.
 		name: "closure_capture_rebind_map_in_place_not_over_released",
 		src: `
 import "core/map";
@@ -7554,12 +7574,8 @@ function main(): i32 {
 		// same pointer it already named, but the return-transfer inc means
 		// the reference DID change hands and the release is owed. Guarding
 		// the release on pointer identity alone reads this as a self-store
-		// and strands one map a round (7344 bytes here against the 144
-		// pinned below) — green on every other gate, which is how the wide
-		// guard nearly shipped.
-		//
-		// The pin is the map the cell still holds at exit (#8845), the same
-		// one closure_capture_rebind_map_in_place_not_over_released carries.
+		// and strands one map a round — green on every other gate, which is
+		// how the wide guard nearly shipped.
 		name: "closure_capture_rebind_identity_call_not_stranded",
 		src: `
 import "core/map";
