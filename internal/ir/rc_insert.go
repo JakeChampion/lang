@@ -3979,17 +3979,46 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 // otherwise it dec's. Payloadless / sentinel values fail the is_unique
 // gate and take the dec path. Mirrors the inline non-uniform enum drop
 // (emitDec), but as a standalone fn so a nested enum field / payload /
-// capture can route to it. Slots: 0=ptr (param), 1=tag (scratch).
+// capture can route to it.
+//
+// A variant's last payload of the enum's own type is not a recursive
+// call: the arm keeps it, frees the box, and the body loops on it, so a
+// list drops in constant stack however long it is (#9046). An enum with
+// no such payload keeps the flat, inlineable body. Slots: 0=ptr (param,
+// then the node the loop is on), 1=tag, and with the loop 2=the ptr to
+// return, 3=the next node.
 func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, dynRcSupported bool) *Func {
 	plan, ok := enumVariantDropPlan(ed, ptrW, dynRcSupported)
 	if !ok {
 		return nil
 	}
-	ops := []Op{
-		{Kind: OpLoadLocal, I32: 0},
-		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpIf, I32: BlockTypeVoid},
+	self := "__drop_enum_" + name
+	// tails[i] is the load of variant i that continues the loop, or -1.
+	tails := make([]int, len(plan))
+	chain := false
+	for i, vd := range plan {
+		tails[i] = -1
+		for k, ld := range vd.loads {
+			if dn, ok := dropFnNameFor(ld.typ, info, reg, tupleReg, ptrW, dynRcSupported); ok && dn == self {
+				tails[i] = k
+				chain = true
+			}
+		}
 	}
+	var ops []Op
+	if chain {
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpStoreLocal, I32: 2},
+			Op{Kind: OpBlock, I32: BlockTypeVoid},
+			Op{Kind: OpLoop, I32: BlockTypeVoid},
+			Op{Kind: OpConstI32, I32: 0},
+			Op{Kind: OpStoreLocal, I32: 3})
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		Op{Kind: OpIf, I32: BlockTypeVoid})
 	ops = appendUserDrop(ops, info, name)
 	ops = append(ops, []Op{
 		// tag = mem[ptr+0] → slot 1 (stashed so arms read it after a
@@ -3998,19 +4027,19 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		{Kind: OpLoad},
 		{Kind: OpStoreLocal, I32: 1},
 	}...)
-	for _, vd := range plan {
+	for i, vd := range plan {
 		ops = append(ops,
 			Op{Kind: OpLoadLocal, I32: 1},
 			Op{Kind: OpConstI32, I32: int32(vd.tag)},
 			Op{Kind: OpEq},
 			Op{Kind: OpIf, I32: BlockTypeVoid})
-		for _, ld := range vd.loads {
+		for k, ld := range vd.loads {
 			// A CLOSURE payload is a DOCUMENTED SAFE LEAK. A variant's
 			// payloads are stored without a retain unless the enum is
-			// EnumRcPayloads-eligible, and a
-			// matched arm's binding takes the reference out of the box under
-			// the move model — so deep-releasing one here frees an env the
-			// binding is still calling through. `async.Future[T]`'s
+			// EnumRcPayloads-eligible, and a matched arm's binding takes
+			// the reference out of the box under the move model — so
+			// deep-releasing one here frees an env the binding is still
+			// calling through. `async.Future[T]`'s
 			// `Pending(i32, (i32) => Future[T])` is exactly that: the
 			// combinators match a Pending, call its `resume`, and build the
 			// next Future from the result (SIGSEGV on both natives, wasm
@@ -4026,6 +4055,10 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 				ops = append(ops, Op{Kind: OpConstI32, I32: ld.off}, Op{Kind: OpAdd})
 			}
 			ops = append(ops, payloadLoadOpFor(ld.typ, ptrW))
+			if k == tails[i] {
+				ops = append(ops, Op{Kind: OpStoreLocal, I32: 3})
+				continue
+			}
 			ops = appendChildDrop(ops, ld.typ, info, ptrW, reg, tupleReg, dynRcSupported)
 		}
 		ops = append(ops,
@@ -4040,13 +4073,31 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		Op{Kind: OpLoadLocal, I32: 0},
 		Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
 		Op{Kind: OpDrop},
-		Op{Kind: OpEnd},
-		Op{Kind: OpLoadLocal, I32: 0},
+		Op{Kind: OpEnd})
+	scratch := []ast.Type{ast.NumberType{}}
+	ret := int32(0)
+	if chain {
+		// Continue with the kept child, or leave when there is none.
+		ops = append(ops,
+			Op{Kind: OpLoadLocal, I32: 3},
+			Op{Kind: OpStoreLocal, I32: 0},
+			Op{Kind: OpLoadLocal, I32: 0},
+			Op{Kind: OpConstI32, I32: 0},
+			Op{Kind: OpEq, Width: WidthPtr},
+			Op{Kind: OpBrIf, I32: 1},
+			Op{Kind: OpBr, I32: 0},
+			Op{Kind: OpEnd}, // loop
+			Op{Kind: OpEnd}) // block
+		scratch = append(scratch, ast.NumberType{}, ast.NumberType{})
+		ret = 2
+	}
+	ops = append(ops,
+		Op{Kind: OpLoadLocal, I32: ret},
 		Op{Kind: OpReturn})
 	return &Func{
-		Name:         "__drop_enum_" + name,
+		Name:         self,
 		Params:       []ast.Param{{Name: "__de", Type: dropThunkParamType}},
-		ScratchTypes: []ast.Type{ast.NumberType{}},
+		ScratchTypes: scratch,
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
 	}
