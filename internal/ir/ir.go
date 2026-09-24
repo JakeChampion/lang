@@ -9173,8 +9173,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 			return err
 		}
 		// Stash the value in a synthetic local so we can run
-		// defers after it's evaluated.
+		// defers after it's evaluated. A returned alias takes its transfer
+		// retain before the defers run: a deferred reassignment of the local
+		// must see a second holder, or it reuses the cell the stash still
+		// names and the caller reads the replacement (#10027).
+		aliasInced := false
 		if len(b.defers) > 0 {
+			if needsRcIncOnAlias(n.Value, b) {
+				b.emitAliasInc(n.Value)
+				aliasInced = true
+			}
 			slot := b.allocSlot()
 			b.scratchType[slot] = b.fn.ReturnType
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
@@ -9265,7 +9273,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			b.emit(Op{Kind: OpEnd})
 			b.emit(Op{Kind: OpLoadLocal, I32: newSlot})
 		}
-		if needsRcIncOnAlias(n.Value, b) {
+		if needsRcIncOnAlias(n.Value, b) && !aliasInced {
 			// Transfer inc so the caller owns the returned alias and
 			// the callee's exit-sweep dec is balanced. A returned
 			// closure-via-Ident already took the move-on-return path
