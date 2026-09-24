@@ -1,0 +1,15 @@
+// Pins E049's enclosing-scope half (#8440). `g` is captured by `f`, so it
+// lives in a cell `f`'s environment shares; storing `f` into it from the
+// enclosing scope would close cell -> closure -> env -> cell, a cycle
+// reference counting cannot collect. Rebinding `g` to a closure that
+// captures nothing stays legal, as does rebinding a captured string.
+function main(): i32 {
+    var g: () => i32 = (): i32 => { return 1; };
+    var f: () => i32 = (): i32 => { return g(); };
+    g = (): i32 => { return 2; };
+    var s: string = "a";
+    var h: () => i32 = (): i32 => { return s.len(); };
+    s = "bb";
+    g = f;
+    return f() + h();
+}

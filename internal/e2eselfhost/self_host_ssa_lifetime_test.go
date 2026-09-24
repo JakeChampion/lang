@@ -39,7 +39,7 @@ func testSelfHostSSALifetimeIR(t *testing.T, target string) {
 		t.Fatal(err)
 	}
 	fixtures := selfHostLifetimeFixtures()
-	for _, name := range []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value"} {
+	for _, name := range []string{"nested-projection", "phi-edges", "loop-anchor", "rebound-value", "wide"} {
 		t.Run(name, func(t *testing.T) {
 			source, want := lifetimeFernFixture(t, fixtures[name])
 			entry := filepath.Join(dir, "lifetime_fixture.fern")
@@ -134,6 +134,26 @@ func selfHostLifetimeFixtures() map[string]lifetimeFixture {
 		f.SetRet(exit, child)
 		out["rebound-value"] = lifetimeFixture{f, map[int32][]ssa.Value{child.ID: {actualRoot}}}
 	}
+	{
+		// Enough values that each live set spans several 64-bit words.
+		f := ssa.NewFunc("wide")
+		entry, mid, exit := f.NewBlock(), f.NewBlock(), f.NewBlock()
+		var early, late []ssa.Value
+		for i := 0; i < 70; i++ {
+			early = append(early, f.AddOp(entry, ssa.OpConstInt))
+		}
+		f.SetBr(entry, mid)
+		for i := 0; i < 70; i++ {
+			late = append(late, f.AddOp(mid, ssa.OpAdd, early[i], early[(i*7)%70]))
+		}
+		f.SetBr(mid, exit)
+		acc := late[1]
+		for i := 3; i < 70; i += 2 {
+			acc = f.AddOp(exit, ssa.OpAdd, acc, late[i])
+		}
+		f.SetRet(exit, acc)
+		out["wide"] = lifetimeFixture{f, map[int32][]ssa.Value{late[5].ID: {early[5]}, late[66].ID: {early[66], early[2]}}}
+	}
 	return out
 }
 
@@ -163,7 +183,7 @@ func lifetimeFernFixture(t *testing.T, tc lifetimeFixture) (string, string) {
 	}
 	blockID := func(b *ssa.Block) int32 { return b.ID*10 + 7 }
 	var source strings.Builder
-	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nfunction main(): i32 {\nvar blocks: ssa.SBlock[] = [];\n")
+	source.WriteString("import \"./ssa\";\nimport \"./ssalive\";\nfunction same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } var i: i32 = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }\nfunction main(): i32 {\nvar blocks: ssa.SBlock[] = [];\n")
 	for _, b := range tc.f.Blocks {
 		var insts, preds []string
 		for _, op := range b.Ops {
@@ -202,6 +222,27 @@ print(bits);
 bits = "";
 for bit in ssalive.live_out_bits(result, f.blocks.len(), f.nvals) { if (bit) { bits = bits + "1"; } else { bits = bits + "0"; } }
 print(bits);
+var bi: i32 = 0;
+while (bi < f.blocks.len()) {
+    var ins: i32[] = [];
+    var outs: i32[] = [];
+    var v: i32 = 0;
+    while (v < f.nvals) {
+        if (ssalive.live_in_has(result, bi, v)) { ins = ins.append(v); }
+        if (ssalive.live_out_has(result, bi, v)) { outs = outs.append(v); }
+        v = v + 1;
+    }
+    if (!same(ssalive.live_in_ids(result, bi), ins)) { print("live_in_ids"); return 3; }
+    if (!same(ssalive.live_out_ids(result, bi), outs)) { print("live_out_ids"); return 3; }
+    var si: i32 = 0;
+    while (si < f.blocks.len()) {
+        var diff: i32[] = [];
+        for o in outs { if (!ssalive.live_in_has(result, si, o)) { diff = diff.append(o); } }
+        if (!same(ssalive.out_not_in(result, bi, si), diff)) { print("out_not_in"); return 3; }
+        si = si + 1;
+    }
+    bi = bi + 1;
+}
 return 0;
 }
 `)

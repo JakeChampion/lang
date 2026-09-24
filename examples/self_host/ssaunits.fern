@@ -297,7 +297,7 @@ function contract_error(f: ssasem.Func, modes: i32[]): string {
 // released when the box is. So is a cell, over its one element; a read of a
 // cell hands out a unit of the element rather than borrowing the slot.
 function construction(kind: i32): boolean {
-    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new()
+    return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new() || kind == ssasem.variant_new() || kind == ssasem.dyn_box()
         || kind == ssasem.closure_new() || kind == ssasem.cell_new() || kind == ssasem.map_new()
         || kind == ssasem.map_cleared();
 }
@@ -426,32 +426,66 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 // under its holder. `ssarc`'s #9328 note is the same asymmetry at the call
 // bracket, which it restricts to arrays.
 //
-// A dyn value is lent for the same reason at a different step: a unit of one
-// would be released through `__fern_rc_dec`, which frees the box without the
-// children only a dispatch on its shape could find.
+// A string retagged as a view is the string's own counted box, so retaining
+// it retains the string, which `__fern_str_view_free` then releases as one.
 // A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
 function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
+    var defs: ssa.SInst[] = definitions(f);
     for s in steps {
         for item in s.supplies {
-            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !literal[item.value]) { return "a view is lent, never retained"; }
-            if (item.mode == retain_unit() && ssasem.is_dyn(f.values[item.value])) { return "a dyn value is lent, never retained"; }
+            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value) && !literal[item.value]) { return "a view is lent, never retained"; }
         }
     }
     return "";
 }
 
-function dyn_owned_error(f: ssasem.Func, owned: boolean[]): string {
+function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
+    var d: ssa.SInst = defs[v];
+    return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
+}
+
+// A unit whose release would reach a dyn value of an open type
+// (`ssasem.Func.open_dyns`) is refused rather than released without the
+// children of a generic implementation.
+function open_dyn_error(f: ssasem.Func, owned: boolean[]): string {
+    if (f.open_dyns.len() == 0) { return ""; }
     var v: i32 = 0;
     while (v < f.graph.nvals) {
-        if (owned[v] && ssasem.is_dyn(f.values[v])) { return "a dyn value is lent, never owned"; }
+        if (owned[v] && reaches_open_dyn(f, f.values[v], [])) { return "a dyn value over a generic implementation is lent, never owned"; }
         v = v + 1;
     }
     return "";
 }
+
+function reaches_open_dyn(f: ssasem.Func, t: typeinfo.Type, seen: string[]): boolean {
+    if (ssasem.is_dyn(t)) {
+        for o in f.open_dyns { if (semtypes.equal(o, t)) { return true; } }
+        return false;
+    }
+    var key: string = ssasem.type_key(t);
+    for k in seen { if (k == key) { return false; } }
+    seen = seen.append(key);
+    var parts: typeinfo.Type[] = [];
+    if let typeinfo.TypeArray(a) = t { parts = parts.append(a.elem); }
+    if let typeinfo.TypeTuple(tup) = t { parts = tup.elements; }
+    if let typeinfo.TypeMap(m) = t { parts = [m.key, m.value]; }
+    if (semtypes.is_cell(t)) { parts = parts.append(semtypes.cell_elem(t)); }
+    if let typeinfo.TypeUnion(u) = t { parts = u.args; }
+    var ri: i32 = semrecords.find(f.records, t);
+    if (ri >= 0) { for field in f.records[ri].fields { parts = parts.append(field.ty); } }
+    var ei: i32 = semrecords.find_enum(f.enums, t);
+    if (ei >= 0) {
+        for variant in f.enums[ei].variants {
+            for field in variant.fields { parts = parts.append(field.ty); }
+        }
+    }
+    for p in parts { if (reaches_open_dyn(f, p, seen)) { return true; } }
+    return false;
+}
+
 function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
-    var out: boolean[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(ssalive.live_out_has(flow, bi, i)); i = i + 1; }
+    var out: boolean[] = bits(n);
+    for v in ssalive.live_out_ids(flow, bi) { out = out.with(v, true); }
     return out;
 }
 function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
@@ -772,7 +806,9 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // out of — the source is released in the same step, and leaving the dependency
 // would read every later use of the element as a borrow outliving its
 // container. A payload take says the same about an enum box's payload.
-struct Units { owned: boolean[], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[] }
+// `reflow` marks a take whose box is released alone (`shell_root`): that box
+// has to die at the read, which the flow derived before the take cannot say.
+struct Units { owned: boolean[], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
 
 // The payload takes are derived FIRST and folded into ownership before the
 // other two run: a taken payload is a unit of this frame's own, and the tuple
@@ -792,12 +828,43 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     var takes: i32[] = tuple_takes(f, a, owned, defs);
     var held: boolean[] = held_elements(f, a, owned, defs);
     var deps: i32[][] = a.dependencies;
+    var reflow: boolean = false;
     i = 0;
     while (i < takes.len()) {
-        if (takes[i] >= 0 || held[i] || payloads[i]) { owned = owned.with(i, true); deps = deps.with(i, []); }
+        if (payloads[i] && option_layout(f, f.values[defs[i].args[0]])) { reflow = true; }
+        if (takes[i] >= 0 || held[i] || payloads[i]) {
+            owned = owned.with(i, true);
+            // A view's bytes are its source's, not the box's it came out of, so
+            // a taken view stays anchored to what the box was.
+            var chain: i32[] = [];
+            if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) { chain = a.dependencies[defs[i].args[0]]; }
+            deps = deps.with(i, chain);
+        }
         i = i + 1;
     }
-    return Units { owned: owned, deps: deps, takes: takes, held: held, payloads: payloads };
+    if (reflow) { deps = through_takes(deps, takes, held, payloads); }
+    return Units { owned: owned, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow };
+}
+
+// A value read through one that became a unit of its own reaches the storage
+// behind it only through that unit's new chain, so every chain stops at the
+// first such value and continues with its chain.
+function through_takes(deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
+    var out: i32[][] = deps;
+    var w: i32 = 0;
+    while (w < deps.len()) {
+        var chain: i32[] = [];
+        for d in deps[w] {
+            chain = chain.append(d);
+            if (takes[d] >= 0 || held[d] || payloads[d]) {
+                for e in deps[d] { chain = chain.append(e); }
+                break;
+            }
+        }
+        out = out.with(w, chain);
+        w = w + 1;
+    }
+    return out;
 }
 
 // The analysis the plan and its replay read once the takes and holds are in:
@@ -806,7 +873,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
 // and the array a held read came from dies where its own uses end; a take's
 // source dies at the read, so a take alone leaves the flow as it was.
 function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
-    var any: boolean = false;
+    var any: boolean = units.reflow;
     for h in units.held { if (h) { any = true; } }
     if (!any) { return ssasem.Analysis { ...a, dependencies: units.deps }; }
     var flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
@@ -905,8 +972,8 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
     var root: i32 = ins.args[0];
     if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) { return none; }
     var got: typeinfo.Type = f.values[ins.result];
-    if (!ssasem.reference(got) || ssasem.is_view(got)) { return none; }
-    if (!is_union(f.values[root]) || option_layout(f, f.values[root])) { return none; }
+    if (!ssasem.reference(got) || !is_union(f.values[root])) { return none; }
+    if ((ssasem.is_view(got) || option_layout(f, f.values[root])) && !sole_box(f, defs, root, bits(f.graph.nvals))) { return none; }
     if (!owned[root] || projection(defs[root].kind_tag)) { return none; }
     var b: ssa.SBlock = f.graph.blocks[bi];
     if (ssalive.live_out_has(a.flow, bi, root)) { return none; }
@@ -929,6 +996,40 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
         w = w + 1;
     }
     return root;
+}
+
+// A box nobody but this frame's tag tests and payload reads ever sees: built
+// here, or a phi of boxes that are, and never handed to anything else. Its
+// count is 1 when its payload is read, so the read may take the payload with no
+// runtime test — which a view needs, since the test's shared arm retains, and
+// the builtin Option layout needs, since it has no store to null the slot with.
+// The box's drop in that step then releases the box alone (`shell_root`).
+function sole_box(f: ssasem.Func, defs: ssa.SInst[], v: i32, seen: boolean[]): boolean {
+    if (v < 0 || v >= defs.len()) { return false; }
+    if (seen[v]) { return true; }
+    var d: ssa.SInst = defs[v];
+    if (d.kind_tag != ssasem.variant_new() && d.kind_tag != 8) { return false; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            var reads: boolean = false;
+            for a in ins.args { if (a == v) { reads = true; } }
+            if (reads && ins.kind_tag != 8 && ins.kind_tag != ssasem.variant_is() && ins.kind_tag != ssasem.variant_get()) { return false; }
+        }
+        if (b.term.kind_tag == 1 && b.term.value == v) { return false; }
+    }
+    if (d.kind_tag == 8) {
+        var next: boolean[] = seen.with(v, true);
+        for a in d.args { if (!sole_box(f, defs, a, next)) { return false; } }
+    }
+    return true;
+}
+
+// The box whose drop at `ins` releases the box alone: the root of a payload
+// take out of the builtin Option layout, whose slot the take cannot null, or -1.
+pub function shell_root(f: ssasem.Func, p: Plan, ins: ssa.SInst): i32 {
+    if (ins.kind_tag != ssasem.variant_get() || ins.result < 0 || ins.result >= p.payloads.len() || !p.payloads[ins.result]) { return 0 - 1; }
+    if (!option_layout(f, f.values[ins.args[0]])) { return 0 - 1; }
+    return ins.args[0];
 }
 
 function is_union(t: typeinfo.Type): boolean {
@@ -1091,7 +1192,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var defs: ssa.SInst[] = definitions(f);
     var units: Units = units_of(f, owned, analysis, defs);
     owned = units.owned;
-    why = dyn_owned_error(f, owned);
+    why = open_dyn_error(f, owned);
     if (why != "") { return bad(why); }
     var takes: i32[] = units.takes;
     analysis = units_analysis(f, analysis, units);
@@ -1144,13 +1245,8 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
             }
             for target in successors(b) {
                 var si: i32 = block_index(f.graph, target);
-                var dead: boolean[] = bits(f.graph.nvals);
-                var vi: i32 = 0;
-                while (vi < f.graph.nvals) {
-                    if (ssalive.live_out_has(analysis.flow, bi, vi) && !ssalive.live_in_has(analysis.flow, si, vi)) { dead = dead.with(vi, true); }
-                    vi = vi + 1;
-                }
-                steps = steps.append(choose(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
+                var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
+                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
             }
         }
         bi = bi + 1;
@@ -1174,10 +1270,8 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
     var state: boolean[] = bits(f.graph.nvals);
-    var i: i32 = 0;
-    while (i < f.graph.nvals) {
-        if (owned[i] && ssalive.live_in_has(flow, bi, i)) { state = state.with(i, true); }
-        i = i + 1;
+    for v in ssalive.live_in_ids(flow, bi) {
+        if (owned[v]) { state = state.with(v, true); }
     }
     for ins in f.graph.blocks[bi].insts {
         if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result]) { state = state.with(ins.result, true); }

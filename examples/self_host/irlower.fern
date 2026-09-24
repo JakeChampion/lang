@@ -691,6 +691,47 @@ pub struct FnSigs {
     grow_field_positions: string[],
 }
 
+// wp_fact_rows lists the whole-program facts a unit's lowering reads that come
+// from function BODIES: the borrow, consume, fresh-return and handback verdicts
+// ircore.wp_fn_sigs derives, the reclaim verdicts, and the enum-contract regions.
+// A body-only edit in one module can move any of them for a unit elsewhere, so
+// the per-module caches fold them into their keys (modloader.module_fact_hashes).
+//
+// Columns built from signatures alone are left out: a unit reads a signature row
+// only for a callee in its import closure, whose signature hash is already in
+// the key. Signature-only columns:
+// b.arr_ret_fns b.bool_ret_fns b.strarr_ret_fns b.arr_method_fns b.opt_ret_fns
+// b.tuple_ret_fns b.arrtup_ret_fns b.map_ret_fns b.f64_ret_fns b.f64arr_ret_fns
+// b.i64arr_ret_fns b.erased_elem_ret_fns b.ret_type_fns b.ret_fn_sigs
+// b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
+pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
+    var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
+    var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
+    for r in regs { cols = cols.append(r.rows); }
+    var out: string[] = [];
+    var ci: i32 = 0;
+    for c in cols {
+        for row in c {
+            // A registry row can hold a whole hash bucket, entries joined by
+            // newlines, and which entries share a bucket depends on the table's
+            // size; so each entry is its own fact. An empty entry is a slot for a
+            // function with nothing to record.
+            var start: i32 = 0;
+            var i: i32 = 0;
+            while (i <= row.len()) {
+                if (i == row.len() || row[i] == b'\n') {
+                    if (i > start) { out = out.append(util.i32_to_string(ci) + "#" + slice_unchecked(row, start, i) + ""); }
+                    start = i + 1;
+                }
+                i = i + 1;
+            }
+        }
+        ci = ci + 1;
+    }
+    for rg in b.enum_regions { out = out.append("R#" + enumcontract.region_key(rg)); }
+    return out;
+}
+
 // LowerFrame is the per-function half of LowerState: what lower_func computes
 // once and threads read-only, plus the few accumulators written rarely enough
 // (a reclaim row, an elided move, a bail note) that rebuilding this whole box
@@ -7131,11 +7172,19 @@ pub function lower_dyn_arg(e: ast.Expr, s: LowerState): LowerState {
 
 // lower_dyn_array_lit lowers an array LITERAL every element of which coerces to
 // `dyn Trait` — lower_dyn_arg per element, then the buffer — leaving the array
-// on the stack. The two positions such a literal can appear in share it: the
-// `var xs: dyn Trait[] = […]` binding and an argument at a `dyn Trait[]` param
-// (#6906). Without the second, a primitive/string element flowed in RAW and the
+// on the stack. Every position such a literal can appear in shares it: the
+// `var xs: dyn Trait[] = […]` binding, an argument at a `dyn Trait[]` param
+// (#6906), a `dyn Trait[]` field and a `dyn Trait[]` return. Without the second, a primitive/string element flowed in RAW and the
 // callee's op_dyn_dispatch read a shape pointer out of a scalar — a segfault on
 // the register backends, a validation failure on wasm.
+// dyn_array_literal: `e` is an array literal written where a `dyn Trait[]`
+// is declared, so each element is coerced on its own.
+function dyn_array_literal(declared: string, e: ast.Expr): boolean {
+    if (declared.len() <= 4 || slice_unchecked(declared, 0, 4) != "dyn " || !is_array_type_name(declared)) { return false; }
+    if let ast.ExprArray(_) = e { return true; }
+    return false;
+}
+
 pub function lower_dyn_array_lit(a: ast.ExprArray, s: LowerState): LowerState {
     var das: LowerState = s;
     var i: i32 = 0;
@@ -17541,6 +17590,12 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // isn't self-evidently i64), so lower it via lower_i64.
             if (struct_field_is_i64(s.frame.structs, slit.type_name, di)) {
                 sm = lower_i64(slit.field_values[found], sm);
+            } else if (cfft.len() > 4 && slice_unchecked(cfft, 0, 4) == "dyn " && !is_array_type_name(cfft)) {
+                // A dyn field is a coercion site like a dyn var or argument:
+                // a primitive or string value is boxed so it carries a shape.
+                sm = lower_dyn_arg(slit.field_values[found], sm);
+            } else if (dyn_array_literal(cfft, slit.field_values[found])) {
+                if let ast.ExprArray(fda) = slit.field_values[found] { sm = lower_dyn_array_lit(fda, sm); }
             } else {
                 sm = lower_expr(slit.field_values[found], sm);
             }
@@ -20525,6 +20580,14 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             // caller's dispatch can read), a struct/enum flows unboxed
             // (docs/DYN-TRAITS.md §4.3). The returned value is not a local array,
             // so the exit dec-sweep over array locals leaves it alone.
+            if (dyn_array_literal(s.frame.cur_ret, r.value)) {
+                if let ast.ExprArray(rda) = r.value {
+                    var rdl: LowerState = lower_dyn_array_lit(rda, s);
+                    if (!rdl.ok) { return rdl; }
+                    rdl = emit_dec_sweep_except(rdl, 0 - 1);
+                    return rdl.emit(ir.op_return());
+                }
+            }
             if (s.ret_dyn()) {
                 var rds: LowerState = lower_dyn_arg(r.value, s);
                 if (!rds.ok) { return rds; }
@@ -59628,17 +59691,13 @@ function cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
     return acc;
 }
 
+// Only the statement's own binders: the fold visits nested statements itself,
+// and a loop body's cell declaration is not a non-cell binding of the loop.
 function non_cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
-    match (st) {
-        ast.StmtVar(v) => {
-            if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
-            return append_all(acc, astwalk.collect_bound_stmt(st, no_names()));
-        },
-        ast.StmtFor(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        ast.StmtMatch(_) => { return append_all(acc, astwalk.collect_bound_stmt(st, no_names())); },
-        _ => { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (is_cell_type_name(v.type_name) || (v.type_name.len() == 0 && is_cell_new_call(v.init))) { return acc; }
     }
-    return acc;
+    return astwalk.binders_of(st, acc);
 }
 
 pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for_wasm: boolean): LowerResult {
@@ -71934,7 +71993,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -72549,7 +72608,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
     if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -72736,7 +72795,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -72821,7 +72880,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -72831,7 +72890,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false };
+    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
@@ -72859,7 +72918,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -74296,7 +74355,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnptys = armptys;
     }
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false };
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }

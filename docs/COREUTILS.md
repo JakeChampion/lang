@@ -2988,6 +2988,47 @@ words.
 
 `comm -123` went from 1.48 G instructions to 1.21 G (GNU: 1.30 G).
 
+The same move applies when the list that declares y ends without
+mentioning y again, since y's scope ends there and a loop coming back
+into the list re-runs the declaration first. That also counts when the copy
+sits in an if/else arm of the declaring list and nothing after the `if`
+names y. uniq's `var src = chunk; ... prev = src;` and comm's
+`var line ...; if (...) { cur1 = line; }` are both that shape. A loop
+between the declaration and the copy still keeps the copy, because
+the next pass reads y again. So does a y that a `var v = y` borrows
+without a count: x's next write would free the box v still reads.
+
+| workload | instructions before | after |
+|---|---:|---:|
+| comm -12 over 2M + 1M sorted lines | 1.50 G | 1.42 G |
+| uniq -c over 4M lines | 1.31 G | 1.28 G |
+| uniq -f1 over 4M lines | 2.28 G | 2.25 G |
+
+These moves are native-only (#4451), and the self-host compiler needs
+none. For every shape in `internal/ir/overwrite_move_test.go` it emits
+no retain wherever native now moves the source. Its string copies
+retain only a source credited `STRALIASSRC:`, and its IR optimizer
+cancels the array retain against the next release.
+
+### uniq -f's field skip by scan, 2026-09-23 (GNU coreutils 9.12)
+
+`uniq -f N` found where each line's compared field starts by walking
+blanks and then the field's bytes one at a time, with a separator test
+per byte. Each run is now one `__scan_set` against a table built once:
+every byte that is not a separator, then the separators and the line
+terminator. A scan can pass the line's end, into the next line or to
+the end of a carried line, so its answer is clamped to the line's
+content, and the offsets come out as the byte walk gave them.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| uniq -f1 -c over 4M lines | 336.5 ms | 308.4 ms | 253.9 ms |
+
+Over the first 20 MB of that input: 1.17 G instructions to 1.04 G
+(GNU: 0.92 G). What is left is the per-line loop itself, about 290
+instructions a line, and the retain `var src = chunk` takes. The one
+`prev = src` took is gone with the scope-dead move above.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

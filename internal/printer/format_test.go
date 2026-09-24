@@ -3,6 +3,7 @@ package printer
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
@@ -1499,9 +1500,7 @@ func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	}
 }
 
-// An f-string's literal segments take the same rule. They are a second copy of
-// the escape switch, so the control-byte arm has to be added to both — the
-// self-host formatter's parity gate is what caught this one missing.
+// An f-string's literal segments take the same rule.
 func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	got := formatSrc(t, "function f(s: string): string { return f\"a\\x00b\\x1f{s}\\x7fc\"; }")
 	want := `return f"a\x00b\x1f{s}\x7fc";`
@@ -1510,6 +1509,89 @@ func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
 	}
 	if strings.ContainsRune(got, 0) {
 		t.Fatalf("a raw NUL survived the format:\n%q", got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
+// A byte escape that is not valid UTF-8 stays an escape; written raw it would
+// make the formatted file invalid UTF-8, which the self-host reader refuses.
+// A real multi-byte character is still written as itself.
+func TestFormatKeepsNonUTF8BytesEscaped(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{"function f(): string { return \"\\x07\\xb2\\x01é\\xff\"; }", `return "\x07\xb2\x01é\xff";`},
+		{"function f(s: string): string { return f\"\\xc3{s}\\xa9\"; }", `return f"\xc3{s}\xa9";`},
+	} {
+		got := formatSrc(t, tc.src)
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("want %q in:\n%s", tc.want, got)
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("formatted source is not valid UTF-8:\n%q", got)
+		}
+		if again := formatSrc(t, got); again != got {
+			t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+		}
+	}
+}
+
+// A comment inside a multi-line list stays where it was written (#10143). The
+// list keeps the source's line grouping, so a long annotated table does not turn
+// into one element per line, and a list with no comment inside stays one line.
+func TestFormatKeepsListInteriorComments(t *testing.T) {
+	src := `struct S { a: i32, b: i32 }
+function g(a: i32, b: i32): i32 { return a + b; }
+function f(): i32 {
+  var xs: i32[] = [
+    // group one
+    1, 2,
+    // group two
+    3,  // just three
+  ];
+  var s: S = S {
+    // the a field
+    a: 1,
+    b: 2,  // trailing
+  };
+  var t: S = S { ...s,
+    // override
+    a: 3 };
+  var plain: i32[] = [1,
+    2];
+  return g(
+    xs[0],  // first
+    // second
+    t.a + s.b + plain[1],
+  );
+}
+`
+	want := `  var xs: i32[] = [
+    // group one
+    1, 2,
+    // group two
+    3,  // just three
+  ];
+  var s: S = S {
+    // the a field
+    a: 1,
+    b: 2,  // trailing
+  };
+  var t: S = S {
+    ...s,
+    // override
+    a: 3,
+  };
+  var plain: i32[] = [1, 2];
+  return g(
+    xs[0],  // first
+    // second
+    t.a + s.b + plain[1],
+  );
+`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, want) {
+		t.Fatalf("want\n%s\nin:\n%s", want, got)
 	}
 	if again := formatSrc(t, got); again != got {
 		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)

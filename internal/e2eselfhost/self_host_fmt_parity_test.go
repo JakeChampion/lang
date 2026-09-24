@@ -1370,6 +1370,55 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 }
 `},
 
+	// A comment inside a multi-line array literal, argument list or struct
+	// literal stays where it was written (#10143): the list prints one source
+	// line per output line, keeping elements that shared a line together, with
+	// leading comments above a line and a trailing one after its comma. Before,
+	// both printers collapsed the list and moved every comment to the next
+	// statement.
+	{"list-interior-comments", `struct S { a: i32, b: i32 }
+const NAMES: string[] = [
+  // group one
+  "a", "b",
+  // group two
+  "c",  // just c
+];
+function g(a: i32, b: i32): i32 {
+  return a + b;
+}
+function main(): i32 {
+  var s: S = S {
+    // the a field
+    a: 1,
+    b: 2,  // trailing
+  };
+  var t: S = S {
+    ...s,
+    // override
+    a: 3,
+  };
+  var xs: i32[] = [
+    1, 2,
+    // then
+    3,
+  ];
+  g(
+    xs[0],  // first
+    // second
+    t.a,
+  );
+  return g(
+    s.a,
+    // nested
+    g(
+      1,
+      // innermost
+      2,
+    ),
+  );
+}
+`},
+
 	// A control byte in a string literal re-emits as `\xNN` rather than raw: a
 	// raw NUL makes git read the formatted file as binary, and the escape reads
 	// back the same byte. `\0` takes the hex form on both sides — neither
@@ -1378,6 +1427,15 @@ return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_s
 	{"string-control-bytes", "function main(): i32 {\n" +
 		"var s: string = \"a\\x00b\\x1fc\\x7fd\\0e\";\n" +
 		"var f: string = f\"pre\\x01{s}\";\n" +
+		"return s.len() + f.len();\n" +
+		"}\n"},
+
+	// A byte escape that is not part of valid UTF-8 stays an escape on both
+	// sides; written raw it made the formatted file invalid UTF-8, which the
+	// self-host reader then refused. A real multibyte character stays itself.
+	{"string-non-utf8-bytes", "function main(): i32 {\n" +
+		"var s: string = \"\\x07\\xb2é\\xff\\xed\\xa0\\x80\";\n" +
+		"var f: string = f\"\\xc3{s}\\xa9\";\n" +
 		"return s.len() + f.len();\n" +
 		"}\n"},
 

@@ -17,6 +17,9 @@ import (
 // a single lowering runs, which is what fixpointTables collects.
 var lowerWithFixpoints = []string{
 	"findReturnsNoParamEscape",
+	// A payload one function forwards from another is as fresh as the
+	// other's, so this one is a fixpoint too (#8003).
+	"findReturnsFreshPairPayload",
 	"inferParamEscapes",
 	"inferParamCountedRetain",
 	// Its weaker sibling, over the same walk with a bare `return p`

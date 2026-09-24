@@ -27,6 +27,7 @@
 // the parameter is — the cycle never starts from below.
 import "./ssa";
 import "./ssasem";
+import "./semtypes";
 
 // One row per produced symbol: whether each parameter leaves the frame.
 pub struct Escapes { name: string, bits: boolean[] }
@@ -91,7 +92,7 @@ function all_true(n: i32): boolean[] {
 function builds_out(kind: i32): boolean {
     return kind == ssasem.array_new() || kind == ssasem.tuple_new() || kind == ssasem.record_new()
         || kind == ssasem.variant_new() || kind == ssasem.closure_new() || kind == ssasem.cell_new()
-        || kind == ssasem.cell_set() || kind == ssasem.map_insert();
+        || kind == ssasem.cell_set() || kind == ssasem.map_insert() || kind == ssasem.dyn_box();
 }
 
 // A store whose RECEIVER is operand 0 and whose stored value is every operand
@@ -197,14 +198,19 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[
     return out;
 }
 
-// The values this frame lets out, under the current round's answers.
+// The values this frame lets out, under the current round's answers. A
+// returned view reads the parameter it is anchored to without taking its unit,
+// so its caller keeps the argument alive and the parameter stays lent.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts { out = instruction_carried(out, f, a, ins, rows); }
-        if (b.term.kind_tag == 1 && b.term.value >= 0) { out = carry(out, a, b.term.value); }
+        if (b.term.kind_tag == 1 && b.term.value >= 0) {
+            if (semtypes.holds_view(f.values[b.term.value])) { out = out.with(b.term.value, true); }
+            else { out = carry(out, a, b.term.value); }
+        }
     }
     return out;
 }

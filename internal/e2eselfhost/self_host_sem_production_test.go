@@ -3083,7 +3083,8 @@ function main(): i32 { return signals(); }
 	// The sockets, `sync` and the set-id builtins, which no other row reaches:
 	// a loopback listener on an ephemeral port (a fixed one sits in TIME_WAIT
 	// for the leg that runs next), a connection, an accept, one send and its
-	// receive as a fresh u8[], the three closes, `sync` as a statement, and
+	// receive as a fresh u8[], a connection's readiness token (the fd itself
+	// on native), the three closes, `sync` as a statement, and
 	// the set-id calls asking for root, which a host refuses or grants and
 	// the row counts either way.
 	{name: "os-floor-sockets-and-ids", atLeast: 2, nativeOnly: true, src: `
@@ -3097,6 +3098,7 @@ function sockets(): i32 {
             var a: i32 = tcp_accept(listener);
             if (a >= 0) {
                 if (tcp_send(c, "ping") == 4) { n = n + 1; }
+                if (tcp_pollable(c) == c) { n = n + 1; }
                 var got: u8[] = tcp_recv(a, 16);
                 if (got.len() == 4 && got[0] as i32 == 112) { n = n + 1; }
                 if (tcp_close(a) >= 0) { n = n + 1; }
@@ -3754,6 +3756,170 @@ function main(): i32 {
     return f(4) + mk()(3) + add(0)(20, 8);
 }
 `},
+	// A view result reads the parameter it is anchored to, so the caller keeps
+	// that argument alive while the result lives: a temporary receiver is
+	// released after the last read of the view rather than after the call,
+	// and the anchor passes through `pick`, whose result is `tail`'s. Each
+	// trip allocates the next string where the released one was, so a
+	// dangling view prints it (conformance/cases/alloc_flat_method_identity_return).
+	{name: "a-view-result-is-anchored-to-its-argument", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function (s: string) tail(n: i32): str {
+    if (n <= 0) { return s; }
+    var sLen: i32 = s.len();
+    if (n >= sLen) { return ""; }
+    return slice_unchecked(s, n, sLen);
+}
+function pick(a: string, n: i32): str { return a.tail(n); }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var r: str = ("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string()).tail(i);
+        var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
+        var local: string = "0123456789012345678901234567890ab" + i.to_string();
+        var q: str = pick(local, 2);
+        var junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
+        print(r);
+        print(q);
+        t = t + r.len() + q.len() + junk.len() + junk2.len();
+        i = i + 1;
+    }
+    return t - 194;
+}
+`},
+	// A checked slice wraps its view in a fresh Option, and the Option reads the
+	// source's bytes as the view did: the local stays alive until the last read
+	// of the payload rather than dying at its own last use, the slice. Each trip
+	// allocates the next string where a released one was, so a dangling view
+	// prints it.
+	{name: "a-slice-view-keeps-its-local-alive", atLeast: 1, noLeak: true, src: `
+import "std/i32";
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var s: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+        match (s[0:30]) {
+            Some(v) => {
+                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                print(v);
+                t = t + v.len() + junk.len();
+            },
+            None => { t = t + 1; }
+        }
+        i = i + 1;
+    }
+    return t - 204;
+}
+`},
+	// `?` on the Option a slice built reads a view out of a box nothing else
+	// holds, so it takes the payload with no count to test and releases the box
+	// alone; the Option the function returns is anchored to the parameter its
+	// view reads (conformance/cases/string_slice_option).
+	{name: "an-option-view-result-takes-its-payload", atLeast: 2, noLeak: true, src: `
+import "std/i32";
+function first_three(s: string): Option[str] {
+    var v: str = s[0:3]?;
+    return Some(v);
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        match (first_three("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string())) {
+            Some(v) => {
+                var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ" + i.to_string();
+                print(v);
+                t = t + v.len() + junk.len();
+            },
+            None => { t = t + 100; }
+        }
+        match (first_three("ab")) {
+            Some(v) => { t = t + 100; },
+            None => { t = t + 1; }
+        }
+        i = i + 1;
+    }
+    return t - 126;
+}
+`},
+	// A str loop variable that starts as a view of a parameter and is then
+	// reassigned from an owned string, std/string's drop, merges two sources
+	// at its phi. Each operand is a counted string's own box, so the phi's unit
+	// carries the bytes and anchors nothing (examples/cli/fold.fern).
+	{name: "a-view-of-counted-strings-carries-its-own-bytes", atLeast: 2, noLeak: true, src: `
+import "std/string";
+function fold_line(line: string, width: i32): i32 {
+    var n: i32 = 0;
+    var rest: str = line;
+    while (rest.len() > width) {
+        print(rest.take(width));
+        rest = rest.drop(width);
+        n = n + 1;
+    }
+    print(rest);
+    return n;
+}
+function main(): i32 {
+    return fold_line("the quick brown fox jumps over the lazy dog", 10) - 4;
+}
+`},
+	// A view of either of two parameters has no one argument its caller could
+	// keep alive for it. (A view of a local is the checker's E065.)
+	{name: "a-view-result-of-either-parameter-is-refused", atLeast: 0, refuses: "view result escapes its source", src: `
+import "std/i32";
+function either(a: string, b: string, first: boolean): str {
+    if (first) { return a; }
+    return b;
+}
+function main(): i32 {
+    var v: str = either(7.to_string(), 42.to_string(), false);
+    return v.len() - 2;
+}
+`},
+	// A checked string slice is an Option[str], and binds and returns as one.
+	// The driver's pre-lowering check typed it as its source string and
+	// refused both with E003 and E002, where native accepts them.
+	{name: "a-checked-slice-is-an-option", atLeast: 2, noLeak: true, src: `
+function f(t: string): Option[str] { return t[0:2]; }
+function main(): i32 {
+    var s: string = "abcdef";
+    var o: Option[str] = s[1:3];
+    var n: i32 = 0;
+    match (o) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
+    match (f(s)) { Some(v) => { print(v); n = n + v.len(); }, None => { n = n + 10; } }
+    match (s[5:9]) { Some(v) => { n = n + 10; }, None => { n = n + 1; } }
+    return n - 5;
+}
+`},
+	// A record holding a function value reaches, through the field, the
+	// records the function takes and hands back, so a body that names only
+	// the record still carries their schemas (examples/proposals/pipeline.fern).
+	{name: "a-function-field-names-its-signature-records", atLeast: 3, noLeak: true, src: `
+struct Ctx { value: i32 }
+struct Fault { why: string }
+struct Stage { name: string, run: (Ctx) => Result[Ctx, Fault] }
+function names(a: Stage[]): i32 { return a.len(); }
+function main(): i32 {
+    var xs: Stage[] = [Stage { name: "a", run: (c: Ctx): Result[Ctx, Fault] => Ok(c) }];
+    return names(xs) - 1;
+}
+`},
+	// An unsuffixed literal beside an operand the checker gave no width is
+	// read at that operand's width, on either side: the i64 deadline
+	// arithmetic in std/tcp's request reader was refused as `i64 / i32`.
+	{name: "a-literal-takes-its-operands-width", atLeast: 2, noLeak: true, src: `
+function ms(recv_deadline_ms: i32): i32 {
+    var read_start_ns: i64 = monotonic_ns();
+    var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
+    var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+    var back: i64 = 7000000000 - (monotonic_ns() - read_start_ns);
+    if (back < 6000000000) { return 0 - 1; }
+    return remaining_ms;
+}
+function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
+`},
 	// A method call on a `dyn Trait` receiver: the widening borrows the
 	// record, and the call dispatches on its shape to the implementation
 	// (conformance/cases/dyn_trait_dispatch). Two implementations behind one
@@ -3908,77 +4074,247 @@ function main(): i32 {
     return describe(sq) + describe(tr) - 155;
 }
 `},
-	// A dyn value is lent, never owned: the unit a holder would take could
-	// only be released by dispatching on the shape to find the children. A
-	// rebinding merges two widenings at a phi that would own one, a return
-	// hands one out, and a field holds one; each is refused where it stands.
-	{name: "a-rebound-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never owned", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
+	// A dyn value is counted: a holder owns the box's unit, and its release
+	// dispatches on the box's shape to the concrete's drop. The concretes are
+	// a record and an enum that each own a string, so a release that missed
+	// the children would leak. Each shape builds six values round a loop:
+	// rebound at a phi, returned, held in a field, held in an array, and
+	// passed through a function that hands its parameter back. A skip leg
+	// leaves the dyn's producer or its pass-through to the AST lowering.
+	{name: "a-rebound-dyn-value-is-owned", atLeast: 3, noLeak: true, src: semDynShapes + `
 function main(): i32 {
-    var s: dyn Shape = Square { side: 3 };
+    var t: i32 = 0;
     var i: i32 = 0;
-    while (i < 2) {
-        s = Triangle { base: 4, height: 5 };
+    while (i < 6) {
+        var s: dyn Shape = Square { side: 1, tag: "a" + i.to_string() };
+        if (i % 2 == 1) { s = Tri.Right(i, "b" + i.to_string()); }
+        t = t + s.area();
         i = i + 1;
     }
-    return s.area() - 10;
+    return t - 24;
 }
 `},
-	{name: "a-returned-dyn-value-is-refused", atLeast: 0, refuses: "a dyn value is lent, never retained", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
-function make(n: i32): dyn Shape { return Square { side: n }; }
-
+	{name: "a-returned-dyn-value-is-owned", atLeast: 4, noLeak: true, skip: "make", src: semDynShapes + `
 function main(): i32 {
-    var s: dyn Shape = make(3);
-    return s.area() - 9;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 50;
 }
 `},
-	{name: "a-dyn-field-is-refused", atLeast: 0, refuses: "dyn value is not a field", src: `
-trait Shape {
-    function area(self: Self): i32;
-    function sides(self: Self): i32;
-}
-struct Square { side: i32 }
-impl Shape for Square {
-    function area(self: Self): i32 { return self.side * self.side; }
-    function sides(self: Self): i32 { return 4; }
-}
-struct Triangle { base: i32, height: i32 }
-impl Shape for Triangle {
-    function area(self: Self): i32 { return (self.base * self.height) / 2; }
-    function sides(self: Self): i32 { return 3; }
-}
+	{name: "a-dyn-field-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
 struct Holder { s: dyn Shape }
 
 function main(): i32 {
-    var h: Holder = Holder { s: Square { side: 3 } };
-    return h.s.area() - 9;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var h: Holder = Holder { s: make(i) };
+        t = t + h.s.area();
+        i = i + 1;
+    }
+    return t - 50;
+}
+`},
+	{name: "a-dyn-array-owns-its-elements", atLeast: 4, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var xs: dyn Shape[] = [make(i), make(i + 1)];
+        t = t + xs[0].area() + xs[1].area();
+        i = i + 1;
+    }
+    return t - 136;
+}
+`},
+	{name: "a-dyn-option-payload-is-owned", atLeast: 4, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var o: Option[dyn Shape] = Some(make(i));
+        if let Some(s) = o { t = t + s.area(); }
+        i = i + 1;
+    }
+    return t - 50;
+}
+`},
+	// A superseded entry is released through the map's value column, which
+	// dispatches the same way.
+	{name: "a-dyn-map-value-is-owned", atLeast: 4, noLeak: true, src: `import "core/map";` + semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var m: Map[i32, dyn Shape] = map_new(8);
+    var i: i32 = 0;
+    while (i < 6) { m = m.insert(i % 3, make(i)); i = i + 1; }
+    i = 0;
+    while (i < 3) { if let Some(s) = m.get(i) { t = t + s.area(); } i = i + 1; }
+    return t - 35;
+}
+`},
+	{name: "a-captured-dyn-value-is-owned", atLeast: 5, noLeak: true, src: semDynShapes + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        var f = (): i32 => { return s.area(); };
+        t = t + f() + s.area();
+        i = i + 1;
+    }
+    return t - 100;
+}
+`},
+	{name: "a-dyn-parameter-handed-back-is-retained", atLeast: 4, noLeak: true, skip: "pass", src: semDynShapes + `
+function pass(s: dyn Shape): dyn Shape { return s; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var q: Square = Square { side: 2, tag: "k" + i.to_string() };
+        var s: dyn Shape = pass(q);
+        t = t + s.area() + q.tag.len();
+        i = i + 1;
+    }
+    return t - 48;
+}
+`},
+	// A dyn array local an AST-lowered frame builds and lends to a produced
+	// callee. The AST frame frees the elements at exit only when the callee's
+	// row promises it keeps no reference, which the produced callee now gives
+	// for a borrowed parameter nothing derived from is retained or handed on.
+	{name: "a-dyn-array-lent-to-a-produced-callee", atLeast: 4, noLeak: true, skip: "main", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+
+function main(): i32 {
+    var xs: dyn Show[] = [1, 2];
+    return total(xs) - 6;
+}
+`},
+	// A scalar or string widened to dyn is boxed into a cell whose shape is the
+	// primitive's name; the release dispatches on it and frees a boxed
+	// string. The widenings reach a return, a local and an array element, and
+	// the skip leg leaves the producer to the AST lowering.
+	{name: "a-primitive-dyn-value-is-boxed", atLeast: 5, noLeak: true, skip: "make", src: semPrimitiveShows + `
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var d: dyn Show = make(i);
+        var e: dyn Show = i + 1;
+        t = t + d.show() + e.show();
+        i = i + 1;
+    }
+    return t - 63;
+}
+`},
+	{name: "a-boxed-string-dyn-held-in-an-array", atLeast: 5, noLeak: true, src: semPrimitiveShows + `
+struct Holder { d: dyn Show }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var xs: dyn Show[] = [make(i), make(i + 1)];
+        var h: Holder = Holder { d: "h" + i.to_string() };
+        t = t + xs[0].show() + xs[1].show() + h.d.show();
+        i = i + 1;
+    }
+    return t - 66;
+}
+`},
+	// A 64-bit integer and a float are boxed at their own width, which wasm's
+	// box stores and unboxes by the primitive's name (#10098): an i64 above
+	// 2^32 keeps its high half, and an f64 its fraction. The AST lowering
+	// refuses the module.
+	{name: "a-wide-scalar-dyn-value-is-boxed-at-its-width", atLeast: 5, noLeak: true, want: "0|", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i64 { function show(self: Self): i32 { return (self / 1000000000) as i32; } }
+impl Show for f64 { function show(self: Self): i32 { return (self * 4.0) as i32; } }
+impl Show for boolean { function show(self: Self): i32 { if (self) { return 1; } return 0; } }
+function pick(i: i32): dyn Show {
+    if (i % 3 == 0) { return 5000000000 as i64; }
+    if (i % 3 == 1) { return 2.5; }
+    return i > 3;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var d: dyn Show = pick(i);
+        t = t + d.show();
+        i = i + 1;
+    }
+    return t - 31;
+}
+`},
+	// A literal mixing a scalar and a string, at each position that declares a
+	// `dyn Show[]`: a binding, a field, a return and an argument. The checker
+	// once refused all four with the first-element E034 (#10097); the skip
+	// leg leaves the returning function to the AST lowering.
+	{name: "a-mixed-dyn-array-literal-at-each-destination", atLeast: 5, noLeak: true, skip: "mk", src: `
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+struct H { xs: dyn Show[] }
+function total(xs: dyn Show[]): i32 { var t: i32 = 0; for x in xs { t = t + x.show(); } return t; }
+function mk(): dyn Show[] { return [3, "abc"]; }
+
+function main(): i32 {
+    var xs: dyn Show[] = [1, "ab"];
+    var h: H = H { xs: [2, "x"] };
+    return total(xs) + total(h.xs) + total(mk()) + total([5, "q"]) - 29;
+}
+`},
+	// A generic implementation's instances are not enumerated, so a release
+	// could not find their children: owning a dyn value of a type one
+	// implements is refused, and borrowing one is not.
+	{name: "a-dyn-value-over-a-generic-implementation-is-refused", atLeast: 0,
+		refuses: "a dyn value over a generic implementation is lent, never owned", src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct W[T] { v: T, tag: string }
+impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
+function make(i: i32): dyn Shape { return W { v: "v" + i.to_string(), tag: "w" + i.to_string() }; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = make(i);
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 12;
+}
+`},
+	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, noLeak: true, src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct W[T] { v: T, tag: string }
+impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        var s: dyn Shape = W { v: "v" + i.to_string(), tag: "w" + i.to_string() };
+        t = t + s.area();
+        i = i + 1;
+    }
+    return t - 12;
 }
 `},
 	// A function VALUE whose type nests a function type: a parameter that is
@@ -4157,6 +4493,31 @@ function main(): i32 {
     return t % 256;
 }
 `},
+	// An unsuffixed literal in an array literal takes a concrete sibling's
+	// type, as native's settleNumeric does after joining the element type, and
+	// a float literal with no sibling to take a width from is an f64 inside a
+	// container as it is alone. The self-host checker rejected the mixed
+	// literals with E034, and the typed path refused every binding here.
+	{name: "an-array-literal-settles-to-its-concrete-sibling", atLeast: 4, want: "59|", noLeak: true, src: `
+function half(x: f32): f32 { return x / 2.0; }
+function big(): i64 { return 5000000000; }
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var xs = id([4, half(1.0), 0.5]);
+    var ys = [0.25, half(0.5), 3];
+    var zs = [1, big(), 2];
+    var ws = [1.5, 2.25];
+    var tu = (1.5, 2);
+    var s: f32 = 0.0;
+    for x in xs { s = s + x; }
+    for y in ys { s = s + y; }
+    var t: i64 = 0;
+    for z in zs { t = t + z; }
+    var w: f64 = 0.0;
+    for v in ws { w = w + v; }
+    return (s * 4.0) as i32 + (t / 1000000000) as i32 + (w * 4.0) as i32 + (tu.0 * 2.0) as i32 + tu.1;
+}
+`},
 	{name: "a-function-returning-a-function-returns-a-box", atLeast: 15, want: "53|", astAnswers: "53|", noLeak: true, src: `
 enum Box { W((i32) => i32), No }
 function id[T](x: T): T { return x; }
@@ -4176,6 +4537,45 @@ function main(): i32 {
 }
 `},
 }
+
+// semDynShapes is a trait with a record and an enum implementation, each
+// owning a string, and a function widening either into the dyn type.
+const semDynShapes = `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct Square { side: i32, tag: string }
+impl Shape for Square {
+    function area(self: Self): i32 { return self.side * self.side + self.tag.len(); }
+}
+enum Tri { Right(i32, string), Flat }
+impl Shape for Tri {
+    function area(self: Self): i32 {
+        match (self) { Right(b, t) => { return b + t.len(); }, Flat => { return 0; } }
+    }
+}
+function make(n: i32): dyn Shape {
+    if (n % 2 == 0) { return Square { side: n, tag: "sq" + n.to_string() }; }
+    return Tri.Right(n, "tri" + n.to_string());
+}
+`
+
+// semPrimitiveShows implements a trait for i32, string and a record owning a
+// string, and a function widening each of the three into the dyn type.
+const semPrimitiveShows = `
+import "std/i32";
+
+trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self * 2; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+struct Sq { side: i32, tag: string }
+impl Show for Sq { function show(self: Self): i32 { return self.side + self.tag.len(); } }
+function make(i: i32): dyn Show {
+    if (i % 3 == 0) { return i; }
+    if (i % 3 == 1) { return "s" + i.to_string(); }
+    return Sq { side: i, tag: "t" + i.to_string() };
+}
+`
 
 // semHeldElementSource sorts by length with the insertion sort's body: the
 // element read into `v` is live across the inner loop's `.with`.

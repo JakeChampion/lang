@@ -4203,7 +4203,7 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: pars
                 while (dk < dargc) {
                     if (dk == 0 && dprim) {
                         // arg0 is the receiver: UNBOX the value from box+8.
-                        parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    i32.load\n");
+                        parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.const 8\n    i32.add\n    " + dyn_prim_valtype(dbn) + ".load\n");
                     } else {
                         parts = parts.append("    local.get " + util.i32_to_string(dbase + dk) + "\n");
                     }
@@ -4799,7 +4799,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 147) {  // dyn_dispatch
         parts = parts.append(emit_dyn_dispatch_wat(o, structs, funcs));
     } else if (o.kind_tag == 146) {  // dyn_box
-        parts = emit_wasm_dyn_box(arrtmp, eltmp, o, parts);
+        parts = emit_wasm_dyn_box(arrtmp, eltmp, f64tmp, i64tmp, o, parts);
     } else if (o.kind_tag == 148) {  // dyn_downcast
         parts = emit_wasm_dyn_downcast(arrtmp, eltmp, o, parts);
     } else if (o.kind_tag == 6) {  // const_func
@@ -14334,22 +14334,35 @@ function emit_wasm_call_direct(parts: string[]): string[] {
     return parts;
 }
 
-function emit_wasm_dyn_box(arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
+function emit_wasm_dyn_box(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, parts: string[]): string[] {
     // Heap-box a primitive/string value coerced into a `dyn Trait` slot
     // (docs/DYN-TRAITS.md §4.2.3). Cell = [shape@0, value@8] via
     // $__fern_str_box (rc-headered, like struct_make), 16 bytes; shape =
     // the primitive type id (prim_type_id, never colliding with a struct
-    // id). The value (one i32 word — an i32 OR a string box pointer) is on
-    // the operand stack: stash it in $eltmp, alloc into $arrtmp, store
-    // id@0 + value@8, push the cell pointer. op_dyn_dispatch reads @0 and
-    // unboxes @8.
-    parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
+    // id). The value (an i32, a string box pointer, or an i64 / f64 at its
+    // own width, `dyn_prim_valtype`) is on the operand stack: stash it,
+    // alloc into $arrtmp, store id@0 + value@8, push the cell pointer.
+    // op_dyn_dispatch reads @0 and unboxes @8.
+    var vt: string = dyn_prim_valtype(o.str);
+    var tmp: i32 = eltmp;
+    if (vt == "i64") { tmp = i64tmp; }
+    if (vt == "f64") { tmp = f64tmp; }
+    parts = parts.append("    local.set " + util.i32_to_string(tmp) + "\n");
     parts = parts.append("    i32.const 16\n    call $__fern_str_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + tid_get(o.str) + "    i32.store\n");
-    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
+    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(tmp) + "\n    " + vt + ".store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n");
 
     return parts;
+}
+
+// The wasm value type a primitive `dyn` box holds at @8: a 64-bit integer or
+// a float at its own width, everything else (an i32, a boolean, a string box
+// pointer) as one i32.
+function dyn_prim_valtype(name: string): string {
+    if (name == "i64" || name == "u64") { return "i64"; }
+    if (name == "f64" || name == "float") { return "f64"; }
+    return "i32";
 }
 
 function emit_wasm_dyn_downcast(arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {

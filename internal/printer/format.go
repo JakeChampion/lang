@@ -36,6 +36,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
 )
@@ -246,6 +247,36 @@ func (f *formatter) innerCommentPending(declLine, last int) bool {
 		}
 	}
 	return false
+}
+
+// writeListLines prints the n elements of a bracketed list one SOURCE line per
+// output line: elements that shared a line in the source share one here, each
+// line's leading comments go above it and its trailing comment after its comma.
+// It is the form a list takes when a comment sits inside it (#10143), since the
+// one-line rendering has nowhere to put the comment and would strand it for the
+// next statement to pick up. The caller has written the opener.
+func (f *formatter) writeListLines(n int, line func(int) int, write func(int), closer string) {
+	f.b.WriteByte('\n')
+	f.depth++
+	for i := 0; i < n; {
+		ln := line(i)
+		f.drainLeading(ln, f.depth)
+		f.indent(f.depth)
+		j := i
+		for ; j < n && (j == i || line(j) == ln); j++ {
+			if j > i {
+				f.b.WriteString(", ")
+			}
+			write(j)
+		}
+		f.b.WriteByte(',')
+		f.emitTrailing(ln)
+		f.b.WriteByte('\n')
+		i = j
+	}
+	f.depth--
+	f.indent(f.depth)
+	f.b.WriteString(closer)
 }
 
 // drainAll flushes every remaining comment at the supplied indent.
@@ -1549,6 +1580,43 @@ func binaryPrec(op string) int {
 	return precLowest
 }
 
+// writeStringBody re-escapes a string or f-string literal segment. A control
+// byte stays an escape so the source stays text (a raw NUL makes git treat the
+// file as binary), and so does a byte that is not part of valid UTF-8: written
+// raw it would make the file itself invalid UTF-8.
+func (f *formatter) writeStringBody(lit string, fstring bool) {
+	for i := 0; i < len(lit); i++ {
+		c := lit[i]
+		switch {
+		case c == '"':
+			f.b.WriteString(`\"`)
+		case c == '\\':
+			f.b.WriteString(`\\`)
+		case c == '\n':
+			f.b.WriteString(`\n`)
+		case c == '\t':
+			f.b.WriteString(`\t`)
+		case c == '\r':
+			f.b.WriteString(`\r`)
+		case fstring && c == '{':
+			f.b.WriteString(`{{`)
+		case fstring && c == '}':
+			f.b.WriteString(`}}`)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&f.b, `\x%02x`, c)
+		case c >= utf8.RuneSelf:
+			if r, n := utf8.DecodeRuneInString(lit[i:]); r != utf8.RuneError || n > 1 {
+				f.b.WriteString(lit[i : i+n])
+				i += n - 1
+			} else {
+				fmt.Fprintf(&f.b, `\x%02x`, c)
+			}
+		default:
+			f.b.WriteByte(c)
+		}
+	}
+}
+
 // formatExpr emits e, wrapping in parens when the outer context
 // (parentPrec) binds tighter than e's outermost operator.
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
@@ -1662,29 +1730,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString(x.Raw)
 	case *ast.StringLit:
 		f.b.WriteByte('"')
-		for i := 0; i < len(x.Value); i++ {
-			c := x.Value[i]
-			switch c {
-			case '"':
-				f.b.WriteString(`\"`)
-			case '\\':
-				f.b.WriteString(`\\`)
-			case '\n':
-				f.b.WriteString(`\n`)
-			case '\t':
-				f.b.WriteString(`\t`)
-			case '\r':
-				f.b.WriteString(`\r`)
-			default:
-				// A control byte stays an escape so the source stays
-				// text: a raw NUL makes git treat the file as binary.
-				if c < 0x20 || c == 0x7f {
-					fmt.Fprintf(&f.b, `\x%02x`, c)
-				} else {
-					f.b.WriteByte(c)
-				}
-			}
-		}
+		f.writeStringBody(x.Value, false)
 		f.b.WriteByte('"')
 	case *ast.FString:
 		// Reconstruct the f"..." surface syntax. Literal segments
@@ -1702,34 +1748,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				f.b.WriteByte('}')
 				continue
 			}
-			for i := 0; i < len(part.Lit); i++ {
-				c := part.Lit[i]
-				switch c {
-				case '"':
-					f.b.WriteString(`\"`)
-				case '\\':
-					f.b.WriteString(`\\`)
-				case '\n':
-					f.b.WriteString(`\n`)
-				case '\t':
-					f.b.WriteString(`\t`)
-				case '\r':
-					f.b.WriteString(`\r`)
-				case '{':
-					f.b.WriteString(`{{`)
-				case '}':
-					f.b.WriteString(`}}`)
-				default:
-					// Same control-byte rule as a plain string
-					// literal above: a raw NUL here makes the file
-					// binary just as readily.
-					if c < 0x20 || c == 0x7f {
-						fmt.Fprintf(&f.b, `\x%02x`, c)
-					} else {
-						f.b.WriteByte(c)
-					}
-				}
-			}
+			f.writeStringBody(part.Lit, true)
 		}
 		f.b.WriteByte('"')
 	case *ast.Ident:
@@ -1827,6 +1846,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Callee, precPrimary)
 		f.writeCallTypeArgs(x)
 		f.b.WriteByte('(')
+		if n := len(x.Args); n > 0 && f.innerCommentPending(x.P.Line, x.Args[n-1].Pos().Line) {
+			f.writeListLines(n, func(i int) int { return x.Args[i].Pos().Line },
+				func(i int) { f.writeCallArg(x, i, x.Args[i]) }, ")")
+			break
+		}
 		for i, a := range x.Args {
 			if i > 0 {
 				f.b.WriteString(", ")
@@ -1852,6 +1876,11 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(']')
 	case *ast.ArrayLit:
 		f.b.WriteByte('[')
+		if n := len(x.Elems); n > 0 && f.innerCommentPending(x.P.Line, x.Elems[n-1].Pos().Line) {
+			f.writeListLines(n, func(i int) int { return x.Elems[i].Pos().Line },
+				func(i int) { f.formatExpr(x.Elems[i], precLowest) }, "]")
+			break
+		}
 		for i, el := range x.Elems {
 			if i > 0 {
 				f.b.WriteString(", ")
@@ -1923,6 +1952,32 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteString(x.TypeName)
 		if x.TypeArgsWritten {
 			f.writeTypeArgs(x.TypeArgs)
+		}
+		// The spread base, when there is one, is the list's first element.
+		nb := 0
+		if x.Base != nil {
+			nb = 1
+		}
+		elemLine := func(i int) int {
+			if i < nb {
+				return x.Base.Pos().Line
+			}
+			return x.Fields[i-nb].NamePos.Line
+		}
+		if n := nb + len(x.Fields); n > 0 && f.innerCommentPending(x.P.Line, elemLine(n-1)) {
+			f.b.WriteString(" {")
+			f.writeListLines(n, elemLine, func(i int) {
+				if i < nb {
+					f.b.WriteString("...")
+					f.formatExpr(x.Base, precLowest)
+					return
+				}
+				fld := x.Fields[i-nb]
+				f.b.WriteString(fld.Name)
+				f.b.WriteString(": ")
+				f.formatExpr(fld.Value, precLowest)
+			}, "}")
+			break
 		}
 		f.b.WriteString(" { ")
 		// Struct-update literal: leading `...base`, then overrides.
