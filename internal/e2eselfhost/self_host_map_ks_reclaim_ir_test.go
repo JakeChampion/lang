@@ -140,7 +140,7 @@ function main(): i32 {
 }`, "mapks-aliased-key-excluded", 0)
 
 	// OVERWRITE with a recurring FRESH key (the word-count / histogram
-	// m.set(computed_key, n) pattern): each re-insert of the same key overwrites
+	// m = m.insert(computed_key, n) pattern): each re-insert of the same key overwrites
 	// the slot and discards the incoming fresh key temp, which __fern_map_set now
 	// frees (kconsume) rather than leaking. Differential against a literal-keyed
 	// map doing the same overwrites (a .rodata literal key is guarded by
@@ -149,13 +149,13 @@ function main(): i32 {
 	run(t, `function build_sk_over(n: i32): i32 {
     var m: Map[string, i32] = Map { "wo" + "rd": 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+    while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
     return 1;
 }
 function build_ik_over(n: i32): i32 {
     var m: Map[string, i32] = Map { "k": 0 };
     var j: i32 = 0;
-    while (j < 8) { m.set("k", j); j = j + 1; }
+    while (j < 8) { m = m.insert("k", j); j = j + 1; }
     return 1;
 }
 function main(): i32 {
@@ -183,7 +183,7 @@ function main(): i32 {
     while (i < 500) {
         var m: Map[string, i32] = Map { "wo" + "rd": 0 };
         var j: i32 = 0;
-        while (j < 8) { m.set("wo" + "rd", j); j = j + 1; }
+        while (j < 8) { m = m.insert("wo" + "rd", j); j = j + 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }
         if (m.len() != 1) { bad = 1; }
         i = i + 1;
@@ -203,7 +203,7 @@ function main(): i32 {
         var key: string = "wo" + "rd";
         var m: Map[string, i32] = Map { "wo" + "rd": 0 };
         var j: i32 = 0;
-        while (j < 8) { m.set(key, j); j = j + 1; }
+        while (j < 8) { m = m.insert(key, j); j = j + 1; }
         if (key.len() != 4) { bad = 1; }
         if (m.get_or("word", 0) != 7) { bad = 1; }
         i = i + 1;

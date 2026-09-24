@@ -377,7 +377,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// the payload-binding cascade) lets `m.get(k)` recover Option[V] and
 		// dispatch as a map op; without the value type `m.get` bails. Builds
 		// {k: JNumber("42")}, gets it back, reads len = 2.
-		{"map-enum-payload-get", "function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.set(\"k\", JNumber(\"42\")); var o: JsonValue = JObject(m); match (jget(o, \"k\")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }"},
+		{"map-enum-payload-get", "function jget(obj: JsonValue, key: string): Option[JsonValue] { match (obj) { JObject(m) => { match (m.get(key)) { Some(v) => { return Some(v); }, None => { return None; } } }, _ => { return None; } } return None; } function main(): i32 { var m: Map[string, JsonValue] = map_new(8); m = m.insert(\"k\", JNumber(\"42\")); var o: JsonValue = JObject(m); match (jget(o, \"k\")) { Some(v) => { match (v) { JNumber(s) => { return s.len(); }, _ => { return 0; } } }, None => { return 99; } } return 0; }"},
 		// A Map[K, V]-RECEIVER method — the shape core/map's contains_value /
 		// get_or_insert / merge use. A Map receiver is now map-tracked (not
 		// mis-marked as an enum), so built-in map ops on `self` (m.has / m.get_or
@@ -385,10 +385,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// (m.goi / m.total here, or core/map's m.merge) dispatches to the
 		// "Map.<method>" user-method label. goi("a")=10 + goi("z",5)=5 + total
 		// (len 2 *100)=200 = 215.
-		{"map-recv-method", "function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 { if (m.has(k)) { return m.get_or(k, 0); } return fallback; } function (m: Map[string, i32]) total(): i32 { return m.len() * 100; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.set(\"a\", 10); m = m.set(\"b\", 20); return m.goi(\"a\", 0) + m.goi(\"z\", 5) + m.total(); }"},
+		{"map-recv-method", "function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 { if (m.has(k)) { return m.get_or(k, 0); } return fallback; } function (m: Map[string, i32]) total(): i32 { return m.len() * 100; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 10); m = m.insert(\"b\", 20); return m.goi(\"a\", 0) + m.goi(\"z\", 5) + m.total(); }"},
 		// A Map-receiver method iterating m.values() with a generic `==` — the
 		// core/map contains_value shape. found(20)->+1, not-found(99)->no change.
-		{"map-recv-contains", "function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { if (v == target) { return true; } } return false; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.set(\"a\", 10); m = m.set(\"b\", 20); var r: i32 = 0; if (m.cv(20)) { r = r + 1; } if (m.cv(99)) { r = r + 100; } return r; }"},
+		{"map-recv-contains", "function (m: Map[string, i32]) cv(target: i32): boolean { for v in m.values() { if (v == target) { return true; } } return false; } function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 10); m = m.insert(\"b\", 20); var r: i32 = 0; if (m.cv(20)) { r = r + 1; } if (m.cv(99)) { r = r + 100; } return r; }"},
 		// An ARRAY payload in an Option (`Some(xs)` where xs: string[]) — the
 		// `m.get(k)` shape on a Map[K, V[]] (std/url's query-param parse). The
 		// array is a leak-only pointer borrowed from the Option box: bound is_arr
@@ -1158,13 +1158,13 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"map-forkv-strkey", `function main(): i32 { var m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); var s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`},
 		// `.set` is the PUBLIC map mutator (the existing cases above use the
 		// internal `.insert`); it lowers through the IR path identically (#2926).
-		{"map-set-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.set(1, 100); m = m.set(2, 200); m = m.set(3, 300); return m.len(); }`},
-		{"map-set-i32-getor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 42); m = m.set(9, 13); return m.get_or(7, 0) + m.get_or(9, 0); }`},
-		{"map-set-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("a", 1); m = m.set("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
-		{"map-set-overwrite", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.set(7, 40); m = m.set(7, 42); return m.get_or(7, 0) + m.len(); }`},
-		{"map-set-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).set("x", 5).set("y", 7); return m.get_or("y", 0) + m.len(); }`},
-		{"map-set-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
-		{"map-set-has", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.set("k", 9); var r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`},
+		{"map-insert-i32-len", `function main(): i32 { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 100); m = m.insert(2, 200); m = m.insert(3, 300); return m.len(); }`},
+		{"map-insert-i32-getor", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 42); m = m.insert(9, 13); return m.get_or(7, 0) + m.get_or(9, 0); }`},
+		{"map-insert-str-getor", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("a", 1); m = m.insert("bb", 2); return m.get_or("bb", 0) + m.len(); }`},
+		{"map-insert-overwrite", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(7, 40); m = m.insert(7, 42); return m.get_or(7, 0) + m.len(); }`},
+		{"map-insert-chained", `function main(): i32 { var m: Map[string, i32] = map_new(8).insert("x", 5).insert("y", 7); return m.get_or("y", 0) + m.len(); }`},
+		{"map-insert-keyword-literal", `function main(): i32 { var m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`},
+		{"map-insert-has", `function main(): i32 { var m: Map[string, i32] = map_new(4); m = m.insert("k", 9); var r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`},
 		// m.without(k) -> (Map, existed). The destructured map re-marks so later
 		// ops on it work; both AST and IR share __fern_map_delete (#2926).
 		{"map-without-len", `function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); var (m2, e) = m.without(1); return m2.len(); }`},
@@ -1997,7 +1997,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// Option[() => i32], Some(λ.7); f() + base = 7 + 100 = 107.
 		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some((): i32 => { return 7; }); } function main(): i32 { var base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
 		// A closure stored as a MAP VALUE, retrieved and called (slice #3445
-		// map-values): `m.set(1, <lambda>)` wraps the lambda into an env box (the
+		// map-values): `m = m.insert(1, <lambda>)` wraps the lambda into an env box (the
 		// lift method-callee arm — `.set` lowers to the builtin op_map_set whose
 		// value param is the generic `V`, the wrap trigger), the map stores the box
 		// pointer, `m.get(1)` returns it, and the `Some(f) => f()` match-binding
@@ -2006,8 +2006,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		// variant carries an env `[funcval, n]`; the no-capture a `[$wrapN]` box.
 		// (Converting a USER method's declared fn-param to the env-box ABI is a
 		// separate deferred slice — it destabilises the byte-identical fixpoint.)
-		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.set(1, (): i32 => { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
-		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.set(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
+		{"map-value-closure", `import "core/map"; function main(): i32 { var m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return 42; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 42},
+		{"map-value-closure-captured", `import "core/map"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }`, 17},
 		// A match-EXPRESSION arm that binds a NON-SCALAR payload (struct / enum /
 		// string) and passes it as an ARGUMENT to a free-function call (#3498). The
 		// statement-form match already lowered this; the value-position gate now

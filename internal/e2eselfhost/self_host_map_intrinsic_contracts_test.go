@@ -47,9 +47,9 @@ func TestSelfHostMapIntrinsicContracts(t *testing.T) {
 	writeEntry(t, entry, `import "core/map";
 function main(): i32 {
     var m: Map[string, string] = Map { "a": "x" };
-    m = m.set("b", "y");
+    m = m.insert("b", "y");
     var n: Map[i32, i32[]] = Map { 1: [2, 3] };
-    n = n.set(4, [5]);
+    n = n.insert(4, [5]);
     return m.len() + n.len();
 }
 `)

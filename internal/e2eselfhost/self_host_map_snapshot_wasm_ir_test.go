@@ -34,15 +34,15 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
 	}{
 		// SNAPSHOT SEMANTICS (matches native + the register backends after
 		// #4353): keys()/values() taken before later inserts/overwrites show
-		// the pre-set state, including across a rehash-triggering growth.
+		// the pre-insert state, including across a rehash-triggering growth.
 		{"map-keys-snapshot-semantics-wasm", `function main(): i32 {
     var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
     var ks = m.keys();
     var vs: i32[] = m.values();
-    m.set(9, 90);
-    m.set(10, 100);
-    m.set(11, 110);
-    m.set(1, 11);
+    m = m.insert(9, 90);
+    m = m.insert(10, 100);
+    m = m.insert(11, 110);
+    m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
     var sv: i32 = 0;
@@ -62,7 +62,7 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
     var total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
-        m.set(k + 100, v);
+        m = m.insert(k + 100, v);
     }
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
@@ -106,7 +106,7 @@ function main(): i32 {
 		{"map-i32-grow-churn-wasm", `function build_grow(n: i32): i32 {
     var m: Map[i32, i32] = Map { 1: 2 };
     var j: i32 = 0;
-    while (j < 12) { m.set(j + 10, j * 2); j = j + 1; }
+    while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }

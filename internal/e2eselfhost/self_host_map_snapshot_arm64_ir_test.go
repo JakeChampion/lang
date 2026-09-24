@@ -37,10 +37,10 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
     var m: Map[i32, i32] = Map { 1: 10, 2: 20 };
     var ks = m.keys();
     var vs: i32[] = m.values();
-    m.set(9, 90);
-    m.set(10, 100);
-    m.set(11, 110);
-    m.set(1, 11);
+    m = m.insert(9, 90);
+    m = m.insert(10, 100);
+    m = m.insert(11, 110);
+    m = m.insert(1, 11);
     if (ks.len() != 2) { return 10; }
     if (vs.len() != 2) { return 11; }
     var sv: i32 = 0;
@@ -59,7 +59,7 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
 	run(t, `function build(n: i32): i32 {
     var m: Map[i32, i32] = Map { 1: 2 };
     var j: i32 = 0;
-    while (j < 12) { m.set(j + 10, j * 2); j = j + 1; }
+    while (j < 12) { m = m.insert(j + 10, j * 2); j = j + 1; }
     if (m.has(15)) { return m.len(); }
     return 0;
 }
@@ -82,7 +82,7 @@ function main(): i32 {
 	run(t, `function build(n: i32): i32 {
     var m: Map[i32, i32] = Map { 1: 2 };
     var j: i32 = 0;
-    while (j < 8) { m.set(j + 10, j); j = j + 1; }
+    while (j < 8) { m = m.insert(j + 10, j); j = j + 1; }
     var ks = m.keys();
     var vs = m.values();
     return ks.len() + vs.len();
@@ -108,7 +108,7 @@ function main(): i32 {
     var total: i32 = 0;
     for (k, v) in m {
         total = total + k + v;
-        m.set(k + 100, v);
+        m = m.insert(k + 100, v);
     }
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
