@@ -3096,6 +3096,28 @@ function try_able_union(s: Scope, name: string): boolean {
   return us.name.len() != 0 && us.is_try;
 }
 
+// try_success_type is what `E?` yields: the success payload of a `?`-able
+// enum. A `@try` enum's success variant is its first (docs/TRY.md). A `?` in a
+// function that does not return the same enum is E042's, and like native it
+// yields no type rather than a second diagnostic.
+function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeUnion(tu) = ot {
+    var same_ret: boolean = false;
+    if let typeinfo.TypeUnion(ru) = s.ret_type { same_ret = ru.name == tu.name; }
+    if (!same_ret) {
+      return t_unknown("`?` outside a function returning " + tu.name);
+    }
+    if ((tu.name == "Option" || tu.name == "Result") && tu.args.len() > 0) {
+      return tu.args[0];
+    }
+    var us: UnionSig = s.lookup_union(tu.name);
+    if (us.is_try && us.variants.len() == 2) {
+      return variant_pattern_payload_type(s, tu.name + "." + us.variants[0], ot, 0);
+    }
+  }
+  return t_unknown("`?` operand is not a resolved `?`-able enum");
+}
+
 // is_variant_of: is the named struct one of the variants of the
 // named union? Used by type_assignable to allow a struct value
 // to flow into a union-typed slot.
@@ -4555,6 +4577,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       // conservatively accepted downstream.
       if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
         return type_from_name(slice_unchecked(u.op, 3, u.op.len()));
+      }
+      if (u.op == "try_") {
+        return try_success_type(s, ot);
       }
       return t_unknown("unknown unary op:" + u.op);
     },
