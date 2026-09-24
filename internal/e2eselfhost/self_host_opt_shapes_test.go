@@ -152,7 +152,7 @@ function main(): i32 { return grow([1, 2, 3]); }
 		want: map[string][]string{"x86-64-linux": {`rcdecd\d+:\n\s+subl \$1, -8\(`}, "arm64-linux": {`rcdecd\d+:\n\s+sub w5, w5, #1`}}},
 	// An append to a receiver with a free slot that it solely owns stores in
 	// place; only the grow or a shared receiver calls the helper.
-	{name: "push_inline", fn: "fill", exit: 3, typedOnly: true, src: `
+	{name: "push_inline", fn: "fill", exit: 3, src: `
 @noinline function fill(n: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
