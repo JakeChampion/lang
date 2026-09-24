@@ -366,22 +366,29 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return nil, false
+	id, isIdent := call.Callee.(*ast.Ident)
+	var rt ast.Type
+	indirect := false
+	if isIdent {
+		_, indirect = b.locals[id.Name]
+		rt = b.exprType(e)
+	} else if ft := b.indirectCalleeFuncType(call.Callee); ft != nil {
+		indirect, rt = true, ft.Result
 	}
-	if _, isLocal := b.locals[id.Name]; isLocal {
+	if indirect {
 		// Address-taken functions are never pair-form, so every indirect
 		// target has the user-function return shape; the fact below says
 		// each one hands back a box the caller owns.
 		if !b.indirectCallsReturnOwnBox() {
 			return nil, false
 		}
-		t := b.exprType(e)
-		if t == nil || !ast.IsPointerType(t) {
+		if rt == nil || !ast.IsPointerType(rt) {
 			return nil, false
 		}
-		return t, true
+		return rt, true
+	}
+	if !isIdent {
+		return nil, false
 	}
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
