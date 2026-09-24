@@ -1873,6 +1873,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"map-ann-empty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map {}; return 0; }\n", nil},
 		{"map-ann-nonempty-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[string,i32] = Map { \"a\": 1 }; return 0; }\n", nil},
 		{"map-ann-i32keys-ok", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32,i32] = Map { 1: 2 }; return 0; }\n", nil},
+		// An unannotated literal takes its key and value types from its entries.
+		{"maplit-bool-keys-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { true: 5, false: 9 }; return m.get_or(true, 0); }\n", nil},
+		{"maplit-value-type-from-entries", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: \"a\" }; var n: i32 = m.get_or(1, \"z\"); return n; }\n", []string{"E003"}},
 		// E022: `if let` / `let … else` carry dedicated pattern-binding
 		// diagnostics. The self-host parser desugars both to a StmtMatch
 		// tagged with `origin` ("if_let" / "let_else"); the checker reads

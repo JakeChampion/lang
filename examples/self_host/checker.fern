@@ -2230,6 +2230,19 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
 }
 
+// mlit_entries_settle reports whether every entry of a desugared map literal
+// settles to, or is assignable to, the destination's key and value types.
+function mlit_entries_settle(e: ast.Expr, want: typeinfo.TypeMap, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if (fa.field != "insert" || c.args.len() != 2) { return false; }
+      if (!settles_or_assignable(c.args[0], want.key, s) || !settles_or_assignable(c.args[1], want.value, s)) { return false; }
+      return mlit_is_base(fa.obj) || mlit_entries_settle(fa.obj, want, s);
+    }
+  }
+  return false;
+}
+
 // mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
 // it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
 // base. The literal's own key check (the first insert, above) reports E045 for
@@ -2237,6 +2250,13 @@ function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
 // fire — native skips its MapLit destinations for the same reason. A bare
 // `map_new(n)` is NOT one: it is an ordinary call with no key to infer from,
 // which is exactly the case the destination check exists for.
+// literal_insert reports whether `c` is one of the `.insert(k, v)` calls a
+// map literal desugars to. The parser builds those without a source position;
+// a written call carries its own.
+function literal_insert(c: ast.ExprCall): boolean {
+  return c.line == 0 && c.col == 0 && mlit_is_desugared(c);
+}
+
 function mlit_is_desugared(e: ast.Expr): boolean {
   match (e) {
     ast.ExprCall(c) => {
@@ -3939,7 +3959,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // has no inference for them. The surrounding
   // type-annotation (e.g. `var m: Map[K, V] = …`)
   // pins them via assignability.
-  if (!is_method && name == "map_new") {
+  if (!is_method && (name == "map_new" || name == "map_new_i32")) {
     return t_map(t_unknown("map_new key"), t_unknown("map_new value"));
   }
   // cell_new(v) builtin — the Cell[T] constructor
@@ -4017,6 +4037,16 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (name == "insert") {
           if (c.args.len() != 2) {
             return t_unknown("map.set: 2 args");
+          }
+          // A `Map { k: v }` literal desugars to a `map_new(n).insert(k, v)`
+          // chain with no columns; its entries name them, as native types the
+          // literal. A written `map_new(n).insert(…)` keeps them unresolved.
+          if (literal_insert(c) && (is_unknown(mt.key) || is_unknown(mt.value))) {
+            var ik: typeinfo.Type = mt.key;
+            var iv: typeinfo.Type = mt.value;
+            if (is_unknown(ik)) { ik = check_expr(c.args[0], s); }
+            if (is_unknown(iv)) { iv = check_expr(c.args[1], s); }
+            return t_map(ik, iv);
           }
           return recv_ty;
         }
@@ -9173,6 +9203,9 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 // still rejecting a genuinely wrong element.
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   match (want) {
+    typeinfo.TypeMap(wm) => {
+      return mlit_is_desugared(e) && mlit_entries_settle(e, wm, s);
+    },
     typeinfo.TypeFloat(_) => {
       return unsettled_int_literal(e) || is_poly_float(check_expr(e, s));
     },
