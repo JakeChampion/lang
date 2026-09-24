@@ -1821,6 +1821,14 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// + s; … }` stranded base's whole buffer, one per local, with no
 			// dependence on how often it was called.
 			mark(x.Target)
+			// The parameter as the VALUE stored into a local, `out = x`: a
+			// counted store. The Assign lowering retains an ident source
+			// unless it is a move, and a frame-bound alias is never moved,
+			// so the local holds a reference of its own, which the exit
+			// sweep releases (#10117).
+			if _, ok := x.Target.(*ast.Ident); ok {
+				mark(x.Value)
+			}
 		case *ast.Return:
 			// `return p` on a CONSUMED-THREADED param hands out the frame's
 			// OWN reference: the entry retain is the count move-on-return
