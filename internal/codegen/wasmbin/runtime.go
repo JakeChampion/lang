@@ -248,6 +248,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 				// The dedicated rc ops (#4402 opt 2) keep the
 				// helper name in Str, so the same scan covers them.
 				switch callDirectAlias(op.Str) {
+				case "__fern_str_rc_dec":
+					needs.add("__fern_rc_dec")
+					needs.add("__fern_str_rc_dec")
 				case "__fern_str_dec":
 					// Two-word string-local reclamation (emitDec
 					// string branch). Frees the heap buffer at the
@@ -1227,6 +1230,7 @@ var unconditionalHelperCalls = map[string][]string{
 	},
 	"__bytes_to_lang_string": {"__fern_alloc"},
 	"__fern_str_dec":         {"__fern_box_free"},
+	"__fern_str_rc_dec":      {"__fern_rc_dec"},
 	"__fern_box_free":        {"__free"},
 	"__fern_alloc_box":       {"__fern_alloc"},
 	"__fern_alloc_rc1":       {"__fern_alloc"},
@@ -2315,6 +2319,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStrDecBody,
+	},
+	"__fern_str_rc_dec": {
+		// (data, len) → data. Drops one reference without freeing: inline
+		// strings are no-ops, heap strings dec. See buildStrRcDecBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrRcDecBody,
 	},
 	"__fern_str_inc": {
 		// (data, len) → (data, len). Two-word string retain: inline
@@ -3958,6 +3969,25 @@ func buildStrDecBody(helperIdxs map[string]uint32) []byte {
 // static-sentinel short-circuits, so literals are no-ops). The (data,
 // len) pair is returned so the value stays on the operand stack for the
 // alias store that follows the inc.
+// buildStrRcDecBody — (data, len) → data. The non-freeing release the exit
+// sweep gives a string it could not prove it owns: an inline string (len's top
+// bit) returns at once; a heap one goes to __fern_rc_dec, whose guards cover
+// null, low addresses and literals.
+func buildStrRcDecBody(helperIdxs map[string]uint32) []byte {
+	rcDec := helperIdxs["__fern_rc_dec"]
+	var body []byte
+	body = inst.InstLocalGet(body, 1) // len
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstCall(body, rcDec)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
 func buildStrIncBody(helperIdxs map[string]uint32) []byte {
 	rcInc := helperIdxs["__fern_rc_inc"]
 	var body []byte
