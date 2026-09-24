@@ -24,10 +24,9 @@ const mainSafeCancel = "cancel-in-progress: ${{ github.ref != 'refs/heads/main' 
 //
 // Adding a lane that pushes, deploys, publishes or comments? It belongs here.
 var actionLanes = map[string]string{
-	"auto-rebase-prs.yml":    "rebases and pushes every open PR branch",
-	"cancel-on-conflict.yml": "cancels conflicting PRs' CI and comments on them",
-	"pages.yml":              "builds and deploys the docs site",
-	"reap-stale-runs.yml":    "cancels the queued runs nobody is waiting on",
+	"auto-rebase-prs.yml": "rebases and pushes every open PR branch",
+	"pages.yml":           "builds and deploys the docs site",
+	"reap-stale-runs.yml": "cancels the queued runs nobody is waiting on",
 }
 
 // No main lane cancels its own superseded runs.
