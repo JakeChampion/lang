@@ -3608,6 +3608,16 @@ function t_func_after_env(sig: FuncSig): typeinfo.Type {
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
 // body is self-contained on c + s.
+// builtin_ctor_type types `Some(x)` as `Option[type of x]`, so a match on the
+// value types its payload. Like native, only a payload that settles every type
+// argument does: `Ok(x)` leaves the error type open, and stays `Result`.
+function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope): typeinfo.Type {
+  if (name == "Some" && c.args.len() == 1) {
+    return t_union_g(en, [check_expr(c.args[0], s)]);
+  }
+  return t_union(en);
+}
+
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // A desugared value if/match-expression is a 0-arg call of a
   // 0-param lambda whose single-statement body is a StmtIf / StmtMatch
@@ -4074,7 +4084,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     ctor_enum = mx_builtin_enum_of(name);
   }
   if (ctor_enum.len() > 0) {
-    return t_union(ctor_enum);
+    return builtin_ctor_type(ctor_enum, name, c, s);
   }
   if (!s.has_sig(name)) {
     return undeclared_call_type(name, s, c.args.len());

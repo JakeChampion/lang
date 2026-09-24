@@ -395,7 +395,7 @@ imported module's variants (`Full` → `g3__Full`) and rewrites bare references 
 them, so only the ENTRY's variants stay bare. Its checker therefore needs one
 rule rather than the closure: an import cannot name the entry, so a function an
 import declares (`FuncDecl.module` non-empty) reads a variant index without the
-entry's enums (`UnionTable.lib_head`). Without it a program's
+entry's enums and union aliases (`UnionTable.lib_head`). Without it a program's
 `enum Reply { Ok, … }` captured `return Ok(v)` inside `std/json` (#10120).
 
 That dedupe also closed an older bug: an explicit `import "std/foo";` of a
