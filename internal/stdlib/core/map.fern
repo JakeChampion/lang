@@ -1443,13 +1443,12 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
 // handle: pick a layout that fits the widest pointer and pad
 // on narrow targets.
 //
-// Phase 1e-runtime: 8-byte rc header at `[it - 8]` holds the
-// static-sentinel 0x80000000. Alloc bumps from 16 to 24 (8
-// sentinel + 16 iter payload); the returned `it` = base + 8.
-// All `__mapiter_*` accesses are offsets from `it`, unchanged.
+// An 8-byte rc header at `[it - 8]` holds a live count, so the frame
+// that owns the cursor frees it at its last use; the returned `it` is
+// base + 8, and every `__mapiter_*` access is an offset from `it`.
 pub function __map_iter_impl(m: usize): usize {
     var base: usize = __alloc(24);
-    __store_i32(base, 0 - 2147483647 - 1);  // 0x80000000 sentinel
+    __store_i32(base, 1);
     var it: usize = base + 8;
     __store_ptr(it,     __load_ptr(m));     // data ptr
     __store_i32(it + 8, 0);                  // cursor

@@ -6598,6 +6598,11 @@ func (f paramVerdictFacts) verdict(fnName string, t ast.Type, i int) paramVerdic
 	if !ownedByDefaultTypeIn(f.info, t) {
 		return paramVerdictNotOwnedType
 	}
+	// A builtin that moves no count on any argument never releases one, so
+	// a caller retain for it would never be paid back.
+	if rcInertBuiltins[fnName] {
+		return paramVerdictBorrowed
+	}
 	if f.trmcConsumeSafe[fnName] {
 		return paramVerdictTrmcConsume
 	}
