@@ -15345,7 +15345,9 @@ function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum
 // cursor reads its map's columns through a raw pointer, so returning one over
 // a map the function owns hands the caller freed storage (#9920). A cursor
 // over a parameter, or a field chain off one, stays anchored to the caller's
-// map. `var it = m.iter(); return it;` is followed through the local.
+// map. A returned name is followed through every value the body binds or
+// assigns to it, so neither a shadowing declaration nor a reassignment on
+// another path hides the one that dangles.
 struct CursorScan { params: string[], fname: string, var_names: string[], var_inits: ast.Expr[], diags: util.Diag[] }
 
 function e065_cursor_diags(efn: parser.FuncDecl): util.Diag[] {
@@ -15355,27 +15357,35 @@ function e065_cursor_diags(efn: parser.FuncDecl): util.Diag[] {
   for p in efn.params { params = params.append(p.name); }
   var no_inits: ast.Expr[] = [];
   var sc: CursorScan = CursorScan { params: params, fname: efn.name, var_names: [], var_inits: no_inits, diags: none };
-  for st in efn.body { sc = astwalk.fold_stmt_spine(st, sc, cursor_scan_stmt); }
+  for st in efn.body { sc = astwalk.fold_stmt_spine(st, sc, cursor_source_stmt); }
+  for st in efn.body { sc = astwalk.fold_stmt_spine(st, sc, cursor_return_stmt); }
   return sc.diags;
 }
 
-function cursor_scan_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
+function cursor_source_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
   match (st) {
     ast.StmtVar(v) => {
       return CursorScan { ...sc, var_names: sc.var_names.append(v.name), var_inits: sc.var_inits.append(v.init) };
     },
-    ast.StmtReturn(r) => {
-      if (cursor_over_local(r.value, sc, 0)) {
-        return CursorScan { ...sc, diags: sc.diags.append(dg_at("E065", "returning a `MapIter` over a function-local map: the map is reclaimed when \"" + sc.fname + "\" returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", r.line, r.col)) };
-      }
+    ast.StmtAssign(a) => {
+      return CursorScan { ...sc, var_names: sc.var_names.append(a.target), var_inits: sc.var_inits.append(a.value) };
     },
     _ => {}
   }
   return sc;
 }
 
-// cursor_over_local reports whether e is `m.iter()`, or a local bound to one,
-// whose map is not caller-owned storage.
+function cursor_return_stmt(st: ast.Stmt, own sc: CursorScan): CursorScan {
+  if let ast.StmtReturn(r) = st {
+    if (cursor_over_local(r.value, sc, 0)) {
+      return CursorScan { ...sc, diags: sc.diags.append(dg_at("E065", "returning a `MapIter` over a function-local map: the map is reclaimed when \"" + sc.fname + "\" returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", r.line, r.col)) };
+    }
+  }
+  return sc;
+}
+
+// cursor_over_local reports whether e is `m.iter()`, or a local any of whose
+// sources is one, whose map is not caller-owned storage.
 function cursor_over_local(e: ast.Expr, sc: CursorScan, depth: i32): boolean {
   if (depth > 8) { return false; }
   match (e) {
@@ -15386,8 +15396,11 @@ function cursor_over_local(e: ast.Expr, sc: CursorScan, depth: i32): boolean {
       }
     },
     ast.ExprIdent(id) => {
-      var i: i32 = util.index_of_str(sc.var_names, id.name);
-      if (i >= 0) { return cursor_over_local(sc.var_inits[i], sc, depth + 1); }
+      var i: i32 = 0;
+      while (i < sc.var_names.len()) {
+        if (sc.var_names[i] == id.name && cursor_over_local(sc.var_inits[i], sc, depth + 1)) { return true; }
+        i = i + 1;
+      }
     },
     ast.ExprArray(al) => { return any_cursor_over_local(al.elements, sc, depth + 1); },
     ast.ExprTuple(tl) => { return any_cursor_over_local(tl.elements, sc, depth + 1); },

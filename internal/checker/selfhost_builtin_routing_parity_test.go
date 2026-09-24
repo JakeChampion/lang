@@ -24,6 +24,12 @@ import (
 // does not count, since an op nothing emits is the window_size shape. The
 // check is string lookups over committed sources, so it runs on every host,
 // including the ones where the e2e self-host legs skip.
+//
+// Comments are stripped first, so a note naming a builtin routes nothing. A
+// mention in code still counts even when it only guards an arity or fills a
+// shape table: deleting a builtin's emit arm while such a mention survives
+// passes this gate. It catches a builtin accounted for nowhere, and the e2e
+// self-host legs catch the rest.
 func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 	prog, err := parser.Parse(`function main(): i32 { return 0; }`)
 	if err != nil {
@@ -39,7 +45,7 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
-		for _, m := range regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`).FindAllStringSubmatch(string(b), -1) {
+		for _, m := range regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`).FindAllStringSubmatch(stripLineComments(string(b)), -1) {
 			routed[m[1]] = true
 		}
 	}
@@ -93,3 +99,34 @@ var nativeOnlyBuiltins = map[string]string{
 }
 
 const ffiNotLowered = "the C-ABI trampolines are not lowered on any self-host backend (#4375)"
+
+// stripLineComments drops each `//` comment from Fern source, leaving string
+// and character literals, which may contain `//` or a quote, intact.
+func stripLineComments(src string) string {
+	var out strings.Builder
+	for _, line := range strings.Split(src, "\n") {
+		inStr := false
+		cut := len(line)
+		for i := 0; i < len(line); i++ {
+			switch {
+			case inStr && line[i] == '\\':
+				i++
+			case !inStr && line[i] == '\'':
+				// A character literal, which may itself be `'"'`.
+				for i++; i < len(line) && line[i] != '\''; i++ {
+					if line[i] == '\\' {
+						i++
+					}
+				}
+			case line[i] == '"':
+				inStr = !inStr
+			case !inStr && line[i] == '/' && i+1 < len(line) && line[i+1] == '/':
+				cut = i
+				i = len(line)
+			}
+		}
+		out.WriteString(line[:cut])
+		out.WriteByte('\n')
+	}
+	return out.String()
+}

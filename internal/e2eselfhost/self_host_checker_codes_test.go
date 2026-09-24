@@ -2059,6 +2059,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-cursor-local-map", "import \"core/map\";\nfunction f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); m = m.insert(1, 2); return m.iter(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-cursor-through-local", "import \"core/map\";\nfunction f(): MapIter[i32, i32] { var m: Map[i32, i32] = map_new(4); var it = m.iter(); return it; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-cursor-in-array-literal", "import \"core/map\";\nfunction f(): MapIter[i32, i32][] { var m: Map[i32, i32] = map_new(4); return [m.iter()]; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-cursor-shadowed", "import \"core/map\";\nfunction f(m: Map[i32, i32]): MapIter[i32, i32] { var mm: Map[i32, i32] = map_new(4); var it: MapIter[i32, i32] = mm.iter(); if (m.len() > 0) { var it2: MapIter[i32, i32] = m.iter(); var it: MapIter[i32, i32] = it2; } return it; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-cursor-reassigned", "import \"core/map\";\nfunction f(m: Map[i32, i32]): MapIter[i32, i32] { var mm: Map[i32, i32] = map_new(4); var it: MapIter[i32, i32] = m.iter(); if (m.len() > 0) { it = mm.iter(); } return it; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-cursor-param-ok", "import \"core/map\";\nfunction f(m: Map[i32, i32]): MapIter[i32, i32] { return m.iter(); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-cursor-param-field-ok", "import \"core/map\";\nstruct B { m: Map[i32, i32] }\nfunction f(b: B): MapIter[i32, i32] { var it = b.m.iter(); return it; }\nfunction main(): i32 { return 0; }\n", nil},
 		// An owned `T[]` return MOVES its storage to the caller, so a
