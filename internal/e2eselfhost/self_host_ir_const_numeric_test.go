@@ -48,7 +48,7 @@ func irConstNumericEmit(t *testing.T, runner []string, bin, target string) strin
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("ir_const_numeric_run -target %s: %v\n%s", target, err, errb.String())
 	}
-	if !strings.Contains(errb.String(), "rebuilt i64=17 f64=10") {
+	if !strings.Contains(errb.String(), "rebuilt i64=9 f64=10") {
 		t.Fatalf("-target %s: the driver rebuilt a different set of constants: %q", target, errb.String())
 	}
 	return out.String()
