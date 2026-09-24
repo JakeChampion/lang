@@ -103,7 +103,7 @@ function help_text(): string {
 // `stop` is the set a line's scan stops at: the spelled bytes and the
 // newline. `expand` is every byte's output, -E's `$` included, as the
 // eight-byte records `buf_push_expanded` reads.
-struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], stop: u8[], expand: u8[] }
+struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], stop: u8[], expand: u8[], tails: string }
 
 function is_plain(f: Fmt): boolean {
   return !f.number && !f.nonblank && !f.squeeze && !f.ends && !f.tabs && !f.np;
@@ -184,15 +184,14 @@ function spell_table(f: Fmt): Fmt {
 // and whether any input failed.
 //
 // `num` is the last line number written. Its `%6d\t` field goes into
-// the builder as three pushes — `head`, the number's hundreds with the
+// the builder as two pushes: `head`, the number's hundreds with the
 // field's padding, which changes once in a hundred lines and is
-// formatted then; the last two digits as a pair from a table; and the
-// tab — so a line number costs no formatting and no byte-at-a-time
-// push. `head_of` is the hundreds `head` was formatted for.
+// formatted then, and the last two digits with the tab, a slice of
+// `Fmt.tails`. `base` is the hundred `head` was formatted for.
 // `pending_cr` is a carriage return held back from the end of a read under
 // -E without -v: GNU shows `\r\n` as `^M$`, so the CR's spelling waits on
 // the next byte, in the next read or the next file.
-struct State { w: io_buffered.BufWriter, num: u64, head: string, head_of: u64, at_start: boolean, prev_blank: boolean, pending_cr: boolean, ok: boolean }
+struct State { w: io_buffered.BufWriter, num: u64, head: string, base: u64, at_start: boolean, prev_blank: boolean, pending_cr: boolean, ok: boolean }
 
 // `read_size()` — bytes per read(2). GNU reads 128 KiB; measured
 // against `cat` of a 62 MiB file, that block is what the pipe and
@@ -215,7 +214,28 @@ function splice_floor(): i64 {
 }
 
 function state_new(): State {
-  return State { w: gnu.out_with(read_size()), num: 0 as u64, head: "", head_of: 0 as u64, at_start: true, prev_blank: false, pending_cr: false, ok: true };
+  return State { w: gnu.out_with(read_size()), num: 0 as u64, head: "    ", base: 0 as u64, at_start: true, prev_blank: false, pending_cr: false, ok: true };
+}
+
+// `number_tails()` — the last two digits of a line number and the tab
+// after them, three bytes a number: `00\t` to `99\t` for a number past
+// 100, then the same hundred for the first, whose tens are a space
+// below 10.
+function number_tails(): string {
+  var out: u8[] = __alloc_u8(600);
+  var i: i32 = 0;
+  while (i < 200) {
+    var n: i32 = i % 100;
+    var tens: i32 = 48 + n / 10;
+    if (i >= 100 && n < 10) {
+      tens = 32;
+    }
+    out = out.with(i * 3, tens as u8);
+    out = out.with(i * 3 + 1, (48 + n % 10) as u8);
+    out = out.with(i * 3 + 2, 9 as u8);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
 }
 
 // `head_for(q)` — the hundreds `q` of a line number, padded on the left
@@ -258,7 +278,12 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   var h: usize = w.handle();
   var num: u64 = s.num;
   var head: string = s.head;
-  var head_of: u64 = s.head_of;
+  var base: u64 = s.base;
+  var tails: string = f.tails;
+  var toff: i32 = 0;
+  if (base == 0 as u64) {
+    toff = 300;
+  }
   var at_start: boolean = s.at_start;
   var prev_blank: boolean = s.prev_blank;
   var pos: i32 = 0;
@@ -293,26 +318,14 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
       }
       if (nonblank && !blank || !nonblank && number) {
         num = num + 1 as u64;
-        if (num < 100 as u64) {
-          buf_push(h, "    ");
-          if (num < 10 as u64) {
-            buf_push_byte(h, 32);
-            buf_push_byte(h, 48 + num as i32);
-          } else {
-            var k: i32 = num as i32 * 2;
-            buf_push_range(h, io_buffered.digit_pairs(), k, k + 2);
-          }
-        } else {
-          var q: u64 = num / (100 as u64);
-          if (q != head_of) {
-            head = head_for(q);
-            head_of = q;
-          }
-          buf_push_range(h, head, 0, head.len());
-          var r: i32 = (num - q * (100 as u64)) as i32 * 2;
-          buf_push_range(h, io_buffered.digit_pairs(), r, r + 2);
+        if (num - base >= 100 as u64) {
+          base = num / (100 as u64) * (100 as u64);
+          head = head_for(base / (100 as u64));
+          toff = 0;
         }
-        buf_push_byte(h, 9);
+        var t: i32 = toff + (num - base) as i32 * 3;
+        buf_push_range(h, head, 0, head.len());
+        buf_push_range(h, tails, t, t + 3);
       }
       at_start = false;
       prev_blank = blank;
@@ -351,7 +364,7 @@ function format_chunk(st: State, chunk: string, f: Fmt): State {
   }
   // One settle per chunk: the builder grows as the chunk's lines are
   // pushed, by at most a few times the read, and is written once.
-  return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, head_of: head_of, at_start: at_start, prev_blank: prev_blank, pending_cr: pending_cr };
+  return State { ...s, w: gnu.check(gnu.settle(w)), num: num, head: head, base: base, at_start: at_start, prev_blank: prev_blank, pending_cr: pending_cr };
 }
 
 // `spell_chunk(st, chunk, f)` — -v / -T / -E with nothing that needs the
@@ -534,7 +547,7 @@ pub function main(): i32 {
   opts = opts.append(gnu.flag("t", "", opt_t()));
   opts = opts.append(gnu.flag("u", "", opt_u()));
 
-  var f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], stop: [], expand: [] };
+  var f: Fmt = Fmt { number: false, nonblank: false, squeeze: false, ends: false, tabs: false, np: false, spell: [], stop: [], expand: [], tails: "" };
   var g: gnu.Getopt = gnu.getopt_new(argv, opts, "cat", help_text(), 1);
   while (true) {
     var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
@@ -568,6 +581,9 @@ pub function main(): i32 {
   }
 
   f = spell_table(f);
+  if (f.number || f.nonblank) {
+    f = Fmt { ...f, tails: number_tails() };
+  }
 
   var out_stat: FileStat = FileStat { is_file: false, is_dir: false, size: 0 as i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0 as i64, rdev: 0 as i64, ino: 0 as i64, blksize: 0 as i64, blocks: 0 as i64, atime: 0 as i64, atime_nsec: 0 as i64, mtime: 0 as i64, mtime_nsec: 0 as i64, ctime: 0 as i64, ctime_nsec: 0 as i64 };
   match (stdout().stat()) {
