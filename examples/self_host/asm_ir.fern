@@ -5968,21 +5968,50 @@ function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     return ssa_store(reg_of, ins.result, p, s);
 }
 
+// ssa_helper_call calls a runtime helper through its register entry.
+function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs(ins.str, s);
+    var hsrc: i32[] = [];
+    var hdst: i32[] = [];
+    var ha: i32 = 0;
+    while (ha < ins.args.len()) { hsrc = hsrc.append(reg_of[ins.args[ha]]); hdst = hdst.append(ha); ha = ha + 1; }
+    s = ssa_parallel_moves(hsrc, hdst, s);
+    s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + ".r\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// ssa_rc_dec renders the array release inline where the count survives it:
+// below the heap floor (every null), a static box's negative count, and a
+// count above one, which is decremented in memory. A count of one (the free)
+// or zero (the underflow the helper reports) calls __fern_arr_dec. Either way
+// the pointer is the result, as the helper leaves it in %rax.
+function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = helper_call_needs(ins.str, s);
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    var p: string = ssa_src(reg_of, ins.args[0], "%r11");
+    var id: string = util.i32_to_string(ins.result);
+    var dec: string = lp + "rcdecd" + id;
+    var kept: string = lp + "rcdeck" + id;
+    var done: string = lp + "rcdece" + id;
+    var rc: string = "-8(" + p + ")";
+    s = s.write("    cmpq $0x10000, " + p + "\n    jb " + kept + "\n");
+    s = s.write("    cmpl $1, " + rc + "\n    jg " + dec + "\n");
+    s = s.write("    cmpl $0, " + rc + "\n    js " + kept + "\n");
+    s = ssa_helper_call(ins, reg_of, s);
+    s = s.write("    jmp " + done + "\n" + dec + ":\n    subl $1, " + rc + "\n" + kept + ":\n");
+    s = ssa_store(reg_of, ins.result, p, s);
+    return s.write(done + ":\n");
+}
+
 // ssa_call emits one call as the stack machine leaves it: the arguments pushed
 // in IR order for a runtime helper and reversed for a user function (arg0 on
 // top), the callee, the caller-side pop, and %rax stored.
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
+    if (ins.str == "__fern_rc_dec" && ins.args.len() == 1 && !rc_free_debug_on()) { return ssa_rc_dec(ins, reg_of, lp, s); }
     if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
-        s = helper_call_needs(ins.str, s);
-        var hsrc: i32[] = [];
-        var hdst: i32[] = [];
-        var ha: i32 = 0;
-        while (ha < ins.args.len()) { hsrc = hsrc.append(reg_of[ins.args[ha]]); hdst = hdst.append(ha); ha = ha + 1; }
-        s = ssa_parallel_moves(hsrc, hdst, s);
-        s = s.write("    call " + ircore.ir_helper_symbol(ins.str) + ".r\n");
-        return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+        return ssa_helper_call(ins, reg_of, s);
     }
     if (ssa_reg_call(ins, s)) {
         // Only this call's own arguments can be in the pool's registers here:

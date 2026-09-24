@@ -140,6 +140,16 @@ function main(): i32 { return pick3(true, "b").len(); }
 function main(): i32 { return pick(true); }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
+	// An array release whose count survives it is decremented in place; only
+	// the free calls __fern_arr_dec.
+	{name: "release_inline", fn: "grow", exit: 7, typedOnly: true, src: `
+@noinline function grow(xs: i32[]): i32 {
+    var ys: i32[] = xs.append(4);
+    return ys.len() + xs.len();
+}
+function main(): i32 { return grow([1, 2, 3]); }
+`,
+		want: map[string][]string{"x86-64-linux": {`rcdecd\d+:\n\s+subl \$1, -8\(`}, "arm64-linux": {`rcdecd\d+:\n\s+sub w5, w5, #1`}}},
 	{name: "unique_test_fused", fn: "bump", exit: 11, typedOnly: true, src: `
 struct Pt { x: i32, y: i32, tag: string }
 @noinline function bump(p: Pt): Pt { return Pt { ...p, x: p.x + 1 }; }
