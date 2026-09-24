@@ -1009,6 +1009,12 @@ declared type, a name resolution — give it a `fern.fern` leg too
 on disk). Expect that leg to reach checker refusals the emit driver skips
 straight past; those are findings, not noise (#7961 is one).
 
+Reclaim is one of those front-end decisions. Several rc credits rest on the
+checker's type annotations, which the emit drivers never produce, so a shape
+can balance through `fern.fern` and leak through `asm_ir_run.fern` (#8734,
+#8756). A census that is meant to describe production gets a `fern.fern` leg;
+`buildSelfHostCLI` in `self_host_cli_harness_test.go` builds it.
+
 ### A structural IR test cannot see a well-formed op stream naming the wrong slot
 
 A pass that rewrites `Func.Ops` is tempting to gate by reading the result back:

@@ -18,7 +18,7 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm host scratch census")
 	}
-	compile := selfHostCLIWasmCompiler(t)
+	cli := buildSelfHostCLI(t)
 
 	cases := []struct {
 		name, src string
@@ -55,7 +55,7 @@ func TestSelfHostWasmHostScratchFreed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			watFile := compile(t, mustWrite(t, t.TempDir(), "main.fern", tc.src), tc.name)
+			watFile := cli.emit(t, mustWrite(t, t.TempDir(), "main.fern", tc.src), "wasm32-wasi", "FERN_LEAKCHECK=1")
 			for _, leg := range []struct {
 				label string
 				env   []string

@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -58,35 +57,14 @@ const bigintChainExit = 50
 var seqLongDoubleArgs = []string{"1e29", "1e26", "2.2e29"}
 
 func TestSelfHostBigintChainReclaimX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
+	cli := buildSelfHostCLI(t)
 	seqSrc, err := filepath.Abs("../../coreutils/seq.fern")
 	if err != nil {
 		t.Fatal(err)
 	}
-	compile := func(t *testing.T, src, name string) string {
-		t.Helper()
-		asmPath := filepath.Join(t.TempDir(), name+".s")
-		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", src, stdlibRoot, "-o", asmPath)
-		cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
-		if out, cerr := cmd.CombinedOutput(); cerr != nil {
-			t.Fatalf("compile %s: %v\n%s", name, cerr, out)
-		}
-		binPath := filepath.Join(filepath.Dir(asmPath), name)
-		if out, lerr := exec.Command(gcc, "-nostdlib", "-static", "-o", binPath, asmPath).CombinedOutput(); lerr != nil {
-			t.Fatalf("link %s: %v\n%s", name, lerr, out)
-		}
-		return binPath
-	}
 	run := func(t *testing.T, bin string, args ...string) (stdout, stderr string, exit int) {
 		t.Helper()
-		cmd := runX86_64Bin(runner, bin, args...)
+		cmd := runX86_64Bin(cli.runner, bin, args...)
 		var ob, eb bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &ob, &eb
 		_ = cmd.Run()
@@ -95,7 +73,7 @@ func TestSelfHostBigintChainReclaimX86_64(t *testing.T) {
 
 	t.Run("ld-add", func(t *testing.T) {
 		src := mustWrite(t, t.TempDir(), "main.fern", bigintChainSrc)
-		_, stderr, exit := run(t, compile(t, src, "ldadd"))
+		_, stderr, exit := run(t, cli.x86Binary(t, src, "FERN_LEAKCHECK=1"))
 		if exit != bigintChainExit {
 			t.Fatalf("exit = %d, want %d (99 = rc underflow)\n%s", exit, bigintChainExit, stderr)
 		}
@@ -106,7 +84,7 @@ func TestSelfHostBigintChainReclaimX86_64(t *testing.T) {
 	})
 
 	t.Run("seq-long-double", func(t *testing.T) {
-		stdout, stderr, exit := run(t, compile(t, seqSrc, "seq"), seqLongDoubleArgs...)
+		stdout, stderr, exit := run(t, cli.x86Binary(t, seqSrc, "FERN_LEAKCHECK=1"), seqLongDoubleArgs...)
 		if exit != 0 {
 			t.Fatalf("exit = %d\n%s", exit, stderr)
 		}
@@ -131,7 +109,7 @@ func TestSelfHostBigintChainReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm bigint chain reclaim")
 	}
-	compile := selfHostCLIWasmCompiler(t)
+	cli := buildSelfHostCLI(t)
 	seqSrc, err := filepath.Abs("../../coreutils/seq.fern")
 	if err != nil {
 		t.Fatal(err)
@@ -149,42 +127,14 @@ func TestSelfHostBigintChainReclaimWasm(t *testing.T) {
 			if src == "" {
 				src = mustWrite(t, t.TempDir(), "main.fern", bigintChainSrc)
 			}
-			wat := compile(t, src, tc.name)
-			rcmd := exec.Command("wasmtime", append([]string{"run", wat}, tc.args...)...)
-			var eb bytes.Buffer
-			rcmd.Stderr = &eb
-			_ = rcmd.Run()
-			if code := rcmd.ProcessState.ExitCode(); code != tc.want {
-				t.Fatalf("exit = %d, want %d (99 = rc underflow)\n%s", code, tc.want, eb.String())
+			stderr, code := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1"), tc.args...)
+			if code != tc.want {
+				t.Fatalf("exit = %d, want %d (99 = rc underflow)\n%s", code, tc.want, stderr)
 			}
-			allocs, frees, live := leakSummaryOf(t, tc.name, eb.String())
+			allocs, frees, live := leakSummaryOf(t, tc.name, stderr)
 			if allocs == 0 || allocs != frees || live != 0 {
 				t.Fatalf("allocs=%d frees=%d live_bytes=%d, want balanced", allocs, frees, live)
 			}
 		})
-	}
-}
-
-// selfHostCLIWasmCompiler builds the self-host CLI and returns a function that
-// compiles one entry file to WAT under FERN_LEAKCHECK=1, returning its path.
-func selfHostCLIWasmCompiler(t *testing.T) func(t *testing.T, src, name string) string {
-	t.Helper()
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return func(t *testing.T, src, name string) string {
-		t.Helper()
-		wat := filepath.Join(t.TempDir(), name+".wat")
-		cmd := runX86_64Bin(runner, fernBin, "-target", "wasm32-wasi", "-emit", "asm", src, stdlibRoot, "-o", wat)
-		cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
-		if out, cerr := cmd.CombinedOutput(); cerr != nil {
-			t.Fatalf("compile %s: %v\n%s", name, cerr, out)
-		}
-		return wat
 	}
 }

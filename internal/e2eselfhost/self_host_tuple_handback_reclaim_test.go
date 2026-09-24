@@ -1,9 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -454,30 +452,11 @@ func TestSelfHostTupleHandbackReclaimSanitizeX86_64(t *testing.T) {
 // production does: through the self-host CLI with the checker's annotations.
 // Each case gets the census at both round counts and one sanitizer run.
 func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	build := func(t *testing.T, src, name, mode string) string {
+	build := func(t *testing.T, src, mode string) string {
 		t.Helper()
-		proj := t.TempDir()
-		mainPath := mustWrite(t, proj, "main.fern", src)
-		asmPath := filepath.Join(proj, "out.s")
-		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
-		cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", mode)
-		if out, cerr := cmd.CombinedOutput(); cerr != nil {
-			t.Fatalf("compile %s: %v\n%s", name, cerr, out)
-		}
-		bin := filepath.Join(proj, name)
-		if out, lerr := exec.Command(gcc, "-nostdlib", "-static", "-o", bin, asmPath).CombinedOutput(); lerr != nil {
-			t.Fatalf("link %s: %v\n%s", name, lerr, out)
-		}
-		return bin
+		return cli.x86Binary(t, mustWrite(t, t.TempDir(), "main.fern", src), "FERN_STRICT_IR=1", mode)
 	}
 	cases := append(append(tupleHandbackCases[:0:0], tupleHandbackCases...), tupleHandbackCheckedCases...)
 	for _, tc := range cases {
@@ -487,7 +466,7 @@ func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
 			for k, rounds := range tupleHandbackRounds {
 				src := tupleHandbackSrc(tc.run, rounds)
 				want = interpExit(t, interpBin, src)
-				stderr, code := runCaptureStderrExit(t, runner, build(t, src, "thbcli_"+strconv.Itoa(rounds), "FERN_LEAKCHECK=1"))
+				stderr, code := runCaptureStderrExit(t, cli.runner, build(t, src, "FERN_LEAKCHECK=1"))
 				if code != want {
 					t.Fatalf("%s at %d rounds exited %d, want %d (interp oracle)", tc.name, rounds, code, want)
 				}
@@ -497,7 +476,7 @@ func TestSelfHostTupleHandbackReclaimCLIX86_64(t *testing.T) {
 
 			// want is still the last round count's answer.
 			src := tupleHandbackSrc(tc.run, tupleHandbackRounds[1])
-			stderr, code := runCaptureStderrExit(t, runner, build(t, src, "thbclisan", "FERN_SANITIZE=1"))
+			stderr, code := runCaptureStderrExit(t, cli.runner, build(t, src, "FERN_SANITIZE=1"))
 			if code != want {
 				t.Fatalf("%s exited %d under the sanitizer, want %d (interp oracle)", tc.name, code, want)
 			}
