@@ -2388,23 +2388,19 @@ func TestX86_64FeatureParity(t *testing.T) {
 		src  string
 	}{
 		{"defer_basic", `
-import "core/map";
-function inner(trace: Map[string, i32]): i32 {
-    trace = trace.insert("body-start", 1);
-    defer trace.insert("first-defer", 10);
-    defer trace.insert("second-defer", 20);
-    trace = trace.insert("body-end", 2);
+function inner(trace: Cell[i32]): i32 {
+    trace.set(trace.get() * 10 + 1);
+    defer trace.set(trace.get() * 10 + 3);
+    defer trace.set(trace.get() * 10 + 4);
+    trace.set(trace.get() * 10 + 2);
     return 42;
 }
 function main(): i32 {
-    var trace: Map[string, i32] = map_new(8);
+    var trace: Cell[i32] = cell_new(0);
     var r: i32 = inner(trace);
     if (r != 42) { return 1; }
-    if (trace.len() != 4) { return 2; }
-    if (trace.get_or("body-start", 0) != 1) { return 3; }
-    if (trace.get_or("body-end", 0) != 2) { return 4; }
-    if (trace.get_or("first-defer", 0) != 10) { return 5; }
-    if (trace.get_or("second-defer", 0) != 20) { return 6; }
+    // Body steps 1 and 2, then the defers in LIFO order: 4, then 3.
+    if (trace.get() != 1243) { return 2; }
     return 0;
 }`},
 		{"fstring_interp", `
