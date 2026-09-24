@@ -4280,11 +4280,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // 64-bit immediate (source text). load_local / store_local on i64
         // slots use the same local.get/local.set — the local's declared i64
         // type carries the stack type.
-        parts = parts.append("    i64.const " + wat_integer_text(o.str) + "\n");
+        parts = parts.append("    i64.const " + wat_integer_text(ir.const_i64_text(o)) + "\n");
     } else if (o.kind_tag == 4) {  // const_f64
-        // Float literal: wasm assembles the source text directly. f64 locals
-        // are declared (local f64), so local.get/set carry the stack type.
-        parts = parts.append("    f64.const " + o.str + "\n");
+        // The exact bits, reinterpreted: no float text spells a NaN payload.
+        // f64 locals are declared (local f64), so local.get/set carry the type.
+        parts = parts.append("    i64.const " + util.i64_to_string(ir.const_f64_bits(o)) + "\n    f64.reinterpret_i64\n");
     } else if (o.kind_tag == 11) {  // i32_to_f64
         parts = emit_wasm_i32_to_f64(o, parts);
     } else if (o.kind_tag == 12) {  // f64_to_i32
