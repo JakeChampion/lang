@@ -1248,6 +1248,26 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
     }
     return state;
 }
+// holds_invariant is same_bits(state, invariant(f, bi, owned, flow)) without
+// building the invariant.
+function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
+    var want: i32 = 0;
+    for v in ssalive.live_in_ids(flow, bi) {
+        if (owned[v]) {
+            if (!state[v]) { return false; }
+            want = want + 1;
+        }
+    }
+    for ins in f.graph.blocks[bi].insts {
+        if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !ssalive.live_in_has(flow, bi, ins.result)) {
+            if (!state[ins.result]) { return false; }
+            want = want + 1;
+        }
+    }
+    var have: i32 = 0;
+    for bit in state { if (bit) { have = have + 1; } }
+    return have == want;
+}
 function same_bits(a: boolean[], b: boolean[]): boolean {
     var i: i32 = 0;
     while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
@@ -1403,7 +1423,7 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: i
     var si: i32 = block_index(f.graph, target);
     var entered: Ledger = enter_phis(f.graph.blocks[si], done.bits, owned);
     if (!entered.ok) { return entered.why; }
-    if (!same_bits(entered.bits, invariant(f, si, owned, analysis.flow))) { return "edge unit invariant mismatch"; }
+    if (!holds_invariant(entered.bits, f, si, owned, analysis.flow)) { return "edge unit invariant mismatch"; }
     return "";
 }
 
