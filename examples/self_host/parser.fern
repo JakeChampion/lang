@@ -18957,14 +18957,12 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
 }
 
 // has_fn_param_ret_var is the result-position sibling of has_fn_param_arg_var:
-// the `U` of `f: (T) => U`, which parse_decl_type keeps in the fn_ret sidecar.
-// EXACT, not mentioning: `f: (T) => U[]` (flat_map's shape) binds U fine, but
-// its clone is invalid on wasm for a further reason of its own (#9496), so
-// admitting it here trades one invalid module for a differently invalid one.
+// the `U` of `f: (T) => U` or `f: (T) => U[]` (flat_map's shape), which
+// parse_decl_type keeps in the fn_ret sidecar.
 function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < params.len()) {
-        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && params[i].fn_ret == name) { return true; }
+        if ((params[i].type_name == "fn" || params[i].type_name == "fn[]") && type_mentions_var(params[i].fn_ret, name)) { return true; }
         i = i + 1;
     }
     return false;

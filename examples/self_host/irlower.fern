@@ -5989,6 +5989,18 @@ pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
 // refused, because a symbol of that name resolved (#7187). The same failure
 // expr_scalar_type's u32 / u64 branches exist to prevent, one expression kind
 // further out.
+// call_fn_value_elem: the element type of the array a call through a function
+// value returns, from the value's declared result; "" for anything else. The
+// array predicates read it, since a `(T) => U[]` value's result is otherwise
+// untyped and `for y in f(x)` walked an f64[] at the 4-byte stride (#9496).
+function call_fn_value_elem(e: ast.Expr, s: LowerState): string {
+    if let ast.ExprCall(c) = e {
+        var r: string = call_fn_value_ret(c, s);
+        if (r.len() > 2 && is_array_type_name(r)) { return slice_unchecked(r, 0, r.len() - 2) + ""; }
+    }
+    return "";
+}
+
 pub function call_fn_value_ret(c: ast.ExprCall, s: LowerState): string {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -7378,6 +7390,8 @@ pub function expr_is_cell(e: ast.Expr, s: LowerState): boolean {
 }
 
 pub function expr_is_strarr(e: ast.Expr, s: LowerState): boolean {
+    var fve: string = call_fn_value_elem(e, s);
+    if (fve.len() > 0) { return fve == "string"; }
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
@@ -7525,6 +7539,8 @@ pub function expr_is_f32arr_src(e: ast.Expr, s: LowerState): boolean {
 }
 
 pub function expr_is_f64arr(e: ast.Expr, s: LowerState): boolean {
+    var fve: string = call_fn_value_elem(e, s);
+    if (fve.len() > 0) { return fve == "f64"; }
     match (e) {
         ast.ExprArray(arr) => {
             return arr_lit_is_f64(arr, s);
@@ -9720,6 +9736,8 @@ pub function arr_index_is_i32_scalar(arr: ast.Expr, s: LowerState): boolean {
 // i64[] tuple element / array literal in a non-binding position carry its
 // 8-byte element width through elem_type_tag.
 pub function expr_is_i64arr(e: ast.Expr, s: LowerState): boolean {
+    var fve: string = call_fn_value_elem(e, s);
+    if (fve.len() > 0) { return fve == "i64" || fve == "u64"; }
     match (e) {
         ast.ExprArray(lit) => { return arr_lit_is_i64(lit, s); },
         ast.ExprIdent(id) => { return s.is_i64arr_slot(s.slot_of(id.name)); },
@@ -10063,6 +10081,8 @@ pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
 // arm. (u32-ness matters on wasm, whose i32 shr/div/rem select signed vs unsigned
 // — an x86 64-bit register zero-extends, hiding the divergence.)
 pub function expr_is_u32arr(e: ast.Expr, s: LowerState): boolean {
+    var fve: string = call_fn_value_elem(e, s);
+    if (fve.len() > 0) { return fve == "u32"; }
     match (e) {
         ast.ExprArray(lit) => { return lit.elements.len() > 0 && expr_is_u32(lit.elements[0], s); },
         ast.ExprIdent(id) => { var sl: i32 = s.slot_of(id.name); return s.is_arr_slot(sl) && s.is_u32_slot(sl); },
