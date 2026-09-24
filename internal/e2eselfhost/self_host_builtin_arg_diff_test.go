@@ -162,6 +162,11 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 	t.Helper()
 	body := selfHostFileSection(t, "checker.fern",
 		`(?s)function intrinsic_params\(.*?\n// type_debug renders a Type`)
+	// The raw floor is self-host only: native declares none of it, so it has
+	// no oracle here. TestSelfHostRawFloorIsTypedWhole gates it against irlower.
+	floor := selfHostFileSection(t, "checker.fern",
+		`(?s)pub struct RawFloorSig \{.*?\nfunction raw_floor_find\(.*?\n\}\n`)
+	body = strings.Replace(body, floor, "", 1)
 	seen := map[string]bool{}
 	rows := selfHostFileSection(t, "checker.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
 	for _, m := range sigRowNameRE.FindAllStringSubmatch(rows, -1) {
