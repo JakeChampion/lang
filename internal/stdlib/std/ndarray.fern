@@ -849,16 +849,11 @@ function copy_flat[T](a: NdArray[T]): T[] {
 
 // The next index in row-major order: the last axis moves fastest. `idx`
 // is consumed so the writes land in place; borrowed, every step would
-// copy it. Each write is the self-reassign `idx = idx.with(..)` rather
-// than a `return idx.with(..)`: with a second `.with` on the receiver in
-// another branch the return form copies (#9844).
+// copy it.
 function bump(own idx: i32[], shape: i32[]): i32[] {
     var k: i32 = shape.len() - 1;
     while (k >= 0) {
-        if (idx[k] + 1 < shape[k]) {
-            idx = idx.with(k, idx[k] + 1);
-            return idx;
-        }
+        if (idx[k] + 1 < shape[k]) { return idx.with(k, idx[k] + 1); }
         idx = idx.with(k, 0);
         k = k - 1;
     }
