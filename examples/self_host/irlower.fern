@@ -14105,7 +14105,7 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
             return lr;
         }
         // `b.relabel(t).tag.len()` — a string field read off a COUNTED-return
-        // method result (cnt_struct_ret_fns). The STRING is borrowed on both
+        // call result (cnt_struct_ret_fns). The STRING is borrowed on both
         // paths; what dies here is the temp BOX, counted whichever path
         // produced it. Read the length while the box is still alive, then
         // release. The string-fresh cases above never match this shape: their
@@ -14113,10 +14113,10 @@ function lower_call_len(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerState)
         // literal took it from.
         match (fa.obj) {
             ast.ExprFieldAccess(fsfa) => {
-                // Shape first: is_counted_ret_method_call rejects on the
-                // callee's form before any type walk, and this arm sits on the
-                // path every `<expr>.len()` takes.
-                if (is_counted_ret_method_call(fsfa.obj, s)) {
+                // Shape first: counted_ret_call_arg rejects on the callee's
+                // form before any type walk, and this arm sits on the path
+                // every `<expr>.len()` takes.
+                if (counted_ret_call_arg(fsfa.obj, s)) {
                     var fsbty: string = expr_struct_type(fsfa.obj, s);
                     var fsbfld: i32 = 0 - 1;
                     if (fsbty != "" && decl_field_type(s.frame.structs, fsbty, fsfa.field) == "string") {
@@ -15902,20 +15902,6 @@ function counted_recv_release_ok(key: string, s: LowerState): boolean {
         && util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, key) >= 0;
 }
 
-// is_counted_ret_method_call: `e` is a method call whose callee is in
-// cnt_struct_ret_fns — every return a strict-fresh construction, the receiver
-// handed back counted, or a forwarding call to such a member.
-function is_counted_ret_method_call(e: ast.Expr, s: LowerState): boolean {
-    if let ast.ExprCall(c) = e {
-        if let ast.ExprFieldAccess(cfa) = c.callee {
-            var rty: string = expr_struct_type(cfa.obj, s);
-            if (rty == "" || decl_field_type(s.frame.structs, rty, cfa.field) != "") { return false; }
-            return util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, rty + "." + cfa.field) >= 0;
-        }
-    }
-    return false;
-}
-
 // lower_expr lowers one expression, stamping the bail description on the way
 // out of a failure (see LowerState.fail_why). The dispatch itself is
 // lower_expr_dispatch; this wrapper is the only place the tag is computed, and
@@ -16956,10 +16942,10 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
             faown = owned_fresh_call_callee(fa.obj, "", s);
         }
     }
-    // A COUNTED-return method producer (`b.relabel(t).tag`,
+    // A COUNTED-return producer (`b.relabel(t).tag`, `mk(p).xs`,
     // cnt_struct_ret_fns): every return is a strict-fresh construction,
-    // the receiver handed back counted, or a forwarding call to such a
-    // member, so the result is this frame's to dec either way
+    // a parameter or the receiver handed back counted, or a forwarding call
+    // to such a member, so the result is this frame's to dec either way
     // (emit_counted_result_release). The release is the BARE box dec:
     // the fresh path's field values are not proven owned (`Box { tag:
     // t, … }` takes a parameter's box), so the field read stays a
@@ -16972,7 +16958,7 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
             && (owned_scalar_field_type(decl_field_type(s.frame.structs, sty, fa.field))
                 || decl_field_type(s.frame.structs, sty, fa.field) == "string"
                 || is_array_type_name(decl_field_type(s.frame.structs, sty, fa.field)))) {
-        fsself = is_counted_ret_method_call(fa.obj, s);
+        fsself = counted_ret_call_arg(fa.obj, s);
     }
     // A SCALAR field read off an ELEMENT of a fresh struct-array producer —
     // `mk()[i].k`, mk in the "STRUCTARRF:" / "ARRSTRUCTF:" registries
@@ -27531,8 +27517,8 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // — any host inside a loop other than a return or a rebind of the root — is
 // refused: the next iteration would read the moved-out field.
 //
-// The root is the RECEIVER, a PARAMETER, or a top-level `var` this function
-// builds itself (fai_keep_local_roots, #8556 — without it the same expression is
+// The root is the RECEIVER, a PARAMETER, or a `var` whose box this frame holds a
+// count on (fai_keep_local_roots, #8556 — without it the same expression is
 // linear through an `own` parameter and QUADRATIC through a local). What the
 // CALLER can still see through a borrowed box is the #4873 grow bracket's job
 // — the growFieldBufs half of grow_param_flags_of, below; a local has no
@@ -27951,7 +27937,7 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
     return a;
 }
 
-// --- #8556: a top-level `var` as a root ------------------------------------
+// --- #8556: a local `var` as a root ----------------------------------------
 //
 // A parameter's box belongs to the caller, and what the caller can still see is
 // covered by the #4873 grow bracket plus the runtime `__fern_rc_is_unique` gate.
@@ -27961,22 +27947,42 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
 // exactly that (#4402), and `__fern_rc_is_unique` then reads 1 with two live
 // names while the move-out nulls a field the other name still reads — #8310's
 // shape. So a local qualifies only when EVERY binding of the name — its
-// declaration and every assignment to it — is a struct literal, which always
-// yields a box built here. `var a = f(p)` is refused with the rest: a callee may
-// hand back one of its own parameters.
+// declaration and every assignment to it — hands this frame a counted box: a
+// struct literal, or a call into a cnt_struct_ret_fns member (#8589). A callee
+// outside that set may hand back one of its own parameters with no count.
 //
 // The fai_* walks match a root by NAME over the whole body, so a name bound a
 // second time anywhere would conflate two variables — one of them possibly a
 // match-arm payload or a `for` element this frame does not own. A root must
-// therefore be bound exactly once, and that one binding must be a direct child
-// of `fn.body`: a nested declaration is re-run per iteration of whatever
-// encloses it, which the body-wide counting arms do not model.
+// therefore be bound exactly once. It may be declared at any depth: each run of
+// a nested declaration builds a fresh box, and every use of the name sits
+// inside its scope, after it, just as for a top-level one.
 
 // fai_is_struct_lit: is `e` a struct literal — a freshly constructed box?
 function fai_is_struct_lit(e: ast.Expr): boolean {
     match (e) {
         ast.ExprStructLit(_) => { return true; },
         _ => { return false; }
+    }
+    return false;
+}
+
+// fai_owned_init: `e` hands this frame a struct box it holds a count on — a
+// literal it builds, or a call into a cnt_struct_ret_fns member (`a = tag(a)`,
+// `s = s.emit(op)`). A counted result that is still shared elsewhere reads
+// rc > 1, so the runtime uniqueness gate declines the move for it (#8589).
+function fai_owned_init(e: ast.Expr, fn: parser.FuncDecl, cnt: string[]): boolean {
+    if (fai_is_struct_lit(e)) { return true; }
+    if let ast.ExprCall(c) = e {
+        var key: string = "";
+        if let ast.ExprIdent(cid) = c.callee {
+            if (decl_type_in_fn(fn, cid.name).len() == 0 && !body_declares_name(fn.body, cid.name)) { key = cid.name; }
+        }
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rt: string = util.base_type_name(decl_type_in_fn(fn, ident_name_or_empty(fa.obj)));
+            if (rt.len() > 0) { key = rt + "." + fa.field; }
+        }
+        return key.len() > 0 && util.index_of_str(cnt, key) >= 0;
     }
     return false;
 }
@@ -28043,56 +28049,66 @@ function fai_binder_count_stmt(st: ast.Stmt, name: string, acc: i32): i32 {
     return n;
 }
 
-// fai_rebuilds_only: every binding of `name` is a struct literal. See the block
+// fai_rebuilds_only: every binding of `name` is a fai_owned_init. See the block
 // comment above — this is what keeps the local from ever naming a box the frame
-// does not own.
-function fai_rebuilds_only(stmts: ast.Stmt[], name: string): boolean {
-    for st in stmts { if (!fai_rebuilds_only_stmt(st, name)) { return false; } }
+// holds no count on.
+function fai_rebuilds_only(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, cnt: string[]): boolean {
+    for st in stmts { if (!fai_rebuilds_only_stmt(st, name, fn, cnt)) { return false; } }
     return true;
 }
 
-function fai_rebuilds_only_stmt(st: ast.Stmt, name: string): boolean {
+function fai_rebuilds_only_stmt(st: ast.Stmt, name: string, fn: parser.FuncDecl, cnt: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => {
-            if (v.name == name) { return fai_is_struct_lit(v.init); }
+            if (v.name == name) { return fai_owned_init(v.init, fn, cnt); }
             return true;
         },
         ast.StmtAssign(a) => {
-            if (a.target == name) { return fai_is_struct_lit(a.value); }
+            if (a.target == name) { return fai_owned_init(a.value, fn, cnt); }
             return true;
         },
         ast.StmtIf(f) => {
-            if (!fai_rebuilds_only(f.then_body, name)) { return false; }
-            return fai_rebuilds_only(f.else_body, name);
+            if (!fai_rebuilds_only(f.then_body, name, fn, cnt)) { return false; }
+            return fai_rebuilds_only(f.else_body, name, fn, cnt);
         },
-        ast.StmtWhile(w) => { return fai_rebuilds_only(w.body, name); },
-        ast.StmtFor(f2) => { return fai_rebuilds_only(f2.body, name); },
+        ast.StmtWhile(w) => { return fai_rebuilds_only(w.body, name, fn, cnt); },
+        ast.StmtFor(f2) => { return fai_rebuilds_only(f2.body, name, fn, cnt); },
         ast.StmtMatch(m) => {
-            for arm in m.arms { if (!fai_rebuilds_only(arm.body, name)) { return false; } }
+            for arm in m.arms { if (!fai_rebuilds_only(arm.body, name, fn, cnt)) { return false; } }
             return true;
         },
-        ast.StmtDefer(d) => { return fai_rebuilds_only_stmt(d.action, name); },
+        ast.StmtDefer(d) => { return fai_rebuilds_only_stmt(d.action, name, fn, cnt); },
         _ => { return true; }
     }
     return true;
 }
 
-// fai_toplevel_struct_locals names the top-level `var`s built from a struct
-// literal — the CANDIDATE local roots, before the whole-body checks. Kept cheap
-// and separate so a function with no candidate site pays only this scan.
-function fai_toplevel_struct_locals(fn: parser.FuncDecl, roots: string[]): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i < fn.body.len()) {
-        match (fn.body[i]) {
+// fai_struct_locals names the `var`s, at any block depth, bound from a
+// fai_owned_init — the CANDIDATE local roots, before the whole-body checks. Kept
+// cheap and separate so a function with no candidate site pays only this scan.
+// A declaration inside a loop builds a fresh box each time it runs, and the
+// names are already resolved per binding, so its depth changes nothing the
+// whole-body walks rely on. A lambda body is not entered.
+function fai_struct_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, roots: string[], cnt: string[], acc: string[]): string[] {
+    var out: string[] = acc;
+    for st in stmts {
+        match (st) {
             ast.StmtVar(v) => {
-                if (fai_is_struct_lit(v.init) && util.index_of_str(roots, v.name) < 0) {
+                if (fai_owned_init(v.init, fn, cnt) && util.index_of_str(roots, v.name) < 0) {
                     out = push_str_unique(out, v.name);
                 }
             },
+            ast.StmtIf(f) => {
+                out = fai_struct_locals(f.then_body, fn, roots, cnt, out);
+                out = fai_struct_locals(f.else_body, fn, roots, cnt, out);
+            },
+            ast.StmtWhile(w) => { out = fai_struct_locals(w.body, fn, roots, cnt, out); },
+            ast.StmtFor(f2) => { out = fai_struct_locals(f2.body, fn, roots, cnt, out); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { out = fai_struct_locals(arm.body, fn, roots, cnt, out); }
+            },
             _ => {}
         }
-        i = i + 1;
     }
     return out;
 }
@@ -28100,14 +28116,14 @@ function fai_toplevel_struct_locals(fn: parser.FuncDecl, roots: string[]): strin
 // fai_keep_local_roots filters the candidate locals down to those that actually
 // root one of `cands` and pass the whole-body checks. Running the checks only
 // for a local a site names keeps them off every other function's body.
-function fai_keep_local_roots(fn: parser.FuncDecl, locals: string[], cands: string[]): string[] {
+function fai_keep_local_roots(fn: parser.FuncDecl, locals: string[], cands: string[], cnt: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < locals.len()) {
         var nm: string = locals[i];
         if (fai_roots_a_cand(cands, nm)
             && fai_binder_count(fn.body, nm, 0) == 1
-            && fai_rebuilds_only(fn.body, nm)) {
+            && fai_rebuilds_only(fn.body, nm, fn, cnt)) {
             out = out.append(nm);
         }
         i = i + 1;
@@ -28126,12 +28142,13 @@ function fai_roots_a_cand(cands: string[], name: string): boolean {
 
 // field_append_inplace_sites_of returns the site keys of this function's
 // field-receiver appends that may grow in place. See the block comment above.
-pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
+// `cnt` is FnSigs.cnt_struct_ret_fns; empty admits only literal-built locals.
+pub function field_append_inplace_sites_of(fn: parser.FuncDecl, cnt: string[]): string[] {
     var roots: string[] = [];
     if (fn.receiver_name.len() > 0) { roots = roots.append(fn.receiver_name); }
     var pi: i32 = 0;
     while (pi < fn.params.len()) { roots = roots.append(fn.params[pi].name); pi = pi + 1; }
-    var locs: string[] = fai_toplevel_struct_locals(fn, roots);
+    var locs: string[] = fai_struct_locals(fn.body, fn, roots, cnt, []);
     var probe: string[] = roots;
     var li: i32 = 0;
     while (li < locs.len()) { probe = probe.append(locs[li]); li = li + 1; }
@@ -28140,7 +28157,7 @@ pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
     var bi: i32 = 0;
     while (bi < fn.body.len()) { any = fai_cands_stmt(fn.body[bi], probe, any); bi = bi + 1; }
     if (any.len() == 0) { return []; }
-    var keep: string[] = fai_keep_local_roots(fn, locs, any);
+    var keep: string[] = fai_keep_local_roots(fn, locs, any, cnt);
     var ki: i32 = 0;
     while (ki < keep.len()) { roots = roots.append(keep[ki]); ki = ki + 1; }
     if (roots.len() == 0) { return []; }
@@ -60083,7 +60100,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var asg_targets: string[] = body_assign_targets(fn.body);
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
-    if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
+    if (plan_on) { plan_fe = free_eligible_sites_of(fn, asg_targets, structs, sg.ret_type_fns, sg.noesc_ret_fns, sg.cnt_struct_ret_fns); }
     // Every consumer below sees this same normalized function and struct table.
     // Derive the top-level moves once, then extend a separate view with loop
     // moves. The emitter still consumes only the top-level view.
@@ -60310,7 +60327,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -68183,7 +68200,7 @@ function rc_fe_escape_owned(e: ast.Expr, tainted: string[], types_n: string[], t
 
 // FeState threads the taint set + the assigns table (parallel an/av arrays —
 // a name may repeat) + the name->type table through the recursive sink walk.
-struct FeState { tainted: string[], an: string[], av: ast.Expr[], av_env: string[], types_n: string[], types_t: string[], decl_s: string[], site_mode: boolean }
+struct FeState { tainted: string[], an: string[], av: ast.Expr[], av_env: string[], types_n: string[], types_t: string[], decl_s: string[], site_mode: boolean, cnt: string[] }
 
 // The fe engine keys taint by BINDING-SITE id. In name mode (the dump path,
 // native parity) the id IS the bare name, so every resolution falls back to
@@ -68588,8 +68605,10 @@ function rc_fe_walk_stmts(stmts: ast.Stmt[], s: FeState, structs: StructTab, env
 // borrowed (tainted) value. Fresh constructions / literals / string concats /
 // string slices are owned; ident reads the taint set; projections and array
 // slices are tainted; calls are owned unless the receiver or any arg is
-// tainted; unknown shapes default tainted.
-function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], types_t: string[], structs: StructTab, noesc: SigReg, env: string): boolean {
+// tainted; unknown shapes default tainted. A call into a `cnt` member
+// (cnt_struct_ret_fns) is owned too: every return hands back a count this frame
+// holds, whatever the arguments alias.
+function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], types_t: string[], structs: StructTab, noesc: SigReg, cnt: string[], env: string): boolean {
     match (e) {
         ast.ExprArray(_) => { return false; },
         ast.ExprStructLit(_) => { return false; },
@@ -68675,15 +68694,18 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
                     // the subset oracle): the result is fresh however tainted
                     // the inputs — they are only READ to build it.
                     if (sig_reg_has_name(noesc, cid.name)) { return false; }
+                    if (util.index_of_str(types_n, cid.name) < 0 && util.index_of_str(cnt, cid.name) >= 0) { return false; }
                 },
                 ast.ExprFieldAccess(fa) => {
+                    var mty: string = util.base_type_name(rc_fe_expr_type(fa.obj, types_n, types_t, structs));
+                    if (mty.len() > 0 && util.index_of_str(cnt, mty + "." + fa.field) >= 0) { return false; }
                     // method call: aliases the receiver only.
-                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, env);
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, cnt, env);
                 },
                 _ => {}
             }
             for arg in c.args {
-                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, env)) { return true; }
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, cnt, env)) { return true; }
             }
             return false;
         },
@@ -68695,19 +68717,21 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
 pub function free_eligible_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, reassigned, structs, retreg, noesc, false);
+    return rc_fe_run(fn, reassigned, structs, retreg, noesc, [], false);
 }
 
 // free_eligible_sites_of: the same analysis keyed by BINDING SITE — the
 // verdicts the plan-routed release gates consume. A shadow-sibling pair or a
 // binder collision resolves per binding here, where the name-level dump
-// variant (kept above for native parity) must collapse them.
-pub function free_eligible_sites_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, reassigned, structs, retreg, noesc, true);
+// variant (kept above for native parity) must collapse them. `cnt` is
+// FnSigs.cnt_struct_ret_fns, a self-host calling-convention fact the
+// native-parity dump leaves out.
+pub function free_eligible_sites_of(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg, cnt: string[]): string[] {
+    return rc_fe_run(fn, reassigned, structs, retreg, noesc, cnt, true);
 }
 
-function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
-    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
+function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab, retreg: SigReg, noesc: SigReg, cnt: string[], site_mode: boolean): string[] {
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode, cnt: cnt };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, reassigned, structs);
     var pi: i32 = 0;
@@ -68764,7 +68788,7 @@ function rc_fe_run(fn: parser.FuncDecl, reassigned: string[], structs: StructTab
         var i: i32 = 0;
         while (i < st.an.len()) {
             var name: string = st.an[i];
-            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.av_env[i])) {
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.cnt, st.av_env[i])) {
                 st = FeState { ...st, tainted: st.tainted.append(name) };
                 changed = true;
             }
@@ -69398,7 +69422,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
     var consumed: string[] = consumed_params_of(fn, body_assign_targets(fn.body), structs);
     // local name->type table, reusing the freeEligible collector (params
     // recorded first so destructure typing can read them, then locals).
-    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false, cnt: [] };
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         st = FeState { ...st, types_n: st.types_n.append(fn.params[pi].name), types_t: st.types_t.append(fn.params[pi].type_name), decl_s: st.decl_s.append(fn.params[pi].name) };
@@ -69462,7 +69486,7 @@ function rc_ml_compute(fn: parser.FuncDecl, structs: StructTab): MlOut {
 // Shared callers can retain it for emitter decisions while the full result
 // includes loop-body moves for the analysis consumers.
 function rc_ml_extend_loops(fn: parser.FuncDecl, structs: StructTab, toplevel: MlOut): MlOut {
-    var st2: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    var st2: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false, cnt: [] };
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
         st2 = FeState { ...st2, types_n: st2.types_n.append(fn.params[pj].name), types_t: st2.types_t.append(fn.params[pj].type_name), decl_s: st2.decl_s.append(fn.params[pj].name) };
@@ -76675,7 +76699,8 @@ pub function grow_param_flags_seeded(funcs: parser.FuncDecl[], seeds: string[]):
         var recvs: string[] = [];
         var si: i32 = 0;
         while (si < fnk.body.len()) { recvs = collect_append_recvs_stmt(fnk.body[si], recvs); si = si + 1; }
-        var fsites: string[] = field_append_inplace_sites_of(fnk);
+        // Local roots never set a parameter's mask, so no counted-return set.
+        var fsites: string[] = field_append_inplace_sites_of(fnk, []);
         var mask: string = grow_field_tok_for(fsites, fnk.receiver_name);
         var pj: i32 = 0;
         while (pj < fnk.params.len()) {
@@ -79797,7 +79822,7 @@ function own_lift_stmt_uses(e: ast.Expr, name: string, own_positions: string[]):
 function own_lift_retain_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab): string[] {
     var out: string[] = [];
     if (sg.own_positions.len() == 0) { return out; }
-    var fs: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false };
+    var fs: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: false, cnt: [] };
     for p in fn.params {
         fs = FeState { ...fs, types_n: fs.types_n.append(p.name), types_t: fs.types_t.append(p.type_name), decl_s: fs.decl_s.append(p.name) };
     }
