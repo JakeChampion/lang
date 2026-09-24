@@ -3623,11 +3623,6 @@ function main(): i32 {
 // three-field construction, which the runtime declines, for 5 + 5 + 2 = 12.
 // The tuple forms: tuple_loop(4) sums 2i + 5 over i = 0..3 for 32,
 // tuple_from_rec(3) is 5 + 2 + 6 = 13 and rec_from_tuple(5) is 13 + 2 = 15.
-// The wasm leg's standing leak from the existing fixtures, in bytes (#9305).
-// It may only be LOWERED — a drop here means something started freeing, and
-// the new figure belongs in this constant.
-const wasmSemsourceRCLeakFloor = 8976
-
 const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n13\n15\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
@@ -3818,20 +3813,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("no allocations recorded: %s", summary)
 			}
-			if target == "wasm32-wasi" {
-				// wasm carries a standing leak from the existing fixtures —
-				// 8976 bytes, measured identically on main — so it cannot ask
-				// for balance yet (#9305). It can refuse to let the number
-				// GROW, which is the whole of what this leg was missing: the
-				// string[] column's overwrite leak read as green here purely
-				// because nothing looked. An upper bound rather than equality,
-				// because a figure this test cannot measure on CI must be free
-				// to come down without turning the suite red.
-				if live > wasmSemsourceRCLeakFloor {
-					t.Fatalf("wasm leak grew past the %d-byte floor (#9305): %s",
-						wasmSemsourceRCLeakFloor, summary)
-				}
-			} else if allocs != frees || live != 0 {
+			if allocs != frees || live != 0 {
 				t.Fatalf("unbalanced: %s", summary)
 			}
 		})
