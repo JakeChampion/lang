@@ -64,9 +64,9 @@ refusal one level down.
 
 A `?` inside a lambda that is merely part of the action is a different thing —
 it leaves the lambda, not the function whose defer replays it — so `E079` does
-not fire there. It is not usable today for an unrelated reason: `?` anywhere in
-a lambda reads the enclosing function's return type rather than the lambda's and
-draws `E042` (#9515).
+not fire there. `?` in a lambda propagates to the lambda's own return type, the
+annotated one or, for an unannotated lambda, the one its returns infer, with the
+failure edge counted among them.
 
 ## One predicate, on purpose
 
