@@ -102,7 +102,8 @@ function help_text(): string {
 // built once by `spell_table`, empty for a byte copied through as it is.
 // `stop` is the set a line's scan stops at: the spelled bytes and the
 // newline. `expand` is every byte's output, -E's `$` included, as the
-// eight-byte records `buf_push_expanded` reads.
+// eight-byte records `buf_push_expanded` reads. `tails` is a number's last
+// two digits and tab by the hundred (`number_tails`), for -n and -b.
 struct Fmt { number: boolean, nonblank: boolean, squeeze: boolean, ends: boolean, tabs: boolean, np: boolean, spell: string[], stop: u8[], expand: u8[], tails: string }
 
 function is_plain(f: Fmt): boolean {
