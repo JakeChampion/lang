@@ -1335,11 +1335,12 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-// ssa_rc_dec renders the array release inline where the count survives it:
-// below the heap floor (every null), a static box's negative count, and a
-// count above one, decremented in w5 and stored back. A count of one (the
-// free) or zero (the underflow the helper reports) calls __fern_arr_dec.
-// Either way the pointer is the result, as the helper leaves it in x0.
+// ssa_rc_dec renders an array or string release inline where the count
+// survives it: below the heap floor (every null), an inline string's tag bit,
+// a static box's negative count, and a count above one, decremented in w5 and
+// stored back. A count of one (the free) or zero (the underflow the helper
+// reports) calls the helper. Either way the pointer is the result, as the
+// helper leaves it in x0.
 function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     s = helper_call_needs(ins.str, s);
     s = ssa_read(reg_of, ins.args[0], "x4", s);
@@ -1348,6 +1349,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
     var dec: string = lp + "rcdecd" + id;
     var kept: string = lp + "rcdeck" + id;
     var done: string = lp + "rcdece" + id;
+    if (ins.str == "__fern_str_free") { s = s.write("    tbnz " + p + ", #0, " + kept + "\n"); }
     s = s.write("    cmp " + p + ", #16, lsl #12\n    blo " + kept + "\n");
     s = s.write("    ldur w5, [" + p + ", #-8]\n    cmp w5, #1\n    bgt " + dec + "\n");
     s = s.write("    tbnz w5, #31, " + kept + "\n");
@@ -1363,7 +1365,7 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
 function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
     if (ssa.rc_inlined(ins)) { return ssa_rc_prim(ins, reg_of, lp, s); }
     s = ssa_x0_forget(s);
-    if (ins.str == "__fern_rc_dec" && ins.args.len() == 1 && !rc_free_debug_on()) { return ssa_rc_dec(ins, reg_of, lp, s); }
+    if ((ins.str == "__fern_rc_dec" || ins.str == "__fern_str_free") && ins.args.len() == 1 && !rc_free_debug_on()) { return ssa_rc_dec(ins, reg_of, lp, s); }
     if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
         return ssa_helper_call(ins, reg_of, s);
     }
