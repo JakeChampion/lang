@@ -301,6 +301,11 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if b.mapMutatorResultFresh(x) {
 			return b.exprType(x), true
 		}
+		// `m.iter()` allocates its cursor box at rc=1 on every call, so
+		// `drain(m.iter())`'s argument is owned by this expression alone.
+		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "__method_Map_iter" {
+			return b.exprType(x), true
+		}
 		if t, ok := b.freshVariantConstructionType(x); ok {
 			return t, true
 		}
