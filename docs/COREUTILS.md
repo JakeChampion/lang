@@ -3096,6 +3096,23 @@ Instructions: `sort -m` 778.9 M to 518.9 M, `uniq` over the first 16 MB
 875.0 M to 714.4 M. Native builds were already copying through their
 own `__fern_memcpy`.
 
+### The byte-set scan four bytes a turn, 2026-09-24 (GNU coreutils 9.12)
+
+`__scan_set` stepped an index a byte at a time: a bounds test, a load, a
+table test and a jump back, seven instructions a byte. With a full
+256-entry set it now walks a cursor four bytes a turn, one load, one
+table test and one branch a byte, then finishes the tail a byte at a
+time. That applies on every register backend in both compilers. Native
+x86-64's kernel also lost its frame: a leaf reads an inline string's
+bytes from the red zone. `wc -L` over the bench file is one scan per
+line, and a line of `seq` output is seven bytes, so the call itself was
+half the kernel's cost.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| `wc -L` of a 62 MiB file | 129.5 ms | 94.2 ms | 87.7 ms |
+| the same, self-hosted build | 124.2 ms | 91.7 ms | |
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

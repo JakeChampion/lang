@@ -599,18 +599,40 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         var s_done: string = slo6.name;
         var slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
         var s_from_ok: string = slo7.name;
-        s = slo7.state;
+        var slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
+        var s_one: string = slo8.name;
+        var hits: string[] = [];
+        s = slo8.state;
+        while (hits.len() < 4) {
+            var hl: asmcore.LabelOut = asmcore.fresh_label(s);
+            hits = hits.append(hl.name);
+            s = hl.state;
+        }
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
         s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
         s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
         s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-        s = s.write(s_loop + ":\n");
+        // Full set: four bytes a turn on a cursor (x5, the end x8), then one
+        // at a time. A hit at byte k of the four steps the cursor k times
+        // before its offset is read.
         s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-        s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
-        s = s.write("    add x5, x2, x6, lsl #3\n    ldr x7, [x5, #8]\n");
-        s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");
-        s = s.write("    add x1, x1, #1\n    b " + s_loop + "\n");
+        s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
+        s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
+        var k: i32 = 0;
+        while (k < 4) {
+            s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    ldr x7, [x10, x6, lsl #3]\n");
+            s = s.write("    cbnz x7, " + hits[k] + "\n");
+            k = k + 1;
+        }
+        s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
+        s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
+        s = s.write("    ldrb w6, [x5]\n    ldr x7, [x10, x6, lsl #3]\n    cbnz x7, " + hits[0] + "\n");
+        s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
+        s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
+        s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
         s = s.write(s_short + ":\n");
         s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
         s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");

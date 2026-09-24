@@ -5303,17 +5303,41 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         var s_done: string = slo6.name;
         var slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
         var s_from_ok: string = slo7.name;
-        s = slo7.state;
+        var slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
+        var s_one: string = slo8.name;
+        var hits: string[] = [];
+        s = slo8.state;
+        while (hits.len() < 4) {
+            var hl: asmcore.LabelOut = asmcore.fresh_label(s);
+            hits = hits.append(hl.name);
+            s = hl.state;
+        }
         s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
         s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
         s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
         s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
         s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-        s = s.write(s_loop + ":\n");
+        // Full set: four bytes a turn on a cursor (r10, the end r11), then
+        // one at a time. A hit at byte k of the four steps the cursor k times
+        // before its offset is read.
         s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-        s = s.write("    movzbq (%rax,%rcx), %r10\n");
-        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    jne " + s_hit + "\n");
-        s = s.write("    addq $1, %rcx\n    jmp " + s_loop + "\n");
+        s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
+        s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
+        var k: i32 = 0;
+        while (k < 4) {
+            s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
+            s = s.write("    cmpq $0, 8(%rdx,%r9,8)\n    jne " + hits[k] + "\n");
+            k = k + 1;
+        }
+        s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
+        s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
+        s = s.write("    movzbq (%r10), %r9\n");
+        s = s.write("    cmpq $0, 8(%rdx,%r9,8)\n    jne " + hits[0] + "\n");
+        s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
+        s = s.write(hits[3] + ":\n    addq $1, %r10\n");
+        s = s.write(hits[2] + ":\n    addq $1, %r10\n");
+        s = s.write(hits[1] + ":\n    addq $1, %r10\n");
+        s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
         s = s.write(s_short + ":\n");
         s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
         s = s.write("    movzbq (%rax,%rcx), %r10\n");

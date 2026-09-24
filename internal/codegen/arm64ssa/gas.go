@@ -6280,16 +6280,40 @@ func emitScanSetHelper(w func(string, ...any)) {
 	w("\tldur w4, [x2, #-4]") // set length
 	w("\tcmp w4, #256")
 	w("\tb.lo .Lssa_scan_set_short")
-	w(".Lssa_scan_set_loop:")
+	// Full set: four bytes a turn on a cursor, then one at a time. A hit at
+	// byte k of the four steps the cursor k times before its offset is read.
 	w("\tcmp w1, w3")
 	w("\tb.ge .Lssa_scan_set_end")
-	w("\tadd x5, x0, w1, uxtw")
+	w("\tadd x5, x0, w1, uxtw") // cursor
+	w("\tadd x8, x0, w3, uxtw") // end
+	w("\tsub x9, x8, #4")       // the last cursor with four bytes ahead
+	w(".Lssa_scan_set_quad:")
+	w("\tcmp x5, x9")
+	w("\tb.hi .Lssa_scan_set_one")
+	for k := 0; k < 4; k++ {
+		w("\tldrb w6, [x5, #%d]", k)
+		w("\tldrb w7, [x2, x6]")
+		w("\tcbnz w7, .Lssa_scan_set_hit%d", k)
+	}
+	w("\tadd x5, x5, #4")
+	w("\tb .Lssa_scan_set_quad")
+	w(".Lssa_scan_set_one:")
+	w("\tcmp x5, x8")
+	w("\tb.hs .Lssa_scan_set_end")
 	w("\tldrb w6, [x5]")
-	w("\tadd x5, x2, w6, uxtw")
-	w("\tldrb w7, [x5]")
-	w("\tcbnz w7, .Lssa_scan_set_hit")
-	w("\tadd w1, w1, #1")
-	w("\tb .Lssa_scan_set_loop")
+	w("\tldrb w7, [x2, x6]")
+	w("\tcbnz w7, .Lssa_scan_set_hit0")
+	w("\tadd x5, x5, #1")
+	w("\tb .Lssa_scan_set_one")
+	w(".Lssa_scan_set_hit3:")
+	w("\tadd x5, x5, #1")
+	w(".Lssa_scan_set_hit2:")
+	w("\tadd x5, x5, #1")
+	w(".Lssa_scan_set_hit1:")
+	w("\tadd x5, x5, #1")
+	w(".Lssa_scan_set_hit0:")
+	w("\tsub x0, x5, x0")
+	w("\tret")
 	w(".Lssa_scan_set_short:")
 	w("\tcmp w1, w3")
 	w("\tb.ge .Lssa_scan_set_end")
