@@ -156,20 +156,13 @@ function ir_bin_asm(tag: i32, width: i32, d: string, r: string, t: string): stri
 // does (when_true) or its inverse. `cmp x0, x1` has already set the flags, so
 // the signed/unsigned split is the same one ir_bin_asm's cset family makes.
 function ir_cmp_cond(tag: i32, when_true: boolean): string {
-    var direct: string = "";
-    var neg: string = "";
-    if (tag == 35) { direct = "eq"; neg = "ne"; }
-    else if (tag == 36) { direct = "ne"; neg = "eq"; }
-    else if (tag == 37) { direct = "lt"; neg = "ge"; }
-    else if (tag == 38) { direct = "le"; neg = "gt"; }
-    else if (tag == 39) { direct = "gt"; neg = "le"; }
-    else if (tag == 40) { direct = "ge"; neg = "lt"; }
-    else if (tag == 41) { direct = "lo"; neg = "hs"; }
-    else if (tag == 42) { direct = "ls"; neg = "hi"; }
-    else if (tag == 43) { direct = "hi"; neg = "ls"; }
-    else { direct = "hs"; neg = "lo"; }  // ge_u
-    if (when_true) { return direct; }
-    return neg;
+    // Tags 35 (eq) through 44 (ge_u), in order; any other tag reads as ge_u.
+    var direct: string[] = ["eq", "ne", "lt", "le", "gt", "ge", "lo", "ls", "hi", "hs"];
+    var neg: string[] = ["ne", "eq", "ge", "gt", "le", "lt", "hs", "hi", "ls", "lo"];
+    var at: i32 = tag - 35;
+    if (at < 0 || at > 9) { at = 9; }
+    if (when_true) { return direct[at]; }
+    return neg[at];
 }
 
 // shift_imm_asm is one shift of `a` by a known count into `d`, the mask folded
