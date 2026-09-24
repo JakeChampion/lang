@@ -1287,7 +1287,6 @@ function trivial_phi_repl(f: SFunc): i32[] {
     return repl;
 }
 
-// prune_trivial_phis drops the folded phis and rewrites every reader.
 // ---- inlining ------------------------------------------------------------
 // A leaf is a function a caller may take in place of a call to it: one block,
 // or a chain of blocks each branching to the next, that returns a value and
@@ -1316,20 +1315,28 @@ pub function leaf_of(name: string, f: SFunc): Leaf[] {
         for ins in b.insts { insts = insts.append(ins); }
         seen = seen + 1;
         if (b.term.kind_tag == 1) {
-            if (b.term.value < 0 || seen != f.blocks.len()) { return []; }
-            var n: i32 = 0;
-            for ins in insts {
-                if (!leaf_kind(ins.kind_tag)) { return []; }
-                if (ins.kind_tag != 6) { n = n + 1; }
-            }
-            if (n > leaf_limit()) { return []; }
-            var one: SBlock = SBlock { id: f.entry, insts: insts, term: b.term, preds: [] };
-            return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
+            if (seen != f.blocks.len()) { return []; }
+            return returning_leaf(name, f, insts, b.term);
         }
         if (b.term.kind_tag != 2) { return []; }
         bi = position_of(at, b.term.target);
     }
     return [];
+}
+
+// returning_leaf is the leaf of `f`'s instructions, flattened into one block
+// that ends in `term`, or none when they return no value, include an op a leaf
+// may not, or are too many.
+function returning_leaf(name: string, f: SFunc, insts: SInst[], term: STerm): Leaf[] {
+    if (term.value < 0) { return []; }
+    var n: i32 = 0;
+    for ins in insts {
+        if (!leaf_kind(ins.kind_tag)) { return []; }
+        if (ins.kind_tag != 6) { n = n + 1; }
+    }
+    if (n > leaf_limit()) { return []; }
+    var one: SBlock = SBlock { id: f.entry, insts: insts, term: term, preds: [] };
+    return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
 }
 
 // inline_leaves replaces each direct call to a leaf with the leaf's
@@ -1382,6 +1389,7 @@ function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
     return 0 - 1;
 }
 
+// prune_trivial_phis drops the folded phis and rewrites every reader.
 pub function prune_trivial_phis(f: SFunc): SFunc {
     var repl: i32[] = trivial_phi_repl(f);
     var any: boolean = false;
