@@ -1,0 +1,19 @@
+// The program declares a variant named like a builtin one. It must qualify it
+// itself, but a module it imports still reads a bare `Ok` as Result's.
+import "lib";
+
+enum Reply {
+    Ok,
+    Busy,
+}
+
+function code(r: Reply): i32 {
+    match (r) {
+        Reply.Ok => { return 1; },
+        Reply.Busy => { return 2; },
+    }
+}
+
+function main(): i32 {
+    return lib.value(40) + code(Reply.Ok);
+}

@@ -1,0 +1,19 @@
+// std/option's ok_or builds Result's Ok inside a method on Option, which
+// flatten leaves with its bare name. The program's own Ok is not a name
+// there, any more than in a module it imports.
+import "std/option";
+import "std/result";
+
+enum Reply { Ok, Busy }
+
+function code(r: Reply): i32 {
+    match (r) {
+        Reply.Ok => { return 1; },
+        Reply.Busy => { return 2; },
+    }
+}
+
+function main(): i32 {
+    var o: Option[i32] = Some(41);
+    return o.ok_or("no").unwrap_or(0) + code(Reply.Ok);
+}
