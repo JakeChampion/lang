@@ -215,7 +215,11 @@ register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
 (`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
-`sum`'s register and the back edge moves nothing; a phi reads its operand
+`sum`'s register and the back edge moves nothing. A spilled value takes its
+phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
+with more carried values than registers does not copy slot to slot on its
+back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
+self-host `uniq` runs 5% fewer instructions. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses

@@ -862,7 +862,18 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         }
         oi = oi + 1;
     }
-    return assign_spill_slots(lo, hi, def_pos, reg_of);
+    // A spilled value keeps its phi mate's hint for a slot, a loop-carried
+    // one only where the register rule would have let the two share.
+    var slot_hint: i32[] = [];
+    i = 0;
+    while (i < f.nvals) {
+        var sh: i32 = mates.hint[i];
+        if (reg_of[i] >= 0 || sh < 0 || reg_of[sh] >= 0) { sh = 0 - 1; }
+        if (sh >= 0 && mates.carried[i] && mate_interferes(f, at, blk_start, sh, i, def_blk[sh], def_blk[i], def_pos[i])) { sh = 0 - 1; }
+        slot_hint = slot_hint.append(sh);
+        i = i + 1;
+    }
+    return assign_spill_slots(lo, hi, def_pos, reg_of, slot_hint, mates.carried);
 }
 
 // spill_weights counts, per value, its definition and every read, each at the
@@ -1058,8 +1069,11 @@ function index_of_reg(a: i32[], x: i32): i32 {
 
 // assign_spill_slots gives the spilled values frame slots, sharing one between
 // values whose intervals do not meet. A value nothing defines (a parameter) is
-// stored on entry, so it is live from position 0.
-function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[]): i32[] {
+// stored on entry, so it is live from position 0. A value takes the slot of
+// `hint[v]`, its phi mate, before any other: when the slot is free, or, for a
+// loop-carried value, when the phi still holds it, since the two were found
+// not to interfere. The edge between them then moves nothing.
+function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[], hint: i32[], carried: boolean[]): i32[] {
     var from: i32[] = [];
     var i: i32 = 0;
     while (i < reg_of.len()) {
@@ -1067,11 +1081,23 @@ function assign_spill_slots(lo: i32[], hi: i32[], def_pos: i32[], reg_of: i32[])
         i = i + 1;
     }
     var slot_end: i32[] = [];
+    var holder: i32[] = [];
     for v in order_by_lo(reg_of.len(), from) {
         if (hi[v] < 0 || reg_of[v] >= 0) { continue; }
-        var s: i32 = 0;
-        while (s < slot_end.len() && slot_end[s] >= from[v]) { s = s + 1; }
-        if (s == slot_end.len()) { slot_end = slot_end.append(hi[v]); } else { slot_end = slot_end.with(s, hi[v]); }
+        var s: i32 = 0 - 1;
+        var h: i32 = hint[v];
+        if (h >= 0 && reg_of[h] < 0 - 1) {
+            var hs: i32 = spill_slot(reg_of[h]);
+            if (slot_end[hs] < from[v] || carried[v] && holder[hs] == h) { s = hs; }
+        }
+        if (s < 0) {
+            s = 0;
+            while (s < slot_end.len() && slot_end[s] >= from[v]) { s = s + 1; }
+        }
+        var end: i32 = hi[v];
+        if (s < slot_end.len() && slot_end[s] > end) { end = slot_end[s]; }
+        if (s == slot_end.len()) { slot_end = slot_end.append(end); holder = holder.append(v); }
+        else { slot_end = slot_end.with(s, end); holder = holder.with(s, v); }
         reg_of = reg_of.with(v, spill_code(s));
     }
     return reg_of;
