@@ -3049,8 +3049,10 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // reference whose container owns its children. Rows the caller's reading of
 // the callee's syntax recorded for the same result are replaced. Only the
 // shapes those registries can release get a row: a tuple's scalar-element
-// array positions ("ARRF:") and a scalar-element array result ("ARROWN:");
-// every other position keeps the AST caller's leak-mode floor.
+// array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
+// is exact for a retained buffer and at worst strands a fresh one's pointer
+// elements, #9187) and a box with no reference field or payload; every other
+// position keeps the AST caller's leak-mode floor.
 // The AST registries' spelling of what ssaunits.grow_rows found for `callee`,
 // for the callers the AST lowering still emits: irlower.grow_param_flags_of's
 // mask — one token per position, the receiver's first and then one per
@@ -3119,8 +3121,9 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
         var flags: string = tuple_flags(tup);
         if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
     }
-    if (scalar_array(f.result)) { arrays = arrays.append("ARROWN:" + name); }
+    if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
     if (box_only_result(f)) { arrays = arrays.append(name); }
+    if (box_only_union_result(f)) { arrays = arrays.append("ENUM:" + name); }
     // The counted-return class ("CNTRET:") is read through two more fields of
     // its own, so erasing the prefixed row alone would leave the caller still
     // told the result carries a count: cnt_struct_ret_fns names the callee and
@@ -3273,6 +3276,14 @@ function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
 // prove the box is the caller's only one.
 function box_only_result(f: ssasem.Func): boolean {
     if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f); }
+    return false;
+}
+
+// The union half of box_only_result, read through "ENUM:": a variant box with
+// no reference payload is released by the rc-guarded box dec alone, so a
+// shared result stays balanced (#9187).
+function box_only_union_result(f: ssasem.Func): boolean {
+    if let typeinfo.TypeUnion(_) = f.result { return !has_children(f.result, f); }
     return false;
 }
 

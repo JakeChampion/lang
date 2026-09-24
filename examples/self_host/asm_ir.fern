@@ -8746,7 +8746,7 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
 function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
-    var bparams: string[] = irlower.borrowable_params_interproc(fns);
+    var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),

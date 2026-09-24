@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-24: 540 fixtures, 479 clean, 61 leaking, 320
+# Measured 2026-09-24: 541 fixtures, 482 clean, 59 leaking, 318
 # unpaired allocations. The median leaking fixture is 1, and the largest,
 # json_error_location, is 51.
 #
@@ -103,7 +103,7 @@
 # all release it. stdin_double and multiline_stdin are the two that reach 0.
 # What every other row keeps is exactly its HANDLE — one stdin() for
 # alloc_flat_read_chunk (5 -> 1), read_all_stdin_chunks (3 -> 1), read_line
-# and stdin_line (2 -> 1) and audit_env_time_random (2 -> 1), two stdout()
+# and stdin_line (2 -> 1), two stdout()
 # for alloc_flat_writer_accumulator (4 -> 2), and the three io_error_other_*
 # rows the IoError their name is about. The handle is per-stream rather than
 # per-call and keeps its static sentinel — the residual half of #8398, which
@@ -174,7 +174,7 @@ arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
-audit_env_time_random                                1
+audit_env_time_random                                0
 audit_generics_traits_closures                       0
 audit_io_builtins                                    0
 audit_monotonic_sleep                                0
@@ -321,6 +321,7 @@ generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
+generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
@@ -497,7 +498,7 @@ pure_collection_aliases                              0
 pure_copy                                            0
 question_op                                          0
 radix_literals                                       0
-random_bytes                                         1
+random_bytes                                         0
 range_for                                            0
 range_value                                          0
 rc_borrowed_box_field                                0

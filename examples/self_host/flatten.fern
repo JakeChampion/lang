@@ -801,6 +801,27 @@ function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
     return out;
 }
 
+// canon_derives spells each `@derive` trait by the bundle prefix of the module
+// that must declare it: a bare name by the deriving module's own prefix ("" for
+// the entry, so it stays bare), a qualified one by the prefix of the import it
+// names. A qualifier naming no import is left as written, and resolves nothing.
+function canon_derives(derives: string[], ctx: RewriteCtx): string[] {
+    var out: string[] = [];
+    for d in derives {
+        var dot: i32 = d.len() - 1;
+        while (dot >= 0 && d[dot] != b'.') { dot = dot - 1; }
+        if (dot < 0) {
+            if (ctx.prefix.len() == 0) { out = out.append(d); }
+            else { out = out.append(ctx.prefix + "." + d); }
+        } else {
+            var k: i32 = util.index_of_str(ctx.modnames, slice_unchecked(d, 0, dot) + "");
+            if (k < 0) { out = out.append(d); }
+            else { out = out.append(ctx.modprefixes[k] + "." + slice_unchecked(d, dot + 1, d.len())); }
+        }
+    }
+    return out;
+}
+
 function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx): parser.StructFieldDecl[] {
     var out: parser.StructFieldDecl[] = [];
     var i: i32 = 0;
@@ -868,7 +889,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             name: mangle_bare(mod.structs[j].name, ctx),
             fields: rewrite_struct_fields(mod.structs[j].fields, ctx),
             type_params: mod.structs[j].type_params,
-            derives: mod.structs[j].derives,
+            derives: canon_derives(mod.structs[j].derives, ctx),
             line: mod.structs[j].line,
             col: mod.structs[j].col,
             enum_owner: mangle_bare(mod.structs[j].enum_owner, ctx),
@@ -1221,7 +1242,7 @@ pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Modul
         var mii: i32 = 0;
         while (mii < m.impls.len()) { impls = impls.append(m.impls[mii]); mii = mii + 1; }
         var mti: i32 = 0;
-        while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(m.trait_reqs[mti]); mti = mti + 1; }
+        while (mti < m.trait_reqs.len()) { trait_reqs = trait_reqs.append(parser.TraitReq { ...m.trait_reqs[mti], module: pfx }); mti = mti + 1; }
         var mdi: i32 = 0;
         while (mdi < m.trait_decls.len()) { trait_decls = trait_decls.append(m.trait_decls[mdi]); mdi = mdi + 1; }
         i = i + 1;

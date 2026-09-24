@@ -289,6 +289,15 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 				return t, true
 			}
 		}
+		// `random_bytes(n)` and `tcp_recv(fd, n)` allocate a fresh rc=1 u8[]
+		// on every backend (rc_analysis's exprNoParamEscape arm says so: every
+		// argument is a scalar), so `random_bytes(n).len()`'s receiver is one
+		// owned buffer nothing else releases.
+		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "random_bytes" || cid.Name == "tcp_recv") {
+			if t, ok := b.exprType(x).(ast.ArrayType); ok {
+				return t, true
+			}
+		}
 		if t, ok := b.freshVariantConstructionType(x); ok {
 			return t, true
 		}
