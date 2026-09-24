@@ -295,6 +295,64 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return take(s);
 }`},
+	// A local bound from a counted-return call that hands back the CALLER's box
+	// (#8589): the box reads rc 2, so the gate must copy and the caller's field
+	// must keep its length and contents.
+	{"local-root-counted-call-shared", `
+struct St { ops: i32[], n: i32 }
+function mk(p: St): St { return p; }
+function take(p: St): i32 {
+    var a: St = mk(p);
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i), n: a.n + 1 }; i = i + 1; }
+    return p.ops.len() * 10 + a.ops.len() + p.ops[2];
+}
+function main(): i32 {
+    var s: St = St { ops: [], n: 0 };
+    var k: i32 = 0;
+    while (k < 4) { s = St { ...s, ops: s.ops.append(k), n: s.n + 1 }; k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return take(s);
+}`},
+	// The threading style the self-host itself uses: the accumulator is also
+	// rebound through counted-return calls, before and inside the loop.
+	{"local-root-counted-call-threading", `
+struct St { ops: i32[], n: i32 }
+function tag(s: St): St { return St { ...s, n: s.n + 1 }; }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), n: s.n }; }
+function main(): i32 {
+    var a: St = tag(St { ops: [], n: 0 });
+    var i: i32 = 0;
+    while (i < 30) {
+        a = St { ...a, ops: a.ops.append(i) };
+        if (i % 7 == 0) { a = tag(a); }
+        a = a.emit(i * 2);
+        i = i + 1;
+    }
+    a = tag(a);
+    var sum: i32 = 0;
+    for v in a.ops { sum = sum + v; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return (a.ops.len() + a.n + sum) % 100;
+}`},
+	// A per-iteration accumulator declared inside the loop (#8589): each
+	// declaration's box is fresh, and the previous iteration's must still be
+	// released rather than grown into.
+	{"local-root-declared-in-loop", `
+struct St { ops: i32[], n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 6) {
+        var a: St = St { ops: [j], n: 0 };
+        var i: i32 = 0;
+        while (i < j + 3) { a = St { ...a, ops: a.ops.append(i), n: a.n + 1 }; i = i + 1; }
+        t = t + a.ops.len() * 10 + a.ops[0] + a.n;
+        j = j + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 100;
+}`},
 	// The RETURN-position death (#8254). `return f(a, v)` kills a's BINDING, so
 	// the caller-side grow bracket is withdrawn — but not this frame's claim on
 	// the buffers inside a: the exit sweep still deep-drops a's rc fields, and it
@@ -1048,10 +1106,12 @@ function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return f(s, 1) % 25
 			label:     "__fn_f",
 			wantClone: true,
 		},
-		// A CALL RESULT is not proof of a fresh box either: the callee may hand
-		// back one of its own parameters.
+		// A CALL into a counted-return member (cnt_struct_ret_fns) hands back a
+		// box this frame holds a count on, so the local is a root (#8589). Here
+		// mk hands back the caller's box, which then reads rc 2, and the runtime
+		// uniqueness gate is what declines the move.
 		{
-			name: "local-root-call-init-clones",
+			name: "local-root-counted-call-init-grows",
 			src: `
 struct St { ops: i32[], n: i32 }
 function mk(p: St): St { return p; }
@@ -1063,12 +1123,49 @@ function g(p: St): i32 {
 }
 function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return g(s) % 250; }`,
 			label:     "__fn_g",
+			wantClone: false,
+		},
+		// #8589's shape: a counted-return call rebinding the accumulator after
+		// the loop no longer puts the loop back on the clone form.
+		{
+			name: "local-root-counted-call-rebind-grows",
+			src: `
+struct St { ops: i32[], n: i32 }
+function tag(s: St): St { return St { ...s, n: s.n + 1 }; }
+function build(k: i32): i32 {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < k) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    a = tag(a);
+    return a.ops.len() + a.n;
+}
+function main(): i32 { return build(3); }`,
+			label:     "__fn_build",
+			wantClone: false,
+		},
+		// A callee that hands a parameter back through a local alias is outside
+		// cnt_struct_ret_fns: its result may carry no count, so the local is no
+		// root.
+		{
+			name: "local-root-uncounted-call-init-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function mk(p: St): St { var q: St = p; return q; }
+function g(p: St): i32 {
+    var a: St = mk(p);
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    return p.ops.len() * 100 + a.ops.len();
+}
+function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return g(s) % 250; }`,
+			label:     "__fn_g",
 			wantClone: true,
 		},
-		// Declared inside a LOOP, so the name covers a fresh binding per
-		// iteration and the body-wide counting arms do not model it.
+		// Declared inside a LOOP: each iteration builds a fresh box, and the
+		// name is used only inside its scope, so it roots like a top-level one
+		// (#8589).
 		{
-			name: "local-root-declared-in-loop-clones",
+			name: "local-root-declared-in-loop-grows",
 			src: `
 struct St { ops: i32[], n: i32 }
 function h(k: i32): i32 {
@@ -1085,7 +1182,7 @@ function h(k: i32): i32 {
 }
 function main(): i32 { return h(2); }`,
 			label:     "__fn_h",
-			wantClone: true,
+			wantClone: false,
 		},
 		// SHADOWED in a nested block: the fai_* walks match a root by symbol,
 		// and the nested `var a = p` is a different binding (lexical.fern), so

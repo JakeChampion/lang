@@ -1043,6 +1043,13 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			l.out.AddOpNoResult(l.cur, OpCallIndirect, all...)
 			break
 		}
+		if shaped && results == 2 {
+			// A two-word return (a string under the two-word ABI) leaves a
+			// pair, as the direct call above does (#8643).
+			a, b := l.out.AddCallIndirectPair(l.cur, all...)
+			l.stack = append(l.stack, a, b)
+			break
+		}
 		result := l.out.AddOp(l.cur, OpCallIndirect, all...)
 		// Result width, for the same reason ResolveWidths sets it on a
 		// direct call: a 64-bit return (i64, or ANY float, which lives in a

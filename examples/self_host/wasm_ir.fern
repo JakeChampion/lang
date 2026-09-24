@@ -11393,6 +11393,10 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState, hb: i32
             // directive that follows frees the inner box.
             o = o + "    (if (call $__fern_rc_is_unique " + load + ") (then\n";
             o = o + "      (drop (call $__struct_drop_" + op.ty + " " + load + "))))\n";
+        } else if (op.kind == "deep_enum_drop") {
+            // $__enum_drop_ gates on rc==1 itself; the arr_dec directive that
+            // follows frees the enum box.
+            o = o + "    (drop (call $__enum_drop_" + op.ty + " " + load + "))\n";
         } else if (op.kind == "str_free" || op.kind == "arr_dec") {
             // A wasm string is one inline rc-headered block, so the rc-guarded
             // $__fern_arr_dec is its free as well as the shallow box/buffer dec.
