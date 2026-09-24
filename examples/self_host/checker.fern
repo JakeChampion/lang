@@ -10197,14 +10197,21 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           }
         },
         typeinfo.TypeMap(mt) => {
-          // E038: `insert` stores its key and value, so a `str` view there
-          // would outlive the bytes it names (native's storesArgument).
+          // E038: `insert`'s key and value must match the map's columns, as
+          // `append`'s element does. It stores both, so a `str` view is not
+          // lent here (native's storesArgument). A literal's own entries are
+          // the E045 check's, apart from the view.
           if (mfa.field == "insert" && c.args.len() == 2) {
             var slots: typeinfo.Type[] = [mt.key, mt.value];
             var ii: i32 = 0;
             while (ii < 2) {
               var it: typeinfo.Type = check_expr(c.args[ii], s);
-              if (is_str_view(it) && is_owned_string(slots[ii])) {
+              var mismatch: boolean = is_str_view(it) && is_owned_string(slots[ii]);
+              if (!literal_insert(c) && !is_unknown(slots[ii]) && !is_unknown(it)) {
+                out = util.append_diags(out, int_dest_range_diags(c.args[ii], slots[ii]));
+                mismatch = !settles_to(c.args[ii], slots[ii], s) && !coercible(it, slots[ii], s);
+              }
+              if (mismatch) {
                 out = out.append(dg_at("E038", "argument " + util.i32_to_string(ii + 1) + " to \"insert\": expected " + type_label(slots[ii]) + ", got " + type_label(it) + str_copy_hint(it, slots[ii]), expr_line(c.args[ii]), expr_col(c.args[ii])));
               }
               ii = ii + 1;
