@@ -40,7 +40,8 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // -1; `grow_fields` holds that field's index at the same position.
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
+// `literal` marks the values that can only hold a string literal (`literals`).
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -154,7 +155,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -321,8 +322,12 @@ function taken(t: typeinfo.Type): boolean {
 // helper carries, and the replacement the declaration site assigns drops
 // exactly that nothing. It is deliberately NOT a `construction` — no box was
 // made, so nothing may take a field out of one.
+//
+// A string literal (kind 5) is not a unit either: its static box carries the
+// immortal count on every backend, so it is never released, and a consumer
+// that takes one is handed it with no retain (`literal`).
 function fresh_unit(kind: i32): boolean {
-    return kind == 8 || kind == 5 || kind == 9 || kind == ssasem.zero() || construction(kind) || hands_out(kind);
+    return kind == 8 || kind == 9 || kind == ssasem.zero() || construction(kind) || hands_out(kind);
 }
 // The operations whose result is a unit handed to this function: a call's
 // result, a rebuilt container, a view's box, a cell's element, a map read,
@@ -337,6 +342,29 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
         || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice();
 }
+// A phi is a literal too when every operand is: assumed of every phi, then
+// withdrawn from each one with another operand, to a fixpoint, so a loop
+// phi that only ever carries literals keeps the mark.
+function literals(f: ssasem.Func): boolean[] {
+    var out: boolean[] = bits(f.graph.nvals);
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.kind_tag == 5 || ins.kind_tag == 8) { out = out.with(ins.result, true); } }
+    }
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for b in f.graph.blocks {
+            for ins in b.insts {
+                if (ins.kind_tag != 8 || !out[ins.result]) { continue; }
+                var lit: boolean = true;
+                for a in ins.args { if (a < 0 || !out[a]) { lit = false; } }
+                if (!lit) { out = out.with(ins.result, false); changed = true; }
+            }
+        }
+    }
+    return out;
+}
+
 function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
     for b in f.graph.blocks {
@@ -351,7 +379,7 @@ function owned_values(f: ssasem.Func, modes: i32[]): boolean[] {
 }
 
 // A phi owns a unit unless every operand is lent whole: a borrowed parameter,
-// or another phi that is. Such a phi holds nothing its edges could supply --
+// a string literal, or another phi that is. Such a phi holds nothing its edges could supply --
 // asking them retains a view with a no-op and releases it with a free
 // (#9802), and retains a counted box for nothing. Any other operand makes the
 // phi owned as before: a projection of an owned record is anchored to its
@@ -367,7 +395,7 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
             var lent: boolean = true;
             for a in ins.args {
                 if (a < 0) { continue; }
-                if (defs[a].kind_tag == 8) { continue; }
+                if (defs[a].kind_tag == 8 || defs[a].kind_tag == 5) { continue; }
                 if (defs[a].kind_tag == 6 && !out[a]) { continue; }
                 lent = false;
             }
@@ -400,11 +428,12 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 //
 // A string retagged as a view is the string's own counted box, so retaining
 // it retains the string, which `__fern_str_view_free` then releases as one.
-function view_retain_error(f: ssasem.Func, steps: Step[]): string {
+// A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
+function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
     var defs: ssa.SInst[] = definitions(f);
     for s in steps {
         for item in s.supplies {
-            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value)) { return "a view is lent, never retained"; }
+            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !retagged_string(f, defs, item.value) && !literal[item.value]) { return "a view is lent, never retained"; }
         }
     }
     return "";
@@ -1223,9 +1252,10 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    why = view_retain_error(f, steps);
+    var literal: boolean[] = literals(f);
+    why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;

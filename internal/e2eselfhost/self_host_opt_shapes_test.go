@@ -77,6 +77,69 @@ function main(): i32 { return sum_to(10i64) as i32; }
 	// the guards meet at a `_uq` join and the branch reads the flags, with no
 	// 0/1 built and copied into a scratch to be tested again. Reuse, and so
 	// the test, is the typed lowering's.
+	// A string literal's static box is immortal: comparing against one
+	// releases nothing afterwards.
+	{name: "literal_compare_no_release", fn: "sym", exit: 5, typedOnly: true, src: `
+@noinline function sym(k: string): i32 {
+    if (k == "add") { return 1; }
+    if (k == "sub") { return 2; }
+    return 3;
+}
+function main(): i32 { return sym("sub") + sym("x"); }
+`,
+		want:   map[string][]string{"x86-64-linux": {`__fern_str_eq`}, "arm64-linux": {`__fern_str_eq`}},
+		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
+	// A literal a consumer takes while it stays live is handed on without a
+	// retain.
+	{name: "literal_consumed_no_retain", fn: "pair", exit: 2, typedOnly: true, src: `
+@noinline function pair(): string[] {
+    var s: string = "x";
+    var out: string[] = [];
+    out = out.append(s);
+    out = out.append(s);
+    return out;
+}
+function main(): i32 { return pair().len(); }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
+	// A phi of literals is a literal too: handed on while it stays live, it
+	// is not retained.
+	{name: "literal_phi_consumed_no_retain", fn: "pick2", exit: 2, typedOnly: true, src: `
+@noinline function pick2(c: boolean): string[] {
+    var s: string = "ab";
+    if (c) { s = "abc"; }
+    var out: string[] = [];
+    out = out.append(s);
+    out = out.append(s);
+    return out;
+}
+function main(): i32 { return pick2(true).len(); }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
+	// A phi that can also carry a counted string is not a literal: handed on
+	// while live, it is retained.
+	{name: "mixed_phi_consumed_retained", fn: "pick3", exit: 2, typedOnly: true, src: `
+@noinline function pick3(c: boolean, t: string): string[] {
+    var s: string = "a";
+    if (c) { s = t + t; }
+    var out: string[] = [];
+    out = out.append(s);
+    out = out.append(s);
+    return out;
+}
+function main(): i32 { return pick3(true, "b").len(); }
+`,
+		want: map[string][]string{"x86-64-linux": {`rc_?inc`}, "arm64-linux": {`rc_?inc`}}},
+	// A phi of literals holds nothing, so its death releases nothing.
+	{name: "literal_phi_no_release", fn: "pick", exit: 3, typedOnly: true, src: `
+@noinline function pick(c: boolean): i32 {
+    var s: string = "ab";
+    if (c) { s = "abc"; }
+    return s.len();
+}
+function main(): i32 { return pick(true); }
+`,
+		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
 	// An array release whose count survives it is decremented in place; only
 	// the free calls __fern_arr_dec.
 	{name: "release_inline", fn: "grow", exit: 7, typedOnly: true, src: `

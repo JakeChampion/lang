@@ -284,10 +284,11 @@ function helper(own r: irlower.LowerResult, slot: i32, name: string): irlower.Lo
 // `defer0` holds an append's or a with's receiver's retain back, so the
 // operation's own rc gate reads the box rather than this supply — see `deferred_retain` for why the
 // order is the whole of it.
-function supplies(own r: irlower.LowerResult, f: ssasem.Func, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
+function supplies(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, defer0: boolean): irlower.LowerResult {
     var j: i32 = 0;
     for supply in step.supplies {
-        if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0)) {
+        // A string literal's retain is the immortal guard's no-op.
+        if (supply.mode == ssaunits.retain_unit() && !(defer0 && supply.slot == 0) && !p.literal[supply.value]) {
             r = helper(r, supply.value, "__fern_rc_inc");
         }
         if (supply.mode == ssaunits.steal_unit()) {
@@ -1129,7 +1130,7 @@ function successors(t: ssa.STerm): i32[] {
 
 function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], from: i32, target: i32): irlower.LowerResult {
     var step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
-    r = supplies(r, f, step, false);
+    r = supplies(r, f, p, step, false);
     var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
     var pi: i32 = 0;
     while (dest.preds[pi] != from) { pi = pi + 1; }
@@ -2825,7 +2826,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             // `instruction` then takes, and two calls could drift apart with
             // nothing to catch it.
             var defer0: boolean = deferred_retain(f, p, step, ins);
-            r = supplies(r, f, step, defer0);
+            r = supplies(r, f, p, step, defer0);
             r = bracket_take(r, f, held);
             // A box superseded by the construction at this same instruction is
             // taken BEFORE it, where an earlier drop's token was taken at the
@@ -2890,7 +2891,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     var b: ssa.SBlock = f.graph.blocks[order[position]];
     if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
         var ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
-        e = Emit { ...e, r: supplies(e.r, f, ret, false) };
+        e = Emit { ...e, r: supplies(e.r, f, p, ret, false) };
         e = Emit { ...e, r: drops(e.r, ret, f) };
         // The unreachable end aborts as a failed bounds check does, then
         // returns a zero the abort never lets the stack shape reach.

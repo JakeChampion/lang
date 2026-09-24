@@ -175,7 +175,9 @@ if (!supply(w, 0, 0, 0, ssaunits.move_unit()) || !supply(w, 1, 2, 2, ssaunits.re
 		{"changed-hold", unitHeld, "", `p = ssaunits.Plan { ...p, held: p.held.with(3, false) };`, "element hold disagrees with the plan"},
 		{"string-units", unitString, `
 var s = find(p, 7, 2, 0 - 1);
-if (s.supplies.len() != 0 || !drops(s, [1, 2])) { return 28; }
+// The literal (value 1) is immortal and owns no unit, so only the
+// concatenation is dropped.
+if (s.supplies.len() != 0 || !drops(s, [2]) || p.owned[1] || !p.literal[1]) { return 28; }
 if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.retain_unit())) { return 29; }
 `, "", ""},
 	}
