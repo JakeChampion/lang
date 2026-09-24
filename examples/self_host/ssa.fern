@@ -442,24 +442,26 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
     // textual last use and a loop-body temp reuses its register, corrupting it
     // on the next iteration. (A loop-CARRIED value is covered by the phi's
     // read on the back edge; this covers loop-INVARIANT ones.) Block start
-    // positions are recomputed
-    // with the same per-block stride (insts + one terminator slot); a
-    // terminator targeting a block at or before its own block is a back-edge,
-    // and the loop spans [header_start, terminator_pos].
-    var blk_ids: i32[] = [];
-    var blk_starts: i32[] = [];
+    // positions are recomputed with the same per-block stride (insts + one
+    // terminator slot); a terminator targeting a block at or before its own
+    // block is a back-edge, and the loop spans [header_start, terminator_pos].
+    //
+    // Each value's extension reads only the back edges, in block order, so the
+    // values are independent: one with no header in (def, hi] cannot extend,
+    // and a binary search over the sorted header starts rules most out.
+    var top: i32 = 0 - 1;
+    for b in f.blocks { if (b.id > top) { top = b.id; } }
+    var start_of: i32[] = [];
+    while (start_of.len() <= top) { start_of = start_of.append(0 - 1); }
     var rpos: i32 = 0;
-    var rbi: i32 = 0;
-    while (rbi < f.blocks.len()) {
-        blk_ids = blk_ids.append(f.blocks[rbi].id);
-        blk_starts = blk_starts.append(rpos);
-        rpos = rpos + f.blocks[rbi].insts.len() + 1;
-        rbi = rbi + 1;
+    for b in f.blocks {
+        if (b.id >= 0) { start_of = start_of.with(b.id, rpos); }
+        rpos = rpos + b.insts.len() + 1;
     }
-    var lbi: i32 = 0;
+    var edge_head: i32[] = [];
+    var edge_end: i32[] = [];
     var lstart: i32 = 0;
-    while (lbi < f.blocks.len()) {
-        var lblk: SBlock = f.blocks[lbi];
+    for lblk in f.blocks {
         var lterm_pos: i32 = lstart + lblk.insts.len();
         var th: i32 = 0;
         while (th < 2) {
@@ -468,26 +470,60 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
                 if (lblk.term.kind_tag == 2) { tgt = lblk.term.target; }
                 else if (lblk.term.kind_tag == 3) { tgt = lblk.term.t; }
             } else if (lblk.term.kind_tag == 3) { tgt = lblk.term.f; }
-            if (tgt >= 0) {
-                var hstart: i32 = 0 - 1;
-                var si2: i32 = 0;
-                while (si2 < blk_ids.len()) { if (blk_ids[si2] == tgt) { hstart = blk_starts[si2]; } si2 = si2 + 1; }
+            if (tgt >= 0 && tgt <= top) {
+                var hstart: i32 = start_of[tgt];
                 if (hstart >= 0 && hstart <= lstart) {
-                    var vv: i32 = 0;
-                    while (vv < f.nvals) {
-                        if (def_pos[vv] >= 0 && def_pos[vv] < hstart && hi[vv] >= hstart && lterm_pos > hi[vv]) {
-                            if (vv >= 0 && vv < hi.len() && lterm_pos > hi[vv]) { hi = hi.with(vv, lterm_pos); }
-                        }
-                        vv = vv + 1;
-                    }
+                    edge_head = edge_head.append(hstart);
+                    edge_end = edge_end.append(lterm_pos);
                 }
             }
             th = th + 1;
         }
         lstart = lterm_pos + 1;
-        lbi = lbi + 1;
+    }
+    if (edge_head.len() == 0) { return hi; }
+    var heads: i32[] = sorted_i32(edge_head);
+    var vv: i32 = 0;
+    while (vv < f.nvals && vv < hi.len()) {
+        var d: i32 = def_pos[vv];
+        if (d >= 0) {
+            var first: i32 = first_above(heads, d);
+            if (first < heads.len() && heads[first] <= hi[vv]) {
+                var e: i32 = 0;
+                while (e < edge_head.len()) {
+                    if (d < edge_head[e] && hi[vv] >= edge_head[e] && edge_end[e] > hi[vv]) { hi = hi.with(vv, edge_end[e]); }
+                    e = e + 1;
+                }
+            }
+        }
+        vv = vv + 1;
     }
     return hi;
+}
+
+// sorted_i32 is xs in ascending order (an insertion sort; the lists are a
+// function's back edges).
+function sorted_i32(xs: i32[]): i32[] {
+    var out: i32[] = [];
+    for x in xs {
+        out = out.append(x);
+        var i: i32 = out.len() - 1;
+        while (i > 0 && out[i - 1] > x) { out = out.with(i, out[i - 1]); i = i - 1; }
+        out = out.with(i, x);
+    }
+    return out;
+}
+
+// first_above is the index of the first element of ascending xs greater than
+// v, or xs.len() when there is none.
+function first_above(xs: i32[], v: i32): i32 {
+    var lo: i32 = 0;
+    var hi: i32 = xs.len();
+    while (lo < hi) {
+        var mid: i32 = (lo + hi) / 2;
+        if (xs[mid] > v) { hi = mid; } else { lo = mid + 1; }
+    }
+    return lo;
 }
 // An instruction can also fix a register without being a call: x86-64's idiv
 // takes its dividend in %rax and writes %rdx, so a division clobbers the ABI
