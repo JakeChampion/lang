@@ -27,7 +27,7 @@ import (
 // docs/NATIVE-CONVERGENCE.md calls the dangerous direction (#9987).
 //
 // The corpus is DERIVED, not listed. The names come from the self-host's own
-// parameter table and the signatures from native's live FuncSigs, so a builtin
+// parameter tables and the signatures from native's live FuncSigs, so a builtin
 // added to either side is covered here without anyone editing this file — the
 // same reason TestSelfHostTypesEveryIntrinsicFamily reads both tables rather
 // than an allowlist.
@@ -86,6 +86,11 @@ func builtinMistypedCalls(t *testing.T) []struct{ name, src string } {
 				"builtin — one of the two tables names something the other has never heard of", name)
 			continue
 		}
+		// A type-parameter argument accepts anything, so there is nothing to
+		// mistype.
+		if hasTypeParamParam(sig) {
+			continue
+		}
 		args := make([]string, 0, len(sig.Params))
 		for _, p := range sig.Params {
 			args = append(args, mistypedFor(p))
@@ -104,6 +109,15 @@ func builtinMistypedCalls(t *testing.T) []struct{ name, src string } {
 		t.Fatal("no builtins generated — this test would pass on anything")
 	}
 	return out
+}
+
+func hasTypeParamParam(sig *ast.FuncType) bool {
+	for _, p := range sig.Params {
+		if _, ok := p.(ast.ParamType); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // mistypedFor is a literal of a type the parameter cannot accept: a string
@@ -141,14 +155,20 @@ func nativeBuiltinSigs(t *testing.T) map[string]*ast.FuncType {
 	return out
 }
 
-// selfHostParameterisedBuiltins reads the names out of checker.fern's
-// parameter table, expanding a family the table matches with a predicate into
-// the names that predicate lists.
+// selfHostParameterisedBuiltins reads the names out of checker.fern's two
+// parameter tables: intrinsic_params, expanding a family it matches with a
+// predicate into the names that predicate lists, and builtin_sigs' free rows.
 func selfHostParameterisedBuiltins(t *testing.T) []string {
 	t.Helper()
 	body := selfHostFileSection(t, "checker.fern",
-		`(?s)function free_builtin_params\(.*?\n// type_debug renders a Type`)
+		`(?s)function intrinsic_params\(.*?\n// type_debug renders a Type`)
 	seen := map[string]bool{}
+	rows := selfHostFileSection(t, "checker.fern", `(?s)function builtin_sigs\(\): string\[\] \{.*?\n\}`)
+	for _, m := range sigRowNameRE.FindAllStringSubmatch(rows, -1) {
+		if !strings.HasPrefix(m[1], "__method_") {
+			seen[m[1]] = true
+		}
+	}
 	harvest := func(src string) {
 		for _, m := range quotedNameRE.FindAllStringSubmatch(src, -1) {
 			seen[m[1]] = true
@@ -167,11 +187,13 @@ func selfHostParameterisedBuiltins(t *testing.T) []string {
 	return out
 }
 
-// The two patterns selfHostParameterisedBuiltins reads its section with: a
-// quoted builtin name, and a family predicate applied to the name under test.
+// The patterns selfHostParameterisedBuiltins reads its sections with: a
+// quoted builtin name, a family predicate applied to the name under test, and
+// the name a builtin_sigs row opens with.
 var (
 	quotedNameRE      = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 	familyPredicateRE = regexp.MustCompile(`(is_[a-z0-9_]+)\(name\)`)
+	sigRowNameRE      = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)\(`)
 )
 
 // selfHostFileSection returns the span of a self-host source the pattern
