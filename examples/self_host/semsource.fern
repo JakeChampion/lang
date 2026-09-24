@@ -1264,6 +1264,50 @@ function cast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     return define(s, ssasem.cast(), [operand.id], 0, "", ty);
 }
 
+// `e` as control flow, closing the current block: every block it ends in
+// branches to `yes` when `e` holds and to `no` when it does not, and `Cond`
+// lists them for the two targets' predecessors. `&&`, `||` and `!` become a
+// chain of branches rather than a boolean joined in a phi and branched on
+// again. A condition binds nothing, so each edge carries the same bindings.
+struct Cond { s: State, yes: i32[], no: i32[] }
+
+function cond(e: ast.Expr, s: State, yes: i32, no: i32): Cond {
+    if let ast.ExprBinary(b) = e {
+        if (b.op == "&&" || b.op == "||") {
+            var mid: i32 = s.next_block;
+            s = State { ...s, next_block: mid + 1 };
+            if (b.op == "&&") {
+                var l: Cond = cond(b.left, s, mid, no);
+                if (!l.s.ok) { return l; }
+                var r: Cond = cond(b.right, open(l.s, mid, l.yes), yes, no);
+                return Cond { s: r.s, yes: r.yes, no: concat_ids(l.no, r.no) };
+            }
+            var el: Cond = cond(b.left, s, yes, mid);
+            if (!el.s.ok) { return el; }
+            var er: Cond = cond(b.right, open(el.s, mid, el.no), yes, no);
+            return Cond { s: er.s, yes: concat_ids(el.yes, er.yes), no: er.no };
+        }
+    }
+    if let ast.ExprUnary(u) = e {
+        if (u.op == "!") {
+            var n: Cond = cond(u.operand, s, no, yes);
+            return Cond { s: n.s, yes: n.no, no: n.yes };
+        }
+    }
+    var v: Value = expr(e, s, t_bool());
+    s = v.s;
+    if (!s.ok) { return Cond { s: s, yes: [], no: [] }; }
+    if (!is_bool(s.values[v.id])) { return Cond { s: fail(s, "condition type"), yes: [], no: [] }; }
+    var at: i32 = s.cur.id;
+    return Cond { s: terminate(s, t_brif(v.id, yes, no)), yes: [at], no: [at] };
+}
+
+function concat_ids(a: i32[], b: i32[]): i32[] {
+    var out: i32[] = a;
+    for x in b { out = out.append(x); }
+    return out;
+}
+
 // Short-circuit operators are control flow: the right operand runs on its
 // own edge and the result joins as a boolean phi.
 function logical(b: ast.ExprBinary, s: State): Value {
@@ -1954,8 +1998,8 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
 // means it to be; the last statement is the arm's value. An arm the leading
 // statements leave with no live edge reaches the join with nothing to hand it,
 // so it is refused rather than producing a value in a block nothing enters.
-function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
-    s = open(State { ...s, vals: entry }, id, [pred]);
+function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, preds: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
+    s = open(State { ...s, vals: entry }, id, preds);
     var none: VArm = VArm { s: s, end: 0, env: [], value: 0 - 1 };
     if (body.len() == 0) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
     var i: i32 = 0;
@@ -1976,11 +2020,6 @@ function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32,
 // join merges the bindings and then the value. The value phi is a unit of this
 // function's own, supplied on each incoming edge, exactly as a binding's phi is.
 function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
-    var cond: Value = expr(f.cond, s, t_bool());
-    s = cond.s;
-    if (!s.ok) { return cond; }
-    if (!is_bool(s.values[cond.id])) { return refused(s, "condition type"); }
-    var pred: i32 = s.cur.id;
     var then_id: i32 = s.next_block;
     var else_id: i32 = then_id + 1;
     var join: i32 = then_id + 2;
@@ -1988,10 +2027,12 @@ function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
     var count: i32 = s.names.len();
     var entry: i32[] = s.vals;
     var scope: checker.Scope = s.scope;
-    s = terminate(s, t_brif(cond.id, then_id, else_id));
-    var t: VArm = value_arm(f.then_body, s, entry, then_id, pred, join, count, scope, ty);
+    var c: Cond = cond(f.cond, s, then_id, else_id);
+    s = c.s;
+    if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
+    var t: VArm = value_arm(f.then_body, s, entry, then_id, c.yes, join, count, scope, ty);
     if (!t.s.ok) { return Value { s: t.s, id: 0 - 1 }; }
-    var el: VArm = value_arm(f.else_body, t.s, entry, else_id, pred, join, count, scope, ty);
+    var el: VArm = value_arm(f.else_body, t.s, entry, else_id, c.no, join, count, scope, ty);
     if (!el.s.ok) { return Value { s: el.s, id: 0 - 1 }; }
     s = merge_env(open(el.s, join, [t.end, el.end]), [t.env, el.env], count);
     return define(s, 8, [t.value, el.value], 0, "", ty);
@@ -2520,8 +2561,8 @@ function ret(r: ast.StmtReturn, s: State): State {
 struct Arm { s: State, live: boolean, end: i32, env: i32[], value: i32 }
 
 // Each arm starts from the environment at the branch, not from its sibling's.
-function arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope): Arm {
-    return finish_arm(body, open(State { ...s, vals: entry }, id, [pred]), join, count, scope);
+function arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, preds: i32[], join: i32, count: i32, scope: checker.Scope): Arm {
+    return finish_arm(body, open(State { ...s, vals: entry }, id, preds), join, count, scope);
 }
 
 function finish_arm(body: ast.Stmt[], s: State, join: i32, count: i32, scope: checker.Scope): Arm {
@@ -2554,11 +2595,6 @@ function arm_body(body: ast.Stmt[], s: State, join: i32, count: i32, scope: chec
 }
 
 function branch(f: ast.StmtIf, s: State): State {
-    var cond: Value = expr(f.cond, s, t_bool());
-    s = cond.s;
-    if (!s.ok) { return s; }
-    if (!is_bool(s.values[cond.id])) { return fail(s, "condition type"); }
-    var pred: i32 = s.cur.id;
     var then_id: i32 = s.next_block;
     var else_id: i32 = then_id + 1;
     var join: i32 = then_id + 2;
@@ -2566,9 +2602,11 @@ function branch(f: ast.StmtIf, s: State): State {
     var count: i32 = s.names.len();
     var entry: i32[] = s.vals;
     var scope: checker.Scope = s.scope;
-    s = terminate(s, t_brif(cond.id, then_id, else_id));
-    var t: Arm = arm(f.then_body, s, entry, then_id, pred, join, count, scope);
-    var e: Arm = arm(f.else_body, t.s, entry, else_id, pred, join, count, scope);
+    var c: Cond = cond(f.cond, s, then_id, else_id);
+    s = c.s;
+    if (!s.ok) { return s; }
+    var t: Arm = arm(f.then_body, s, entry, then_id, c.yes, join, count, scope);
+    var e: Arm = arm(f.else_body, t.s, entry, else_id, c.no, join, count, scope);
     s = e.s;
     if (!s.ok) { return s; }
     var preds: i32[] = [];
@@ -2924,13 +2962,10 @@ function iterate(w: ast.StmtWhile, s: State): State {
     s = header_phis(open(s, header, [pred]), count);
     var entry_env: i32[] = s.vals;
     s = State { ...s, loops: s.loops.append(Loop { label: w.label, header: header, exit: exit_id, entry_count: count, breaks: [], continues: [] }) };
-    var cond: Value = expr(w.cond, s, t_bool());
-    s = cond.s;
+    var c: Cond = cond(w.cond, s, body, exit_id);
+    s = c.s;
     if (!s.ok) { return s; }
-    if (!is_bool(s.values[cond.id])) { return fail(s, "condition type"); }
-    var cond_end: i32 = s.cur.id;
-    s = terminate(s, t_brif(cond.id, body, exit_id));
-    var latch: Arm = arm(w.body, s, entry_env, body, cond_end, header, count, scope);
+    var latch: Arm = arm(w.body, s, entry_env, body, c.yes, header, count, scope);
     s = latch.s;
     if (!s.ok) { return s; }
     var l: Loop = current_loop(s);
@@ -2938,8 +2973,9 @@ function iterate(w: ast.StmtWhile, s: State): State {
     var back: Exit[] = l.continues;
     if (latch.live) { back = back.append(Exit { block: latch.end, env: latch.env }); }
     s = complete_header(s, header, back);
-    var preds: i32[] = [cond_end];
-    var envs: i32[][] = [entry_env];
+    var preds: i32[] = c.no;
+    var envs: i32[][] = [];
+    for _ in c.no { envs = envs.append(entry_env); }
     for e in l.breaks { preds = preds.append(e.block); envs = envs.append(e.env); }
     return merge_env(open(s, exit_id, preds), envs, count);
 }

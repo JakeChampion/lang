@@ -2141,7 +2141,11 @@ The condition is now lowered in `internal/ir`, so every backend gets it:
 `||` and `!` into a chain of `br_if`s (a block where the operator's own
 value is what is branched on), and each backend already fuses a comparison
 with the branch that follows it. A coverage build keeps the expression
-form, whose arms carry the `&&` / `||` counters. The index shape is the
+form, whose arms carry the `&&` / `||` counters. The self-hosted
+compiler's semantic lowering builds the same chains (`semsource.cond`);
+its register backend already kept a boolean out of memory, so there the
+saving is 1 to 3% (`uniq` 178.3 M to 173.0 M instructions, `fmt` 2.44 G
+to 2.41 G). The index shape is the
 x86-64 peephole: P12 folds the zero-extending copy into a 32-bit move, P5
 then writes the index load straight to `ecx`, and P8 now sees a reload
 through the compare-and-branch pairs a chain leaves between a store and
