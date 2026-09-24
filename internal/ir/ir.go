@@ -19123,7 +19123,11 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	// this it fell to the flat `__fern_rc_dec` below, which decrements
 	// without freeing and stranded the box every time a reused container
 	// replaced a cell field.
-	if _, isArr := t.(ast.ArrayType); isArr || isCellType(t) {
+	//
+	// A `Map` has no generated drop fn either, and the flat dec left a map
+	// field a spread rebuild replaced stranded (#10228); the ladder's Map arm
+	// is the full column chain the owning struct's own drop runs.
+	if _, isArr := t.(ast.ArrayType); isArr || isCellType(t) || isMapType(t) {
 		b.dropStructField(t)
 		return
 	}
