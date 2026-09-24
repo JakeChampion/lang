@@ -13361,6 +13361,10 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                     // An EMPTY literal holds nothing a shallow dec could strand,
                     // whatever its element type: `fold(items, [])`'s seed.
                     ast.ExprArray(laa) => { arrlit_arg = laa.elements.len() == 0 || discardable_scalar_arr_lit(laa, sc); },
+                    // `sum(words[i:i + 2])`: arr_slice copies the window into a
+                    // fresh buffer this frame alone owns (#9843). Scalar
+                    // elements only, for the same reason as the literal.
+                    ast.ExprSlice(las) => { arrlit_arg = !expr_is_str(las.array, sc) && tag_is_scalar_elem_array(arr_tag_of(c.args[ai], sc)); },
                     // A scalar-array PRODUCER CALL (`size(mk(i))`) is the same
                     // temp one step removed: the "ARR:" registry proves every
                     // return is a sole-owned buffer this frame allocated, and
@@ -37054,6 +37058,21 @@ function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
     return tagged_value_of(s.frame.reclaimable_names, "TUPRET:", callee);
 }
 
+// lent_temp_arg reports whether a call argument has a shape whose box the caller
+// may have to free after the call: a string or struct literal, a producer call,
+// a fresh string local, and — with `arrays` — an array literal or a slice.
+function lent_temp_arg(arg: ast.Expr, arrays: boolean): boolean {
+    match (arg) {
+        ast.ExprString(_) => { return true; },
+        ast.ExprStructLit(_) => { return true; },
+        ast.ExprCall(_) => { return true; },
+        ast.ExprArray(_) => { return arrays; },
+        ast.ExprSlice(_) => { return arrays; },
+        _ => { return str_local_binding_is_fresh(arg); }
+    }
+    return false;
+}
+
 // lit_arg_callees_expr / _stmt collect the bare-ident CALLEE names of calls
 // carrying at least one argument whose box the caller may have to free after
 // the call: a string LITERAL, an array or struct LITERAL, a producer CALL, or a
@@ -37086,9 +37105,9 @@ function lit_arg_callees_expr(e: ast.Expr, acc: string[]): string[] {
                         // DISCARDED struct literal has no expression-position
                         // counterpart, so without a "BORROW:" row here the
                         // lowering's stash arm can never fire.
-                        match (arg) { ast.ExprString(_) => { has_lit = true; }, ast.ExprArray(_) => { has_lit = true; }, ast.ExprCall(_) => { has_lit = true; }, ast.ExprStructLit(_) => { has_lit = true; }, _ => {
-                            if (str_local_binding_is_fresh(arg)) { has_lit = true; }
-                        } }
+                        // ExprSlice: an array slice copies into a fresh buffer
+                        // (#9843), released by the same stash arm.
+                        if (lent_temp_arg(arg, true)) { has_lit = true; }
                     }
                     if (has_lit) { a = push_str_unique(a, cid.name); }
                 },
@@ -37105,9 +37124,7 @@ function lit_arg_callees_expr(e: ast.Expr, acc: string[]): string[] {
                         // array literal: this seeds what a METHOD callee's
                         // lowering can consume, and that path stashes the
                         // string and struct tiers only.
-                        match (arg) { ast.ExprString(_) => { mhas = true; }, ast.ExprStructLit(_) => { mhas = true; }, ast.ExprCall(_) => { mhas = true; }, _ => {
-                            if (str_local_binding_is_fresh(arg)) { mhas = true; }
-                        } }
+                        if (lent_temp_arg(arg, false)) { mhas = true; }
                     }
                     if (mhas) { a = push_str_unique(a, mfa.field); }
                     a = lit_arg_callees_expr(c.callee, a);
