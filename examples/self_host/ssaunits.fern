@@ -420,9 +420,8 @@ function dyn_owned_error(f: ssasem.Func, owned: boolean[]): string {
     return "";
 }
 function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
-    var out: boolean[] = [];
-    var i: i32 = 0;
-    while (i < n) { out = out.append(ssalive.live_out_has(flow, bi, i)); i = i + 1; }
+    var out: boolean[] = bits(n);
+    for v in ssalive.live_out_ids(flow, bi) { out = out.with(v, true); }
     return out;
 }
 function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
@@ -1115,13 +1114,8 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
             }
             for target in successors(b) {
                 var si: i32 = block_index(f.graph, target);
-                var dead: boolean[] = bits(f.graph.nvals);
-                var vi: i32 = 0;
-                while (vi < f.graph.nvals) {
-                    if (ssalive.live_out_has(analysis.flow, bi, vi) && !ssalive.live_in_has(analysis.flow, si, vi)) { dead = dead.with(vi, true); }
-                    vi = vi + 1;
-                }
-                steps = steps.append(choose(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
+                var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
+                steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, target, owned), dead, owned));
             }
         }
         bi = bi + 1;
@@ -1144,10 +1138,8 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
     var state: boolean[] = bits(f.graph.nvals);
-    var i: i32 = 0;
-    while (i < f.graph.nvals) {
-        if (owned[i] && ssalive.live_in_has(flow, bi, i)) { state = state.with(i, true); }
-        i = i + 1;
+    for v in ssalive.live_in_ids(flow, bi) {
+        if (owned[v]) { state = state.with(v, true); }
     }
     for ins in f.graph.blocks[bi].insts {
         if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result]) { state = state.with(ins.result, true); }
