@@ -3,7 +3,8 @@ package checker
 import "testing"
 
 // A local named like an enum shadows it for a qualified access, in the entry
-// and in an imported module alike (#10159). std/string has a local `R` that
+// and in an imported module alike (#10159), and inside a lambda that captures
+// it (#10211). std/string has a local `R` that
 // calls `R.mul_pow10(...)`, so an entry union named R used to make the import
 // fail with E036.
 func TestEnumNameShadowedByLocal(t *testing.T) {
@@ -22,6 +23,15 @@ function main(): i32 { var r: R = R.X; return f(); }
 struct S { X: i32 }
 function f(): i32 { var R: S = S { X: 7 }; return R.X; }
 function main(): i32 { var r: R = R.Y; return f(); }
+`},
+		{"field of a captured local", `enum R { X, Y }
+struct S { X: i32 }
+function f(): i32 { var R: S = S { X: 7 }; var g = (): i32 => { return R.X; }; return g(); }
+function main(): i32 { var r: R = R.Y; return f(); }
+`},
+		{"method on a captured local", `enum R { X, Y }
+function f(): i32 { var R: string = "ab"; var g = (): i32 => { return R.len(); }; return g(); }
+function main(): i32 { var r: R = R.X; return f(); }
 `},
 	}
 	for _, c := range cases {
