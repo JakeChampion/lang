@@ -51,7 +51,7 @@ func TestSelfHostBuiltinSigsMatch(t *testing.T) {
 
 // nativeBuiltinSigRows renders each surface builtin, each builtin method whose
 // signature names no type parameter (`__method_Reader_close`), and the
-// `__c_callN` trampolines free_builtin_result has no entry for, as
+// `__c_callN` trampolines intrinsic_result has no entry for, as
 // `name(p1, p2): result`, the spelling the self-host table is written in. The
 // generic methods (Array, Map, MapIter, Cell, slice) are typed by their own
 // arms in check_call_expr, which read the receiver's type arguments.

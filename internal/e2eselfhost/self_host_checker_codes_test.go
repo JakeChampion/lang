@@ -2433,6 +2433,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// A settled i32 beside a settled i64 widens to i64 in either operand
 		// order (native's commonIntegerWidth), so the sum returns as i64 and
 		// is refused as i32.
+		// A builtin typed from builtin_sigs checks its arguments, not just
+		// their count, for a free call and for a Reader method alike.
+		{"builtin-arg-type-mismatch", `function main(): i32 { var r = chdir(42); return 0; }`},
+		{"builtin-arg-literal-mismatch", `function main(): i32 { var b: usize = buf_new("x"); return 0; }`},
+		{"builtin-method-arg-type-mismatch", `function main(): i32 { var r = stdin().read_chunk("x"); return 0; }`},
+		{"builtin-args-ok", `function main(): i32 { var r = chdir("/"); var b: usize = buf_new(4); var c = cell_new(3); var rr = stdin().read_chunk(16); return 0; }`},
 		{"mixed-width-narrow-left-ok", `function f(a: i32, v: i64): i64 { return a + v; }`},
 		{"mixed-width-narrow-right-ok", `function f(a: i32, v: i64): i64 { return v + a; }`},
 		{"mixed-width-narrow-left-mismatch", `function f(a: i32, v: i64): i32 { return a + v; }`},
