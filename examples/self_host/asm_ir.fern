@@ -7466,11 +7466,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_writer_truncate\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.need("heap"); s = s.need("reader"); s = s.need("writer_truncate");
-    } else if (o.kind_tag == 210) {  // arg_at
-        // [i] -> push argv[i] as a fresh rc-headered string box. Same args need
-        // — the helper sits in the args block and reads the same __fern_argv global.
-        s = s.write("    popq %rdi\n    call __fern_arg_at\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("args");
     } else if ((o.kind_tag >= 291 && o.kind_tag <= 297) || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328) {  // the buf_* builder
         s = emit_ir_op_buf(o, s);
     } else if (o.kind_tag == 181) {  // sleep_ms

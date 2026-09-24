@@ -270,7 +270,6 @@ function need_open_file(needs: string[]): boolean {
 // this same set, so an omission changes the emitted module and fails the suite.
 pub function needs_of(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
-    if (module_emits_op_cached(cache, "arg_at")) { out = out.append("arg_at"); }
     if (module_emits_op_cached(cache, "args")) { out = out.append("args"); }
     if (module_emits_op_cached(cache, "arr_push")) { out = out.append("arr_push"); }
     if (module_emits_op_cached(cache, "arr_push_f64")) { out = out.append("arr_push_f64"); }
@@ -2040,12 +2039,10 @@ pub function component_needs_ok(needs: string[], io: boolean): boolean {
         // already calls, so admitting them costs only the import + body swap.
         if (io && (n == "now_ns" || n == "now_unix_ms" || n == "monotonic_ns"
             || n == "random_bytes" || n == "random_i32")) { i = i + 1; continue; }
-        // env / args / arg_at read a preview2 LIST, so their cores must also
-        // export cabi_realloc (the guest allocator the canonical ABI
-        // materialises the list into) — see the mode-2 gate in
-        // emit_ir_module_units. arg_at shares args's get-arguments import
-        // and copies one entry out of the list (arg_at_func_p2).
-        if (io && (n == "env" || n == "environ" || n == "args" || n == "arg_at")) { i = i + 1; continue; }
+        // env / args read a preview2 LIST, so their cores must also export
+        // cabi_realloc (the guest allocator the canonical ABI materialises the
+        // list into) — see the mode-2 gate in emit_ir_module_units.
+        if (io && (n == "env" || n == "environ" || n == "args")) { i = i + 1; continue; }
         // The filesystem pair. Their bodies box a real IoError variant
         // (err_payload_p2) rather than storing the raw wasi error code, so an
         // `Err(e)` here matches like one from any other target (#5795).
@@ -2213,46 +2210,6 @@ pub function args_imports_p2(): string {
 // list entry into a fresh [len][bytes] string block and store its pointer in
 // the same string[] array block ([len][cap][elem-ptrs]) the preview1 helper
 // builds, so every args() call site is unchanged.
-// arg_at_func_p2 is the preview2 $__fern_arg_at(i): read ONE argument. It is
-// args_func_p2's per-entry work specialised to a single index — get-arguments
-// writes a (ptr, count) header, each entry is 8 bytes (data ptr @0, len @4), so
-// entry i lives at ptr + i*8 — minus the array construction.
-//
-// Out-of-range yields an empty [len=0] block, matching the preview1 arg_at_func
-// (native's buildArgAtBodyP2 returns an empty (0,0) pair for the same reason;
-// the calling conventions differ — native returns a (data, len) pair, the
-// self-host a single [len][bytes] block — so it is the algorithm that carries
-// over, not the encoding).
-//
-// Shares the get-arguments import with $__fern_args, so a program using both
-// still imports it once.
-pub function arg_at_func_p2(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arg_at (param $idx i32) (result i32)\n";
-    o = o + "    (local $ra i32) (local $ptr i32) (local $count i32)\n";
-    o = o + "    (local $sp i32) (local $sl i32) (local $blk i32) (local $j i32)\n";
-    o = o + "    (local.set $ra (i32.and (i32.add (call $__fern_alloc (i32.const 16)) (i32.const 7)) (i32.const -8)))\n";
-    o = o + "    (call $get_arguments (local.get $ra))\n";
-    o = o + "    (local.set $ptr (i32.load (local.get $ra)))\n";
-    o = o + "    (local.set $count (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
-    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $count)) (then\n";
-    o = o + "      (local.set $blk (call $__fern_str_box (i32.const 4)))\n";
-    o = o + "      (i32.store (local.get $blk) (i32.const 0))\n";
-    o = o + "      (return (local.get $blk))))\n";
-    o = o + "    (local.set $sp (i32.load (i32.add (local.get $ptr) (i32.mul (local.get $idx) (i32.const 8)))))\n";
-    o = o + "    (local.set $sl (i32.load (i32.add (i32.add (local.get $ptr) (i32.mul (local.get $idx) (i32.const 8))) (i32.const 4))))\n";
-    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $sl))))\n";
-    o = o + "    (i32.store (local.get $blk) (local.get $sl))\n";
-    o = o + "    (local.set $j (i32.const 0))\n";
-    o = o + "    (block $cd (loop $cc\n";
-    o = o + "      (br_if $cd (i32.ge_u (local.get $j) (local.get $sl)))\n";
-    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $sp) (local.get $j))))\n";
-    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "      (br $cc)))\n";
-    o = o + "    (local.get $blk))\n";
-    return o;
-}
-
 pub function args_func_p2(): string {
     var o: string = "";
     o = o + "  (func $__fern_args (result i32)\n";
@@ -2602,7 +2559,7 @@ pub function component_io_imports(needs: string[]): string {
     if (needs_wall_clock(needs) || need(needs, "monotonic_ns")) {
         o = o + clock_imports_p2(needs_wall_clock(needs), need(needs, "monotonic_ns"));
     }
-    if (need(needs, "args") || need(needs, "arg_at")) { o = o + args_imports_p2(); }
+    if (need(needs, "args")) { o = o + args_imports_p2(); }
     if (need(needs, "env") || need(needs, "environ")) { o = o + env_imports_p2(); }
     // Filesystem last, which is where the AST path puts it and therefore the
     // slot component_full_io_fs / _fs_write / _fs_rw alias.
@@ -2681,7 +2638,6 @@ pub function component_io_shims(needs: string[]): string {
     if (need(needs, "env")) { o = o + env_func_p2(); }
     if (need(needs, "environ")) { o = o + environ_func_p2(); }
     if (need(needs, "args")) { o = o + args_func_p2(); }
-    if (need(needs, "arg_at")) { o = o + arg_at_func_p2(); }
     if (need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")) { o = o + build_io_error_p2_func(); }
     if (need(needs, "read_file")) { o = o + utf8_valid_func() + readfile_func_p2(); }
     if (need(needs, "read_file_bytes")) { o = o + readfile_bytes_func_p2(); }
@@ -3894,7 +3850,7 @@ function is_host_op_kind(tag: i32): boolean {
     return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
         tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 233 || tag == 170 ||
         tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
-        tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 210 || tag == 166 ||
+        tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 166 ||
         tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 ||
         tag == 267 || tag == 269 || tag == 273;
 }
@@ -4134,14 +4090,6 @@ function emit_host_op_wat(o: ir.Op): string {
         // in wasm_ir_run when the module reads the environment
         // (module_emits_op "environ").
         return "    call $__fern_environ\n";
-    }
-    if (o.kind_tag == 210) {  // arg_at
-        // stack: i -> push a fresh string block holding argv[i]. The helper
-        // ($__fern_arg_at, param i32 / result i32) shares the args imports and
-        // the heap runtime with $__fern_args but copies only the one entry;
-        // emitted caller-side in wasm_ir_run when the module reads an argument
-        // (module_emits_op "arg_at"). An out-of-range index gives "".
-        return "    call $__fern_arg_at\n";
     }
     if (o.kind_tag == 166) {  // exit
         // stack: n -> proc_exit(n) (already imported for _start). Never returns;
@@ -8373,48 +8321,6 @@ pub function environ_func(): string {
     o = o + "    (local.get $arr))\n";
     return o;
 }
-// arg_at_func emits $__fern_arg_at(i): the single-element sibling of
-// $__fern_args. Same sizes-then-get pattern, but it copies only argv[i] into
-// one fresh [len][bytes] block instead of building the whole string[] — the
-// point of arg_at being a real op rather than an `args()[i]` desugar, which
-// would rebuild all of argv per call. An out-of-range index yields the empty
-// string, matching what the register backends' bounds-free load would read
-// past argv only if the caller ignored args_count(); returning empty is the
-// safe answer here because wasi hands us argc directly.
-pub function arg_at_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arg_at (param $idx i32) (result i32)\n";
-    o = o + "    (local $argc i32) (local $bufsz i32) (local $ptrs i32) (local $buf i32)\n";
-    o = o + "    (local $e i32) (local $len i32) (local $j i32) (local $blk i32)\n";
-    o = o + "    (drop (call $args_sizes_get (i32.const 0) (i32.const 4)))\n";
-    o = o + "    (local.set $argc (i32.load (i32.const 0)))\n";
-    o = o + "    (local.set $bufsz (i32.load (i32.const 4)))\n";
-    o = o + "    (if (i32.ge_u (local.get $idx) (local.get $argc)) (then\n";
-    o = o + "      (local.set $blk (call $__fern_str_box (i32.const 4)))\n";
-    o = o + "      (i32.store (local.get $blk) (i32.const 0))\n";
-    o = o + "      (return (local.get $blk))))\n";
-    o = o + "    (local.set $ptrs (call $__fern_alloc (i32.mul (local.get $argc) (i32.const 4))))\n";
-    o = o + "    (local.set $buf (call $__fern_alloc (local.get $bufsz)))\n";
-    o = o + "    (drop (call $args_get (local.get $ptrs) (local.get $buf)))\n";
-    o = o + "    (local.set $e (i32.load (i32.add (local.get $ptrs) (i32.mul (local.get $idx) (i32.const 4)))))\n";
-    o = o + "    (local.set $len (i32.const 0))\n";
-    o = o + "    (block $ld (loop $lc\n";
-    o = o + "      (br_if $ld (i32.eqz (i32.load8_u (i32.add (local.get $e) (local.get $len)))))\n";
-    o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
-    o = o + "      (br $lc)))\n";
-    o = o + "    (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
-    o = o + "    (i32.store (local.get $blk) (local.get $len))\n";
-    o = o + "    (local.set $j (i32.const 0))\n";
-    o = o + "    (block $cd (loop $cc\n";
-    o = o + "      (br_if $cd (i32.ge_u (local.get $j) (local.get $len)))\n";
-    o = o + "      (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $j)) (i32.load8_u (i32.add (local.get $e) (local.get $j))))\n";
-    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
-    o = o + "      (br $cc)))\n";
-    o = o + "    (call $__fern_raw_free (local.get $ptrs) (i32.mul (local.get $argc) (i32.const 4)))\n";
-    o = o + "    (call $__fern_raw_free (local.get $buf) (local.get $bufsz))\n";
-    o = o + "    (local.get $blk))\n";
-    return o;
-}
 
 // file_imports emits the wasi imports shared by read_file / write_file
 // (path_open's rights args are i64 — fine in hand-authored WAT). fd_read
@@ -10443,10 +10349,9 @@ function preview1_imports(needs: string[]): string {
     if (need(needs, "monotonic_ns") || need(needs, "now_unix_ms") || need(needs, "now_ns") || need(needs, "temp_dir")) {
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"clock_time_get\" (func $clock_time_get (param i32 i64 i32) (result i32)))\n");
     }
-    // args() / arg_at(i) read the wasi argv vector — the shared args_sizes_get /
-    // args_get imports must precede the function section, emitted once when the
-    // module reads argv by either route.
-    if (need(needs, "args") || need(needs, "arg_at")) { parts = parts.append(args_helpers()); }
+    // args() reads the wasi argv vector — the args_sizes_get / args_get imports
+    // must precede the function section.
+    if (need(needs, "args")) { parts = parts.append(args_helpers()); }
     // env(name) scans the wasi environ vector — its environ_sizes_get /
     // environ_get imports must precede the function section, emitted when the
     // module reads an env var.
@@ -10841,10 +10746,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // the heap runtime (module_allocates pulls the heap in for an args
     // module — op_allocates admits "args"). Emitted when the module reads argv.
     if (mode != 2 && need(needs, "args")) { parts = parts.append(args_func()); }
-    // $__fern_arg_at(i) copies just argv[i] into a fresh string block, sharing
-    // the args imports above. Independent of the args need — a module can read
-    // one argument without ever materialising the whole vector.
-    if (mode != 2 && need(needs, "arg_at")) { parts = parts.append(arg_at_func()); }
     // $__fern_env(name): scan the environ vector for `NAME=`, box an
     // Option[string] (Some(value)/None). Heap-backed (allocates the value +
     // box), so the heap gate above folds env in.
@@ -10927,7 +10828,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // host materialises it in guest memory — as does an export whose signature
     // needs the canonical allocator (export_needs_realloc). Like the heap gate
     // above, these come from the module's declarations, not from `needs`.
-    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "arg_at") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
+    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (need(needs, "tcp_connect") || need(needs, "tcp_listen") || need(needs, "udp_send")) { parts = parts.append(network_handle_func()); }
@@ -13696,11 +13597,7 @@ pub function component_shape(mod: parser.Module): i32 {
     var rd: boolean = calls.has("read_file") || calls.has("read_file_bytes");
     var wr: boolean = calls.has("write_file");
     var env: boolean = calls.has("env");
-    // arg_at reads argv just as args() does, so it belongs to the args
-    // category. Omitting it classified an arg_at program as plain-stdout and
-    // wrapped it in component_full_io — a framing with no get-arguments to
-    // satisfy the call (#5818).
-    var args: boolean = calls.has("args") || calls.has("arg_at");
+    var args: boolean = calls.has("args");
     // Building a Map imports get-random-u64 with no explicit random call in the
     // program: core/map draws its per-process string-hash seed from the same
     // CSPRNG. module_uses_random counts that seed on the lowered side, where it
