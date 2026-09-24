@@ -1,0 +1,13 @@
+// Nothing imports the program, so its `Ok` is not a name here: a bare `Ok`
+// is Result's.
+function parse(n: i32): Result[i32, string] {
+    if (n < 0) { return Err("negative"); }
+    return Ok(n + 1);
+}
+
+pub function value(n: i32): i32 {
+    match (parse(n)) {
+        Ok(v) => { return v; },
+        Err(_) => { return 0; },
+    }
+}

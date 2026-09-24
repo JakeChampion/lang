@@ -23,10 +23,7 @@ function failed(why: string): Flow {
 }
 
 // position is block id's position, -1 for an id the graph does not carry.
-pub function position(fl: Flow, id: i32): i32 {
-    if (id < 0 || id >= fl.at.len()) { return 0 - 1; }
-    return fl.at[id];
-}
+pub function position(fl: Flow, id: i32): i32 { return block_index(fl.at, id); }
 pub function live_in_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_in, bi * fl.words, v); }
 pub function live_out_has(fl: Flow, bi: i32, v: i32): boolean { return bit_has(fl.live_out, bi * fl.words, v); }
 
