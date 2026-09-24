@@ -174,8 +174,12 @@ emitted, in the order it was admitted:
   known stack effect — `ir.op_pops` models it and it pushes one value — the
   byte kernels, the map ops, the byte-buffer builder and the whole OS floor
   (the process and host queries, the handle ops, the signal, socket and
-  timer ops). The instruction carries the op's index; the emitter pushes
-  the operands, runs `emit_stack_op` for that exact op, and pops the result.
+  timer ops). The instruction carries the op's index; the emitter runs
+  `emit_stack_op` for that exact op into a capture buffer
+  (`EmitState.capture`). The operands the arm's first lines pop are loaded
+  straight into the registers those pops name, and the rest are pushed
+  beneath them. An arm whose last line pushes one register hands its result
+  back in that register; any other arm's result is popped.
   The byte-buffer builder's ops skip the stack: their helpers take the
   register ABI, so `ssa_buf_call` loads the operands straight into the
   argument registers (`asmcore.buf_helper` names the helper for both).

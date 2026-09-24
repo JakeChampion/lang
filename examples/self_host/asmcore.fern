@@ -136,7 +136,11 @@ pub struct EmitState {
     // entry (`__fn_<name>.r`), sanitized; a direct call to one passes its
     // arguments in registers. Every function keeps its stack-ABI entry, so a
     // callee missing from it is still called correctly, only more slowly.
-    reg_entries: irlower.SigReg
+    reg_entries: irlower.SigReg,
+    // capture is a builder handle that write() appends to instead of the
+    // module's text, 0 when none: the register path reads an arm back to
+    // take its operands in registers.
+    capture: usize
 }
 
 // unit_labels is the sanitized label of every function a unit emits for
@@ -202,7 +206,8 @@ pub function new_state(): EmitState {
         ssa_frame: 0,
         ssa_save: 0,
         ssa_x0: 0 - 1,
-        reg_entries: irlower.sig_reg_of([])
+        reg_entries: irlower.sig_reg_of([]),
+        capture: 0 as usize
     };
 }
 
@@ -278,6 +283,10 @@ pub function (s: EmitState) write(text: string): EmitState {
     // accumulated bytes live in the strbuf until emit_module's
     // tail calls strbuf_take to materialise the final string.
     // Mirrors the x86-64 backend (asm.fern).
+    if (s.capture != 0 as usize) {
+        buf_push(s.capture, text);
+        return s;
+    }
     strbuf_append(text);
     // Return the receiver, not a copy of it. `EmitState { ...s }` overrides no
     // field, so the copy was observationally identical to `s` — and it

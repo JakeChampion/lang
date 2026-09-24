@@ -2761,14 +2761,126 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
     s = ssa_x0_forget(s);
+    var outer: usize = s.capture;
+    var h: usize = buf_new(256);
+    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+    var arm: string = buf_take(h);
+    s = asmcore.EmitState { ...s, capture: outer };
+    var pops: string[] = ssa_leading_pops(arm, ins.args.len());
+    if (!ssa_pops_ordered(ins, reg_of, pops)) { pops = []; }
+    var stacked: i32 = ins.args.len() - pops.len();
     var i: i32 = 0;
-    while (i < ins.args.len()) {
+    while (i < stacked) {
         s = ssa_push_operand(reg_of, ins.args[i], i * 16, s);
         i = i + 1;
     }
-    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, s);
-    s = s.write("    ldr x0, [sp], #16\n");
+    for k in ssa_pop_order(ins, reg_of, pops) {
+        s = ssa_load_pushed(reg_of, ins.args[ins.args.len() - 1 - k], pops[k], stacked * 16, s);
+    }
+    var body: string = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+    var result: string = ssa_trailing_push(body);
+    if (result != "") {
+        s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+        return ssa_store(reg_of, ins.result, result, ssa_x0_forget(s));
+    }
+    s = s.write(body + "    ldr x0, [sp], #16\n");
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
+// An arm starts by popping its operands, the last operand first. The register
+// path loads those operands into the registers the pops name instead, and
+// runs the rest of the arm; operands the arm does not pop that way are pushed
+// as before, beneath where the pops would have read.
+function ssa_pop_line(reg: string): string { return "    ldr " + reg + ", [sp], #16\n"; }
+function ssa_push_line(reg: string): string { return "    str " + reg + ", [sp, #-16]!\n"; }
+
+function ssa_pops_len(pops: string[]): i32 {
+    var n: i32 = 0;
+    for p in pops { n = n + ssa_pop_line(p).len(); }
+    return n;
+}
+
+// ssa_leading_pops lists the registers the arm's first lines pop into, at
+// most `limit` of them.
+function ssa_leading_pops(arm: string, limit: i32): string[] {
+    var out: string[] = [];
+    var at: i32 = 0;
+    while (out.len() < limit) {
+        var reg: string = ssa_line_reg(arm, at, "    ldr x", ", [sp], #16\n");
+        if (reg == "") { return out; }
+        out = out.append(reg);
+        at = at + ssa_pop_line(reg).len();
+    }
+    return out;
+}
+
+// ssa_trailing_push is the register a body's last line pushes, "" when its
+// last line is anything else.
+function ssa_trailing_push(body: string): string {
+    var at: i32 = body.len() - 1;
+    if (at < 0 || body[at] != 10) { return ""; }
+    at = at - 1;
+    while (at >= 0 && body[at] != 10) { at = at - 1; }
+    var reg: string = ssa_line_reg(body, at + 1, "    str x", ", [sp, #-16]!\n");
+    if (reg == "" || at + 1 + ssa_push_line(reg).len() != body.len()) { return ""; }
+    return reg;
+}
+
+// ssa_line_reg reads `xN` from a line at `at` that is `prefix`, the register's
+// digits and `suffix`, or "".
+function ssa_line_reg(text: string, at: i32, prefix: string, suffix: string): string {
+    if (at + prefix.len() > text.len()) { return ""; }
+    if (slice_unchecked(text, at, at + prefix.len()) != prefix) { return ""; }
+    var end: i32 = at + prefix.len();
+    while (end < text.len() && text[end] >= 48 && text[end] <= 57) { end = end + 1; }
+    if (end == at + prefix.len() || end + suffix.len() > text.len()) { return ""; }
+    if (slice_unchecked(text, end, end + suffix.len()) != suffix) { return ""; }
+    return "x" + slice_unchecked(text, at + prefix.len(), end);
+}
+
+// ssa_pops_ordered says the loads into the popped registers can go as one
+// parallel move with no cycle: ssa_pop_order then names an order in which no
+// load overwrites a register a later load still reads.
+function ssa_pops_ordered(ins: ssa.SInst, reg_of: i32[], pops: string[]): boolean {
+    return ssa_pop_order(ins, reg_of, pops).len() == pops.len();
+}
+
+function ssa_pop_order(ins: ssa.SInst, reg_of: i32[], pops: string[]): i32[] {
+    var srcs: string[] = [];
+    var k: i32 = 0;
+    while (k < pops.len()) {
+        var v: i32 = ins.args[ins.args.len() - 1 - k];
+        var src: string = "";
+        if (reg_of[v] >= 0) { src = ssa_reg(reg_of[v]); }
+        srcs = srcs.append(src);
+        k = k + 1;
+    }
+    var done: boolean[] = [];
+    for p in pops { done = done.append(false); }
+    var order: i32[] = [];
+    var progressed: boolean = true;
+    while (progressed && order.len() < pops.len()) {
+        progressed = false;
+        var i: i32 = 0;
+        while (i < pops.len()) {
+            if (!done[i] && !ssa_still_read(srcs, done, pops[i], i)) {
+                order = order.append(i);
+                done = done.with(i, true);
+                progressed = true;
+            }
+            i = i + 1;
+        }
+    }
+    return order;
+}
+
+function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
+    var j: i32 = 0;
+    while (j < srcs.len()) {
+        if (j != self && !done[j] && srcs[j] == reg) { return true; }
+        j = j + 1;
+    }
+    return false;
 }
 
 // ssa_buf_call calls a builder helper with its operands loaded straight into

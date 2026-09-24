@@ -6254,14 +6254,128 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
     if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
     s = ssa_x0_forget(s);
+    var outer: usize = s.capture;
+    var h: usize = buf_new(256);
+    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+    var arm: string = buf_take(h);
+    s = asmcore.EmitState { ...s, capture: outer };
+    var pops: string[] = ssa_leading_pops(arm, ins.args.len());
+    var moves: SsaArgMoves = ssa_arg_moves(ins, reg_of, pops, s);
+    if (!moves.ok) { pops = []; moves = ssa_arg_moves(ins, reg_of, pops, s); }
     var i: i32 = 0;
-    while (i < ins.args.len()) {
+    while (i < ins.args.len() - pops.len()) {
         s = ssa_push_operand(reg_of, ins.args[i], s);
         i = i + 1;
     }
-    s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, s);
-    s = s.write("    popq %rax\n");
+    for m in moves.text { s = s.write(m); }
+    var body: string = slice_unchecked(arm, ssa_pops_len(pops), arm.len()) + "";
+    var result: string = ssa_trailing_push(body);
+    if (result != "") {
+        s = s.write(slice_unchecked(body, 0, body.len() - ssa_push_line(result).len()) + "");
+        return ssa_store(reg_of, ins.result, result, ssa_x0_forget(s));
+    }
+    s = s.write(body + "    popq %rax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// An arm starts by popping its operands, the last operand first. The register
+// path loads those operands into the registers the pops name instead, and
+// runs the rest of the arm; operands the arm does not pop that way are pushed
+// as before, beneath where the pops would have read.
+function ssa_pop_line(reg: string): string { return "    popq " + reg + "\n"; }
+function ssa_push_line(reg: string): string { return "    pushq " + reg + "\n"; }
+
+function ssa_pops_len(pops: string[]): i32 {
+    var n: i32 = 0;
+    for p in pops { n = n + ssa_pop_line(p).len(); }
+    return n;
+}
+
+// ssa_leading_pops lists the registers the arm's first lines pop into, at
+// most `limit` of them.
+function ssa_leading_pops(arm: string, limit: i32): string[] {
+    var out: string[] = [];
+    var at: i32 = 0;
+    while (out.len() < limit) {
+        var reg: string = ssa_line_reg(arm, at, "    popq %");
+        if (reg == "") { return out; }
+        out = out.append(reg);
+        at = at + ssa_pop_line(reg).len();
+    }
+    return out;
+}
+
+// ssa_trailing_push is the register a body's last line pushes, "" when its
+// last line is anything else.
+function ssa_trailing_push(body: string): string {
+    var at: i32 = body.len() - 1;
+    if (at < 0 || body[at] != 10) { return ""; }
+    at = at - 1;
+    while (at >= 0 && body[at] != 10) { at = at - 1; }
+    var reg: string = ssa_line_reg(body, at + 1, "    pushq %");
+    if (reg == "" || at + 1 + ssa_push_line(reg).len() != body.len()) { return ""; }
+    return reg;
+}
+
+// ssa_line_reg reads `%reg` from a line at `at` that is `prefix` then one
+// register name and a newline, or "".
+function ssa_line_reg(text: string, at: i32, prefix: string): string {
+    if (at + prefix.len() > text.len()) { return ""; }
+    if (slice_unchecked(text, at, at + prefix.len()) != prefix) { return ""; }
+    var end: i32 = at + prefix.len();
+    while (end < text.len() && text[end] != 10) {
+        var c: i32 = text[end] as i32;
+        if (!(c >= 97 && c <= 122 || c >= 48 && c <= 57)) { return ""; }
+        end = end + 1;
+    }
+    if (end >= text.len() || end == at + prefix.len()) { return ""; }
+    return slice_unchecked(text, at + prefix.len() - 1, end) + "";
+}
+
+struct SsaArgMoves { ok: boolean, text: string[] }
+
+// ssa_arg_moves loads the popped operands into their registers as one
+// parallel move: a load goes once no pending load still reads its register.
+// A cycle is refused, and the arm then takes every operand from the stack.
+function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore.EmitState): SsaArgMoves {
+    var srcs: string[] = [];
+    var dsts: string[] = [];
+    var k: i32 = 0;
+    while (k < pops.len()) {
+        var v: i32 = ins.args[ins.args.len() - 1 - k];
+        var src: string = ssa_home_name(reg_of, v);
+        if (src == "") { src = ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save); }
+        if (src != pops[k]) { srcs = srcs.append(src); dsts = dsts.append(pops[k]); }
+        k = k + 1;
+    }
+    var done: boolean[] = [];
+    for d in dsts { done = done.append(false); }
+    var out: string[] = [];
+    var left: i32 = dsts.len();
+    while (left > 0) {
+        var progressed: boolean = false;
+        var i: i32 = 0;
+        while (i < dsts.len()) {
+            if (!done[i] && !ssa_still_read(srcs, done, dsts[i], i)) {
+                out = out.append("    movq " + srcs[i] + ", " + dsts[i] + "\n");
+                done = done.with(i, true);
+                left = left - 1;
+                progressed = true;
+            }
+            i = i + 1;
+        }
+        if (!progressed) { return SsaArgMoves { ok: false, text: [] }; }
+    }
+    return SsaArgMoves { ok: true, text: out };
+}
+
+function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: i32): boolean {
+    var j: i32 = 0;
+    while (j < srcs.len()) {
+        if (j != self && !done[j] && srcs[j] == reg) { return true; }
+        j = j + 1;
+    }
+    return false;
 }
 
 function ssa_arg_regs(): string[] { return ["%rdi", "%rsi", "%rdx", "%rcx"]; }
