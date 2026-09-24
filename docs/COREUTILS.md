@@ -2988,6 +2988,25 @@ words.
 
 `comm -123` went from 1.48 G instructions to 1.21 G (GNU: 1.30 G).
 
+### uniq -f's field skip by scan, 2026-09-23 (GNU coreutils 9.12)
+
+`uniq -f N` found where each line's compared field starts by walking
+blanks and then the field's bytes one at a time, with a separator test
+per byte. Each run is now one `__scan_set` against a table built once:
+every byte that is not a separator, then the separators and the line
+terminator. A scan can pass the line's end, into the next line or to
+the end of a carried line, so its answer is clamped to the line's
+content, and the offsets come out as the byte walk gave them.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| uniq -f1 -c over 4M lines | 336.5 ms | 308.4 ms | 253.9 ms |
+
+Over the first 20 MB of that input: 1.17 G instructions to 1.04 G
+(GNU: 0.92 G). What is left is the per-line loop itself, about 290
+instructions a line, and the retain and release of `var src = chunk`
+and `prev = src` on every line.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The

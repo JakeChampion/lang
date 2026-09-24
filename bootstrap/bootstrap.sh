@@ -131,7 +131,9 @@ smoke() {
     || die "smoke: $1 could not compile coreutils/tr.fern"
   chmod +x "$bin"
   local got
-  got="$(printf 'abc' | "$bin" a-c x-z)" || die "smoke: tr compiled by $1 failed"
+  # A here-string rather than a pipe: under pipefail, a tr that exits
+  # without reading would fail the writer with SIGPIPE instead.
+  got="$("$bin" a-c x-z <<<'abc')" || die "smoke: tr compiled by $1 failed"
   [ "$got" = xyz ] || die "smoke: tr compiled by $1 printed '$got', want 'xyz'"
   echo "smoke: $1 compiles a program and coreutils/tr, and both run"
 }

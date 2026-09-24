@@ -102,6 +102,10 @@ func uniqCases(t *testing.T) []invocation {
 	// A NUL-terminated line holding newlines: they are still field
 	// separators under -z, which is the only place that shows.
 	nulnl := writeFile(t, dir, "nulnl", "x\ny\x00x\nz\x00")
+	// Lines ending in blanks, so a skip runs to the line's end with more
+	// input after it, and a last line with no terminator.
+	trailing := writeFile(t, dir, "trailing", "a  \nb  \nc\t\nd e\nd e  \nf g")
+	trailingNul := writeFile(t, dir, "trailingnul", "a  \x00b  \x00c d\x00c d \x00e")
 	folded := writeFile(t, dir, "folded", "A\na\nB\n")
 	// Non-ASCII that differs only in the case bit of its second byte:
 	// C-locale folding leaves both alone, so they stay different.
@@ -267,6 +271,9 @@ func uniqCases(t *testing.T) []invocation {
 		{name: "zero terminated prefix", args: []string{"--zero", nul}},
 		{name: "newline is not a terminator under -z", args: []string{"-zc", d1}},
 		{name: "newline is a field separator under -z", args: []string{"-z", "-f1", "-c", nulnl}},
+		{name: "skip fields to trailing blanks", args: []string{"-c", "-f1", trailing}},
+		{name: "skip more fields than trailing blanks hold", args: []string{"-c", "-f3", trailing}},
+		{name: "skip fields to trailing blanks under -z", args: []string{"-z", "-c", "-f1", trailingNul}},
 		{name: "zero terminated all repeated", args: []string{"-zD", nul}},
 
 		// The final line gets its delimiter, so it can still match.
