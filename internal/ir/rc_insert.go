@@ -849,21 +849,8 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				if !ok || id.Name != name {
 					continue
 				}
-				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) {
-					excused[id] = true
-				}
-			}
-		case *ast.Return:
-			// `return Some(c)`: the construction retains an alias payload, so
-			// the returned value holds a count of its own. The gate is
-			// emitEnumNew's, the stricter of the two constructors' (the pair
-			// form's emitPairFormPayloadRetain drops the eligibility and reuse
-			// terms), so a construction that does not retain is never
-			// excused. A move site hands over the binding's reference instead.
-			if c, ok := x.Value.(*ast.Call); ok && countedAliasOK && len(c.Args) == 1 {
-				if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == name && c.IsVariantCall &&
-					b.enumRcPayloadsEligibleForValue(c) && !b.rc.consumingMatchReuse[c] &&
-					needsRcIncOnAlias(id, b) && !b.rc.moveSites[id] {
+				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
+					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
 					excused[id] = true
 				}
 			}
@@ -878,6 +865,19 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 		return true
 	})
 	return confined
+}
+
+// variantRetainsPayload reports whether the variant construction `c` retains
+// its alias payload `id`, so the box it builds holds a count of its own —
+// wherever the construction sits: `return Some(c)`, `var r = Err(c)`, or a
+// struct field `{ ...s, err: Some(c) }`. The gate is emitEnumNew's, the
+// stricter of the two constructors' (the pair form's emitPairFormPayloadRetain
+// drops the eligibility and reuse terms). A move site hands over the
+// binding's reference instead, and so is not counted. `bt` is the binding's
+// type, which exprType cannot supply before the arm is in scope.
+func (b *builder) variantRetainsPayload(c *ast.Call, id *ast.Ident, bt ast.Type) bool {
+	return c.IsVariantCall && b.enumRcPayloadsEligibleForValue(c) &&
+		!b.rc.consumingMatchReuse[c] && b.retainsOnAlias(bt) && !b.rc.moveSites[id]
 }
 
 // assignTakesAliasInc reports whether an assignment's lowering will retain its
