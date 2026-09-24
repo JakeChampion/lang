@@ -10067,7 +10067,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           out = util.append_diags(out, display_arg_diags(c, s));
           // The Display builtins' arity, which free_builtin_sig leaves to this
           // pass: native reports E004 at the call (#7311).
-          if ((id.name == "print" || id.name == "eprint") && c.args.len() != 1) {
+          if (is_display_builtin(id.name) && c.args.len() != 1) {
             out = out.append(dg_at("E004", "function expects 1 arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }
         }

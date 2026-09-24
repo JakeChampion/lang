@@ -408,6 +408,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"string-as-bytes-arity-e004", "function main(): i32 { var s: string = \"abc\"; return s.as_bytes(1).len(); }\n", []string{"E004"}},
 		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
+		{"write-arity-e004", "function main(): i32 { write(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"slice-unchecked-arity-e004", "function main(): i32 { var s: string = \"abcdef\"; var t: str = slice_unchecked(s, 1); return t.len(); }\n", []string{"E004"}},
 		// target_os() is a string under -check, where nothing folds it: a
 		// clean use types, a mismatch is E003, and an argument is E004 — the
