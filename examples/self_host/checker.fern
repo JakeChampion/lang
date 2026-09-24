@@ -517,6 +517,15 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__heap_alloc_count") { return t_i64(); }
   if (argc == 0 && name == "__heap_mark") { return t_i64(); }
   if (argc == 1 && name == "__heap_release_to") { return t_void(); }
+  // The rc detectors programs read to report on themselves: the underflow
+  // count, the rc==1 append cliff (#6023) and the raw refcount pokes.
+  if (argc == 0 && name == "__rc_underflow_count") { return t_i32(); }
+  if (argc == 0 && name == "__arr_push_shared_count") { return t_i32(); }
+  if (argc == 0 && name == "__arr_push_shared_bytes") { return t_i64(); }
+  if (argc == 1 && name == "__rc_inc") { return typeinfo.TypeArray { elem: t_u8(), view: false }; }
+  if (argc == 1 && name == "__rc_dec") { return t_void(); }
+  if (argc == 1 && name == "__rc_get") { return t_i32(); }
+  if (argc == 3 && name == "__alloc_reuse") { return t_usize(); }
   if (argc == 3 && name == "__memcpy") { return t_void(); }
   if (argc == 3 && name == "__memset") { return t_void(); }
   if (argc == 1 && name == "__load_u8") { return t_i32(); }
@@ -601,6 +610,9 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__heap_alloc_count") { return ([], true); }
   if (name == "__heap_mark") { return ([], true); }
   if (name == "__heap_release_to") { return ([t_i64()], true); }
+  if (name == "__rc_underflow_count" || name == "__arr_push_shared_count" || name == "__arr_push_shared_bytes") { return ([], true); }
+  if (name == "__rc_inc" || name == "__rc_dec" || name == "__rc_get") { return ([t_array(t_u8())], true); }
+  if (name == "__alloc_reuse") { return ([t_usize(), t_i32(), t_i32()], true); }
   if (name == "__memcpy") { return ([t_usize(), t_usize(), t_i32()], true); }
   if (name == "__memset") { return ([t_usize(), t_i32(), t_i32()], true); }
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") { return ([t_usize()], true); }
@@ -9792,6 +9804,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         return out;
       }
       out = call_diags(mfa.obj, s);
+      match (check_expr(mfa.obj, s)) {
+        typeinfo.TypeTuple(mtt) => {
+          var tdg: util.Diag[] = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
+          if (tdg.len() > 0) { return util.append_diags(out, tdg); }
+        },
+        _ => {}
+      }
       // E045: a map literal `Map { k: v, … }` desugars to
       // `map_new[_i32](n).insert(k0, v0).insert(…)…`. The FIRST
       // insert (its object is the base constructor) carries the
@@ -10708,13 +10727,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
       }
     },
     typeinfo.TypeTuple(tt) => {
-      // E046: a tuple field must be a numeric index in range.
-      var idx: i32 = digit_string_to_i32(fa.field);
-      if (idx < 0) {
-        out = out.append(dg_at("E046", "tuple field access requires a numeric index, got \"" + fa.field + "\"", fa.line, fa.col));
-      } else if (idx >= tt.elements.len()) {
-        out = out.append(dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", fa.line, fa.col));
-      }
+      out = util.append_diags(out, tuple_field_diags(fa.field, tt, fa.line, fa.col));
     },
     _ => {
       // E043: a field READ on a non-struct, non-tuple value (an i32 /
@@ -10730,6 +10743,20 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   }
 
   return out;
+}
+
+// tuple_field_diags is E046 for `t.field` on a tuple: the field must be a
+// numeric index in range. A method-call callee takes the same rule, since a
+// tuple has no methods; `t.0()` calls the function its element holds.
+function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col: i32): util.Diag[] {
+  var idx: i32 = digit_string_to_i32(field);
+  if (idx < 0) {
+    return [dg_at("E046", "tuple field access requires a numeric index, got \"" + field + "\"", line, col)];
+  }
+  if (idx >= tt.elements.len()) {
+    return [dg_at("E046", "tuple has " + util.i32_to_string(tt.elements.len()) + " elements; index " + util.i32_to_string(idx) + " is out of range", line, col)];
+  }
+  return [];
 }
 
 function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]): util.Diag[] {
