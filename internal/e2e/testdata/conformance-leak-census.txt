@@ -267,7 +267,7 @@ enum_shares_a_struct_name                            0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_struct_enum                                       0
-erased_typevar_ret                                   50
+erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
 exit                                                 0
