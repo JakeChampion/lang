@@ -1303,7 +1303,7 @@ pub struct MethodSig { name: string, receiver_type: string, param_types: typeinf
 // payloadless variant's name is read as that variant's payload (#9900).
 // module is the bundle prefix of the import that declared the enum or alias,
 // "" for the entry module.
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string }
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[] }
 
 // A flat name → type map plus the function signature table
 // plus the struct-decl table plus the union-alias table.
@@ -1557,7 +1557,7 @@ pub struct UnionTable {
 // so an enum-typed scrutinee types to TypeUnion and exhaustiveness and
 // union-variant assignability cover enums the way they cover aliases.
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
-  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module };
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params };
 }
 
 // union_table indexes every union's variants by variant name. Built backward so
@@ -1970,7 +1970,7 @@ function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
     e = unions.variant_chain_next(e);
   }
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "" };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [] };
 }
 
 // union_of_variant returns the NAME of that union, or "" when none declares
@@ -2765,8 +2765,32 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
       return t_unknown("unresolved generic pattern payload");
     }
   }
+  if let typeinfo.TypeUnion(u) = whole {
+    var g: typeinfo.Type = generic_variant_payload_type(s, name, u, index);
+    if (!is_unknown(g)) { return g; }
+  }
   if (index == 0) { return variant_binding_type(s, name); }
   return variant_payload_type_at(s, name, index);
+}
+
+// A payload of a user generic enum, `Box[i32, string]`'s `Blank(s)`, is its
+// spelling with the enum's type parameters replaced by the scrutinee's
+// arguments, as a generic struct's field is. Unknown when the enum is not
+// generic or the scrutinee names no arguments for it.
+function generic_variant_payload_type(s: Scope, name: string, u: typeinfo.TypeUnion, index: i32): typeinfo.Type {
+  var us: UnionSig = s.lookup_union(u.name);
+  if (us.type_params.len() == 0 || us.type_params.len() != u.args.len()) { return t_unknown("not a generic enum instance"); }
+  var ss: StructSig = variant_payload_struct(s, name);
+  var want: string = "__ev";
+  if (index > 0) { want = "__ev" + util.i32_to_string(index); }
+  var i: i32 = 0;
+  while (i < ss.field_names.len() && i < ss.field_type_names.len()) {
+    if (ss.field_names[i] == want) {
+      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, u.args, s.structs.names, s.unions.names);
+    }
+    i = i + 1;
+  }
+  return t_unknown("no payload " + want);
 }
 
 // bind_variant_payloads brings EVERY payload binding of a matched variant into
@@ -3144,7 +3168,7 @@ function (s: Scope) lookup_union(name: string): UnionSig {
   }
   // Sentinel: empty name signals "no such union".
   var empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "" };
+  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [] };
 }
 
 // try_able_union answers whether `?` accepts an operand of this union type.
@@ -5978,7 +6002,7 @@ function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[])
       k = k + 1;
     }
     if (!dup) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [] });
     }
   }
   return out;
