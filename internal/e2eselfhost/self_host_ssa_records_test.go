@@ -63,15 +63,21 @@ graph = ssa.SFunc { name: "duplicate", nparams: 1, nvals: 2, entry: 7, takes_env
 
 func unitRecordCases() []unitCase {
 	return []unitCase{
+		// The rebuilt record dies at its field read, so the read takes the
+		// field's unit: the record is dropped there and the field after the
+		// element read.
 		{"record-borrowed-replacement", semanticRecord + "modes = [2];", `
 var created = find(p, 7, 3, 0 - 1);
 if (!supply(created, 0, 1, 0, ssaunits.retain_unit()) || !drops(created, [])) { return 40; }
-if (!drops(find(p, 7, 6, 0 - 1), [3])) { return 41; }
+if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { return 41; }
 `, "", ""},
+		// A counted parameter's field read takes too, so the parameter is
+		// released there and the field moves into the new record.
 		{"record-counted-replacement", semanticRecord + "modes = [3];", `
+if (!drops(find(p, 7, 1, 0 - 1), [0])) { return 42; }
 var created = find(p, 7, 3, 0 - 1);
-if (!supply(created, 0, 1, 0, ssaunits.retain_unit()) || !drops(created, [0])) { return 42; }
-if (!drops(find(p, 7, 6, 0 - 1), [3])) { return 43; }
+if (!supply(created, 0, 1, 0, ssaunits.move_unit()) || !drops(created, [])) { return 43; }
+if (!drops(find(p, 7, 4, 0 - 1), [3]) || !drops(find(p, 7, 6, 0 - 1), [4])) { return 50; }
 `, "", ""},
 		{"record-loop-phi", unitRecordDuplicate + "sa = recordType;\n" + unitLoop, `
 if (!supply(find(p, 7, ssaunits.edge_point(), 17), 0, 0, 0, ssaunits.move_unit())) { return 46; }

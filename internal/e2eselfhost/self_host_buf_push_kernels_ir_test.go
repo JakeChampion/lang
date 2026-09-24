@@ -135,6 +135,10 @@ function main(): i32 {
     if (!check(b, "", big, rot)) { return 6; }
     if (!check_filtered(b, "", big, alt)) { return 11; }
     if (!check_expanded(b, "", big, ex)) { return 14; }
+    var every: string = "";
+    k = 0;
+    while (k < 384) { every = every + chr(k % 128); k = k + 1; }
+    if (!check_expanded(b, "gh", every, ex)) { return 15; }
     buf_free(b);
     return 42;
 }

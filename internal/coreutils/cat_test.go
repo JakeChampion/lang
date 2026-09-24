@@ -64,8 +64,8 @@ func catCases(t *testing.T) []invocation {
 	// in every mode, and past a million lines for the number width.
 	big := catFile(t, dir, "big", strings.Repeat("line\n\n", 30000))
 	million := catFile(t, dir, "million", strings.Repeat("\n", 1000002))
-	// Numbered twice, 1 to 300: the hundreds change inside each file and
-	// between them.
+	// Numbered twice, 1 to 300: each file crosses a hundred on its own,
+	// and the count continues across the boundary.
 	hund := catFile(t, dir, "hund", strings.Repeat("x\n", 150))
 	// Its own output: the harness appends the run to it.
 	self := catFile(t, dir, "self", "s\n")

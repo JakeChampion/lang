@@ -30,13 +30,18 @@ lowered function it:
    function, a shape or a string literal, the rc-headered allocation, and
    the two ways the runtime is called), and bails on anything else, naming
    the op;
-2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
+2. takes the unit's leaves inline (`ssa.inline_leaves`): a function of one
+   block, or a chain of blocks each branching to the next, that calls nothing
+   and returns a value in at most twelve computing instructions, unless it is
+   declared `@noinline`. Its body is already reference-counted as the
+   callee's, so the splice keeps every retain and release the call made;
+3. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
-3. allocates registers with `ssa.regalloc_linear` over two pools: the
+4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
    ones (x19 to x28; rbx and r12 to r15);
-4. emits the function on the conventions the stack machine established:
+5. emits the function on the conventions the stack machine established:
    the same frame record, parameters read from the caller's slots
    (`[x29, #16 + 16*i]`, `16 + 8*i(%rbp)`), the result in x0 or %rax, calls
    made by pushing the arguments and calling the same `__fn_*` and runtime
@@ -174,8 +179,15 @@ emitted, in the order it was admitted:
   known stack effect — `ir.op_pops` models it and it pushes one value — the
   byte kernels, the map ops, the byte-buffer builder and the whole OS floor
   (the process and host queries, the handle ops, the signal, socket and
-  timer ops). The instruction carries the op's index; the emitter pushes
-  the operands, runs `emit_stack_op` for that exact op, and pops the result.
+  timer ops). The instruction carries the op's index; the emitter runs
+  `emit_stack_op` for that exact op into a capture buffer
+  (`EmitState.capture`). The operands the arm's first lines pop are loaded
+  straight into the registers those pops name, and the rest are pushed
+  beneath them. An arm whose last line pushes one register hands its result
+  back in that register; any other arm's result is popped.
+  The byte-buffer builder's ops skip the stack: their helpers take the
+  register ABI, so `ssa_buf_call` loads the operands straight into the
+  argument registers (`asmcore.buf_helper` names the helper for both).
   `emit_stack_op` is what survives of the stack machine: an op table with
   one arm per op the lift has no instruction of its own for, and a refusal
   (`ircore.flat_arm_missing`) for an op that reaches it without one. The
@@ -215,7 +227,14 @@ register is free or its holder dies at the definition, and a loop-carried
 operand takes its phi's register whenever no use of the phi is reachable
 from the operand's definition without passing the header
 (`ssa.phi_mates`, `ssa.mate_interferes`), so `sum = sum + i` computes into
-`sum`'s register and the back edge moves nothing; a phi reads its operand
+`sum`'s register and the back edge moves nothing. A spilled value takes its
+phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop
+with more carried values than registers does not copy slot to slot on its
+back edge: the whole compiler's x86-64 text is 3.8% shorter for it, and a
+self-host `uniq` runs 5% fewer instructions. A phi also takes its entry
+operand's slot when no use of the operand is reachable from the phi, and a
+free slot another phi is waiting for is passed over, so entering an inner
+loop does not copy either. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
 a loop-carried operand's interval ends at that edge. Empty blocks holding
 only a branch are skipped by every edge into them and dropped, a phi loses
