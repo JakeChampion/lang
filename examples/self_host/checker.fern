@@ -5206,6 +5206,7 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
   if (fd.ret_str) {
     return t_str();
   }
+  if (fd.ret_str_elem) { return t_array(t_str()); }
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
   }
@@ -5224,12 +5225,13 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 }
 
 // var_declared_type resolves a StmtVar's annotation, re-entering the `str` /
-// `[T]` view-ness the parse-time erasure recorded on is_str (#7293) and
-// is_view (#9944).
+// `str[]` / `[T]` view-ness the parse-time erasure recorded on is_str (#7293),
+// str_elem and is_view (#9944).
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.is_str) {
     return t_str();
   }
+  if (v.str_elem) { return t_array(t_str()); }
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
@@ -5943,6 +5945,7 @@ function param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: stri
 
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
   if (p.is_str) { return t_str(); }
+  if (p.str_elem) { return t_array(t_str()); }
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
