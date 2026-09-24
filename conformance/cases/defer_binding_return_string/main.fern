@@ -1,0 +1,11 @@
+// Evaluate the return value before cleanup. Rebinding a string's source in a
+// defer does not replace the value the caller receives.
+function build(): string {
+    var s: string = "abc" + "defghijklmnop";
+    defer s = "z";
+    return s;
+}
+
+function main(): i32 {
+    return build().len();
+}
