@@ -20570,8 +20570,8 @@ func (b *builder) emitOwnFlagOverwriteDec(name string, releaseOwned, balanceSame
 	idx, hasSlot := b.locals[name]
 	flagSlot, ok := b.locals[ownFlagName(name)]
 	if !ok || !hasSlot {
-		// No flag was allocated (the prologue only allocates for promoted
-		// array params); fall back to the unconditional dec.
+		// No flag was allocated for this param; fall back to the
+		// unconditional dec.
 		balanceSame()
 		return
 	}
