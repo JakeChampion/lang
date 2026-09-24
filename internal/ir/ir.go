@@ -22726,14 +22726,19 @@ func (b *builder) fieldAppendRootOK(fa *ast.FieldAccess) bool {
 // ownedAppendReceiver reports whether an append's receiver expression yields a
 // reference of its own that the append consumes: another append's result
 // (every __fern_arr_push_grow result is counted — rc 2 in place, a fresh rc 1
-// buffer otherwise), a literal, or a fresh user-call result. An ident, a field
-// or an index reads a reference some binding still owns and is not this.
+// buffer otherwise), a literal, a fresh user-call result, or a `.with` whose
+// live receiver forced the copy (arraySetInc), which is a fresh rc 1 buffer.
+// An ident, a field or an index reads a reference some binding still owns and
+// is not this.
 func (b *builder) ownedAppendReceiver(e ast.Expr) bool {
 	if !ast.RcFreeEnabled {
 		return false
 	}
 	if c, ok := e.(*ast.Call); ok {
 		if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" {
+			return true
+		}
+		if isArraySetCall(c) && b.rc.arraySetInc[c] {
 			return true
 		}
 	}
