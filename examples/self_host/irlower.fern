@@ -29190,11 +29190,10 @@ function struct_is_scalar_only(structs: StructTab, sty: string): boolean {
 // arbitrary acyclic depth: `A { b: B }` / `B { c: C }` / `C { xs: i32[] }` now
 // deep-drops all the way down (A's drop releases B's box AND, transitively, C's xs
 // buffer), reusing the per-level rc_is_unique guard the leaf case already applied.
-// A `string` field counts as reclaimable (#4297 A2). An enum field does NOT:
-// `__struct_drop_` releases it box-only, because the inline
-// emit_struct_enum_field_payload_drops sweep is its other releaser and the two
-// cannot both fire (#8692). Option / tuple inner fields are not reclaimed either,
-// so a struct reaching only those returns false.
+// A `string` field counts as reclaimable (#4297 A2), and so does an enum field
+// whose payloads `__struct_drop_`'s deep_enum_drop walks (enum_arr_elems_walk_ok,
+// #8692). Option / tuple inner fields are not reclaimed, so a struct reaching
+// only those returns false.
 pub function nested_field_deep_drop_ok(structs: StructTab, sty: string): boolean {
     if (sty.len() == 0) { return false; }
     var visiting: string[] = [];
@@ -29232,6 +29231,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             has_arr = true;
         } else if (fdt == "string") {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
+        } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
+            has_arr = true;   // deep_enum_drop walks its payloads
         }
         fi = fi + 1;
     }
@@ -30151,70 +30152,12 @@ function emit_struct_field_drops(s: LowerState, slot: i32): LowerState {
     // ($tsx/$optst/...) never carry the marker, so the tuple-child / option-
     // payload / array-element walks are unaffected.
     if (slot_nodeep(s, slot)) { return s; }
-    // __struct_drop_<T>'s k_enum arm is a box-only dec, so a direct enum field's
-    // variant payload survives the sweep. Release it here first, while the box is
-    // still readable.
-    var st: LowerState = emit_struct_enum_field_payload_drops(s, slot, sty);
-    // Direct tuple fields, for the same reason the enum payloads above need
-    // their own arm: no k_* arm of __struct_drop_<sty> matches a "(…)" type.
-    st = emit_struct_tuple_field_drops(st, slot, sty);
+    // Direct tuple fields: no k_* arm of __struct_drop_<sty> matches a "(…)"
+    // type, so they are released here, before the box.
+    var st: LowerState = emit_struct_tuple_field_drops(s, slot, sty);
     st = st.emit(ir.op_load_local(slot));    // box (arg0)
     st = st.emit(ir.op_call_direct("__struct_drop_" + sty, 1));   // deep-drops the rc-array fields; returns box
     return st.emit(ir.op_drop());
-}
-
-// emit_struct_enum_field_payload_drops releases the VARIANT PAYLOAD of every direct
-// enum field of struct `sty` whose enum type is array-payload-only, leaving the enum
-// BOX itself to the k_enum arm of the __struct_drop_<sty> call that follows (a dec
-// here too would over-release it). Without this the payload array leaks once per
-// construction — the residual #6691 left, and the gap between a struct's enum FIELD
-// and the same enum spelled as a LOCAL, which lowering already deep-drops via
-// emit_enum_variant_drops.
-//
-// ADMISSION, two halves:
-//   - the enum TYPE: enum_all_variants_array_payload — every rc payload is a leaf
-//     scalar ARRAY that a single rc_dec fully releases. String / nested-struct
-//     payloads are excluded because releasing one needs the per-construction
-//     freshness proof (variant_struct_payloads_fresh) the sweep cannot see, whereas
-//     an array payload takes the construction alias-inc, so a bare-ident payload is
-//     retained and the dec only releases the dup.
-//   - the box at RUNTIME: __fern_rc_is_unique, which doubles as the null guard. A
-//     non-fresh enum field (bound from a live enum local, copied from a struct-lit
-//     base) was alias-inc'd at construction, so the box is shared and its payload is
-//     still reachable through the other owner — deep-dropping it there would free a
-//     live value, and the other owner's own sweep would double-release. Shared boxes
-//     take today's shallow path: leaks, never dangles.
-//
-// The struct box is null-guarded because op_struct_get faults on a zeroed slot (an
-// unreached local), which __struct_drop_'s own low-address check would have absorbed.
-function emit_struct_enum_field_payload_drops(se: LowerState, slot: i32, sty: string): LowerState {
-    var st: LowerState = se;
-    var n: i32 = decl_field_count(st.frame.structs, sty);
-    var fi: i32 = 0;
-    while (fi < n) {
-        var ft: string = decl_field_type_at(st.frame.structs, sty, fi);
-        if (decl_is_enum(st.frame.structs, ft) && enum_all_variants_array_payload(st.frame.structs, ft)) {
-            var esc: string = "$sefp" + util.i32_to_string(st.locals.len());
-            st = st.add_local(esc);
-            var etmp: i32 = st.slot_of(esc);
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_bin("ne", 0, false));                                     // struct box != 0
-            st = st.emit(ir.op_if(0));
-            st = st.emit(ir.op_load_local(slot));
-            st = st.emit(ir.op_struct_get(fi, struct_field_width(st.frame.structs, sty, fi)));  // enum box
-            st = st.emit(ir.op_store_local(etmp));
-            st = st.emit(ir.op_load_local(etmp));
-            st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));                    // sole owner (and null-safe)
-            st = st.emit(ir.op_if(0));
-            var no_moved: string[] = [];
-            st = emit_enum_variant_payload_drops(st, etmp, ft, no_moved);
-            st = st.emit(ir.op_end());
-            st = st.emit(ir.op_end());
-        }
-        fi = fi + 1;
-    }
-    return st;
 }
 
 // struct_has_deep_tuple_field: `sty` has a direct tuple field whose shape
@@ -30233,14 +30176,13 @@ function struct_has_deep_tuple_field(structs: StructTab, sty: string): boolean {
 }
 
 // emit_struct_tuple_field_drops releases every direct deep-droppable TUPLE
-// field of struct `sty` — its rc children and then its box. The tuple sibling
-// of emit_struct_enum_field_payload_drops, and it exists for the same reason
-// that one does: the asm __struct_drop_<sty> ladder has no arm that matches a
-// "(…)" field type, so without this the tuple box and everything it owns
-// survives the sweep. Runs BEFORE the __struct_drop_ call, while the box is
+// field of struct `sty` — its rc children and then its box. It exists because
+// the asm __struct_drop_<sty> ladder has no arm that matches a "(…)" field
+// type, so without this the tuple box and everything it owns survives the
+// sweep. Runs BEFORE the __struct_drop_ call, while the box is
 // still readable.
 //
-// Two guards, both the enum sibling's:
+// Two guards:
 //   - the struct box is null-guarded (op_struct_get faults on a zeroed slot);
 //   - the CHILD WALK is __fern_rc_is_unique-gated. A non-fresh tuple field was
 //     alias-inc'd at construction (the ExprStructLit tuple arm, gated on this
@@ -46446,8 +46388,8 @@ function emit_enum_variant_drops(s: LowerState, slot: i32, enum_name: string): L
 // implies every arm is unguarded and exactly the escaping arm ran.
 //
 // `shared` guards the payload walk with __fern_rc_is_unique — the local-side
-// twin of the gate emit_struct_enum_field_payload_drops already applies from
-// the struct side.
+// twin of the gate __struct_drop_<T>'s deep_enum_drop applies (__enum_drop_)
+// from the struct side.
 //
 // `shared` is true wherever the released name may be a COUNTED SHARE: a bare
 // enum ident handed to a struct-literal field is retained there, so at this
@@ -46486,8 +46428,6 @@ function emit_enum_variant_drops_gated(s: LowerState, slot: i32, enum_name: stri
 // callers need exactly that split:
 //   - emit_enum_inplace_reassign / emit_enum_donor_reuse, which re-shape the SAME box
 //     to the new variant rather than freeing it;
-//   - emit_struct_enum_field_payload_drops, where __struct_drop_<T>'s k_enum arm frees
-//     the box afterwards and a second dec here would over-release it;
 //   - emit_enum_variant_drops_gated, which appends the free itself.
 function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: string, moved: string[]): LowerState {
     var st: LowerState = s;
@@ -55689,7 +55629,7 @@ function sa_escape_stmt(st: ast.Stmt, name: string, tyname: string, acc: string[
 // its payload stranded once per construction.
 //
 // Both owners release under __fern_rc_is_unique (emit_enum_variant_drops_gated
-// here, emit_struct_enum_field_payload_drops on the struct side), so whichever
+// here, __struct_drop_<T>'s deep_enum_drop on the struct side), so whichever
 // runs last finds rc 1 and does the deep drop; neither order double-frees.
 // That gate is what licenses this carve-out, and only the credits that take
 // the gated release may use this walk.

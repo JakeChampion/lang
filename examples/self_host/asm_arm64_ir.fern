@@ -4002,6 +4002,17 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (struct_drop clobbered x10)
             s = s.write(".Lasd_" + san + "_sdf" + ks + ":\n");
+        } else if (op.kind == "deep_enum_drop") {
+            // A direct enum field's live-variant rc payloads; __enum_drop_ applies
+            // the rc==1 gate and the null guard itself, and the arr_dec directive
+            // that follows frees the enum box. It clobbers x10, so reload the box.
+            var edsan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("enum_drop:" + op.ty);
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // enum box = box.field_k
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___enum_drop_" + edsan + "\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box
         } else if (op.kind == "str_free") {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string box
             s = s.write("    str x0, [sp, #-16]!\n");

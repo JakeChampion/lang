@@ -7203,12 +7203,13 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
             ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false, uniq: false });
         } else if (k_str_arr) {
             ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false, uniq: false });
-        // A DIRECT enum field is NOT deep-dropped here. It has a second releaser —
-        // the inline emit_struct_enum_field_payload_drops sweep at a struct local's
-        // scope exit — and __struct_drop_ cannot tell whether its caller already
-        // ran it. Both are rc==1-gated, so in a scope-exit context both fire and
-        // the second dec lands past a live claim (#8692). The field-reclaim side
-        // has no such twin and keeps its deep_enum_dec.
+        // A DIRECT enum field: its live variant's rc payloads (__enum_drop_,
+        // rc==1-gated on the enum box), then the box. This helper is the one
+        // releaser of that payload on every drop path (#8692), as
+        // __field_reclaim_'s deep_enum_dec is on the rebind path.
+        } else if (k_enum && irlower.enum_arr_elems_walk_ok(s.struct_decls, fdt)) {
+            ops = ops.append(RcOp { kind: "deep_enum_drop", idx: k, ty: fdt, cow: false, uniq: false });
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         } else if (k_scalar || k_struct || k_enum || k_clo || k_str_arr_shallow) {
             ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false, uniq: false });
         }
