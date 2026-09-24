@@ -4858,6 +4858,51 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The struct sibling of the case above, for a type with no wired deep
+		// drop: a closure field. computeConsumedParams declines to promote a
+		// reassigned borrowed param of such a type, so the caller passes it
+		// without a retain, yet the Assign catch-all still emitted the
+		// overwrite dec. `ctx = step(ctx)` released a reference `steps` was
+		// never handed, and main's own drop then took the box to -1. The
+		// overwrite dec and the exit release are gated on an ownership flag
+		// now, as the array param's are.
+		name: "closure_field_struct_param_threaded_by_reassignment",
+		src: `
+function no_f(s: string): i32 { return 0; }
+struct Ctx { f: (string) => i32, n: i32 }
+function step(ctx: Ctx): Ctx { return Ctx { f: ctx.f, n: ctx.n + 1 }; }
+function steps(ctx: Ctx, k: i32): Ctx {
+    var i: i32 = 0;
+    while (i < k) { ctx = step(ctx); i = i + 1; }
+    return ctx;
+}
+function main(): i32 {
+    var ctx: Ctx = Ctx { f: no_f, n: 0 };
+    ctx = steps(ctx, 3);
+    ctx = steps(ctx, 0);
+    return (ctx.n - 3) + ctx.f("x") + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same undercount through a Map field, the other shape
+		// typeDeepDropWired rejects.
+		name: "map_field_struct_param_threaded_by_reassignment",
+		src: `
+import "core/map";
+struct Ctx { m: Map[string, i32], n: i32 }
+function step(ctx: Ctx): Ctx { return Ctx { m: ctx.m, n: ctx.n + 1 }; }
+function steps(ctx: Ctx): Ctx {
+    ctx = step(ctx);
+    return ctx;
+}
+function main(): i32 {
+    var m: Map[string, i32] = map_new(4);
+    var ctx: Ctx = Ctx { m: m.insert("a", 1), n: 0 };
+    ctx = steps(ctx);
+    return (ctx.n - 1) + (ctx.m.len() - 1) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A match payload binding and a differently-TYPED local in a SIBLING
 		// arm, both named `a`. Neither shadows the other — their scopes are
 		// disjoint — so shadowrename left both bare, and the IR builder's flat

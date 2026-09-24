@@ -1771,7 +1771,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// at the end of the transfer chain; an own param that escaped is not
 	// freeEligible (re-tainted) and is likewise skipped.
 	for i, p := range b.fn.Params {
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name]) || !rcTracked(p.Type) || seen[p.Name] {
+		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] && !b.rc.flagThreadedParams[p.Name]) || !rcTracked(p.Type) || seen[p.Name] {
 			continue
 		}
 		// A consumed-threaded ARRAY param owns its slot only once a
@@ -1791,7 +1791,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// makes the accumulator's buffer permanently shared, so every
 		// subsequent append copies it: correct, but O(n²) in bytes moved.
 		flagSlot, hasFlag := b.locals[ownFlagName(p.Name)]
-		flagGated := hasFlag && b.isConsumedArrayParam(p.Name)
+		flagGated := hasFlag && b.ownFlagThreadedParam(p.Name)
 		if !flagGated && !b.rc.freeEligible[p.Name] {
 			continue
 		}
