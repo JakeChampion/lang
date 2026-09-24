@@ -70,9 +70,12 @@ func TestSelfHostConstDivisorShapesX86_64(t *testing.T) {
 @noinline function d8w(x: i64): i64 { return x / 8i64; }
 @noinline function mbig(x: i64): i64 { return x % 1099511627776i64; }
 @noinline function dneg1(x: i32): i32 { return x / -1; }
+@noinline function d10uw(x: u64): u64 { return x / 10u64; }
+@noinline function mtw(x: i64): i64 { return x % 1000000000000i64; }
 function main(): i32 {
   return m4093(9000) + d7(50) + d8(-17) + m8(-17) + (d3u(20u32) as i32) + (m7u(20u32) as i32) + dxy(9, 2)
-    + (mxyu(9u32, 2u32) as i32) + (m97w(200i64) as i32) + (d8w(-9i64) as i32) + (mbig(5i64) as i32) + dneg1(5);
+    + (mxyu(9u32, 2u32) as i32) + (m97w(200i64) as i32) + (d8w(-9i64) as i32) + (mbig(5i64) as i32) + dneg1(5)
+    + (d10uw(70u64) as i32) + (mtw(5i64) as i32);
 }
 `
 	asm := selfHostX86Emit(t, runner, driverBin, src)
@@ -96,8 +99,12 @@ function main(): i32 {
 		// and the 33-bit magic's shift-average for 7.
 		{"d3u", []string{"movl $-1431655765, %eax", "mull %ecx", "shrl $1, %edx"}, append([]string{"div ", "divl", "divq"}, guards...)},
 		{"m7u", []string{"mull %ecx", "subl %edx, %eax", "shrl $1, %eax", "addl %edx, %eax", "shrl $2, %eax", "imull $7, %eax, %eax"}, append([]string{"divl", "divq"}, guards...)},
-		// i64 keeps its divide but loses both guards and all four labels.
-		{"m97w", []string{"movabsq $97, %rcx", "cqto", "idivq %rcx", "movq %rdx, %rax"}, guards},
+		// i64 takes the reciprocal too: the high half of the 128-bit product
+		// in %rdx, the multiply-back an imm32 while the divisor fits one and
+		// a movabsq once it does not.
+		{"m97w", []string{"movq %rax, %rcx", "movabsq $-6275696437447579415, %rax", "imulq %rcx", "addq %rcx, %rdx", "sarq $6, %rdx", "shrq $63, %rdx", "imulq $97, %rax, %rax"}, append([]string{"idiv", "cqto"}, guards...)},
+		{"d10uw", []string{"movabsq $-3689348814741910323, %rax", "mulq %rcx", "shrq $3, %rdx"}, append([]string{"divq", "idiv"}, guards...)},
+		{"mtw", []string{"movabsq $2535301200456458803, %rax", "sarq $37, %rdx", "movabsq $1000000000000, %rdx", "imulq %rdx, %rax"}, append([]string{"idiv"}, guards...)},
 		{"d8w", []string{"sarq $63, %rcx", "shrq $61, %rcx", "sarq $3, %rax"}, append([]string{"idiv"}, guards...)},
 		// A mask past bit 31 is a shift pair, never an immediate gas refuses.
 		{"mbig", []string{"shrq $40, %rcx", "shlq $40, %rcx"}, append([]string{"idiv", "andq $-1099511627776"}, guards...)},
@@ -144,8 +151,13 @@ var constDivisorOracleCases = []struct {
 	{"reciprocal", `function main(): i32 { var xs: i32[] = [9000, -9000, -2147483648, 2147483647]; var h: i32 = 0; var i: i32 = 0; while (i < 4) { var x: i32 = xs[i]; h = h * 31 + x / 4093 + x % 4093 + x / -7 + x % -7 + x / 3; i = i + 1; } if (h < 0) { h = 0 - h; } return h % 200; }`},
 	// u32 above 2^31 through the 33-bit magic (7) and the plain one (3).
 	{"u32-highbit", `function main(): i32 { var us: u32[] = [3000000000u32, 4294967295u32]; var h: u32 = 0u32; var i: i32 = 0; while (i < 2) { var u: u32 = us[i]; h = h * 31u32 + u / 7u32 + u % 7u32 + u / 3u32 + u % 3u32 + u / 1024u32 + u % 1024u32; i = i + 1; } return (h % 200u32) as i32; }`},
-	// i64: the unguarded divide, and a power-of-two mask past bit 31.
+	// i64: the reciprocal, and a power-of-two mask past bit 31.
 	{"i64-wide", `function main(): i32 { var ws: i64[] = [-9223372036854775808i64, -7i64, 1099511627783i64]; var h: i64 = 0i64; var i: i32 = 0; while (i < 3) { var w: i64 = ws[i]; h = h * 31i64 + w / 97i64 + w % 97i64 + w / 1099511627776i64 + w % 1099511627776i64 + w / -1099511627776i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
+	// The 64-bit reciprocals at the ends of the range: u64 through a magic one
+	// bit wider than the word (7) and a plain one (10), i64 by a divisor too
+	// wide for an imm32.
+	{"u64-reciprocal", `function main(): i32 { var us: u64[] = [18446744073709551615u64, 9223372036854775808u64, 12345678901234567u64]; var h: u64 = 0u64; var i: i32 = 0; while (i < 3) { var u: u64 = us[i]; h = h * 31u64 + u / 7u64 + u % 7u64 + u / 10u64 + u % 10u64 + u / 100u64; i = i + 1; } return (h % 200u64) as i32; }`},
+	{"i64-wide-reciprocal", `function main(): i32 { var ws: i64[] = [9223372036854775807i64, -9223372036854775808i64, -1234567890123i64]; var h: i64 = 0i64; var i: i32 = 0; while (i < 3) { var w: i64 = ws[i]; h = h * 31i64 + w / 1000000000000i64 + w % 1000000000000i64 + w / -7i64 + w % -7i64 + w / 10i64; i = i + 1; } if (h < 0i64) { h = 0i64 - h; } return (h % 200i64) as i32; }`},
 	// Zero and one literals, which need no arithmetic at all.
 	{"degenerate", `function main(): i32 { var xs: i32[] = [-17]; var x: i32 = xs[0]; if (x / 0 == 0 && x % 0 == -17 && x / 1 == -17 && x % 1 == 0) { return 5; } return 9; }`},
 	// The dynamic path on its dword forms: INT_MIN and -1 from arrays.

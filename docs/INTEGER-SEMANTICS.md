@@ -70,8 +70,8 @@ backends match it:
   zero divisor and the `INT_MIN / -1` overflow) so the hardware op
   only runs on operands it can't fault on. A literal divisor needs
   neither guard and takes an unguarded sequence instead — a shift for a
-  power of two, the multiply-high reciprocal at i32 width — in both
-  compilers.
+  power of two, otherwise the multiply-high reciprocal at either width —
+  in both compilers.
 - **wasm** routes `div` / `rem` through guarded runtime helpers
   (`__fern_idiv_*` / `__fern_irem_*`) that sanitise the divisor before
   the trapping instruction and `select` the contract result.

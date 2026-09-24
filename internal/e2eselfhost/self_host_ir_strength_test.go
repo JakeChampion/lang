@@ -250,10 +250,11 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 }
 
 // magicParityLines renders native's reciprocal derivation in the driver's
-// format, so ir.fern's derive_magic_s32 / derive_magic_u32 are pinned to
+// format, so ir.fern's derive_magic_s / derive_magic_u are pinned to
 // internal/ir/magic.go itself rather than to a copied table. The divisors
 // cover every arm: plain, add, sub, a zero shift, a large shift, a tiny
-// magic, a 33-bit unsigned magic, and divisors past 2^31.
+// magic, a magic one bit wider than the word, and divisors past 2^31 and 2^63
+// at both widths.
 func magicParityLines() string {
 	var b strings.Builder
 	for _, d := range []int32{3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5} {
@@ -263,6 +264,14 @@ func magicParityLines() string {
 	for _, d := range []uint32{3, 7, 97, 641, 1000000, 2147483649, 2863311531, 4294967291, 4294967295, 10, 100, 5, 4093} {
 		mg := ir.DeriveMagicU32(d)
 		fmt.Fprintf(&b, "magic_u %d: m=%d s=%d add=%v\n", d, mg.M, mg.S, mg.Add)
+	}
+	for _, d := range []int64{3, 7, -7, 10, 100, 641, -1000000007, 1000000000000, 6148914691236517205, -6148914691236517205, 9223372036854775807, -9223372036854775807} {
+		mg := ir.DeriveMagicS64(d)
+		fmt.Fprintf(&b, "magic_s64 %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
+	}
+	for _, d := range []uint64{3, 7, 10, 100, 641, 1000000007, 9223372036854775809, 12297829382473034411, 18446744073709551557, 18446744073709551615} {
+		mg := ir.DeriveMagicU64(d)
+		fmt.Fprintf(&b, "magic_u64 %d: m=%d s=%d add=%v\n", int64(d), int64(mg.M), mg.S, mg.Add)
 	}
 	return b.String()
 }

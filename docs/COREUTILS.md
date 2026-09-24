@@ -3046,6 +3046,31 @@ division happens only then.
 
 Instructions: 1.16 G to 1.04 G (GNU: 0.83 G).
 
+### 64-bit division by a constant, 2026-09-24 (GNU coreutils 9.12)
+
+`od`'s decimal formats (`-tu8`, `-td8`, …) split each value into digit
+pairs with `/ 100` on a u64, about eighteen times for a 20-digit value.
+Division by a constant took the multiply-high reciprocal only at i32; at
+64 bits it was a hardware `div`, 35–90 cycles each. Both x86-64 emitters
+now take the reciprocal at 64 bits too: the one-operand `mul` / `imul`
+leave the high half of the 128-bit product in rdx.
+
+| workload | before | after | GNU 9.12 |
+|---|---:|---:|---:|
+| od -An -tu8 over 16 MB of random bytes (median of 15) | 767.4 ms | 497.6 ms | 452.4 ms |
+
+The divide is three instructions and the reciprocal eight, so the
+instruction count rises slightly. What changes is the latency on the
+dependency chain: each quotient feeds the next division.
+
+`nl` measured 194.8 ms before and 207.5 ms after, with the same
+instruction count. Its division runs once per hundred lines, in a
+branch inside `fast_lines`' loop. Padding the old build with 18 bytes
+of nops at that site (the reciprocal's extra length) gives 210.7 ms. So
+the slowdown is where the loop's code lands, not the division. Aligning
+every loop head to 16 bytes does not remove that sensitivity: it moved
+the old build to 204.6 ms and the new one to 196.7 ms.
+
 ### ls, 2026-09-14, Linux x86-64 (GNU coreutils 9.4, uutils 0.0.24)
 
 The same 4-core container, so read the columns against each other. The
