@@ -15434,27 +15434,88 @@ function e021_derive_conforms(mod: parser.Module, tr: string, treq_idx: i32, fty
   return true;
 }
 
+// derive_trait_idx finds the trait a derive spelling names: a bare name among
+// the program's own traits, `p.Name` among those of the module with bundle
+// prefix `p` (flatten.canon_derives spells every derive that way). -1 when
+// nothing in scope declares it.
+function derive_trait_idx(tr: string, trait_reqs: parser.TraitReq[]): i32 {
+  var dot: i32 = tr.len() - 1;
+  while (dot >= 0 && tr[dot] != b'.') {
+    dot = dot - 1;
+  }
+  var q: string = "";
+  var name: string = tr;
+  if (dot >= 0) {
+    q = slice_unchecked(tr, 0, dot) + "";
+    name = slice_unchecked(tr, dot + 1, tr.len()) + "";
+  }
+  var i: i32 = 0;
+  while (i < trait_reqs.len()) {
+    if (trait_reqs[i].trait_name == name && trait_reqs[i].module == q) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// derive_import_unloaded reports a qualified derive whose qualifier is one of
+// the program's imports but whose module was never loaded — a single-module
+// driver checks without its imports, so nothing can say what that module
+// declares.
+function derive_import_unloaded(mod: parser.Module, tr: string): boolean {
+  var dot: i32 = tr.len() - 1;
+  while (dot >= 0 && tr[dot] != b'.') {
+    dot = dot - 1;
+  }
+  if (dot < 0) {
+    return false;
+  }
+  var q: string = slice_unchecked(tr, 0, dot) + "";
+  for r in mod.trait_reqs {
+    if (r.module == q) {
+      return false;
+    }
+  }
+  for im in mod.imports {
+    var qual: string = im.alias;
+    if (qual.len() == 0) {
+      var sl: i32 = im.path.len() - 1;
+      while (sl >= 0 && im.path[sl] != b'/') {
+        sl = sl - 1;
+      }
+      qual = slice_unchecked(im.path, sl + 1, im.path.len()) + "";
+    }
+    if (qual == q) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // e021_derive_one_diag returns the E021 for ONE @derive(tr) on type
 // `tname` (struct fields or flattened enum variant payloads: labels[i]
-// names types[i] in the message), or none. Gates mirror the native
-// pre-check (#5392): only the kinds whose synthesised body calls the
-// trait method on every field, only a trait declared in this module,
-// only known non-generic field types; the first non-conforming field
-// draws the single diagnostic at the deriving decl.
-//
-// Native writes this same set as "every derivable kind but Default",
-// because its deriveKind already whitelists the derivable traits. This
-// side has no such whitelist — derive_simple_name only strips the
-// module prefix, so an arbitrary user trait reaches here — hence the
-// explicit list. Default is excluded on both sides: it composes through
-// zero literals and `Type.default()`, not a call on the field value.
+// names types[i] in the message), or none. As native does, a trait nothing
+// in scope declares is "unknown" (there is no prelude, so a bare `Eq` needs
+// the program's own `trait Eq`), and a declared trait outside the derivable
+// set is refused. Then the field check mirrors native's pre-check (#5392):
+// only known non-generic field types, and the first non-conforming field
+// draws the single diagnostic at the deriving decl. Default skips it: it
+// composes through zero literals and `Type.default()`, not a call on the
+// field value.
 function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
   var kind: string = parser.derive_simple_name(tr);
-  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json") {
-    return [];
-  }
-  var tidx: i32 = e021_trait_idx(tr, mod.trait_reqs);
+  var tidx: i32 = derive_trait_idx(tr, mod.trait_reqs);
   if (tidx < 0) {
+    if (derive_import_unloaded(mod, tr)) {
+      return [];
+    }
+    return [dg_at("E021", "@derive(" + tr + "): unknown trait", ln, cl)];
+  }
+  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "Default") {
+    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", ln, cl)];
+  }
+  if (kind == "Default") {
     return [];
   }
   var fi: i32 = 0;
