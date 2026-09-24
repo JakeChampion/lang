@@ -429,10 +429,11 @@ function phi_ownership(f: ssasem.Func, owned: boolean[]): boolean[] {
 // A dyn value is lent for the same reason at a different step: a unit of one
 // would be released through `__fern_rc_dec`, which frees the box without the
 // children only a dispatch on its shape could find.
-function view_retain_error(f: ssasem.Func, steps: Step[]): string {
+// A literal's retain is never emitted (ssarc.supplies), so it lends nothing.
+function view_retain_error(f: ssasem.Func, steps: Step[], literal: boolean[]): string {
     for s in steps {
         for item in s.supplies {
-            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value])) { return "a view is lent, never retained"; }
+            if (item.mode == retain_unit() && ssasem.is_view(f.values[item.value]) && !literal[item.value]) { return "a view is lent, never retained"; }
             if (item.mode == retain_unit() && ssasem.is_dyn(f.values[item.value])) { return "a dyn value is lent, never retained"; }
         }
     }
@@ -1154,9 +1155,10 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
         }
         bi = bi + 1;
     }
-    why = view_retain_error(f, steps);
+    var literal: boolean[] = literals(f);
+    why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, literal: literals(f), grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
+    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
     why = verify(f, modes, out);
     if (why != "") { return bad(why); }
     return out;
