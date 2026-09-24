@@ -114,3 +114,24 @@ function f(): i32 {
 		})
 	}
 }
+
+// A `?` refused by E079 has no failure edge, so it is not one of an
+// unannotated lambda's inferred returns. Counting it as one (#9515) typed the
+// lambda from an Option return nothing can reach, and the binding then drew a
+// return-type mismatch beside E079 where the self-host reports E042.
+func TestDeferTryOpIsNotAnInferredReturn(t *testing.T) {
+	got := checkSrc(t, `function g(v: i32): Option[i32] {
+	if (v < 100) { return Some(v + 1); }
+	return None;
+}
+function main(): i32 {
+	var h: (i32) => i32 = (x: i32) => { var n: i32 = x; defer n = g(n)?; return n; };
+	return h(1);
+}`)
+	if !strings.Contains(got, "is not allowed inside a `defer` action") {
+		t.Errorf("want E079, got:\n%s", got)
+	}
+	if strings.Contains(got, "mismatch") {
+		t.Errorf("the refused `?` was inferred as a return:\n%s", got)
+	}
+}

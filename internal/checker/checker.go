@@ -13511,6 +13511,11 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				kind = "an `errdefer`"
 			}
 			c.errfCode(pos, "E079", "`?` is not allowed inside %s action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", kind)
+			// That `?` has no failure edge, so it is not one of an
+			// unannotated body's returns (#9515).
+			prevInfer := c.inferReturns
+			c.inferReturns = nil
+			defer func() { c.inferReturns = prevInfer }()
 		}
 		// Just type-check the action; its result is discarded (defer is
 		// statement-shaped, not expression-shaped). The IR builder is
