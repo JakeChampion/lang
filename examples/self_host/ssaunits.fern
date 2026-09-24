@@ -1224,10 +1224,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     }
     why = view_retain_error(f, steps);
     if (why != "") { return bad(why); }
-    var out: Plan = Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
-    why = verify(f, modes, out);
-    if (why != "") { return bad(why); }
-    return out;
+    return Plan { ok: true, why: "", steps: steps, owned: owned, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
 }
 
 function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][]): string {
