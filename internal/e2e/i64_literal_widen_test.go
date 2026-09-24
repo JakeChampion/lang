@@ -132,6 +132,22 @@ function main(): i32 {
 }
 `
 
+// genericScrutineeBigLiteralProgram: a generic call in SCRUTINEE position
+// settles its literal-bound type parameter the way an unannotated `var` init
+// does, so `pick(1, 2^62)` binds T = i64 and the payload compares wide. Before,
+// T took the i32 default there and the arm's comparison against a wide literal
+// was refused as E041 (#8722). A correct run exits 9.
+const genericScrutineeBigLiteralProgram = `
+function pick[T](a: T, b: T): Option[T] { return Some(b); }
+function main(): i32 {
+  var c = 0;
+  match (pick(1, 4611686018427387904)) { Some(v) => { if (v / 1000000000000000000 == 4) { c = c + 1; } }, None => { } }
+  var m = match (pick(2, 4611686018427387904)) { Some(v) => v / 1000000000000000000, None => 0 };
+  c = c + (m as i32) * 2;
+  return c;
+}
+`
+
 // annotatedGenericBigLiteralProgram pins the annotated half of #8722: a
 // destination type reaches a generic call's type parameters through the
 // callee's RETURN type, so `(i64, string)` binds A of `pair` and `i64` binds A
@@ -203,6 +219,7 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(wideLiteralSiblingsProgram, 63, "big-literal generic call and comparisons")
 	run(compositeBigLiteralProgram, 63, "big-literal tuple and array elements")
 	run(matchScrutineeBigLiteralProgram, 62, "big-literal match scrutinee")
+	run(genericScrutineeBigLiteralProgram, 9, "big-literal generic call as scrutinee")
 	run(annotatedGenericBigLiteralProgram, 63, "big-literal annotated generic call")
 	run(arrayDestinationGenericProgram, 15, "annotated array destination generic call")
 }
@@ -225,6 +242,9 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, matchScrutineeBigLiteralProgram); code != 62 {
 		t.Errorf("x86-64 big-literal match scrutinee: exit = %d, want 62", code)
+	}
+	if _, code := compileAndRunX86_64(t, genericScrutineeBigLiteralProgram); code != 9 {
+		t.Errorf("x86-64 big-literal generic call as scrutinee: exit = %d, want 9", code)
 	}
 	if _, code := compileAndRunX86_64(t, arrayDestinationGenericProgram); code != 15 {
 		t.Errorf("x86-64 annotated array destination generic call: exit = %d, want 15", code)
@@ -253,6 +273,9 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, matchScrutineeBigLiteralProgram); code != 62 {
 		t.Errorf("arm64 big-literal match scrutinee: exit = %d, want 62", code)
 	}
+	if _, code := compileAndRunArm64(t, genericScrutineeBigLiteralProgram); code != 9 {
+		t.Errorf("arm64 big-literal generic call as scrutinee: exit = %d, want 9", code)
+	}
 	if _, code := compileAndRunArm64(t, arrayDestinationGenericProgram); code != 15 {
 		t.Errorf("arm64 annotated array destination generic call: exit = %d, want 15", code)
 	}
@@ -279,6 +302,9 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, matchScrutineeBigLiteralProgram); code != 62 {
 		t.Errorf("wasm big-literal match scrutinee: exit = %d, want 62", code)
+	}
+	if code := runWasm(t, genericScrutineeBigLiteralProgram); code != 9 {
+		t.Errorf("wasm big-literal generic call as scrutinee: exit = %d, want 9", code)
 	}
 	if code := runWasm(t, arrayDestinationGenericProgram); code != 15 {
 		t.Errorf("wasm annotated array destination generic call: exit = %d, want 15", code)

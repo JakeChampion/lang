@@ -1087,6 +1087,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"len-method-ok", "function main(): i32 { var s: string = \"hello\"; var xs: i32[] = [1, 2]; return s.len() + xs.len(); }\n", nil},
 		{"tuple-field-non-numeric", "function main(): i32 { var t = (1, 2); return t.foo; }\n", []string{"E046"}},
 		{"tuple-field-out-of-range", "function main(): i32 { var t = (1, 2); return t.5; }\n", []string{"E046"}},
+		// The rc detector intrinsics type as native registers them.
+		{"rc-intrinsics-clean", "function main(): i32 { var n: i32 = __rc_underflow_count() + __arr_push_shared_count(); var b: i64 = __arr_push_shared_bytes(); return n; }\n", nil},
+		{"rc-intrinsic-sink", "function main(): i32 { var b: boolean = __rc_underflow_count(); return 0; }\n", []string{"E003"}},
+		// A tuple has no methods: a method-call callee takes the field rule.
+		{"tuple-method-call", "function main(): i32 { var t = (1, 2); return t.len(); }\n", []string{"E046"}},
+		{"tuple-method-call-builtin", "function main(): i32 { var t = (1, 2); print(t.to_string()); return 0; }\n", []string{"E046"}},
+		{"tuple-element-fn-call-clean", "function one(): i32 { return 1; }\nfunction main(): i32 { var t: (() => i32, i32) = (one, 4); return t.0() + t.1; }\n", nil},
 		{"tuple-field-ok", "function main(): i32 { var t = (1, 2); return t.0; }\n", nil},
 		// E003 (tuple var annotation): a tuple-literal init must match the
 		// annotation element-wise (and in arity). Matching tuples — including
