@@ -11789,12 +11789,12 @@ func (g *generator) emitScanSetRuntime() {
 	g.line(".globl __fern_scan_set")
 	g.line(".type __fern_scan_set, @function")
 	g.label("__fern_scan_set")
-	// rdi = string, esi = from, rdx = set (length at [rdx - 4]).
-	g.emit("push rbp")
-	g.emit("mov rbp, rsp")
-	g.emit("sub rsp, 16")
-	g.emitStrLen("ecx", "rdi") // ecx = len
-	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// rdi = string, esi = from, rdx = set (length at [rdx - 4]). A leaf with
+	// no frame: an inline string's bytes go to the red zone below rsp.
+	g.emit("test edi, 1")
+	g.emit("jnz .Lscan_set_inline")
+	g.emit("mov ecx, [rdi - 4]") // ecx = len
+	g.label(".Lscan_set_data")
 	// Clamp `from` into [0, len]; at or past the end the answer is len. The
 	// cursor is scaled into an address, so its top half is cleared once.
 	g.emit("test esi, esi")
@@ -11805,14 +11805,41 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("mov r8d, [rdx - 4]") // set length
 	g.emit("cmp r8d, 256")
 	g.emit("jb .Lscan_set_short")
-	g.label(".Lscan_set_loop")
+	// Full set: four bytes a turn on a cursor, then one at a time. A hit at
+	// byte k of the four steps the cursor k times before its offset is read.
 	g.emit("cmp esi, ecx")
 	g.emit("jge .Lscan_set_end")
-	g.emit("movzx eax, byte ptr [rdi + rsi]")
+	g.emit("lea r9, [rdi + rsi]")  // cursor
+	g.emit("lea r10, [rdi + rcx]") // end
+	g.emit("lea r11, [r10 - 4]")   // the last cursor with four bytes ahead
+	g.label(".Lscan_set_quad")
+	g.emit("cmp r9, r11")
+	g.emit("ja .Lscan_set_one")
+	for k := 0; k < 4; k++ {
+		g.emit(fmt.Sprintf("movzx eax, byte ptr [r9 + %d]", k))
+		g.emit("cmp byte ptr [rdx + rax], 0")
+		g.emit(fmt.Sprintf("jne .Lscan_set_hit%d", k))
+	}
+	g.emit("add r9, 4")
+	g.emit("jmp .Lscan_set_quad")
+	g.label(".Lscan_set_one")
+	g.emit("cmp r9, r10")
+	g.emit("jae .Lscan_set_end")
+	g.emit("movzx eax, byte ptr [r9]")
 	g.emit("cmp byte ptr [rdx + rax], 0")
-	g.emit("jne .Lscan_set_hit")
-	g.emit("inc esi")
-	g.emit("jmp .Lscan_set_loop")
+	g.emit("jne .Lscan_set_hit0")
+	g.emit("inc r9")
+	g.emit("jmp .Lscan_set_one")
+	g.label(".Lscan_set_hit3")
+	g.emit("inc r9")
+	g.label(".Lscan_set_hit2")
+	g.emit("inc r9")
+	g.label(".Lscan_set_hit1")
+	g.emit("inc r9")
+	g.label(".Lscan_set_hit0")
+	g.emit("mov rax, r9")
+	g.emit("sub rax, rdi")
+	g.emit("ret")
 	// A set shorter than 256 entries: a byte past its end is not in it.
 	g.label(".Lscan_set_short")
 	g.emit("cmp esi, ecx")
@@ -11827,13 +11854,17 @@ func (g *generator) emitScanSetRuntime() {
 	g.emit("jmp .Lscan_set_short")
 	g.label(".Lscan_set_hit")
 	g.emit("mov eax, esi")
-	g.emit("jmp .Lscan_set_ret")
+	g.emit("ret")
 	g.label(".Lscan_set_end")
 	g.emit("mov eax, ecx") // nothing in the set: the answer is len
-	g.label(".Lscan_set_ret")
-	g.emit("mov rsp, rbp")
-	g.emit("pop rbp")
 	g.emit("ret")
+	g.label(".Lscan_set_inline")
+	g.emit("mov ecx, edi")
+	g.emit("shr ecx, 1")
+	g.emit("and ecx, 7")
+	g.emit("mov [rsp - 16], rdi")
+	g.emit("lea rdi, [rsp - 15]")
+	g.emit("jmp .Lscan_set_data")
 	g.line(".size __fern_scan_set, .-__fern_scan_set")
 }
 

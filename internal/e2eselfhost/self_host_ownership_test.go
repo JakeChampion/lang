@@ -201,8 +201,19 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 //
 // Both directions are asserted from ONE compilation, so the marker is proven
 // present before its absence is read as an answer: `hands_back` returns its
-// parameter and must drop, `reads_only` must not.
+// parameter and must drop, `reads_only` must not. The same pair for a record:
+// `keep_or_new` hands its parameter back on one arm and drops it on the other,
+// and `lends_to_builtin` only lends a field to a builtin's lent slot, which
+// takes no unit.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
+struct Rec { text: string, n: i32 }
+@noinline
+function lends_to_builtin(r: Rec): i32 { return __count_byte(r.text, 97) + r.n; }
+@noinline
+function keep_or_new(r: Rec, k: i32): Rec {
+    if (k > 0) { return r; }
+    return Rec { text: "z" + "", n: k };
+}
 @noinline
 function reads_only(n: Node): i32 {
     match (n) { Leaf(v) => { return v * 2; }, Label(s) => { return s.len(); }, Empty => { return 0; } }
@@ -224,6 +235,11 @@ function main(): i32 {
     var n: Node = hands_back(make(1), 5);
     if (total != 12) { return 1; }
     if (reads_only(n) != 3) { return 2; }
+    var r: Rec = Rec { text: "banana" + "", n: 1 };
+    var j: i32 = 0;
+    var seen: i32 = 0;
+    while (j < 4) { seen = seen + lends_to_builtin(r); r = keep_or_new(r, j); j = j + 1; }
+    if (seen != 4) { return 3; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -282,5 +298,20 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(reader, drop) {
 		t.Errorf("reads_only calls %s: a parameter the body only reads was inferred COUNTED, which costs a retain and a release per call and reclaims nothing", drop)
+	}
+	const recDrop = "__sem_drop_Rec"
+	keep, ok := asmWholeFunc(string(asm), "keep_or_new")
+	if !ok {
+		t.Fatal("no __fn_keep_or_new in the emitted code")
+	}
+	if !strings.Contains(keep, recDrop) {
+		t.Fatalf("keep_or_new does not call %s — the marker this reads is gone, so the builtin assertion below proves nothing", recDrop)
+	}
+	lends, ok := asmWholeFunc(string(asm), "lends_to_builtin")
+	if !ok {
+		t.Fatal("no __fn_lends_to_builtin in the emitted code")
+	}
+	if strings.Contains(lends, recDrop) {
+		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
 	}
 }

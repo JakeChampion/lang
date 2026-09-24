@@ -5,6 +5,8 @@ import "./astwalk";
 import "./util";
 import "./ir";
 import "./irlower";
+import "./ssa";
+import "./ssa_lift";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -136,7 +138,13 @@ pub struct EmitState {
     // entry (`__fn_<name>.r`), sanitized; a direct call to one passes its
     // arguments in registers. Every function keeps its stack-ABI entry, so a
     // callee missing from it is still called correctly, only more slowly.
-    reg_entries: irlower.SigReg
+    reg_entries: irlower.SigReg,
+    // leaves are the unit's functions a call may take inline (ssa.Leaf).
+    leaves: ssa.Leaf[],
+    // capture is a builder handle that write() appends to instead of the
+    // module's text, 0 when none: the register path reads an arm back to
+    // take its operands in registers.
+    capture: usize
 }
 
 // unit_labels is the sanitized label of every function a unit emits for
@@ -155,6 +163,32 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
     }
     var xi: i32 = mod.funcs.len();
     while (xi < cache.len()) { out = out.append(sanitize_label(cache[xi].name)); xi = xi + 1; }
+    return out;
+}
+
+// unit_leaves lifts every small body in the unit's cache (the same bodies
+// unit_labels names) and keeps the ones a caller may take inline. A body
+// declared `@noinline` stays a call.
+pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.LowerResult[]): ssa.Leaf[] {
+    var out: ssa.Leaf[] = [];
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
+        if (fi < mod.funcs.len() && mod.funcs[fi].no_inline) { inside = false; }
+        if (inside && !cache[fi].superseded && cache[fi].ok && cache[fi].ops.len() <= 160) {
+            var name: string = cache[fi].name;
+            if (fi < mod.funcs.len()) {
+                name = mod.funcs[fi].name;
+                if (mod.funcs[fi].receiver_type.len() > 0) { name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name; }
+            }
+            var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
+            if (lifted.ok) {
+                var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted.func)));
+                for leaf in ssa.leaf_of(name, f) { out = out.append(leaf); }
+            }
+        }
+        fi = fi + 1;
+    }
     return out;
 }
 
@@ -202,7 +236,9 @@ pub function new_state(): EmitState {
         ssa_frame: 0,
         ssa_save: 0,
         ssa_x0: 0 - 1,
-        reg_entries: irlower.sig_reg_of([])
+        reg_entries: irlower.sig_reg_of([]),
+        leaves: [],
+        capture: 0 as usize
     };
 }
 
@@ -242,6 +278,31 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // shape_sym is the deterministic global symbol for a shape name (the linker-merged
 // weak symbol the per-module path uses for shape pointers). Stable across units so
 // two units' references to the same shape resolve to one address.
+// The register-ABI helper a buffer-builder op calls (#8773), and how many
+// operands it takes, in argument-register order; "" and 0 for any other op.
+pub function buf_helper(kind: i32): string {
+    if (kind == 291) { return "__fern_buf_new"; }
+    if (kind == 292) { return "__fern_buf_push"; }
+    if (kind == 293) { return "__fern_buf_push_range"; }
+    if (kind == 294) { return "__fern_buf_push_byte"; }
+    if (kind == 295) { return "__fern_buf_len"; }
+    if (kind == 296) { return "__fern_buf_take"; }
+    if (kind == 297) { return "__fern_buf_free"; }
+    if (kind == 306) { return "__fern_buf_push_u64"; }
+    if (kind == 325) { return "__fern_buf_push_mapped"; }
+    if (kind == 326) { return "__fern_buf_push_filtered"; }
+    if (kind == 328) { return "__fern_buf_push_expanded"; }
+    return "";
+}
+
+pub function buf_arity(kind: i32): i32 {
+    if (kind == 293) { return 4; }
+    if (kind == 325 || kind == 326 || kind == 328) { return 3; }
+    if (kind == 292 || kind == 294 || kind == 306) { return 2; }
+    if (buf_helper(kind) != "") { return 1; }
+    return 0;
+}
+
 pub function shape_sym(name: string): string {
     return "__fern_shp_" + sanitize_label(name);
 }
@@ -253,6 +314,10 @@ pub function (s: EmitState) write(text: string): EmitState {
     // accumulated bytes live in the strbuf until emit_module's
     // tail calls strbuf_take to materialise the final string.
     // Mirrors the x86-64 backend (asm.fern).
+    if (s.capture != 0 as usize) {
+        buf_push(s.capture, text);
+        return s;
+    }
     strbuf_append(text);
     // Return the receiver, not a copy of it. `EmitState { ...s }` overrides no
     // field, so the copy was observationally identical to `s` — and it

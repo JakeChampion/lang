@@ -26817,17 +26817,24 @@ function lower_plain_arr_with_store(idx: ast.Expr, val: ast.Expr, slot: i32, s: 
         if (!ws.ok) { return ws; }
         return ws.emit(ir.op_arr_set(64));
     }
-    ws = lower_expr(val, ws);
+    ws = lower_with_elem(val, ws);
     if (!ws.ok) { return ws; }
-    // A bare array local stored as a ROW of a nested array is held by the
-    // container too, so the container takes a count of it — the `.with` twin of
-    // the append arm's retain. Without it the local's exit release frees a row
-    // the container still reads, and an in-place update of the local rewrites
-    // the row.
-    if (s.is_arrarr_slot(slot) && s.is_arr_slot(s.slot_of(bare_ident_name(val)))) {
-        ws = ws.emit(ir.op_call_direct("__fern_rc_inc", 1));
-    }
     return ws.emit(ir.op_arr_set(32));
+}
+
+// lower_with_elem lowers the element `a.with(i, v)` stores. A bare array local
+// stored as a ROW of a nested array is held by the container too, so the
+// container takes a count of it: the `.with` twin of the append arm's retain
+// (#4702). Without it the local's rebind or exit release frees a row the
+// container still reads, and an in-place update of the local rewrites the
+// row (#10219). Every `.with` form stores through here.
+function lower_with_elem(val: ast.Expr, s: LowerState): LowerState {
+    var st: LowerState = lower_expr(val, s);
+    if (!st.ok) { return st; }
+    if (st.is_arr_slot(st.slot_of(bare_ident_name(val)))) {
+        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    }
+    return st;
 }
 
 // bare_ident_name returns the name a bare identifier expression spells, or "".
@@ -26868,7 +26875,7 @@ function lower_owned_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slot:
         st = lower_i64(val, st);
     } else {
         if (kind == "f64") { st = st.mark_f64(value, true); }
-        st = lower_expr(val, st);
+        st = lower_with_elem(val, st);
     }
     if (!st.ok) { return st; }
     st = st.emit(ir.op_store_local(value));
@@ -26927,7 +26934,7 @@ function lower_counted_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slo
         st = lower_i64(val, st);
     } else {
         if (kind == "f64") { st = st.mark_f64(value, true); }
-        st = lower_expr(val, st);
+        st = lower_with_elem(val, st);
     }
     if (!st.ok) { return st; }
     st = st.emit(ir.op_store_local(value));
@@ -26978,7 +26985,7 @@ function lower_flagged_arr_with(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, slo
         st = lower_i64(val, st);
     } else {
         if (kind == "f64") { st = st.mark_f64(value, true); }
-        st = lower_expr(val, st);
+        st = lower_with_elem(val, st);
     }
     if (!st.ok) { return st; }
     st = st.emit(ir.op_store_local(value));
@@ -27085,7 +27092,7 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
         if (!st.ok) { return st; }
         st = st.emit(ir.op_arr_set(64));
     } else {
-        st = lower_expr(val, st);
+        st = lower_with_elem(val, st);
         if (!st.ok) { return st; }
         st = st.emit(ir.op_arr_set(32));
     }
@@ -27407,7 +27414,7 @@ pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Exp
         if (!st.ok) { return st; }
         st = st.emit(ir.op_arr_set_i64());
     } else {
-        st = lower_expr(val, st);
+        st = lower_with_elem(val, st);
         if (!st.ok) { return st; }
         st = st.emit(ir.op_arr_set(sw));
     }
