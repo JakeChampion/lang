@@ -45,6 +45,9 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		// have no struct sig, and JsonValue is in no union table.
 		{"option-match-stmt", `function f(o: Option[i32]): i32 { match (o) { Some(n) => { return n; }, None => { return 0; } } } function main(): i32 { return f(Some(3)); }`, 0},
 		{"result-match-stmt", `function f(r: Result[i32, string]): i32 { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } } function main(): i32 { return f(Ok(3)); }`, 0},
+		// A user generic enum's payload is its spelling with the enum's
+		// parameters replaced by the scrutinee's arguments.
+		{"generic-enum-match-stmt", `enum Box[T, E] { Full(T), Blank(E) } function f(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } } function main(): i32 { var b: Box[i32, string] = Full(5); return f(b); }`, 0},
 		{"json-value-match-stmt", `function f(v: JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
 		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { var it: MapIter[string, i32] = m.iter(); var n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, 0},
 		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, 0},
