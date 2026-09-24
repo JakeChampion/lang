@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-24: 540 fixtures, 479 clean, 61 leaking, 320
+# Measured 2026-09-24: 541 fixtures, 480 clean, 61 leaking, 320
 # unpaired allocations. The median leaking fixture is 1, and the largest,
 # json_error_location, is 51.
 #
@@ -321,6 +321,7 @@ generic_array_methods                                0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
+generic_enum_bound_dispatch                          0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0

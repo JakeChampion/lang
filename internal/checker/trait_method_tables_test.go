@@ -23,10 +23,12 @@ func newTableChecker() *checker {
 		Methods:         map[string]string{},
 		TraitMethods:    map[string]string{},
 		MethodOwners:    map[string][]string{},
+		MethodInsts:     map[string][]string{},
 		MethodSources:   map[string]string{},
 		MethodDeclSites: map[string]ast.Position{},
 		Traits:          map[string]*ast.TraitDecl{},
 		DirectImports:   map[string]map[string]bool{},
+		FuncSigs:        map[string]*ast.FuncType{},
 	}}
 }
 
@@ -288,6 +290,33 @@ func TestMethodOwnersSorted(t *testing.T) {
 	}
 	if got := c.info.TraitMethods["Apple.P.go"]; got != "__method_P__Apple__go" {
 		t.Errorf(`TraitMethods["Apple.P.go"] = %q, want "__method_P__Apple__go"`, got)
+	}
+}
+
+// A generic enum's instantiated methods all register under the unmangled
+// receiver name, so a call on one instantiation must pick the method whose
+// receiver parameter is that instantiation, not the first registered (#9308).
+func TestInstForReceiverPicksMatchingEnumInstantiation(t *testing.T) {
+	c := newTableChecker()
+	bag := func(arg string) ast.Type {
+		return ast.EnumType{Name: "Bag", Args: []ast.Type{ast.StructType{Name: arg}}}
+	}
+	for _, arg := range []string{"i32", "string"} {
+		name := "__method_Bag_count__" + arg
+		c.info.FuncSigs[name] = &ast.FuncType{Params: []ast.Type{bag(arg)}}
+		c.registerMethod("Bag", "count", "Count", name, "", ast.Position{})
+	}
+	first := c.info.TraitMethods["Count.Bag.count"]
+	if first != "__method_Bag_count__i32" {
+		t.Fatalf(`TraitMethods["Count.Bag.count"] = %q, want the first registration`, first)
+	}
+	for _, arg := range []string{"i32", "string"} {
+		if got := c.instForReceiver("Bag", "count", "Count", first, bag(arg)); got != "__method_Bag_count__"+arg {
+			t.Errorf("instForReceiver on Bag[%s] = %q, want __method_Bag_count__%s", arg, got, arg)
+		}
+	}
+	if got := c.instForReceiver("Bag", "count", "Count", first, bag("f64")); got != first {
+		t.Errorf("instForReceiver on an unregistered instantiation = %q, want the resolved %q", got, first)
 	}
 }
 
