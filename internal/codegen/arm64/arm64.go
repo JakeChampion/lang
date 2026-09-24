@@ -747,6 +747,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrDec {
 		g.emitStrDecRuntime()
 	}
+	if g.usesStrRcDec {
+		g.emitStrRcDecRuntime()
+	}
 	if g.usesCellFree {
 		g.emitCellFreeRuntime()
 	}
@@ -2482,6 +2485,23 @@ func (g *generator) emitStrDecRuntime() {
 	g.label(".Lstrdec_ret")
 	g.emit("ret")
 	g.sizeDirective("__fern_str_dec")
+}
+
+// emitStrRcDecRuntime emits `__fern_str_rc_dec(data, len) -> data`: drop one
+// reference to a two-word string without freeing it, the release the exit
+// sweep gives a string it could not prove it owns. An inline string (top bit of
+// len) holds its bytes in the words themselves, so only a heap string reaches
+// __fern_rc_dec, whose guards cover null, low addresses and literals.
+func (g *generator) emitStrRcDecRuntime() {
+	g.line("")
+	g.line(".global __fern_str_rc_dec")
+	g.typeDirective("__fern_str_rc_dec")
+	g.label("__fern_str_rc_dec")
+	g.emit("tbnz x1, #63, .Lstrrcdec_ret")
+	g.emit("b __fern_rc_dec")
+	g.label(".Lstrrcdec_ret")
+	g.emit("ret")
+	g.sizeDirective("__fern_str_rc_dec")
 }
 
 // emitCellFreeRuntime emits `__fern_cell_free(cell) -> cell` —
@@ -15976,6 +15996,8 @@ type generator struct {
 	usesStrInc   bool
 	usesStrDec   bool
 	usesCellFree bool
+	// usesStrRcDec gates __fern_str_rc_dec, the non-freeing two-word release.
+	usesStrRcDec bool
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter that __fern_rc_dec bumps). Set when the IR emits the
@@ -17797,6 +17819,7 @@ func (g *generator) slotIsString(idx int32) bool {
 var twoWordStrHelperArgSlots = map[string]int{
 	"__fern_str_inc":           2,
 	"__fern_str_dec":           2,
+	"__fern_str_rc_dec":        2,
 	"__fern_str_append":        4,
 	"__method_string_as_bytes": 2,
 }
@@ -20361,6 +20384,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// on the heap path so we need both.
 			g.usesStrInc = true
 			g.usesRcInc = true
+		case "__fern_str_rc_dec":
+			g.usesStrRcDec = true
+			g.usesRcDec = true
 		case "__fern_str_dec":
 			// Two-word string reclaim (arm64 + wasm). On rc==1 tail-calls
 			// __fern_box_free + needs __fern_rc_dec for the rc!=1 path.

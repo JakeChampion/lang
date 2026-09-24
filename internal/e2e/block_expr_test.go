@@ -334,6 +334,26 @@ func TestBlockExprCompiledStringTail(t *testing.T) {
 	backendsAgree(t, src, interpOracle(t, src, "s=foobar"))
 }
 
+// The same shape under a condition that does not fold. The arm's tail names
+// a local the arm declares, so on wasm the `if` has to carry the two-word
+// string block type; typed as one i32 the module failed validation.
+func TestBlockExprStringTailRuntimeCondition(t *testing.T) {
+	src := `function pick(n: i32): string {
+	var s: string = if (n > 1) { var joined = "foo" + "bar"; joined } else { "" };
+	return s;
+}
+function main(): i32 {
+	var i: i32 = 0;
+	while (i < 3) {
+		print("s=" + pick(i));
+		i = i + 1;
+	}
+	return 0;
+}
+`
+	backendsAgree(t, src, interpOracle(t, src, "s=\ns=\ns=foobar"))
+}
+
 // Nested: a block-expr whose tail is itself an `if`-expression. The outer
 // block runs `var base = 3;` then yields `if (base > 0) { base * 7 } else
 // { -1 }` → 21.

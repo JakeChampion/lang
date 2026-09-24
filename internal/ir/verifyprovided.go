@@ -195,6 +195,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_str_byte":                 {3, rWord},
 	"__fern_str_copy":                 {2, rString},
 	"__fern_str_dec":                  {2, rWord},
+	"__fern_str_rc_dec":               {2, rWord},
 	"__fern_str_inc":                  {2, rString},
 	"__fern_str_len":                  {2, rWord},
 	"__fern_string_from_bytes":        {1, rString},

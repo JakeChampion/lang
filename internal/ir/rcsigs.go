@@ -133,6 +133,7 @@ var rcRuntimeSigs = map[string]RcSig{
 
 	"__fern_rc_dec":       one(0, RcRelease, true),
 	"__fern_str_dec":      one(0, RcRelease, true),
+	"__fern_str_rc_dec":   one(0, RcRelease, true),
 	"__fern_arr_dec":      one(0, RcRelease, true),
 	"__fern_box_free":     one(0, RcRelease, true),
 	"__fern_cell_free":    one(0, RcRelease, true),
