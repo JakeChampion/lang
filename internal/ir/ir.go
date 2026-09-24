@@ -5376,6 +5376,9 @@ type builder struct {
 	// its own key like fieldMutCopy (fieldAppendRootOK).
 	freshRoots   map[string]bool
 	freshRootsFn *ast.FuncDecl
+	// strStoresCounted memoises stringStoresCounted per local, for strStoresFn.
+	strStoresCounted map[string]bool
+	strStoresFn      *ast.FuncDecl
 	// identOrder is the same order under its own key, for the analyses that
 	// want only it. Separate from appendOrderFn so asking for the order does
 	// not also build inPlacePushes and fieldPlaceMutationCopies, which are far
@@ -12269,6 +12272,20 @@ func (b *builder) matchExprArmBodyType(arm *ast.MatchExprArm, scrutinee ast.Type
 // can pick the slice (`+4`) vs array / string (`-4`) offset.
 func (b *builder) exprType(e ast.Expr) ast.Type {
 	switch x := e.(type) {
+	case *ast.BlockExpr:
+		// A tail naming a local the block declares resolves to that
+		// declaration: the local is not in scope until the block is lowered.
+		if id, ok := x.Tail.(*ast.Ident); ok {
+			for i := len(x.Stmts) - 1; i >= 0; i-- {
+				if v, ok := x.Stmts[i].(*ast.Var); ok && v.Name == id.Name && v.Type != nil {
+					return v.Type
+				}
+			}
+		}
+		if x.Tail == nil {
+			return nil
+		}
+		return b.exprType(x.Tail)
 	case *ast.Ident:
 		for _, v := range b.info.Locals[b.fn] {
 			if v.Name == x.Name {
