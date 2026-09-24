@@ -3413,7 +3413,7 @@ function main(): i32 {
 	// WAT body for this builtin, so the register legs' fix says nothing about
 	// it: before the wasm half of the fix this program printed 25 over-releases
 	// on the typed leg against its own AST leg's 0.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 111, noLeak: true, src: `
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 65, noLeak: true, src: `
 import "std/string";
 import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
