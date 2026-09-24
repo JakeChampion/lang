@@ -162,15 +162,15 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-// BUILTIN NEGATIVE — `random_bytes(n)` lives in FuncSigs like a user function
-// but is NOT one: a builtin's allocation contract is per-helper, so
-// ownedCallResultType must reject non-user-declared callees outright.
-// Historically the darwin helper returned a string buffer with NO rc header
-// and the is_unique gate reading the missing header word crashed the darwin
-// lane on `random_bytes(32).len()`; the result is a headered u8[] box now,
-// but the user-decl gate this case locks in is unchanged. Presence in the
-// returnsNoParamEscape oracle map (keyed over every prog.Funcs decl, true or
-// false) is the user-decl test.
+// BUILTIN — `random_bytes(n)` lives in FuncSigs like a user function but is
+// NOT one: a builtin's allocation contract is per-helper, so
+// ownedCallResultType rejects non-user-declared callees outright, and
+// random_bytes is admitted by name in freshOwnedRcTempType instead, whose
+// contract is that it allocates a headered rc=1 u8[] on every backend.
+// Historically the darwin helper returned a buffer with NO rc header and the
+// is_unique gate reading the missing header word crashed the darwin lane on
+// `random_bytes(32).len()`; 200 reclaimed receivers must neither crash nor
+// underflow.
 const lenCallRecvBuiltinSrc = `function main(): i32 {
     var i: i32 = 0;
     var acc: i32 = 0;
