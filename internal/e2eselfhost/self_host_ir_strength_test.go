@@ -202,7 +202,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"wc_u32_neg_refused: const_i32 -1 ; int_cast\n" +
 		"wc_u32_wrap: const_i32 9\n" +
 		"wc_u32_wrap_neg_refused: const_i32 -1 ; u32_wrap\n" +
-		"wc_int_extend_refused: const_i32 9 ; int_extend\n" +
+		"wc_int_extend: const_i64 9\n" +
 		"wc_int_wrap_refused: const_i32 9 ; int_wrap\n" +
 		"wc_hex_refused: const_i32_text 0x10 ; int_cast\n" +
 		"wc_opaque_refused: load_local 0 ; int_cast\n" +
@@ -232,6 +232,20 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// `if` and the whole drop body goes with it.
 		"zg_in_optimize: return\n" +
 		"zg_idempotent=1\n" +
+		"f64_neg: const_i64 -3\n" +
+		"f64_mul_wraps: const_i64 0\n" +
+		"f64_cmp: const_i32 1\n" +
+		"f64_div_zero_refused: const_i64 7 ; const_i64 0 ; div_s\n" +
+		"f64_min_div_refused: const_i64 -9223372036854775808 ; const_i64 -1 ; div_s\n" +
+		"f64_min_rem: const_i64 0\n" +
+		"f64_unsigned_refused: const_i64 -8 ; const_i64 1 ; shr_s\n" +
+		"f64_hex_refused: const_i64 0x10 ; const_i64 1 ; add\n" +
+		"f64_extend_s: const_i64 -1\n" +
+		"f64_extend_u: const_i64 4294967295\n" +
+		"f64_extend_ptr_refused: const_i32 100 ; int_extend\n" +
+		"f64_wrap: const_i32 1\n" +
+		"f64_wrap_u32_high_refused: const_i64 3000000000 ; int_wrap\n" +
+		"f64_wrap_u32: const_i32 7\n" +
 		magicParityLines()
 
 	cmd := exec.Command(bin)
