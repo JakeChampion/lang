@@ -14,10 +14,15 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-23: 528 fixtures, 458 clean, 70 leaking, 6606
+# Measured 2026-09-24: 540 fixtures, 471 clean, 69 leaking, 4936
 # unpaired allocations. The distribution is heavily skewed — the median
-# leaking fixture is 2, and regex_captures_assert alone is 5220 of the
+# leaking fixture is 2, and regex_captures_assert alone is 3741 of the
 # total.
+#
+# The five regex_* rows fell when an array rebind stopped refusing string
+# elements: the program emitter's `pg = __rx_emit(pg, n)` had freed nothing.
+# Most of what they still leak is the capture engine's inline `.with`
+# argument, which no call with a pointer result releases (#10168).
 #
 # shadowed_builtin_variant and tuple_elem_variant_pattern reach 0 with
 # #9313: a GENERIC enum construction typed as the bare enum, losing the
@@ -496,19 +501,19 @@ read_all_stdin_chunks                                1
 read_line                                            1
 recursive_tree                                       0
 regex_basic                                          0
-regex_captures                                       109
-regex_captures_all                                   104
-regex_captures_assert                                5220
+regex_captures                                       68
+regex_captures_all                                   69
+regex_captures_assert                                3741
 regex_ci                                             0
 regex_convenience                                    0
 regex_counts                                         0
 regex_escapes                                        0
 regex_find                                           0
 regex_groups                                         0
-regex_named_groups                                   124
+regex_named_groups                                   79
 regex_ops                                            0
 regex_replace_edge                                   0
-regex_replace_groups                                 77
+regex_replace_groups                                 64
 regex_wordbound                                      0
 result_err_path                                      1
 result_match                                         0
