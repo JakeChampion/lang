@@ -206,12 +206,15 @@ func typeIsStringArrayFreeIn(info *checker.Info, t ast.Type, seen map[string]boo
 // __drop_tuple_ / the array / string helpers) on EVERY backend — the
 // precondition for a callee to own a value it did not build, which both an
 // owned-by-default parameter and a consumed-threaded one release at exit. It
-// allows scalars, strings, and arrays / structs / enums / tuples of wired
-// types; it rejects Map (its deep drop is incomplete), slices, closures, and
-// unknown / generic / runtime-handle types whose drop is not statically wired.
+// allows scalars, strings, closures (released through __drop_closure_value),
+// and arrays / structs / enums / tuples of wired types; it rejects Map (its
+// deep drop is incomplete), slices, and unknown / generic / runtime-handle
+// types whose drop is not statically wired.
 func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType, ast.StringType:
+		return true
+	case *ast.FuncType:
 		return true
 	case ast.ArrayType:
 		return typeDeepDropWired(ty.Elem, info, seen)
@@ -286,7 +289,7 @@ func ownedByDefaultTypeIn(info *checker.Info, t ast.Type) bool {
 // children in an array (a HAMT / vector node) is owned like a box-only one,
 // and a consuming match can hand the child array to its binding at the box's
 // own count — the unique path then rewrites it in place. Map-bearing shapes,
-// slices, closures and unresolved generics stay on the borrow model.
+// slices, bare closures and unresolved generics stay on the borrow model.
 func (b *builder) ownedByDefaultShape(t ast.Type) bool {
 	return ownedByDefaultShapeIn(b.info, t)
 }

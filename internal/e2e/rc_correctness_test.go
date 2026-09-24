@@ -4868,7 +4868,6 @@ function main(): i32 {
 		// now, as the array param's are.
 		name: "closure_field_struct_param_threaded_by_reassignment",
 		src: `
-function no_f(s: string): i32 { return 0; }
 struct Ctx { f: (string) => i32, n: i32 }
 function step(ctx: Ctx): Ctx { return Ctx { f: ctx.f, n: ctx.n + 1 }; }
 function steps(ctx: Ctx, k: i32): Ctx {
@@ -4877,15 +4876,34 @@ function steps(ctx: Ctx, k: i32): Ctx {
     return ctx;
 }
 function main(): i32 {
-    var ctx: Ctx = Ctx { f: no_f, n: 0 };
+    var bias: i32 = 2;
+    var ctx: Ctx = Ctx { f: (s: string) => s.len() + bias, n: 0 };
     ctx = steps(ctx, 3);
     ctx = steps(ctx, 0);
-    return (ctx.n - 3) + ctx.f("x") + __rc_underflow_count();
+    return (ctx.n - 3) + (ctx.f("x") - 3) + __rc_underflow_count();
 }`,
 	},
 	{
-		// The same undercount through a Map field, the other shape
-		// typeDeepDropWired rejects.
+		// A tuple carrying a closure, threaded the same way. Until closures
+		// were deep-drop wired it took the leak-mode drops: correct, but the
+		// tuple box the reassignment replaced was never freed.
+		name: "closure_tuple_param_threaded_by_reassignment",
+		src: `
+function no_f(s: string): i32 { return 0; }
+function step(ctx: ((string) => i32, i32)): ((string) => i32, i32) { return (ctx.0, ctx.1 + 1); }
+function steps(ctx: ((string) => i32, i32)): ((string) => i32, i32) {
+    ctx = step(ctx);
+    return ctx;
+}
+function main(): i32 {
+    var ctx: ((string) => i32, i32) = (no_f, 0);
+    ctx = steps(ctx);
+    return (ctx.1 - 1) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The same undercount through a Map field, the shape
+		// typeDeepDropWired still rejects.
 		name: "map_field_struct_param_threaded_by_reassignment",
 		src: `
 import "core/map";

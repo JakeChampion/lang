@@ -105,9 +105,9 @@ func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 }
 
 // The owned-by-default shape is gated on the deep drop being WIRED, not on
-// the value being string/array-free: an array- or string-carrying enum or
-// struct is owned like a box-only one, a non-uniform enum too, and Map /
-// unknown / generic-erased shapes stay borrowed.
+// the value being string/array-free: an array-, string- or closure-carrying
+// enum or struct is owned like a box-only one, a non-uniform enum too, and
+// Map / unknown / generic-erased shapes stay borrowed.
 func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 	b := capsTestBuilder()
 	i32 := ast.NumberType{}
@@ -129,7 +129,10 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 	b.info.Structs["Tagged"] = &ast.StructDecl{Name: "Tagged", Fields: []ast.Param{
 		{Name: "buf", Type: ast.StringType{}},
 		{Name: "tag", Type: optionOf(ast.StringType{})}}}
-	b.info.Structs["MapTagged"] = &ast.StructDecl{Name: "MapTagged", Fields: []ast.Param{
+	b.info.Structs["WithFn"] = &ast.StructDecl{Name: "WithFn", Fields: []ast.Param{
+		{Name: "f", Type: &ast.FuncType{}},
+		{Name: "n", Type: i32}}}
+		b.info.Structs["MapTagged"] = &ast.StructDecl{Name: "MapTagged", Fields: []ast.Param{
 		{Name: "buf", Type: ast.StringType{}},
 		{Name: "tag", Type: optionOf(ast.StructType{Name: "Map"})}}}
 	cases := []struct {
@@ -158,7 +161,11 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 		{"array of i32", ast.ArrayType{Elem: i32}, true, false},
 		{"string", ast.StringType{}, true, false},
 		{"slice", ast.SliceType{Elem: i32}, false, false},
-		{"closure", &ast.FuncType{}, false, false},
+		// A closure field is released by the struct drop through
+		// __drop_closure_value, so a closure-bearing struct is owned like a
+		// string-bearing one; a bare closure param stays borrowed.
+		{"closure", &ast.FuncType{}, true, false},
+		{"closure-bearing struct", ast.StructType{Name: "WithFn"}, true, true},
 		// A generic enum INSTANTIATION is wired: the drop emitter substitutes
 		// the type args (emitEnumSlotDrop), so the capability walk must ask
 		// about the same substituted payloads. Reading the shared decl
