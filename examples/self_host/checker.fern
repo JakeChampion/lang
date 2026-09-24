@@ -8862,7 +8862,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
           }
           var i: i32 = 0;
           while (i < wt.elements.len()) {
-            if (!settles_or_assignable(tl.elements[i], wt.elements[i], s)) {
+            if (!settles_or_nested(tl.elements[i], wt.elements[i], s)) {
               return false;
             }
             i = i + 1;
@@ -8882,13 +8882,26 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
 }
 
 // settles_or_assignable: one element of a composite destination — either it
-// settles, or it already types to something the slot accepts.
+// settles, or it already types to something the slot accepts. An ARRAY
+// literal's elements only: native coerces into a `dyn` slot there.
 function settles_or_assignable(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if (settles_to(e, want, s)) {
     return true;
   }
   var t: typeinfo.Type = check_expr(e, s);
   return is_unknown(t) || type_assignable(t, want, s.unions.unions);
+}
+
+// settles_or_nested: the same for a TUPLE literal's elements, which are not a
+// coercion site. Native refuses a concrete in a `dyn` tuple slot even when it
+// conforms — boxing is a representation change, and a tuple is not where one
+// happens — so this asks nested_assignable rather than type_assignable.
+function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if (settles_to(e, want, s)) {
+    return true;
+  }
+  var t: typeinfo.Type = check_expr(e, s);
+  return is_unknown(t) || nested_assignable(t, want, s.unions.unions);
 }
 
 // variant_ctor_diags checks a variant-constructor call's ARGUMENTS against the

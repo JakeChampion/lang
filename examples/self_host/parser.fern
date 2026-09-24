@@ -6732,11 +6732,10 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     // redundant grouping (source needs them so a trailing `[]` binds to
     // the whole `dyn T`, not to a trait generic-arg). Unwrap to the
     // paren-free `dyn T` / `dyn T[]` spelling the `dyn` branch above
-    // produces — otherwise the tuple char-collect loop below mashes
-    // `dyn Shape` into `(dynShape)` (space dropped, parens kept) and
-    // every `type_name[0:4] == "dyn "` consumer misses, so a
-    // `(dyn Trait)[]` PARAM's element dispatch declines the IR path
-    // (#5203). A genuine tuple whose first element is `dyn`
+    // produces — otherwise the tuple char-collect loop below keeps the
+    // parens (`(dyn Shape)`) and every `type_name[0:4] == "dyn "` consumer
+    // misses, so a `(dyn Trait)[]` PARAM's element dispatch declines the
+    // IR path (#5203). A genuine tuple whose first element is `dyn`
     // (`(dyn A, i32)`) is NOT a single-type wrap: the `)`-follows check
     // fails and the untouched cursor runs the unchanged tuple path.
     var dpa: Par = p.advance();   // peek past `(`
@@ -6761,14 +6760,15 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
     var is_fn: boolean = false;
     var top_comma: boolean = false;
     var tprev_word: boolean = false;
+    var tprev_dyn: boolean = false;
     while (!p.at_end()) {
         var tpk: string = p.peek_punct();
         // A unit ELEMENT of a tuple type — `((), i32)`. The head `()` never
         // reaches here (folded above), so this is always a nested one.
-        if (at_unit_type(p)) { tbuf = tbuf + "void"; p = p.advance(); p = p.advance(); tprev_word = false; continue; }
-        if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); tprev_word = false; continue; }
-        if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); tprev_word = false; if (td == 0) { break; } continue; }
-        if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); tprev_word = false; continue; }
+        if (at_unit_type(p)) { tbuf = tbuf + "void"; p = p.advance(); p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
+        if (tpk == "(") { td = td + 1; tbuf = tbuf + "("; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
+        if (tpk == ")") { td = td - 1; tbuf = tbuf + ")"; p = p.advance(); tprev_word = false; tprev_dyn = false; if (td == 0) { break; } continue; }
+        if (tpk == ",") { if (td == 1) { top_comma = true; } tbuf = tbuf + ", "; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
         // A `=>` *inside* the parens with NO depth-1 comma means the
         // parens wrap a whole function type (`(() => i32)`), not a
         // tuple — coarse it to "fn" (a closure box). With a depth-1
@@ -6786,20 +6786,28 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, boolean, s
             // tag (#7961).
             tbuf = tbuf + " => ";
             p = p.advance();
-            tprev_word = false;
+            tprev_word = false; tprev_dyn = false;
             continue;
         }
-        if (tpk.len() > 0) { tbuf = tbuf + tpk; p = p.advance(); tprev_word = false; continue; }
+        // Multi-trait object `dyn A + B` as a tuple element — join with ` + `
+        // to match parse_type_dyn, whose spelling the checker compares against
+        // a value's traits string exactly.
+        if (tpk == "+") { tbuf = tbuf + " + "; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
+        if (tpk.len() > 0) { tbuf = tbuf + tpk; p = p.advance(); tprev_word = false; tprev_dyn = false; continue; }
         var tseg: string = p.peek_ident();
         if (tseg.len() == 0) { tseg = p.peek_keyword(); }
         if (tseg.len() == 0) { p = p.advance(); continue; }
         // Two adjacent word tokens have no separator of their own, so
-        // `dyn Speak` collects as `dynSpeak`. Only `-fmt` reinserts the
-        // space: the compile parse feeds this spelling to consumers that
-        // match on it, and they were written against the mashed form.
-        if (p.verbatim && tprev_word) { tbuf = tbuf + " "; }
+        // `dyn Speak` would collect as `dynSpeak`. `-fmt` reinserts the space
+        // everywhere; the compile parse reinserts it only after `dyn`, because
+        // every consumer matches on that prefix and a mashed element resolves
+        // to no type at all, slipping past every checker rule that would have
+        // judged it (#10085). Other adjacent words keep the mashed spelling
+        // the consumers were written against.
+        if (tprev_word && (p.verbatim || tprev_dyn)) { tbuf = tbuf + " "; }
         tbuf = tbuf + tseg;
         tprev_word = true;
+        tprev_dyn = tseg == "dyn";
         p = p.advance();
     }
     // Parenthesized function type `(… => …)` → coarse "fn", plus any
