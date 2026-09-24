@@ -127,6 +127,7 @@
 # keep the static sentinel no release can reclaim (rcresults.go, #8398). The
 # Writer.write result boxes that made this 4 are reclaimed since #8405. The
 # accumulator the case measures is clean — it is what the "flat" line asserts.
+a_builtin_method_does_not_see_the_programs_variants  0
 ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0
@@ -147,6 +148,7 @@ alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
 alloc_flat_writer_accumulator                        2
 alloc_grows_when_retained                            0
+an_imported_module_does_not_see_the_programs_variants 0
 args                                                 2
 arith_precedence                                     0
 arr_slice_block_copy                                 0
