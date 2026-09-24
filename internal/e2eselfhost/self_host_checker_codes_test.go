@@ -2425,6 +2425,9 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// settle on, whichever element comes first (#10122).
 		{"array-float-literals-beside-f32", `function g(): f32 { return 1.0 as f32; } function f(): f32 { var a: f32[] = [2.0, g(), -1.5 * 2.0]; return a[0]; }`},
 		{"array-float-literal-anchor-mismatch", `function g(): f32 { return 1.0 as f32; } function f(): i32 { var a = [2.0, g(), "x"]; return 0; }`},
+		// A struct that shares a built-in variant's name is not that
+		// variant: native has no struct-to-enum assignability.
+		{"struct-named-like-a-builtin-variant", `struct Some { n: i32 } function f(): i32 { var o: Option[i32] = Some { n: 1 }; return 0; }`},
 		// A pipe hole as a named argument's value (#10121).
 		{"pipe-hole-named-arg", `function diff(a: i32 = 0, b: i32 = 0): i32 { return a - b; } function f(): i32 { return 9 |> diff(b = _); }`},
 		// Annotated tuple shapes — var binding, parameter, return, nested, and
@@ -2951,6 +2954,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// whose `return Ok(v)` is Result's; in the entry both are visible, so
 		// a bare `Ok(1)` there is only the E036 ambiguity.
 		{"entry-variant-invisible-in-import-ok", "import \"std/json\";\nenum Reply { Ok, Full }\nfunction main(): i32 {\n    var r: Reply = Reply.Ok;\n    match (json.json_parse_result(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return match (r) { Ok => 0, Full => 2 };\n}\n"},
+		// The same leak through the entry's union ALIAS: its members are
+		// variants to this checker's union table, and an import cannot name
+		// them any more than the entry's enums.
+		{"entry-alias-invisible-in-import-ok", "import \"std/json\";\nstruct Ok { n: i32 }\nstruct Full { n: i32 }\ntype Reply = Ok | Full;\nfunction main(): i32 {\n    var r: Reply = Full { n: 2 };\n    match (json.json_parse_result(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return 0;\n}\n"},
 		{"entry-variant-shadows-result-e036", "enum Reply { Ok, Full }\nfunction f(): Result[i32, string] { return Ok(1); }\nfunction main(): i32 { var r: Reply = Reply.Full; return match (r) { Reply.Ok => 0, Reply.Full => 2 }; }\n"},
 		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { var p: P = P.zero(); return p.x; }\n"},
 		// #10094, the BUNDLED half. E001's missing-`core/map` rule reads the
