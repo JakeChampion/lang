@@ -591,6 +591,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// both sides.
 		{"derive-debug-impl-ok", "trait Debug { function to_debug(self: Self): string; }\nstruct Bare { n: i32 }\nimpl Debug for Bare { function to_debug(self: Self): string { return \"b\"; } }\n@derive(Debug)\nstruct Foo { b: Bare }\nfunction main(): i32 { return 0; }\n", nil},
 		{"derive-json-impl-ok", "trait Json { function to_json(self: Self): string; }\nimpl Json for i32 { function to_json(self: Self): string { return \"0\"; } }\n@derive(Json)\nstruct Foo { x: i32 }\nfunction main(): i32 { return 0; }\n", nil},
+		// A value-block arm that always leaves the function hands the block no
+		// value, so its unreachable filler is not an arm type (#9326).
+		{"value-block-arm-returns-early", "function probe(n: i32): boolean {\n  var s: string = match (n) { 0 => \"zero\", _ => { return false; } };\n  return s.len() > 0;\n}\nfunction main(): i32 { if (probe(0)) { return 1; } return 0; }\n", nil},
+		// A derive resolves its trait by the name as written (#9322): with no
+		// prelude, a bare `Eq` names nothing unless the program declares it,
+		// and a declared trait outside the derivable set is refused. A
+		// qualified derive through an import this single-module driver never
+		// loaded is declined; the bundle differential covers the loaded case.
+		{"derive-unknown-trait", "@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-not-derivable", "trait Frob { function frob(self: Self): i32; }\n@derive(Frob)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		{"derive-unloaded-import", "import \"core/cmp\";\n@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n", nil},
 		// The broken path, one per field-wise kind: a nominal field with no
 		// impl of the derived trait. Each is E021 ALONE — an E043 here means
 		// the synthesised body escaped suppression.
@@ -2899,6 +2910,16 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// Here rather than in the codes table because std/array has to be
 		// in scope for the call to be a method call at all.
 		{"e053-map-on-an-own-array", "import \"std/array\";\nfip function f(own xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
+		// A derive resolves against the traits of the module its qualifier
+		// names (#9322): the import makes `cmp.Eq` resolve and a bare `Eq`
+		// still unknown, and a qualified derive's field conformance is
+		// checked against the imported trait.
+		{"derive-bare-with-cmp-imported", "import \"core/cmp\";\n@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-qualified-ok", "import \"core/cmp\";\n@derive(cmp.Eq, cmp.Hash)\nstruct P { n: i32, s: string }\nfunction main(): i32 { var p: P = P { n: 1, s: \"x\" }; if (p.eq(p)) { return 3; } return 0; }\n"},
+		{"derive-aliased-import-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
+		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
+		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
 		{"e053-map-on-a-borrowed-array", "import \"std/array\";\nfip function f(xs: i64[]): i64[] { return xs.map((x: i64): i64 => x); }\nfunction main(): i32 { return f([1 as i64]).len(); }\n"},
 		{"char-not-from-int-literal", "function main(): i32 { var c: char = 65; return 0; }\n"},
 		{"char-not-to-i32-return", "function f(c: char): i32 { return c; }\nfunction main(): i32 { return 0; }\n"},

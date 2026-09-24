@@ -1945,7 +1945,7 @@ function block_stmt_kind(st: ast.Stmt): string {
     }
 }
 
-struct VArm { s: State, end: i32, env: i32[], value: i32 }
+struct VArm { s: State, live: boolean, end: i32, env: i32[], value: i32 }
 
 // The statement that carries an arm's value: its own `return`, or the nested
 // if-expression an `else if` chain leaves there.
@@ -1964,23 +1964,23 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
 // One arm of an if-expression. Its leading statements run in the arm's own
 // block, where a `return` of the ENCLOSING function is what the inlined form
 // means it to be; the last statement is the arm's value. An arm the leading
-// statements leave with no live edge reaches the join with nothing to hand it,
-// so it is refused rather than producing a value in a block nothing enters.
+// statements leave with no live edge contributes no edge to the join; its last
+// statement is parse_branch_body's unreachable filler and is not produced.
 function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, pred: i32, join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
     s = open(State { ...s, vals: entry }, id, [pred]);
-    var none: VArm = VArm { s: s, end: 0, env: [], value: 0 - 1 };
+    var none: VArm = VArm { s: s, live: false, end: 0, env: [], value: 0 - 1 };
     if (body.len() == 0) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
     var i: i32 = 0;
     while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
     if (!s.ok) { return VArm { ...none, s: s }; }
-    if (!s.live) { return VArm { ...none, s: fail(s, "value block arm has no value") }; }
+    if (!s.live) { return VArm { ...none, s: leave(s, count, scope) }; }
     var v: Value = arm_value(body[body.len() - 1], s, ty);
     s = v.s;
     if (!s.ok) { return VArm { ...none, s: s }; }
     var end: i32 = s.cur.id;
     var env: i32[] = prefix(s.vals, count);
     s = terminate(s, t_br(join));
-    return VArm { s: leave(s, count, scope), end: end, env: env, value: v.id };
+    return VArm { s: leave(s, count, scope), live: true, end: end, env: env, value: v.id };
 }
 
 // The if-expression itself: the two arms are produced the way a branch's are —
@@ -2005,8 +2005,14 @@ function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
     if (!t.s.ok) { return Value { s: t.s, id: 0 - 1 }; }
     var el: VArm = value_arm(f.else_body, t.s, entry, else_id, pred, join, count, scope, ty);
     if (!el.s.ok) { return Value { s: el.s, id: 0 - 1 }; }
-    s = merge_env(open(el.s, join, [t.end, el.end]), [t.env, el.env], count);
-    return define(s, 8, [t.value, el.value], 0, "", ty);
+    var preds: i32[] = [];
+    var envs: i32[][] = [];
+    var values: i32[] = [];
+    if (t.live) { preds = preds.append(t.end); envs = envs.append(t.env); values = values.append(t.value); }
+    if (el.live) { preds = preds.append(el.end); envs = envs.append(el.env); values = values.append(el.value); }
+    if (preds.len() == 0) { return refused(el.s, "value block has no live arm"); }
+    s = merge_env(open(el.s, join, preds), envs, count);
+    return define(s, 8, values, 0, "", ty);
 }
 
 function is_slice_call(name: string, c: ast.ExprCall): boolean {
@@ -2555,7 +2561,7 @@ function arm_body(body: ast.Stmt[], s: State, join: i32, count: i32, scope: chec
     var i: i32 = 0;
     while (i < body.len() - 1) { s = stmt(body[i], s); i = i + 1; }
     if (!s.ok) { return Arm { ...dead, s: s }; }
-    if (!s.live) { return Arm { ...dead, s: fail(s, "value block arm has no value") }; }
+    if (!s.live) { return Arm { ...dead, s: leave(s, count, scope) }; }
     var v: Value = arm_value(body[body.len() - 1], s, ty);
     s = v.s;
     if (!s.ok) { return Arm { ...dead, s: s }; }

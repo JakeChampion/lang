@@ -20,10 +20,10 @@ import (
 // The verdict moves to the call sites. strarrfld_forwarders_of registers every
 // function whose returns all hand out one borrowed string[] field; inside such a
 // function the forwarding return is exempt, and at a CALL of one the walk
-// applies its existing read rules to the forwarded field — a `.len()` receiver
-// admits, everything else marks. So `keep.get().len()` is the borrow
-// `keep.xs.len()` already was, and `var g = keep.get()` is the escape
-// `var g = keep.xs` already was.
+// marks only where its result is read for its ELEMENTS — indexed, sliced or
+// iterated — since the forwarding return retains the buffer and a result bound
+// or handed on whole is a counted reference (#9187). So `keep.get()[0]` is the
+// escape `keep.xs[0]` already was, and `var g = keep.get()` is not.
 //
 // Every want was confirmed against native x86-64 and `bin/fern -interp`, which
 // agree on every row. Native allocates a different number of boxes for the same
@@ -159,9 +159,11 @@ function main(): i32 {
 			want: 15, allocs: 500, frees: 500,
 		},
 		{
-			// NEGATIVE CONTROL. The result is BOUND, so the caller holds the
-			// buffer past the call and the type must stay refused. If this
-			// reaches 800/800 the deep free is dangling a live alias.
+			// The result is BOUND. The forwarding return retains the buffer,
+			// so the binding holds a count of its own and the holder keeps
+			// its deep drop (#9187): every round's box and buffer are freed.
+			// The three element strings each round leaks are the shallow
+			// rebind release of an in-loop string[] local (#5338).
 			name: "forwarder_result_bound",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -178,7 +180,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 500, frees: 100,
+			want: 15, allocs: 500, frees: 203,
 		},
 		{
 			// NEGATIVE CONTROL. `keep.get()[0]` binds an ELEMENT — the exact
@@ -224,7 +226,7 @@ function main(): i32 {
 			want: 16, allocs: 500, frees: 100,
 		},
 		{
-			// NEGATIVE CONTROL, free-function half.
+			// The free-function half of forwarder_result_bound.
 			name: "free_fn_forwarder_result_bound",
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
@@ -241,7 +243,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 500, frees: 100,
+			want: 15, allocs: 500, frees: 203,
 		},
 		{
 			// NEGATIVE CONTROL, one frame deeper: the element leaves through

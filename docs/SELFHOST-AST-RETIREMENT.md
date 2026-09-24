@@ -1243,7 +1243,7 @@ Mapping every remaining `asm.emit_module` / `asm_arm64.emit_module` /
 | arm64 ELF | yes, and it carries **no 512-function budget** | `all_eligible` false |
 | arm64-darwin | yes — `emit_module_ir(lm, darwin)` threads `darwin` into `emit_runtime` | `all_eligible` false |
 | wasm core | yes | `wasm_ir.should_use_ir_core` false (the `wasm_ir_deferrals_ok` set) |
-| wasm component | yes, for the no-I/O + stdout/stderr/exit shapes | `component_needs_ok` false (any other WASI category) |
+| wasm component | yes, for the no-I/O + stdout/stderr/exit shapes | `component_refused_need` names one (any other WASI category) |
 
 So the raw call-site count badly overstates the work: `asm.emit_module` and
 `asm_arm64.emit_module` are both IR-*preferring shells* (each runs the gate
@@ -1278,7 +1278,7 @@ random / clock. Those are not gated by the framing but by the *helpers* —
 `readfile_func_p2`, `env_func_p2`, `args_func_p2`, `clock_funcs_p2`,
 `random_func_p2` are preview2 rewrites living only in `wasm.fern`, with no IR
 sibling. Each is an independent, well-scoped port against a working reference;
-`component_needs_ok` is an allowlist over need names and fails closed, so a
+`component_refused_need` is an allowlist over need names and fails closed, so a
 shape stays on the AST path until its helper is ported and the name is added.
 
 Two corrections to the framing that was here before:
@@ -4625,7 +4625,7 @@ IR subset **is** the x86 subset. The wasm-only exclusions are just:
 1. `wasm_ir_deferrals_ok` → `module_erased_wide` (partially closed already);
 2. `component_ir_core_ok` — refuses any module with WIT `exports` or a function
    with `import_iface`;
-3. `component_needs_ok` — the needs whitelist for component modes.
+3. `component_refused_need` — the needs allowlist for component modes.
 
 (2) is the substantive gap: the component path, not the core language.
 
