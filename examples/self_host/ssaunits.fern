@@ -837,7 +837,9 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     var reflow: boolean = false;
     i = 0;
     while (i < takes.len()) {
-        if (payloads[i] && option_layout(f, f.values[defs[i].args[0]])) { reflow = true; }
+        // A taken record field reflows too: the values read through it still
+        // chain to the record, which has to die at the read.
+        if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || option_layout(f, f.values[defs[i].args[0]]))) { reflow = true; }
         if (takes[i] >= 0 || held[i] || payloads[i]) {
             owned = owned.with(i, true);
             // A view's bytes are its source's, not the box's it came out of, so
@@ -952,11 +954,12 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
     return ins.kind_tag == ssasem.variant_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != slot;
 }
 
-// The enum box whose payload the variant read at (`bi`, `pos`) may MOVE out
-// of rather than borrow, or -1. Same shape as `projection_root` above, over
-// an enum rather than a record and over the one payload slot the arm names:
-// the box is a unit of this frame's own, it does not leave the block, and
-// after the read it is reached only through reads of its OTHER slots.
+// The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
+// borrow, or -1: an enum's payload named by a variant read, or a record's
+// array or record field. Same shape as `projection_root` above, over the one
+// slot the read names: the box is a unit of this frame's own, it does not
+// leave the block, and after the read it is reached only through reads of its
+// OTHER slots.
 //
 // A tuple take next door demands more of its source — `takeable_root`, a box
 // this frame ALLOCATED — because it nulls without asking. Here the physical
@@ -971,24 +974,29 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
     var none: i32 = 0 - 1;
     var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
-    if (ins.kind_tag != ssasem.variant_get() || ins.args.len() != 1) { return none; }
+    var field: boolean = ins.kind_tag == ssasem.record_get();
+    if ((ins.kind_tag != ssasem.variant_get() && !field) || ins.args.len() != 1) { return none; }
     // This runs BEFORE the graph is verified, so a malformed instruction has
     // to answer "no take" rather than read past the end of its own operands.
     if (ins.result < 0 || ins.result >= f.graph.nvals) { return none; }
     var root: i32 = ins.args[0];
     if (root < 0 || root >= f.graph.nvals || root >= owned.len() || root >= defs.len()) { return none; }
     var got: typeinfo.Type = f.values[ins.result];
-    if (!ssasem.reference(got) || !is_union(f.values[root])) { return none; }
-    if ((ssasem.is_view(got) || option_layout(f, f.values[root])) && !sole_box(f, defs, root, bits(f.graph.nvals))) { return none; }
-    if (!owned[root] || projection(defs[root].kind_tag)) { return none; }
+    if (field) {
+        if (!field_takeable(got) || !is_record(f.values[root]) || semtypes.is_env(f.values[root])) { return none; }
+    } else {
+        if (!ssasem.reference(got) || !is_union(f.values[root])) { return none; }
+        if ((ssasem.is_view(got) || option_layout(f, f.values[root])) && !sole_box(f, defs, root, bits(f.graph.nvals))) { return none; }
+    }
+    if (!owned[root] || projection(defs[root].kind_tag) && !taken_read(defs[root].kind_tag)) { return none; }
     var b: ssa.SBlock = f.graph.blocks[bi];
-    if (ssalive.live_out_has(a.flow, bi, root)) { return none; }
+    if (field && needed_past(f, a, defs, bi, ins, root) || !field && ssalive.live_out_has(a.flow, bi, root)) { return none; }
     var i: i32 = pos + 1;
     while (i < b.insts.len()) {
         var later: ssa.SInst = b.insts[i];
         var mentions: boolean = false;
         for arg in later.args { if (arg == root) { mentions = true; } }
-        if (mentions && !other_payload_get(later, root, ins.imm)) { return none; }
+        if (mentions && !other_slot_get(later, ins)) { return none; }
         i = i + 1;
     }
     if (b.term.kind_tag == 1 && b.term.value == root) { return none; }
@@ -997,11 +1005,66 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
     while (w < f.graph.nvals) {
         if (w != root && w != ins.result && reads(a, w, root) && used_after(f, a, bi, pos, w)) {
             var hop: i32 = first_hop(a, w, root);
-            if (hop != ins.result && (hop < 0 || !other_payload_get(defs[hop], root, ins.imm))) { return none; }
+            if (hop != ins.result && (hop < 0 || !other_slot_get(defs[hop], ins))) { return none; }
         }
         w = w + 1;
     }
     return root;
+}
+
+// Whether `root` is still needed after block `bi` other than through what the
+// read `take` moves out of it: a block that can run later, `bi` itself again
+// included, names it, or a live-out value is anchored to it other than through
+// a read of another of its slots.
+// The value taken keeps `root` live in the flow, which predates the take.
+function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: i32, take: ssa.SInst, root: i32): boolean {
+    if (!ssalive.live_out_has(a.flow, bi, root)) { return false; }
+    var seen: boolean[] = bits(f.graph.blocks.len());
+    var work: i32[] = [];
+    for id in successors(f.graph.blocks[bi]) { work = work.append(block_index(f.graph, id)); }
+    var next: i32 = 0;
+    while (next < work.len()) {
+        var k: i32 = work[next];
+        next = next + 1;
+        if (k < 0 || seen[k]) { continue; }
+        seen = seen.with(k, true);
+        var blk: ssa.SBlock = f.graph.blocks[k];
+        for ins in blk.insts {
+            for arg in ins.args { if (arg == root) { return true; } }
+        }
+        if (blk.term.kind_tag == 1 && blk.term.value == root || blk.term.kind_tag == 3 && blk.term.cond == root) { return true; }
+        for id in successors(blk) { work = work.append(block_index(f.graph, id)); }
+    }
+    var out: boolean[] = live_out_row(a.flow, bi, f.graph.nvals);
+    var w: i32 = 0;
+    while (w < f.graph.nvals) {
+        if (out[w] && w != root && reads(a, w, root)) {
+            var hop: i32 = first_hop(a, w, root);
+            if (hop != take.result && (hop < 0 || !other_slot_get(defs[hop], take))) { return true; }
+        }
+        w = w + 1;
+    }
+    return false;
+}
+
+// A later read of the box `take` reads that names a DIFFERENT slot of it.
+function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
+    if (take.kind_tag == ssasem.record_get()) { return other_field_get(later, take.args[0], take.imm); }
+    return other_payload_get(later, take.args[0], take.imm);
+}
+
+// A record field a take may move out: a buffer or a record, whose slot is one
+// word the take can null. A string may be a view or a literal at run time, and
+// is left to the borrow.
+function field_takeable(t: typeinfo.Type): boolean {
+    if (ssasem.is_view(t) || ssasem.is_text(t)) { return false; }
+    return is_array(t) || is_record(t) && !semtypes.is_env(t);
+}
+
+// A projection whose read may itself be a take, and so a unit of the frame's
+// own that a nested read can take from in turn.
+function taken_read(kind: i32): boolean {
+    return kind == ssasem.record_get() || kind == ssasem.variant_get();
 }
 
 // A box nobody but this frame's tag tests and payload reads ever sees: built
@@ -1051,22 +1114,34 @@ function option_layout(f: ssasem.Func, t: typeinfo.Type): boolean {
     return f.enums[at].layout == semrecords.layout_option();
 }
 
-// The variant reads that take their payload's unit, indexed by the read's
-// result value. Computed before the step walk for the same reason the tuple
+// The variant and record reads that take their slot's unit, indexed by the
+// read's result value. Computed before the step walk for the same reason the tuple
 // takes are: the walk runs backwards, so the consuming use that moves the
 // payload is reached before the read that produced it.
+//
+// To a fixpoint: a take makes its read a unit of the frame's own, which a read
+// of one of ITS slots may take from in turn — `var ws = s.words; var xs =
+// ws.xs;`.
 function payload_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
     var out: boolean[] = bits(f.graph.nvals);
-    var bi: i32 = 0;
-    while (bi < f.graph.blocks.len()) {
-        var pos: i32 = 0;
-        while (pos < f.graph.blocks[bi].insts.len()) {
-            if (payload_root(f, a, owned, defs, bi, pos) >= 0) {
-                out = out.with(f.graph.blocks[bi].insts[pos].result, true);
+    var own: boolean[] = owned;
+    var grown: boolean = true;
+    while (grown) {
+        grown = false;
+        var bi: i32 = 0;
+        while (bi < f.graph.blocks.len()) {
+            var pos: i32 = 0;
+            while (pos < f.graph.blocks[bi].insts.len()) {
+                var v: i32 = f.graph.blocks[bi].insts[pos].result;
+                if (v >= 0 && v < out.len() && !out[v] && payload_root(f, a, own, defs, bi, pos) >= 0) {
+                    out = out.with(v, true);
+                    own = own.with(v, true);
+                    grown = true;
+                }
+                pos = pos + 1;
             }
-            pos = pos + 1;
+            bi = bi + 1;
         }
-        bi = bi + 1;
     }
     return out;
 }
@@ -1095,7 +1170,8 @@ function occurrences(xs: i32[], v: i32): i32 {
 // than a retained one (steal_unit): the callee then holds the buffer's only
 // count and grows it in place. `Emit { ...e, r: emit(e.r, op) }` is the shape,
 // and retaining there put a second count on every buffer the emit chain
-// threads, so the callee's first append copied it.
+// threads, so the callee's first append copied it. A field read that took its
+// unit (payload_root) already owns it, and its record may be gone.
 function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32, s: Step): Step {
     var ins: ssa.SInst = f.graph.blocks[bi].insts[pos];
     if (ins.kind_tag != ssasem.call()) { return s; }
@@ -1103,7 +1179,7 @@ function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.
     var i: i32 = 0;
     while (i < out.len()) {
         var v: i32 = out[i].value;
-        if (out[i].mode == retain_unit() && defs[v].kind_tag == ssasem.record_get() && occurrences(ins.args, v) == 1) {
+        if (out[i].mode == retain_unit() && defs[v].kind_tag == ssasem.record_get() && !owned[v] && occurrences(ins.args, v) == 1) {
             var root: i32 = projection_root(f, a, owned, defs, bi, pos, v);
             if (root >= 0 && owned[root]) { out = out.with(i, Supply { ...out[i], mode: steal_unit() }); }
         }
@@ -1114,8 +1190,8 @@ function steals(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.
 
 // The buffers a direct call at (`bi`, `pos`) is handed without a bracket:
 // an array operand this frame reads no further, either a borrowed parameter
-// of its own or a projection whose record it reads no further through that
-// field (projection_root); or a whole record parameter this frame reads no
+// of its own or a projection, not a take, whose record it reads no further
+// through that field (projection_root); or a whole record parameter this frame reads no
 // further, whose fields the callee grows under the record's own count. An
 // operand named twice is bracketed, since a callee growing one name would
 // move the other. The buffer's only later holder is then the callee's result
@@ -1132,7 +1208,7 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
         var lent_param: boolean = defs[v].kind_tag == 6 && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(f, a, bi, pos, v);
         if (is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
             if (lent_param) { root = v; }
-            if (defs[v].kind_tag == ssasem.record_get()) {
+            if (defs[v].kind_tag == ssasem.record_get() && !owned[v]) {
                 root = projection_root(f, a, owned, defs, bi, pos, v);
                 if (root >= 0) { field = defs[v].imm; }
             }
