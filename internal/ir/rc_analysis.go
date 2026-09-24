@@ -59,6 +59,12 @@ type rcPlan struct {
 	// consumedParams (typeDeepDropWired), and without the bit the overwrite
 	// dec on the copy path released the caller's handle.
 	cowMapParams map[string]bool
+	// flagThreadedParams[name] is true for a reassigned borrow-baseline param
+	// computeConsumedParams declined because its type has no wired deep drop
+	// (a closure or Map field). It takes no entry retain, so, like a
+	// consumed-threaded array param, its overwrite dec and exit release are
+	// gated on a runtime ownership bit (ownFlagName).
+	flagThreadedParams map[string]bool
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -331,7 +337,7 @@ func (b *builder) computeRcAnalyses() {
 	// reassignment-overwrite can deep-drop the old value without over-releasing
 	// (paired with the entry-inc emitted by lowerFunc). Computed before
 	// freeEligible, which consults it (a consumed param is not borrow-tainted).
-	b.rc.consumedParams = b.computeConsumedParams()
+	b.rc.consumedParams, b.rc.flagThreadedParams = b.computeConsumedParams()
 	b.rc.cowMapParams = b.computeCowThreadedMapParams()
 	// Koka-style consuming matches on owned-by-default enum params (#4400).
 	// Computed before freeEligible, which consults consumingBindings (a
@@ -2645,10 +2651,11 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 	return everyOccurrenceSafe(total, len(safe))
 }
 
-func (b *builder) computeConsumedParams() map[string]bool {
+func (b *builder) computeConsumedParams() (map[string]bool, map[string]bool) {
 	res := map[string]bool{}
+	flagged := map[string]bool{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil || b.trmcFuncs[b.fn.Name] {
-		return res
+		return res, flagged
 	}
 	reassigned := map[string]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
@@ -2737,11 +2744,14 @@ func (b *builder) computeConsumedParams() map[string]bool {
 			continue
 		}
 		if !deepDropWired(b.info, p.Type) {
+			if st, isStruct := p.Type.(ast.StructType); !isStruct || st.Name != "Map" {
+				flagged[p.Name] = true
+			}
 			continue
 		}
 		res[p.Name] = true
 	}
-	return res
+	return res, flagged
 }
 
 // computeCowThreadedMapParams finds the borrow-baseline Map params the body

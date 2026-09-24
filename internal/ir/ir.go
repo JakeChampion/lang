@@ -6138,7 +6138,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// carries the same bit. Allocate and zero it here, in parameter order, so
 	// the slot numbering is deterministic.
 	for _, p := range fn.Params {
-		if !b.isConsumedArrayParam(p.Name) && !b.rc.cowMapParams[p.Name] {
+		if !b.ownFlagThreadedParam(p.Name) && !b.rc.cowMapParams[p.Name] {
 			continue
 		}
 		slot := b.allocSlot()
@@ -19558,7 +19558,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// Self-append / self-map / construction-move shapes are
 				// unaffected: their RHS is a method call or constructor, never an
 				// `own`-flagged user function, so callConsumesIdent is false.
-				if flag, ok := b.locals[ownFlagName(t.Name)]; ok && b.isConsumedArrayParam(t.Name) {
+				if flag, ok := b.locals[ownFlagName(t.Name)]; ok && b.ownFlagThreadedParam(t.Name) {
 					// The callee spent the transferred reference, so no overwrite
 					// drop is owed. Its result is now this frame's counted owner,
 					// even if it happens to equal the original borrowed pointer.
@@ -19642,12 +19642,15 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpDrop})
 				}
 				// A consumed-threaded array param that borrow-taint kept out
-				// of freeEligible lands here. It gets no entry retain either
-				// (isConsumedArrayParam), so this flat dec would steal the
-				// caller's count — the #6021 undercount — unless it is gated
-				// on the same ownership flag.
+				// of freeEligible lands here, and so does a reassigned param
+				// whose type has no wired deep drop. Neither took an entry
+				// retain, so this flat dec would steal the caller's count —
+				// the #6021 undercount — unless it is gated on the ownership
+				// flag.
 				if b.isConsumedArrayParam(t.Name) {
 					b.emitConsumedArrayOverwriteDec(t.Name, flatDec)
+				} else if pt, ok := b.paramType(t.Name); ok && b.rc.flagThreadedParams[t.Name] {
+					b.emitOwnFlagOverwriteDec(t.Name, func() { b.emitOwnedSlotDrop(idx, pt) }, flatDec)
 				} else {
 					flatDec()
 				}
@@ -20503,6 +20506,23 @@ func ownFlagName(param string) string { return "__ownflag_" + param }
 //
 // So arrays get the ownership bit explicitly instead of encoding it in the
 // refcount — see emitConsumedArrayOverwriteDec for the discipline it buys.
+// paramType is the declared type of the parameter `name`.
+func (b *builder) paramType(name string) (ast.Type, bool) {
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			return p.Type, true
+		}
+	}
+	return nil, false
+}
+
+// ownFlagThreadedParam reports whether `name` is a param whose ownership of
+// its slot is a runtime bit rather than an entry retain: a consumed-threaded
+// array param, or a reassigned one computeConsumedParams declined.
+func (b *builder) ownFlagThreadedParam(name string) bool {
+	return b.isConsumedArrayParam(name) || b.rc.flagThreadedParams[name]
+}
+
 func (b *builder) isConsumedArrayParam(name string) bool {
 	if !b.rc.consumedParams[name] {
 		return false
@@ -20540,12 +20560,19 @@ func (b *builder) isConsumedArrayParam(name string) bool {
 // what structs / tuples / enums use; arrays cannot afford it (see
 // isConsumedArrayParam).
 func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
+	b.emitOwnFlagOverwriteDec(name, emitDec, emitDec)
+}
+
+// emitOwnFlagOverwriteDec is emitConsumedArrayOverwriteDec with the two
+// releases apart: `releaseOwned` for an old value this frame owns and is
+// replacing, `balanceSame` for the extra count a same-pointer RHS added.
+func (b *builder) emitOwnFlagOverwriteDec(name string, releaseOwned, balanceSame func()) {
 	idx, hasSlot := b.locals[name]
 	flagSlot, ok := b.locals[ownFlagName(name)]
 	if !ok || !hasSlot {
 		// No flag was allocated (the prologue only allocates for promoted
 		// array params); fall back to the unconditional dec.
-		emitDec()
+		balanceSame()
 		return
 	}
 	newTmp := b.allocSlot()
@@ -20558,13 +20585,13 @@ func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
 	// Replaced: dec only what this frame owns, then take ownership.
 	b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-	emitDec()
+	releaseOwned()
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
 	b.emit(Op{Kind: OpElse})
 	// Same buffer: the RHS added exactly one count to it.
-	emitDec()
+	balanceSame()
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
 }
