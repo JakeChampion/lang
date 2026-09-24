@@ -3832,9 +3832,11 @@ function rt_arm64_str_eq(): string {
     return s;
 }
 
-pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
-    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
-    var fns: parser.FuncDecl[] = m.funcs;
+// runtime_ast_bodies is the AST lowering of a runtime helper's functions, with
+// side tables computed over the helper alone. They read its own functions as
+// the whole program, so a read-only string or array parameter is borrowed and
+// takes no release that would free the caller's value.
+function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState): irlower.LowerResult[] {
     var bparams: string[] = irlower.borrowable_params_interproc(fns, all_structs);
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
@@ -3843,13 +3845,23 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
         opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
+    var out: irlower.LowerResult[] = [];
+    for fd in fns { out = out.append(irlower.lower_func(fd, s.struct_decls, sg, false)); }
+    return out;
+}
+
+pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
+    var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    var fns: parser.FuncDecl[] = m.funcs;
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
     var agg0: i32 = s.const_aggs.len();
     var sh0: i32 = s.shape_lits.len();
+    var bodies: irlower.LowerResult[] = s.rt_lower(src);
+    if (bodies.len() != fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
     var i: i32 = 0;
     while (i < fns.len()) {
-        s = emit_function_via_ir(fns[i], s, sg, vsigs);
+        s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
         i = i + 1;
     }
     if (s.shape_lits.len() > sh0) {
@@ -9827,13 +9839,13 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
     base = ircore.sub_sigs(sub, base);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
     if (!g.ok) { return ""; }
-    return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base);
+    return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);
 }
 
-function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): string {
+function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs, rt: (string) => irlower.LowerResult[]): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: stab, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: stab, funcs: mod.funcs, rt_lower: rt };
     // emit_body takes the runtime-dependency closure itself, ahead of the _start
     // it ends with. The seeds below are marker needs with no declared deps, so
     // they need no second pass.

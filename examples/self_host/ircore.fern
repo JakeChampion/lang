@@ -1257,10 +1257,13 @@ pub struct Sub {
     // verified contracts. The AST lowering of what is left must read these, and
     // so must the emit.
     sigs: irlower.FnSigs,
+    // The runtime helpers' lowering, handed to the emit's state; independent of
+    // `on`, since a helper produces whether or not the program's module did.
+    rt_lower: (string) => irlower.LowerResult[],
 }
 
 pub function no_sub(): Sub {
-    return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty() };
+    return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower };
 }
 
 // The body the substitution produced for declaration `i`, else the AST

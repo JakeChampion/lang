@@ -48,7 +48,7 @@ function rebuild(cache: irlower.LowerResult[]): Rebuilt {
 // semantic one: every declaration's body substituted, over the same registry.
 function sub_of(rb: Rebuilt, base: irlower.FnSigs): ircore.Sub {
     eprint("rebuilt i64=" + util.i32_to_string(rb.i64s) + " f64=" + util.i32_to_string(rb.f64s) + "\n");
-    return ircore.Sub { on: true, bodies: rb.cache, extra: [], sigs: base };
+    return ircore.Sub { ...ircore.no_sub(), on: true, bodies: rb.cache, extra: [], sigs: base };
 }
 
 // bits_round_trip checks the patterns no source literal spells: a NaN's

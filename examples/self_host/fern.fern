@@ -1922,7 +1922,8 @@ function cli_substitution(full: parser.Module, target: string): ircore.Sub {
     if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(full); }
     var stab: irlower.StructTab = irlower.struct_tab(im.structs);
     util.arr_push_cliff_report("sem:gated", 0);
-    return semlower.substitution(im, stab, ircore.wp_fn_sigs(im.funcs, stab));
+    var sub: ircore.Sub = semlower.substitution(im, stab, ircore.wp_fn_sigs(im.funcs, stab));
+    return ircore.Sub { ...sub, rt_lower: semlower.runtime_bodies };
 }
 
 function run(): i32 {
