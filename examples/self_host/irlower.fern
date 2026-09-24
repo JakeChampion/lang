@@ -44460,7 +44460,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         if (fn_returns_fresh_arrtup(fn, structs, str_fresh)) {
             out = out.append("ARRTUPF:" + fn.name);
         }
-        if (fn_returns_fresh_arrstruct(fn, structs, sfok)) {
+        if (fn_returns_fresh_arrstruct(fn, structs, sfok, fwd)) {
             out = out.append("ARRSTRUCTF:" + fn.name);
         }
         // "STRUCTARRF:<name>" — the same for the SCALAR-FIELD struct arrays the
@@ -44469,7 +44469,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         // credit at all, so its exit sweep took the generic shallow buffer dec
         // and stranded every element box — 160 B per round, unbounded, where the
         // byte-identical literal init was flat.
-        if (fn_returns_fresh_structarr(fn, structs, sfok)) {
+        if (fn_returns_fresh_structarr(fn, structs, sfok, fwd)) {
             out = out.append("STRUCTARRF:" + fn.name);
         }
         // "ARENUMF:<name>|<Enum>" — the array-of-ENUM sibling of the rows above.
@@ -52893,24 +52893,19 @@ function structarr_elem_struct_type(type_name: string, structs: StructTab): stri
 }
 
 // arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element the
-// array may own — a fresh struct literal (is_fresh_struct_init), or, when
-// `bare_ok`, a bare IDENT. The literal RETAINS a bare ident exactly as the
-// self-append does, so the element is a counted share and both owners run their
-// field walk under __fern_rc_is_unique; the sites that retain are the ones
-// arrstruct_owned_elem_sites stamps.
-//
-// `bare_ok` is false for the ARRSTRUCTF producer registry, whose question is the
-// stricter one: a RETURNED literal's counted co-owner is a local of the frame
-// being left, so "every element box is the callee's own" needs the fresh-literal
-// evidence rather than a count.
-function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, bare_ok: boolean, sfok: string[]): boolean {
+// array may own — a fresh struct literal (is_fresh_struct_init) or a bare IDENT.
+// The literal RETAINS a bare ident exactly as the self-append does, so the
+// element is a counted share and both owners run their field walk under
+// __fern_rc_is_unique; the sites that retain are the ones
+// arrstruct_owned_elem_sites stamps. The producer registries ask a stricter
+// question and use producer_lit_is_fresh instead.
+function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[]): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
                 if (!is_fresh_struct_init(arr.elements[i], structs, sfok)) {
-                    if (!bare_ok) { return false; }
                     match (arr.elements[i]) {
                         ast.ExprIdent(_) => {},
                         _ => { return false; }
@@ -53308,26 +53303,64 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
     return false;
 }
 
+// producer_elem_is_fresh: an element a producer's array owns outright — a fresh
+// struct literal, or a call into `pfresh`, the strict-fresh producers this
+// function does not shadow. That call's box is rc 1 and unaliased, the same
+// freshness one frame out, which is what structarr_elem_store_ok already admits
+// on the store side (#8609). is_fresh_struct_init itself stays literal-only: it
+// serves the plain struct-local credit too.
+function producer_elem_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
+    if (is_fresh_struct_init(e, structs, sfok)) { return true; }
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee { return util.index_of_str(pfresh, cid.name) >= 0; }
+    }
+    return false;
+}
+
+// producer_lit_is_fresh: a non-empty array literal of producer_elem_is_fresh
+// elements. A bare ident does not qualify: a RETURNED literal's counted co-owner
+// would be a local of the frame being left.
+function producer_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
+    if let ast.ExprArray(arr) = e {
+        if (arr.elements.len() == 0) { return false; }
+        for el in arr.elements { if (!producer_elem_is_fresh(el, structs, sfok, pfresh)) { return false; } }
+        return true;
+    }
+    return false;
+}
+
+// producer_fresh_callees: the strict-fresh producers `fn` can call by bare name —
+// `fwd` minus any name a parameter or a local of `fn` shadows.
+function producer_fresh_callees(fn: parser.FuncDecl, fwd: string[]): string[] {
+    var out: string[] = [];
+    for nm in fwd {
+        var shadowed: boolean = body_declares_name(fn.body, nm);
+        for pd in fn.params { if (pd.name == nm) { shadowed = true; } }
+        if (!shadowed) { out = out.append(nm); }
+    }
+    return out;
+}
+
 // body_has_nonfresh_arrstruct_return: any return whose value is NOT a fresh
 // array-of-structs the callee owns outright — a fresh literal, or a local this
 // body built by self-append (arrstruct_producer_ret_local). `fnbody` stays the
 // whole function body so a return nested in a block can still find that local's
 // declaration and its rebinds.
-function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[], structs: StructTab, sfok: string[]): boolean {
+function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[], structs: StructTab, sfok: string[], pfresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (!arrstruct_lit_is_fresh(r.value, structs, false, sfok)) {
+                if (!producer_lit_is_fresh(r.value, structs, sfok, pfresh)) {
                     match (r.value) {
-                        ast.ExprIdent(rid) => { if (!arrstruct_producer_ret_local(fnbody, rid.name, structs, sfok)) { return true; } },
+                        ast.ExprIdent(rid) => { if (!arrstruct_producer_ret_local(fnbody, rid.name, structs, sfok, pfresh)) { return true; } },
                         _ => { return true; }
                     }
                 }
             },
-            ast.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, fnbody, structs, sfok) || body_has_nonfresh_arrstruct_return(f.else_body, fnbody, structs, sfok)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, fnbody, structs, sfok)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, fnbody, structs, sfok)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, fnbody, structs, sfok)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonfresh_arrstruct_return(f.then_body, fnbody, structs, sfok, pfresh) || body_has_nonfresh_arrstruct_return(f.else_body, fnbody, structs, sfok, pfresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfresh_arrstruct_return(w.body, fnbody, structs, sfok, pfresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfresh_arrstruct_return(fo.body, fnbody, structs, sfok, pfresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrstruct_return(m.arms[a].body, fnbody, structs, sfok, pfresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -53342,21 +53375,20 @@ function body_has_nonfresh_arrstruct_return(stmts: ast.Stmt[], fnbody: ast.Stmt[
 // took the shallow buffer dec and stranded each element box and its array fields.
 //
 // Strictness matches the registry's question, not the local credit's: every
-// appended element must be a fresh struct LITERAL. A bare ident would leave the
-// container's counted co-owner in the frame being left, which is the same reason
-// arrstruct_lit_is_fresh takes bare_ok=false here.
-function arrstruct_producer_ret_local(fnbody: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
-    if (!arrstruct_local_fresh_init(fnbody, name, structs, sfok)) { return false; }
-    if (arrstruct_local_foreign_rebind(fnbody, name, structs, sfok)) { return false; }
+// appended element must be producer_elem_is_fresh. A bare ident would leave the
+// container's counted co-owner in the frame being left.
+function arrstruct_producer_ret_local(fnbody: ast.Stmt[], name: string, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
+    if (!arrstruct_local_fresh_init(fnbody, name, structs, sfok, pfresh)) { return false; }
+    if (arrstruct_local_foreign_rebind(fnbody, name, structs, sfok, pfresh)) { return false; }
     return !body_unsafe_for_allow_ret(fnbody, name, [], []);
 }
 
 // arrstruct_local_fresh_init: `name` is declared IN this body with an array
-// literal every element of which is a fresh struct literal. `[]` qualifies
+// literal every element of which is producer_elem_is_fresh. `[]` qualifies
 // vacuously — that is what an append-built producer starts from. Requiring the
 // declaration to be here is what keeps the soleness proof local: a param, or a
 // name from an enclosing scope, is already owned by someone else.
-function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
+function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -53365,7 +53397,7 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
                         ast.ExprArray(lit) => {
                             var j: i32 = 0;
                             while (j < lit.elements.len()) {
-                                if (!is_fresh_struct_init(lit.elements[j], structs, sfok)) { return false; }
+                                if (!producer_elem_is_fresh(lit.elements[j], structs, sfok, pfresh)) { return false; }
                                 j = j + 1;
                             }
                             return true;
@@ -53375,13 +53407,13 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
                 }
             },
             ast.StmtIf(f) => {
-                if (arrstruct_local_fresh_init(f.then_body, name, structs, sfok)) { return true; }
-                if (arrstruct_local_fresh_init(f.else_body, name, structs, sfok)) { return true; }
+                if (arrstruct_local_fresh_init(f.then_body, name, structs, sfok, pfresh)) { return true; }
+                if (arrstruct_local_fresh_init(f.else_body, name, structs, sfok, pfresh)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_local_fresh_init(w.body, name, structs, sfok)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_local_fresh_init(fo.body, name, structs, sfok)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_local_fresh_init(w.body, name, structs, sfok, pfresh)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_local_fresh_init(fo.body, name, structs, sfok, pfresh)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_local_fresh_init(arm.body, name, structs, sfok)) { return true; } }
+                for arm in m.arms { if (arrstruct_local_fresh_init(arm.body, name, structs, sfok, pfresh)) { return true; } }
             },
             _ => {}
         }
@@ -53390,25 +53422,25 @@ function arrstruct_local_fresh_init(stmts: ast.Stmt[], name: string, structs: St
 }
 
 // arrstruct_local_foreign_rebind: any reassignment of `name` that is NOT
-// `name.append(<fresh struct literal>)` / `name.with(i, <fresh struct literal>)`.
+// `name.append(e)` / `name.with(i, e)` with a producer_elem_is_fresh `e`.
 // The store INDEX comes from arrstruct_self_store_elem_index so the two spellings
 // stay one question; the element rule is the strict one above.
-function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[]): boolean {
+function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtAssign(a) => {
-                if (a.target == name && !arrstruct_fresh_store_elem(a.value, name, structs, sfok)) { return true; }
+                if (a.target == name && !arrstruct_fresh_store_elem(a.value, name, structs, sfok, pfresh)) { return true; }
             },
             ast.StmtIf(f) => {
-                if (arrstruct_local_foreign_rebind(f.then_body, name, structs, sfok)) { return true; }
-                if (arrstruct_local_foreign_rebind(f.else_body, name, structs, sfok)) { return true; }
+                if (arrstruct_local_foreign_rebind(f.then_body, name, structs, sfok, pfresh)) { return true; }
+                if (arrstruct_local_foreign_rebind(f.else_body, name, structs, sfok, pfresh)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_local_foreign_rebind(w.body, name, structs, sfok)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_local_foreign_rebind(fo.body, name, structs, sfok)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_local_foreign_rebind(w.body, name, structs, sfok, pfresh)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_local_foreign_rebind(fo.body, name, structs, sfok, pfresh)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_local_foreign_rebind(arm.body, name, structs, sfok)) { return true; } }
+                for arm in m.arms { if (arrstruct_local_foreign_rebind(arm.body, name, structs, sfok, pfresh)) { return true; } }
             },
-            ast.StmtDefer(d) => { return arrstruct_local_foreign_rebind([d.action], name, structs, sfok); },
+            ast.StmtDefer(d) => { return arrstruct_local_foreign_rebind([d.action], name, structs, sfok, pfresh); },
             _ => {}
         }
     }
@@ -53416,13 +53448,13 @@ function arrstruct_local_foreign_rebind(stmts: ast.Stmt[], name: string, structs
 }
 
 // arrstruct_fresh_store_elem: the strict half of arrstruct_self_store_elem — the
-// self-store spellings it recognises, with a fresh struct LITERAL element only.
-function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: StructTab, sfok: string[]): boolean {
+// self-store spellings it recognises, with a producer_elem_is_fresh element only.
+function arrstruct_fresh_store_elem(e: ast.Expr, name: string, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             var eidx: i32 = arrstruct_self_store_elem_index(e, name);
             if (eidx < 0) { return false; }
-            return is_fresh_struct_init(c.args[eidx], structs, sfok);
+            return producer_elem_is_fresh(c.args[eidx], structs, sfok, pfresh);
         },
         _ => { return false; }
     }
@@ -53450,11 +53482,11 @@ function struct_arr_call_producer(e: ast.Expr, body: ast.Stmt[], fresh_ret: stri
 
 // fn_returns_fresh_arrstruct: the array-of-structs sibling of
 // fn_returns_fresh_arrtup, registered "ARRSTRUCTF:<name>".
-function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab, sfok: string[]): boolean {
+function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab, sfok: string[], fwd: string[]): boolean {
     if (fn.receiver_type.len() > 0) { return false; }
     if (arrstruct_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok);
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, producer_fresh_callees(fn, fwd));
 }
 
 // fn_returns_fresh_structarr: the SCALAR-FIELD sibling of the above, registered
@@ -53462,11 +53494,11 @@ function fn_returns_fresh_arrstruct(fn: parser.FuncDecl, structs: StructTab, sfo
 // fresh struct-literal array or a local built by self-append and handed back — and
 // only the element-struct test differs, so the two registries are as disjoint as
 // the credits they feed and a function is claimed by exactly one.
-function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: StructTab, sfok: string[]): boolean {
+function fn_returns_fresh_structarr(fn: parser.FuncDecl, structs: StructTab, sfok: string[], fwd: string[]): boolean {
     if (fn.receiver_type.len() > 0) { return false; }
     if (structarr_elem_struct_type(fn.ret_type, structs) == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok);
+    return !body_has_nonfresh_arrstruct_return(fn.body, fn.body, structs, sfok, producer_fresh_callees(fn, fwd));
 }
 
 // collect_fresh_arrstruct_names: LOCAL names bound from a fresh `(<struct-with-array>)[]`
@@ -53478,7 +53510,7 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, true, sfok)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, sfok)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
