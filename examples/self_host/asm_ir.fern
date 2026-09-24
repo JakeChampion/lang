@@ -7063,7 +7063,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
     if (why != "") { ircore.ssa_refuse(label_name, why); }
     var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     var t_emit: i64 = monotonic_ns();
-    s = emit_ssa_function_x86(lifted.func, label_name, r, s);
+    s = emit_ssa_function_x86(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, s);
     // Under the report, a function whose lift or emit took over 200 ms is
     // named with both times: the whole-compiler build is where a phase's
     // cost shows, and this is how a slow one is found.
@@ -8982,7 +8982,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     var hh: i32 = hi;
     if (hh < 0 || hh > mod.funcs.len()) { hh = mod.funcs.len(); }
     if (check_claims) { ircore.check_fip_claims(mod.funcs, lo, hh, cache, s.struct_decls, sg, false); }
-    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)) };
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
     var fi: i32 = lo;
     while (fi < hh) {
         // A template the substitution superseded has no body: its instances

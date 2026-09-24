@@ -1263,6 +1263,100 @@ function trivial_phi_repl(f: SFunc): i32[] {
 }
 
 // prune_trivial_phis drops the folded phis and rewrites every reader.
+// ---- inlining ------------------------------------------------------------
+// A leaf is a function a caller may take in place of a call to it: one block,
+// or a chain of blocks each branching to the next, that returns a value and
+// calls nothing, of at most leaf_limit() instructions
+// that compute (constants, copies, binaries, unaries) and its parameters. Its
+// body is already reference-counted as the callee's own, so splicing it in
+// place of the call keeps every retain and release the call would have made.
+// `name` is the callee name a call to it carries.
+pub struct Leaf { name: string, func: SFunc }
+
+function leaf_limit(): i32 { return 12; }
+
+function leaf_kind(k: i32): boolean {
+    return k == 1 || k == 2 || k == 3 || k == 6 || k == 7 || k == 9 || k == 10;
+}
+
+// leaf_of is the leaf `f` is, as one block, or none.
+pub function leaf_of(name: string, f: SFunc): Leaf[] {
+    if (f.takes_env || f.blocks.len() == 0) { return []; }
+    var at: i32[] = block_positions(f);
+    var insts: SInst[] = [];
+    var bi: i32 = position_of(at, f.entry);
+    var seen: i32 = 0;
+    while (bi >= 0 && seen < f.blocks.len()) {
+        var b: SBlock = f.blocks[bi];
+        for ins in b.insts { insts = insts.append(ins); }
+        seen = seen + 1;
+        if (b.term.kind_tag == 1) {
+            if (b.term.value < 0 || seen != f.blocks.len()) { return []; }
+            var n: i32 = 0;
+            for ins in insts {
+                if (!leaf_kind(ins.kind_tag)) { return []; }
+                if (ins.kind_tag != 6) { n = n + 1; }
+            }
+            if (n > leaf_limit()) { return []; }
+            var one: SBlock = SBlock { id: f.entry, insts: insts, term: b.term, preds: [] };
+            return [Leaf { name: name, func: SFunc { ...f, blocks: [one] } }];
+        }
+        if (b.term.kind_tag != 2) { return []; }
+        bi = position_of(at, b.term.target);
+    }
+    return [];
+}
+
+// inline_leaves replaces each direct call to a leaf with the leaf's
+// instructions: its parameters read the call's
+// arguments, its other values are renumbered past the caller's, and the call's
+// result becomes a copy of the value the leaf returns.
+pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
+    if (leaves.len() == 0) { return f; }
+    var nvals: i32 = f.nvals;
+    var blocks: SBlock[] = [];
+    for b in f.blocks {
+        var insts: SInst[] = [];
+        for ins in b.insts {
+            var at: i32 = 0 - 1;
+            if (ins.kind_tag == 11) { at = leaf_index(leaves, ins.str, ins.args.len()); }
+            if (at < 0) {
+                insts = insts.append(ins);
+                continue;
+            }
+            var leaf: SFunc = leaves[at].func;
+            var map: i32[] = [];
+            var i: i32 = 0;
+            while (i < leaf.nvals) { map = map.append(0 - 1); i = i + 1; }
+            for li in leaf.blocks[0].insts {
+                if (li.kind_tag == 6) {
+                    map = map.with(li.result, ins.args[li.imm]);
+                } else {
+                    map = map.with(li.result, nvals);
+                    var args: i32[] = [];
+                    for a in li.args { args = args.append(map[a]); }
+                    insts = insts.append(SInst { ...li, result: nvals, args: args });
+                    nvals = nvals + 1;
+                }
+            }
+            if (ins.result >= 0) {
+                insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
+            }
+        }
+        blocks = blocks.append(SBlock { ...b, insts: insts });
+    }
+    return SFunc { ...f, nvals: nvals, blocks: blocks };
+}
+
+function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
+    var i: i32 = 0;
+    while (i < leaves.len()) {
+        if (leaves[i].name == name && leaves[i].func.nparams == argc) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
 pub function prune_trivial_phis(f: SFunc): SFunc {
     var repl: i32[] = trivial_phi_repl(f);
     var any: boolean = false;

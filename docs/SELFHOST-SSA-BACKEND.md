@@ -30,13 +30,18 @@ lowered function it:
    function, a shape or a string literal, the rc-headered allocation, and
    the two ways the runtime is called), and bails on anything else, naming
    the op;
-2. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
+2. takes the unit's leaves inline (`ssa.inline_leaves`): a function of one
+   block, or a chain of blocks each branching to the next, that calls nothing
+   and returns a value in at most twelve computing instructions, unless it is
+   declared `@noinline`. Its body is already reference-counted as the
+   callee's, so the splice keeps every retain and release the call made;
+3. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
    the lift gives declared locals and most of the loop-header phis;
-3. allocates registers with `ssa.regalloc_linear` over two pools: the
+4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
    ones (x19 to x28; rbx and r12 to r15);
-4. emits the function on the conventions the stack machine established:
+5. emits the function on the conventions the stack machine established:
    the same frame record, parameters read from the caller's slots
    (`[x29, #16 + 16*i]`, `16 + 8*i(%rbp)`), the result in x0 or %rax, calls
    made by pushing the arguments and calling the same `__fn_*` and runtime

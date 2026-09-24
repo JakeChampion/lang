@@ -2146,7 +2146,7 @@ function emit_ssa_function(r: irlower.LowerResult, label_name: string, s: asmcor
     if (why != "") { ircore.ssa_refuse(label_name, why); }
     var lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
     var t_emit: i64 = monotonic_ns();
-    s = emit_ssa_function_arm64(lifted.func, label_name, r, s);
+    s = emit_ssa_function_arm64(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, s);
     // Under the report, a function whose lift or emit took over 200 ms is
     // named with both times: the whole-compiler build is where a phase's
     // cost shows, and this is how a slow one is found.
@@ -3732,7 +3732,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache, s.struct_decls, sg, false);
-    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)) };
+    s = asmcore.EmitState { ...s, reg_entries: irlower.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         if (cache.len() == 0) {
