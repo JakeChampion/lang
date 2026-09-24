@@ -408,6 +408,12 @@ pub function discard_name(name: string, line: i32, col: i32, nth: i32): string {
 pub function is_unit_literal(n: ast.ExprNumber): boolean {
     return n.raw == "()";
 }
+// is_quoted_literal: the node is a character or byte literal (`'a'`, `b'0'`),
+// whose `raw` is its quoted spelling. A `0o` / `0b` numeral keeps a `raw` too,
+// and is a written numeral like any other.
+pub function is_quoted_literal(n: ast.ExprNumber): boolean {
+    return n.raw.len() > 0 && (n.raw[0] == b'\'' || (n.raw.len() > 1 && n.raw[0] == b'b' && n.raw[1] == b'\''));
+}
 // is_cast_op reads back what the `as` postfix wrote: a unary operator whose
 // name is "as_" followed by the target type's spelling. The `as?` downcast
 // writes "as?_" and is deliberately NOT one of these — it tests a runtime

@@ -6230,11 +6230,18 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	switch t.Kind {
 	case lexer.Number:
 		p.advance()
-		isHex := len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X')
 		digits, base := t.Text, 10
-		if isHex {
-			digits, base = t.Text[2:], 16
+		if len(t.Text) > 2 && t.Text[0] == '0' {
+			switch t.Text[1] {
+			case 'x', 'X':
+				digits, base = t.Text[2:], 16
+			case 'o', 'O':
+				digits, base = t.Text[2:], 8
+			case 'b', 'B':
+				digits, base = t.Text[2:], 2
+			}
 		}
+		prefixed := base != 10
 		lit := &ast.NumberLit{P: t.Pos}
 		// strconv rather than a hand-rolled accumulate, so a magnitude past
 		// 64 bits is seen instead of wrapping (docs/ADVERSARIAL-REVIEW-2026-06.md, F3).
@@ -6258,7 +6265,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			}
 		}
 		lit.Value = v
-		if isHex {
+		if prefixed {
 			lit.Raw = t.Text
 		}
 		// Typed suffix (`42i64`, `7u8`): stamp Width + IsUnsigned

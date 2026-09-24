@@ -8781,10 +8781,11 @@ function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
 // spelled it, decimal with leading zeros dropped, and a `-` when the source
 // wrote one.
 function int_lit_as_written(text: string, negated: boolean): string {
-  var hex: boolean = parser.is_hex_lit(text);
+  var prefixed: boolean = parser.is_hex_lit(text)
+    || (text.len() > 2 && text[0] == b'0' && (text[1] == b'o' || text[1] == b'O' || text[1] == b'b' || text[1] == b'B'));
   var start: i32 = 0;
   var out: string = text;
-  if (hex) {
+  if (prefixed) {
     start = 2;
   } else {
     var i: i32 = 0;
@@ -8925,6 +8926,13 @@ function lit_negated(signs: LitSign[], line: i32, col: i32): boolean {
   return deepest % 2 == 1;
 }
 
+// numeral_spelling is an integer literal as written, without its suffix: a
+// `0o` / `0b` numeral's text is its value in hex, and its `raw` the spelling.
+function numeral_spelling(n: ast.ExprNumber): string {
+  if (n.raw.len() == 0) { return n.text; }
+  return slice_unchecked(n.raw, 0, n.raw.len() - n.suffix.len()) + "";
+}
+
 // suffix_range_diag: E047 for a typed-suffix integer literal outside its own
 // type's range. A suffix pins the type in the parser, so no destination ever
 // settles the literal and no other rule judges it. A quoted literal (`'a'`,
@@ -8932,9 +8940,9 @@ function lit_negated(signs: LitSign[], line: i32, col: i32): boolean {
 // numeral, so it is left alone.
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
   var out: util.Diag[] = [];
-  if (num.is_float || num.raw.len() > 0 || num.suffix.len() == 0) { return out; }
+  if (num.is_float || parser.is_quoted_literal(num) || num.suffix.len() == 0) { return out; }
   if (int_lit_fits(num.text, num.suffix, negated)) { return out; }
-  var msg: string = "literal " + int_lit_as_written(num.text, negated) + " does not fit in " + num.suffix;
+  var msg: string = "literal " + int_lit_as_written(numeral_spelling(num), negated) + " does not fit in " + num.suffix;
   if (negated && is_unsigned_int_ty(num.suffix)) {
     msg = msg + ": unsigned types have no negative values";
   }
@@ -9112,9 +9120,9 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
   var out: util.Diag[] = [];
   match (e) {
     ast.ExprNumber(n) => {
-      if (n.is_float || n.raw.len() > 0 || n.suffix.len() > 0 || parser.is_unit_literal(n)) { return out; }
+      if (n.is_float || parser.is_quoted_literal(n) || n.suffix.len() > 0 || parser.is_unit_literal(n)) { return out; }
       if (int_lit_fits(n.text, ty, negated)) { return out; }
-      var msg: string = "literal " + int_lit_as_written(n.text, negated) + " does not fit in " + ty;
+      var msg: string = "literal " + int_lit_as_written(numeral_spelling(n), negated) + " does not fit in " + ty;
       if (negated && is_unsigned_int_ty(ty)) {
         msg = msg + ": unsigned types have no negative values";
       }

@@ -496,6 +496,7 @@ pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
 question_op                                          0
+radix_literals                                       0
 random_bytes                                         1
 range_for                                            0
 range_value                                          0
