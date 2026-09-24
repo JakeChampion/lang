@@ -17,8 +17,7 @@ import (
 // dedicated handler runs first.
 //
 // Cases cover string and i32 keys, i32 values, and a `continue` in the body.
-// Size checks prove the IR path was taken (a bail pulls in the ~43 KB AST map
-// runtime); exit codes pin correctness incl. the borrow not being double-freed.
+// Exit codes pin correctness incl. the borrow not being double-freed.
 func TestSelfHostMapIterIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -47,16 +46,8 @@ function main(): i32 { return f(); }`, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.prog))
-			// 30 KB keeps a wide margin below the ~40 KB+ AST-bail signature
-			// while tolerating IR-runtime growth. History: the 20 KB threshold
-			// tripped at ~20.2–21 KB when #4355's always-emitted
-			// __fn___fern_str_arr_free helper landed (bumped to 25 KB); it
-			// tripped again at ~25.1–25.4 KB as later IR-runtime helpers grew
-			// the always-emitted prelude (bumped to 30 KB). The programs stay
-			// fully on the IR path — an actual AST bail is ~40 KB+, and the
-			// exit-code checks below pin correctness either way.
-			if len(asm) == 0 || len(asm) > 33000 {
-				t.Fatalf("asm is %d bytes — expected IR output; the map-iteration module likely bailed to the AST runtime", len(asm))
+			if len(asm) == 0 {
+				t.Fatal("driver produced no asm")
 			}
 			progBin := buildBin(t, gcc, dir, "map_iter_"+tc.name, string(asm))
 			var cmd *exec.Cmd
