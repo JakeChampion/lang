@@ -316,8 +316,8 @@ function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type
 // A float the checker left polymorphic — a literal's binding with no
 // annotation, or an expression over one — has settled nowhere else, so it
 // settles here at the width the checker carried, which is the f64 an
-// unsuffixed literal is. The same holds for one inside a container:
-// `var xs = [1.5]` is an f64[].
+// unsuffixed literal is. The same holds for one inside a container or a
+// variant: `var xs = [1.5]` is an f64[], and `Some(1.5)` an Option[f64].
 function settled(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return typeinfo.TypeFloat { width: f.width, polymorphic: false }; } }
     if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { ...a, elem: settled(a.elem) }; }
@@ -327,6 +327,11 @@ function settled(t: typeinfo.Type): typeinfo.Type {
         return typeinfo.TypeTuple { elements: els };
     }
     if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: settled(m.key), value: settled(m.value) }; }
+    if let typeinfo.TypeUnion(u) = t {
+        var args: typeinfo.Type[] = [];
+        for a in u.args { args = args.append(settled(a)); }
+        return typeinfo.TypeUnion { ...u, args: args };
+    }
     return t;
 }
 
