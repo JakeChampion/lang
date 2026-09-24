@@ -430,14 +430,10 @@ Unsupported constructs refuse the whole function with a reason.
   released — and is refused for the same reason. A map READ's key is not:
   `get_or`, `has` and `delete` hash and compare it and `operation_supplies`
   counts no unit for it, so a view there is an ordinary lend and takes the
-  retag a borrowed `string` parameter offers. The checker's borrowed-argument
-  carve-out lets `xs.append(slice_unchecked(s, a, b))` through today — the
-  escaping position docs/STR-VIEW-CONTRACT.md's decision hands to #8635 —
-  and this boundary refuses it rather than inheriting the hole. The
-  compiler's own sources did it in 26 places, split helpers handing back a
-  `string[]` of windows onto their argument, each element a leaked view box
-  on the register backends; they copy now (`+ ""`), which is what the
-  checker rule will demand of them.
+  retag a borrowed `string` parameter offers. Both checkers refuse the
+  stored positions too (E038 at `append`, `with` and `insert`, #8635), so
+  a checked program no longer reaches these refusals; they stay as the
+  boundary's own statement of the rule.
 
 - A function VALUE and the call through one. A value is the environment BOX
   the lambda lift builds before this boundary reads the tree: one allocation

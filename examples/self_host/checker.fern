@@ -3176,6 +3176,48 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
   return out;
 }
 
+// promotes_view: `from` holds a `str` view where `to` holds an owned `string`,
+// at the top or inside an array, tuple, map or type argument (`str[]` into
+// `string[]`), which type_eq's tag-blind comparison would let through.
+function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if (is_str_view(from) && is_owned_string(to)) { return true; }
+  match (from) {
+    typeinfo.TypeArray(fa) => {
+      if let typeinfo.TypeArray(ta) = to { return promotes_view(fa.elem, ta.elem); }
+    },
+    typeinfo.TypeTuple(ft) => {
+      if let typeinfo.TypeTuple(tt) = to { return any_promotes_view(ft.elements, tt.elements); }
+    },
+    typeinfo.TypeMap(fm) => {
+      if let typeinfo.TypeMap(tm) = to { return promotes_view(fm.key, tm.key) || promotes_view(fm.value, tm.value); }
+    },
+    typeinfo.TypeUnion(fu) => {
+      if let typeinfo.TypeUnion(tu) = to { return any_promotes_view(fu.args, tu.args); }
+    },
+    typeinfo.TypeStruct(fs) => {
+      if let typeinfo.TypeStruct(ts) = to { return any_promotes_view(fs.args, ts.args); }
+    },
+    _ => {}
+  }
+  return false;
+}
+
+// same_element_type: two array-literal elements agree, which a `str` view and
+// an owned `string` do not in either order, though type_eq calls them equal.
+function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
+}
+
+function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean {
+  if (from.len() != to.len()) { return false; }
+  var i: i32 = 0;
+  while (i < from.len()) {
+    if (promotes_view(from[i], to[i])) { return true; }
+    i = i + 1;
+  }
+  return false;
+}
+
 function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
   // `str` (#4813): a borrowed view never silently promotes to an owned
   // `string` — an owning sink must materialise a copy via .to_owned().
@@ -3183,7 +3225,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   // direction (an owned string into a `str` slot) borrows freely and goes through
   // the type_eq below. Argument positions re-allow the lend via
   // view_arg_borrow at their call sites, mirroring native argAssignable.
-  if (is_str_view(from) && is_owned_string(to)) {
+  if (promotes_view(from, to)) {
     return false;
   }
   // `[T]` (#9944): an array view and an owned `T[]` convert in neither
@@ -4583,13 +4625,11 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       while (i < a.elements.len()) {
         var et: typeinfo.Type = check_expr(a.elements[i], s);
         var lit: i32 = numeric_literal_kind(a.elements[i]);
-        if (!literal_gives_way(lit, first)) {
-          if (type_eq(et, first) || literal_gives_way(first_lit, et)) {
-            first = et;
-            first_lit = lit;
-          } else {
-            return t_unknown("array elements have mixed types");
-          }
+        // A mismatch is call_diags_array's E034; the literal keeps its
+        // first element's type, as native types it.
+        if (!literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
+          first = et;
+          first_lit = lit;
         }
         i = i + 1;
       }
@@ -10652,7 +10692,7 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
         var etk: typeinfo.Type = check_expr(a.elements[k], s);
         var lit: i32 = numeric_literal_kind(a.elements[k]);
         if (is_primitive_type(etk) && !literal_gives_way(lit, anchor)) {
-          if (type_eq(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
+          if (same_element_type(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
             anchor = etk;
             anchor_lit = lit;
           } else {
@@ -16894,11 +16934,12 @@ function main(): i32 {
     return 100;
   }
 
-  // Mixed-type array literal → TypeUnknown.
+  // Mixed-type array literal → its first element's type, as native types it;
+  // E034 reports the mismatch.
   var src11: string = "var a = [1, \"oops\"]; return a[0];";
   var stmts11: ast.Stmt[] = parser.parse_program(lexer.tokenize(src11));
   var pt11: ProgramTypes = check_program(stmts11);
-  if (!is_unknown(pt11.tys[0])) {
+  if (!type_eq(pt11.tys[0], t_array(t_i32()))) {
     return 110;
   }
 

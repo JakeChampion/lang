@@ -1861,6 +1861,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e038-str-as-map-key", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len(); }\n", []string{"E038"}},
 		{"e038-str-as-map-value", "import \"core/map\";\nfunction main(): i32 { var s: string = \"ab\"; var m: Map[string, string] = map_new(2); m = m.insert(\"k\", slice_unchecked(s, 0, 1)); return m.len(); }\n", []string{"E038"}},
 		{"str-appended-to-str-array-clean", "function main(): i32 { var s: string = \"ab\"; var out: str[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len(); }\n", nil},
+		// An array literal of views is a `str[]`, and its elements agree only
+		// when their string tags do, in either order. The literal keeps its
+		// first element's type, so the declared `string[]` is E003 exactly when
+		// the view comes first. A map READ keeps nothing and still takes a view.
+		{"str-view-array-literal-e003", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [slice_unchecked(t, 0, 3)]; return xs.len(); }\n", []string{"E003"}},
+		{"str-view-array-literal-after-string-e034", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [\"a\", slice_unchecked(t, 0, 3)]; return xs.len(); }\n", []string{"E034"}},
+		{"str-view-array-literal-before-string-e034", "function main(): i32 { var t: string = \"abcdef\"; var xs: string[] = [slice_unchecked(t, 0, 3), \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
+		{"mixed-array-literal-keeps-first-type", "function main(): i32 { var xs: string[] = [1, \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
+		{"str-view-map-read-get-or-clean", "import \"core/map\";\nfunction main(): i32 { var t: string = \"abcdef\"; var m: Map[string, i32] = map_new(4); return m.get_or(slice_unchecked(t, 0, 3), 0); }\n", nil},
 		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},
