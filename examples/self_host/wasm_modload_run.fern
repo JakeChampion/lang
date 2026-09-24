@@ -72,11 +72,6 @@ function sub_module(m: parser.Module, lo: i32, hi: i32): parser.Module {
     };
 }
 
-// whole_program_view returns the inferred, lambda-lifted union of every module's
-// functions and structs — the view a unit's lowering and emit must see, because a
-// call is shaped by its CALLEE and that routinely lives in another module. It is
-// PARSE-level work only: no lowering, so building it for every module on every
-// invocation stays cheap, which is what lets a cache hit skip the expensive part.
 function whole_program_view(parts: flatten.PerModule[]): parser.Module[] {
     var mods: parser.Module[] = [];
     var i: i32 = 0;
@@ -130,6 +125,16 @@ function whole_module_plan(nmods: i32): ShardRef[] {
     return out;
 }
 
+// with_builtin_enums gives a unit, and the link, the variant structs of the
+// builtin enums (IoError, JsonValue), which no module declares and
+// merge_builtins finds only beside the compiler's own sources. Without them a
+// unit's `match` on their variants bails, and the link gives every variant the
+// fallback type id 0, so each construction matches the first arm. The
+// whole-program struct table gets the same injection in run_per_module.
+function with_builtin_enums(m: parser.Module): parser.Module {
+    return parser.Module { ...m, structs: parser.inject_builtin_enums(m.structs) };
+}
+
 // build_unit lowers module `idx` and packages its bodies with the metadata link
 // needs. This is the only place lowering happens, which is what makes a cache
 // hit cheap: it skips this entirely.
@@ -138,7 +143,7 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
     // Lower ONLY this window's functions. lower_all_for_view sees the whole
     // program for its side tables, so a call into a function outside the window
     // (another shard, another module) still tags correctly.
-    var sub: parser.Module = sub_module(infmods[idx], lo, hi);
+    var sub: parser.Module = with_builtin_enums(sub_module(infmods[idx], lo, hi));
     var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(sub, all_funcs, all_stab);
     return wasm_objfile.UnitObj {
         strs: wasm_ir.str_values(cache),
@@ -238,6 +243,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         }
         pi = pi + 1;
     }
+    all_structs = parser.inject_builtin_enums(all_structs);
 
     // Signature hashes are needed by the manifest and by any cached emit, and
     // only then: computing them is a whole-program string walk the self-host
@@ -329,7 +335,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // emitted once against the merged module. heap_base is a whole-LINK
         // quantity: it sits past every unit's literals.
         var merged: parser.Module = flatten.bundle(entry, loaded);
-        merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(modloader.merge_builtins(dir, merged)));
+        merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(with_builtin_enums(modloader.merge_builtins(dir, merged))));
         var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
         write(wasm_ir.emit_ir_module_units(units, merged, needs, fn_sigs, rc, 0));
         return 0;
