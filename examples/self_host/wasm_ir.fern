@@ -1741,11 +1741,11 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
 // wasm serves those helpers with hand-written WAT and has neither a raw address
 // space nor a syscall instruction to lower them onto.
 //
-// __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm selects them
-// (kind_tag 84 / 85) — and neither are their two type-only bridges: __raw_data
+// __raw_load8 / __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm
+// selects them (kind_tag 83 / 84 / 85; raw_load8 also backs __load_u8) — and neither are their two type-only bridges: __raw_data
 // lowers to a raw_load_ptr and __raw_array emits nothing at all.
 function is_raw_floor_builtin(name: string): boolean {
-    if (name == "__raw_alloc" || name == "__raw_store8" || name == "__raw_load8") { return true; }
+    if (name == "__raw_alloc" || name == "__raw_store8") { return true; }
     if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") { return true; }
     if (name == "__raw_addr" || name == "__raw_arr_box") { return true; }
     return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
@@ -4592,6 +4592,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    drop\n");
     } else if (o.kind_tag == 84) {  // raw_store_ptr
         parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
+    } else if (o.kind_tag == 83) {  // raw_load8
+        // pop off (top), ptr; push the zero-extended byte at ptr+off.
+        parts = parts.append("    i32.add\n    i32.load8_u\n");
     } else if (o.kind_tag == 85) {  // raw_load_ptr
         // pop off (top), ptr; push the 4-byte word slot at ptr+off*4.
         parts = parts.append("    i32.const 4\n    i32.mul\n    i32.add\n    i32.load\n");
