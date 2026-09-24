@@ -16155,6 +16155,9 @@ func (b *builder) callBody(n *ast.Call) error {
 	// keeps its prior safe-leak. The local / pair-form / map_new /
 	// retain-sink exclusions carry over from the call-level gate unchanged.
 	countedArgTemp := func(ai int) bool {
+		if ast.RcFreeEnabled && calleeIsLocal {
+			return b.indirectArgCounted(ai)
+		}
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
@@ -16623,7 +16626,7 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 			}
 			continue
 		}
-		if reclaim || b.dynCoercedArg(a) {
+		if reclaim || b.dynCoercedArg(a) || (ast.RcFreeEnabled && b.indirectArgCounted(ai)) {
 			slot, tt, ok, err := b.stashOwnedArgTemp(a)
 			if err != nil {
 				return nil, nil, err
@@ -16680,6 +16683,9 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 	}
 	if !ok {
 		tt, ok = b.appendCopyTempType(a)
+	}
+	if !ok {
+		tt, ok = b.withCopyTempType(a)
 	}
 	if !ok && b.isOwnedContainerRead(a) {
 		// `sink(mk_box().items)`. The read retained the value and deep-dropped

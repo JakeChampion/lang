@@ -183,6 +183,22 @@ func (b *builder) appendCopyTempType(e ast.Expr) (ast.Type, bool) {
 	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
 }
 
+// withCopyTempType classifies a call ARGUMENT that is a `.with` whose receiver
+// took the forced-copy retain (arraySetInc): __fern_arr_cow_inplace then hands
+// back a fresh rc 1 buffer, with every pointer element retained by the copy,
+// that only this argument holds. A `.with` that ran in place is left out; its
+// result is the receiver's own buffer.
+func (b *builder) withCopyTempType(e ast.Expr) (ast.Type, bool) {
+	if !ast.RcFreeEnabled {
+		return nil, false
+	}
+	c, ok := e.(*ast.Call)
+	if !ok || !isArraySetCall(c) || !b.rc.arraySetInc[c] || len(c.TypeArgs) != 1 {
+		return nil, false
+	}
+	return ast.ArrayType{Elem: c.TypeArgs[0]}, true
+}
+
 func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled {
 		return nil, false

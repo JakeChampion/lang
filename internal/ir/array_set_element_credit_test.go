@@ -66,17 +66,42 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// The RECEIVER is deliberately not credited: `.with` hands the
-// receiver's own buffer back at rc 1, which is a retention the caller
-// cannot discount.
-func TestArrayParamSetReceiverStaysUncredited(t *testing.T) {
-	src := `function put(xs: string[], v: string): string[] {
+// The RECEIVER is credited because it is borrowed: computeArraySetIncs
+// retains a parameter receiver before __fern_arr_cow_inplace, so the helper
+// always copies and the result is never the caller's buffer. The lowering
+// check pins the retain the credit depends on.
+func TestArrayParamSetReceiverIsCounted(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"string elements", `function put(xs: string[], v: string): string[] {
     return xs.with(0, v);
 }
-function main(): i32 { return 0; }`
-	got := paramCountedFor(t, src, "put")
-	if len(got) == 2 && got[0] {
-		t.Errorf("paramCountedRetain[put] = %v, but the result IS the receiver's buffer "+
-			"when it is unique — crediting it lets the caller free a live one", got)
+function main(): i32 { return 0; }`},
+		{"scalar elements", `function put(xs: i32[], v: i32): i32[] {
+    return xs.with(0, v);
+}
+function main(): i32 { return 0; }`},
+	} {
+		got := paramCountedFor(t, tc.src, "put")
+		if len(got) != 2 || !got[0] {
+			t.Errorf("%s: paramCountedRetain[put] = %v, want [true _]: the receiver is "+
+				"copied, so the result is a fresh buffer", tc.name, got)
+		}
+		ops := findFunc(lowerSourceWith(t, tc.src, 8), "put").Ops
+		inc, cow := -1, -1
+		for i, op := range ops {
+			if !isNamedCallKind(op.Kind) {
+				continue
+			}
+			if op.Str == "__fern_rc_inc" && inc < 0 {
+				inc = i
+			}
+			if (op.Str == "__fern_arr_cow_inplace" || op.Str == "__fern_arr_cow_inplace_ptr") && cow < 0 {
+				cow = i
+			}
+		}
+		if cow < 0 || inc < 0 || inc > cow {
+			t.Errorf("%s: put's ops have rc_inc at %d and cow_inplace at %d, want the "+
+				"receiver retained before the copy", tc.name, inc, cow)
+		}
 	}
 }
