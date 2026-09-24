@@ -68,7 +68,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// leaked only the undropped tuple box, which no fixture had ever covered.
 	"map_iter_escape_churn_free":           32000,
 	"map_iter_string_kv_retain_churn_free": 19200,
-	"matchexpr_alias_array_no_free":        1600,
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
 	"pair_form_payload_borrowing_call":     128,
@@ -98,7 +97,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// leaked only the undropped tuple box, which no fixture had ever covered.
 	"map_iter_escape_churn_free":           32000,
 	"map_iter_string_kv_retain_churn_free": 19200,
-	"matchexpr_alias_array_no_free":        1600,
 	"option_of_array":                      32,
 	"pair_form_enum_temp_as_argument":      288,
 	"pair_form_payload_borrowing_call":     128,
@@ -144,7 +142,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,
-	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                160,
 	"pair_form_payload_borrowing_call":               128,
