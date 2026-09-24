@@ -120,9 +120,13 @@ right-hand side, since the slot is about to stop holding it. That is what
 Perceus does at a last use, and it is why `x = x.with(i, v)` finds the
 buffer unshared — and, because a parameter takes ownership of its
 argument, why `x = f(x)` does too, one call deep and inside the callee.
-Nothing can reach the old value uncounted in between: an alias made during
-the right-hand side binds (and so counts), and an argument already
-evaluated is held by `evalCall`. A right-hand side that fails — including
+An alias made during the right-hand side binds (and so counts), and an
+argument already evaluated is held by `evalCall`. The slot itself is the
+exception: it still reads the old value until the store. So the move is
+taken only when every read of the slot runs before anything writes — a
+single read, or an update chain rooted at the slot whose other reads all sit
+in the root link's own arguments. `x = x.with(0, 3).with(1, x[0])` reads the
+slot after the first link has written, so it copies (#9702). A right-hand side that fails — including
 a `?` unwind or a `return` out of a value-position block, both of which
 arrive as errors — puts the reference back.
 

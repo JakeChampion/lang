@@ -7655,18 +7655,26 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 // BEFORE the right-hand side runs, because the slot is about to stop
 // holding it: that is the move Perceus performs at a last use, and it is
 // what lets `x = x.with(i, v)` — and `x = f(x)`, through the callee's
-// parameter — find the buffer unshared and write into it. Nothing else
-// can reach the old value uncounted in between: an alias made during the
-// right-hand side binds (and so counts), and an argument already
-// evaluated is held by evalCall.
+// parameter — find the buffer unshared and write into it. An alias made
+// during the right-hand side binds (and so counts), and an argument already
+// evaluated is held by evalCall; the slot itself still reads the old value
+// until the store, so the move is taken only when every read of it runs
+// before anything writes (movesFirst).
 func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error) {
 	old, _ := env.get(name)
-	arrDisown(old)
-	i.moving = append(i.moving, old)
+	move := movesFirst(a.Value, name)
+	if move {
+		arrDisown(old)
+		i.moving = append(i.moving, old)
+	}
 	v, err := i.evalExpr(a.Value, env)
-	i.moving = i.moving[:len(i.moving)-1]
+	if move {
+		i.moving = i.moving[:len(i.moving)-1]
+	}
 	if err != nil {
-		arrOwn(old)
+		if move {
+			arrOwn(old)
+		}
 		return nil, err
 	}
 	// Retain before release so a self-assign (m = m.set(..) returning
@@ -7675,6 +7683,63 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 	arrOwn(v)
 	env.set(name, v)
 	return v, nil
+}
+
+// movesFirst reports whether every read of name in rhs runs before anything
+// can write the buffer it holds: a single read, or an update chain rooted at
+// name (`x.with(i, v).with(j, w)`, `m.insert(k, v).insert(…)`) whose other
+// reads are all in the root link's own arguments, evaluated before its write.
+func movesFirst(rhs ast.Expr, name string) bool {
+	reads := 0
+	ast.Walk(rhs, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			reads++
+		}
+		return true
+	})
+	if reads <= 1 {
+		return true
+	}
+	e := rhs
+	for {
+		if fa, ok := e.(*ast.FieldAccess); ok {
+			e = fa.Target
+		}
+		c, ok := e.(*ast.Call)
+		if !ok || !isUpdateCall(c) {
+			return false
+		}
+		if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == name {
+			return true
+		}
+		for _, arg := range c.Args[1:] {
+			mentioned := false
+			ast.Walk(arg, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && id.Name == name {
+					mentioned = true
+				}
+				return !mentioned
+			})
+			if mentioned {
+				return false
+			}
+		}
+		e = c.Args[0]
+	}
+}
+
+// isUpdateCall reports whether c is a collection update that may write its
+// receiver's buffer in place: an array `with` or a Map mutator.
+func isUpdateCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || len(c.Args) == 0 {
+		return false
+	}
+	switch id.Name {
+	case "__method_Array_set", "__method_Map_set", "__method_Map_delete", "__method_Map_clear":
+		return true
+	}
+	return false
 }
 
 func asBool(v Value) bool {

@@ -346,3 +346,34 @@ func TestArrayWithModesDiffer(t *testing.T) {
 		}
 	})
 }
+
+// An update chain assigned back to its receiver reads the receiver's slot
+// in an outer link, after the inner link has run. The slot must still
+// hold the old buffer's elements then, so the move is not taken (#9702).
+func TestArrayWithChainOuterReadSeesTheOldValue(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want Number
+	}{
+		{"array", `function main(): i32 {
+			var b: i32[] = [7, 8, 9, 10];
+			b = b.with(0, 3).with(1, b[0]);
+			return b[0] * 10 + b[1];
+		}`, 37},
+		{"map", `import "core/map";
+		function main(): i32 {
+			var m: Map[i32, i32] = map_new(4);
+			m = m.insert(1, 5);
+			m = m.insert(1, 3).insert(2, m.get_or(1, 0));
+			return m.get_or(1, 0) * 10 + m.get_or(2, 0);
+		}`, 35},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := evalProgramValue(t, tc.src)
+			if got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

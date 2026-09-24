@@ -14740,18 +14740,19 @@ struct E053Ctx { fname: string, kw: string, callable: string[], variants: string
 
 // fip_recv_root names the variable a `.with` receiver is rooted at, or "" when
 // the expression is not rooted at one. It is native's fipRootIdent: an index or
-// a field access reaches the container it reads.
-//
-// A `.with` CALL does not, so a chain stays outside the claim. It reads as
-// though it should be admitted — the second link holds the array the first
-// returned — but in assignment position the lowering materialises that
-// intermediate, one fresh box per evaluation (#9702). Admitting it here would
-// let a `fip` function allocate while claiming it does not.
+// a field access reaches the container it reads, and an earlier `.with` link
+// reaches its own receiver, since the chain writes one array in place (#9702).
 function fip_recv_root(e: ast.Expr): string {
   match (e) {
     ast.ExprIdent(id) => { return id.name; },
     ast.ExprIndex(ix) => { return fip_recv_root(ix.array); },
     ast.ExprFieldAccess(fa) => { return fip_recv_root(fa.obj); },
+    ast.ExprCall(c) => {
+      if let ast.ExprFieldAccess(link) = c.callee {
+        if (link.field == "with") { return fip_recv_root(link.obj); }
+      }
+      return "";
+    },
     _ => { return ""; }
   }
   return "";
