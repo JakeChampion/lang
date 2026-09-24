@@ -19457,7 +19457,7 @@ function settle_to_type(e: ast.Expr, t: TypeRef): ast.Expr {
 // settle_to_name is settle_to_type against a declared type NAME, the spelling
 // every decl in the AST carries. An empty name is "no annotation" and settles
 // nothing.
-function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
+pub function settle_to_name(e: ast.Expr, type_name: string): ast.Expr {
     if (type_name.len() == 0) { return e; }
     return settle_to_type(e, parse_type_ref(type_name));
 }

@@ -4125,12 +4125,21 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         // type from context.
         return t_array(t_unknown("empty array literal"));
       }
+      // An unsuffixed literal takes a concrete sibling's type, as in
+      // call_diags_array's E034 rule.
       var first: typeinfo.Type = check_expr(a.elements[0], s);
+      var first_lit: i32 = numeric_literal_kind(a.elements[0]);
       var i: i32 = 1;
       while (i < a.elements.len()) {
         var et: typeinfo.Type = check_expr(a.elements[i], s);
-        if (!type_eq(et, first)) {
-          return t_unknown("array elements have mixed types");
+        var lit: i32 = numeric_literal_kind(a.elements[i]);
+        if (!literal_gives_way(lit, first)) {
+          if (type_eq(et, first) || literal_gives_way(first_lit, et)) {
+            first = et;
+            first_lit = lit;
+          } else {
+            return t_unknown("array elements have mixed types");
+          }
         }
         i = i + 1;
       }
@@ -8565,8 +8574,15 @@ function int_literal_tree(e: ast.Expr): boolean {
   return parser.int_literal_tree(e);
 }
 
-// float_literal_tree: an unsuffixed float literal, or a sign or arithmetic
-// over them, which takes the float type its destination settles on.
+// numeric_literal_kind: 1 for a tree of unsuffixed integer literals, 2 for one
+// of unsuffixed float literals, 0 for anything else.
+function numeric_literal_kind(e: ast.Expr): i32 {
+  if (int_literal_tree(e)) { return 1; }
+  if (float_literal_tree(e)) { return 2; }
+  return 0;
+}
+
+// float_literal_tree: is `e` built from unsuffixed float literals only?
 function float_literal_tree(e: ast.Expr): boolean {
   match (e) {
     ast.ExprNumber(n) => { return n.is_float && n.suffix.len() == 0; },
@@ -8582,8 +8598,12 @@ function float_literal_tree(e: ast.Expr): boolean {
   return false;
 }
 
-function numeric_literal_tree(e: ast.Expr): boolean {
-  return int_literal_tree(e) || float_literal_tree(e);
+// literal_gives_way: does a literal of numeric_literal_kind `kind` take the
+// concrete type `t` of a sibling, as native's unifyIfArms settles it?
+function literal_gives_way(kind: i32, t: typeinfo.Type): boolean {
+  if (kind == 1) { return is_integer(t) || is_float(t); }
+  if (kind == 2) { return is_float(t); }
+  return false;
 }
 
 // int_operand_op: does a binary `op` hand its own integer type down to both
@@ -10128,35 +10148,29 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
   for element in a.elements {
     out = util.append_diags(out, call_diags(element, s));
   }
-  // E034: heterogeneous array literal. Anchor on the first
-  // element's type and flag the first later element whose type
-  // differs. Conservative: only fires when every type involved
-  // is a known PRIMITIVE (i32 / bool / string / f64), so it
-  // never trips on arrays of structs / enums / nested arrays
-  // (whose union-widening the Go checker handles and this port
-  // doesn't yet). The Go checker reports E034 at the element.
+  // E034: heterogeneous array literal. The element type starts at the
+  // first element's and, as native's unifyIfArms does, an unsuffixed
+  // literal gives way to a concrete sibling: an integer literal to any
+  // integer or float, a float literal to any float. The first element that
+  // fits neither way is flagged. Conservative: only PRIMITIVE types are
+  // compared, so arrays of structs / enums / nested arrays never trip it.
   if (a.elements.len() >= 2) {
-    // An unsuffixed numeric literal takes the numeric element type the other
-    // elements settle on, so the anchor is the first element that is not one
-    // when that element is numeric, and the first element otherwise.
-    var anchor: i32 = 0;
-    while (anchor < a.elements.len() && numeric_literal_tree(a.elements[anchor])) { anchor = anchor + 1; }
-    if (anchor == a.elements.len()) { anchor = 0; }
-    var et0: typeinfo.Type = check_expr(a.elements[anchor], s);
-    if (anchor > 0 && !is_integer(et0) && !is_float(et0)) {
-      anchor = 0;
-      et0 = check_expr(a.elements[0], s);
-    }
-    if (is_primitive_type(et0)) {
-      var k: i32 = 0;
+    var anchor: typeinfo.Type = check_expr(a.elements[0], s);
+    var anchor_lit: i32 = numeric_literal_kind(a.elements[0]);
+    if (is_primitive_type(anchor)) {
+      var k: i32 = 1;
       var flagged: boolean = false;
       while (k < a.elements.len() && !flagged) {
         var etk: typeinfo.Type = check_expr(a.elements[k], s);
-        var lits_agree: boolean = (is_integer(et0) && int_literal_tree(a.elements[k]))
-          || (is_float(et0) && float_literal_tree(a.elements[k]));
-        if (k != anchor && is_primitive_type(etk) && !type_eq(etk, et0) && !lits_agree) {
-          out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(et0), expr_line(a.elements[k]), expr_col(a.elements[k])));
-          flagged = true;
+        var lit: i32 = numeric_literal_kind(a.elements[k]);
+        if (is_primitive_type(etk) && !literal_gives_way(lit, anchor)) {
+          if (type_eq(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
+            anchor = etk;
+            anchor_lit = lit;
+          } else {
+            out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(anchor), expr_line(a.elements[k]), expr_col(a.elements[k])));
+            flagged = true;
+          }
         }
         k = k + 1;
       }
@@ -17106,6 +17120,26 @@ function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
 
+// settle_array_literals gives the unsuffixed literals of an array literal no
+// destination has settled the type of a concrete numeric sibling, as native's
+// settleNumeric does after joining the element type: `id([4, half(1.0)])` is an
+// f32[], not an i32 in an f32 array.
+function settle_array_literals(a: ast.ExprArray, s: Scope): ast.Expr {
+  if (a.elem_ty.len() > 0) { return a; }
+  var tag: string = "";
+  for element in a.elements {
+    var et: typeinfo.Type = check_expr(element, s);
+    if (tag.len() == 0 && numeric_literal_kind(element) == 0 && (is_integer(et) || is_float(et))) { tag = type_to_irtag(et); }
+  }
+  if (tag.len() == 0) { return a; }
+  var els: ast.Expr[] = [];
+  for element in a.elements {
+    if (int_literal_tree(element) && !util.has_str(["f32", "f64"], tag)) { els = els.append(settle_int_tree(element, tag)); }
+    else { els = els.append(element); }
+  }
+  return parser.settle_to_name(ast.ExprArray { ...a, elements: els }, tag + "[]");
+}
+
 // annotate_expr rebuilds `e`, stamping ExprCall.ty, ExprIdent.ty,
 // ExprBinary.ty, ExprUnary.ty, ExprFieldAccess.ty and ExprIndex.ty with the
 // checker-inferred result tag.
@@ -17159,7 +17193,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       for element in a.elements {
         na = na.append(annotate_expr(element, s));
       }
-      return ast.ExprArray { ...a, elements: na };
+      return settle_array_literals(ast.ExprArray { ...a, elements: na }, s);
     },
     ast.ExprTuple(t) => {
       var nt: ast.Expr[] = [];
