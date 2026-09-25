@@ -3985,6 +3985,34 @@ function main(): i32 {
     return parts.len() * 10 + cs.len() + ls.len() * 100 + lt * 1000;
 }
 `},
+	// The stdio helpers, whose syscall words are i64 and whose scratch
+	// pointer is a usize. The AST leg lowers the same retyped sources, so it
+	// takes `usize as i64` and 64-bit syscall words too.
+	{name: "stdio-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
+		reports: []string{
+			"runtime __fern_print_str: produced", "runtime __fern_putchar: produced",
+			"runtime __fern_eprint_str: produced",
+		}, src: `
+function main(): i32 {
+    write("got ");
+    putchar(65);
+    putchar(10);
+    eprint("to stderr");
+    return 0;
+}
+`},
+	// An address widened to i64 keeps every bit: the store and the load
+	// round-trip it, on the AST leg as well as the typed one.
+	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
+function main(): i32 {
+    var p: usize = __raw_scratch(8);
+    var w: i64 = p as i64;
+    __store_i64(p, w);
+    if (__raw_load_ptr(p, 0) != p) { return 1; }
+    if (__load_i64(p) != w) { return 2; }
+    return 0;
+}
+`},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
 	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `
