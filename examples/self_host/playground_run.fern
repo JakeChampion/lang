@@ -144,11 +144,11 @@ function report_diags(diags: util.Diag[], files: string[]): boolean {
     return true;
 }
 
-// check reports type errors and emits nothing. The nameless-declaration gate
-// runs first and alone: the permissive parser leaves an empty name where a
-// keyword was written and then parses the body as top-level statements, so the
-// checker downstream of it reports a cascade that all points away from the
-// cause.
+// check reports type errors and emits nothing. The parser's sentinels are
+// reported first, then the declaration gate, each alone: the permissive parser
+// leaves an empty name where a keyword was written and then parses the body as
+// top-level statements, so the checker downstream of it reports a cascade that
+// all points away from the cause.
 //
 // The verdict is the DIAGNOSTICS, not ModuleTypes.all_well_typed. While the
 // checker port is partial (#9053) that flag goes false for a program it merely

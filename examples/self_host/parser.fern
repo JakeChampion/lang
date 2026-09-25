@@ -5799,6 +5799,13 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // built — matching a plain closure-valued local.)
         var (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
+        // The FuncDecl is discarded below, so check_decl_names never sees its
+        // parameters; an untyped one is reported through the sentinel instead.
+        for prm in fr_func.params {
+            if (prm.type_name.len() == 0) {
+                return (s_unknown_at("parameter \"" + prm.name + "\" of \"" + fr_func.name + "\" has no type: expected \":\" after its name", fr_func.line, fr_func.col), p);
+            }
+        }
         if (stmts_mention(fr_func.body, fr_func.name)) {
             // Self-recursive local function: the closure can't reference
             // itself (the name binds after the lambda captures), so this

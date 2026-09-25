@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,9 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "has no type"},
+		// A local function's FuncDecl is desugared to a closure, so the parser
+		// reports its untyped parameter through a sentinel instead.
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "has no type"},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
@@ -109,6 +113,7 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	for _, tc := range []struct{ name, src, cause string }{
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", "has no type"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", "has no type"},
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", "has no type"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, stderr, code := runDeclGate(t, runner, driverBin, []byte(tc.src+"\n"))
@@ -242,6 +247,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "has no type"},
 		{"sentinel", "function main(): i32 { return @; }\n", "parser-side unknown"},
+		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }\n", "has no type"},
 	}
 	for _, d := range drivers {
 		for _, tc := range cases {
@@ -272,6 +278,48 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSelfHostEmittingDriversRunDeclGates pins that every self-host driver
+// calling an emitter entry point also reports parser sentinels and runs the
+// declaration gate. The gates cannot live in the emitters, which see the module
+// after the local-function lift has added untyped capture parameters, so each
+// driver carries its own call and a new driver must too.
+func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
+	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(`)
+	declGate := regexp.MustCompile(`\b(refuse_decl_names|check_decl_names)\(`)
+	sentinelGate := regexp.MustCompile(`\b(refuse_parse_unknowns|parse_unknown_errors_module)\(`)
+	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "self_host", "*.fern"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("globbing the self-host sources: %v (%d files)", err, len(files))
+	}
+	drivers := 0
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		var code strings.Builder
+		for _, line := range strings.Split(string(raw), "\n") {
+			if trimmed := strings.TrimSpace(line); !strings.HasPrefix(trimmed, "//") {
+				code.WriteString(line + "\n")
+			}
+		}
+		src := code.String()
+		if !emits.MatchString(src) {
+			continue
+		}
+		drivers++
+		if !declGate.MatchString(src) {
+			t.Errorf("%s calls an emitter but never runs the declaration gate", filepath.Base(f))
+		}
+		if !sentinelGate.MatchString(src) {
+			t.Errorf("%s calls an emitter but never reports parser sentinels", filepath.Base(f))
+		}
+	}
+	if drivers < 10 {
+		t.Fatalf("found %d emitting drivers, expected the full set: a silently shrunken sweep proves nothing", drivers)
 	}
 }
 
