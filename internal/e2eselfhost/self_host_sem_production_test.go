@@ -4752,11 +4752,9 @@ function main(): i32 {
     return total(xs) + total(h.xs) + total(mk()) + total([5, "q"]) - 29;
 }
 `},
-	// A generic implementation's instances are not enumerated, so a release
-	// could not find their children: owning a dyn value of a type one
-	// implements is refused, and borrowing one is not.
-	{name: "a-dyn-value-over-a-generic-implementation-is-refused", atLeast: 0,
-		refuses: "a dyn value over a generic implementation is lent, never owned", src: `
+	// An owned dyn value over a generic implementation: its instances are the
+	// struct pass's clones (`W__string`), each released by its own drop.
+	{name: "an-owned-dyn-value-over-a-generic-implementation", atLeast: 3, noLeak: true, src: `
 import "std/i32";
 
 trait Shape { function area(self: Self): i32; }
@@ -4773,6 +4771,54 @@ function main(): i32 {
         i = i + 1;
     }
     return t - 12;
+}
+`},
+	// Two instances of one generic implementation, one of them nested, beside a
+	// plain implementation in one array of dyn values.
+	{name: "a-dyn-array-over-a-generic-implementations-instances", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+
+trait Shape { function area(self: Self): i32; }
+struct W[T] { v: T, tag: string }
+impl[T] Shape for W[T] { function area(self: Self): i32 { return self.tag.len(); } }
+struct Sq { side: i32, name: string }
+impl Shape for Sq { function area(self: Self): i32 { return self.side * self.side + self.name.len(); } }
+
+function mk(i: i32): dyn Shape {
+    if (i % 3 == 0) { return W { v: "s" + i.to_string(), tag: "ab" + i.to_string() }; }
+    if (i % 3 == 1) { return W { v: i, tag: "c" + i.to_string() }; }
+    return W { v: W { v: "in" + i.to_string(), tag: "x" }, tag: "yz" + i.to_string() };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 30) {
+        var xs: dyn Shape[] = [mk(i), Sq { side: 2, name: "q" + i.to_string() }];
+        for x in xs { t = t + x.area(); }
+        i = i + 1;
+    }
+    return t % 256;
+}
+`},
+	// A generic ENUM implementation: its clone (`Opt__i32`) is a concrete too,
+	// or its payload's string leaks with every release.
+	{name: "an-owned-dyn-value-over-a-generic-enum-implementation", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+trait Shape { function area(self: Self): i32; }
+enum Opt[T] { Sm(T, string), Nn }
+impl[T] Shape for Opt[T] { function area(self: Self): i32 { match (self) { Sm(_, s) => { return s.len(); }, Nn => { return 0; } } } }
+
+function mk(i: i32): dyn Shape {
+    var o: Opt[i32] = Sm(i, "abc" + i.to_string());
+    return o;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) { var s: dyn Shape = mk(i); t = t + s.area(); i = i + 1; }
+    return t - 40;
 }
 `},
 	{name: "a-borrowed-dyn-value-over-a-generic-implementation", atLeast: 2, noLeak: true, src: `

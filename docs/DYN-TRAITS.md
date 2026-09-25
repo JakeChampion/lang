@@ -963,9 +963,10 @@ return one are its reason to exist.
   shared or lost (#10053, #10054, #10072, #10073, #10082). Until the natives adopt
   the self-host shape, a holder that borrows a native dyn takes a cell of
   its own as well as a unit of the concrete (`emitDynRetain`).
-- **The typed self-host path's "lent, never owned" refusal is a slice
-  limit, not the rule.** It lifts once that path can release a dyn value
-  through the shape-dispatched drop.
+- **The typed self-host path owns dyn values.** It releases one through the
+  drop dispatched on its box's shape. A generic implementation's instances
+  are the clones monomorphisation makes of it (`W__string`), and each is a
+  concrete of its own there.
 
 ## 5. Coercion (boxing) model
 

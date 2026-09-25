@@ -20,10 +20,7 @@ pub struct Func {
     anchors: Anchor[],
     // (dyn type, concrete) for every record and enum implementing the type's
     // whole trait set; a dyn release dispatches on its box's shape over these.
-    dyns: EnvRow[],
-    // The dyn types one of whose implementations is generic: its instances
-    // are not enumerated, so a release could not find their children.
-    open_dyns: typeinfo.Type[]
+    dyns: EnvRow[]
 }
 
 // The parameter whose storage a callee's result reads, so a caller keeps that
