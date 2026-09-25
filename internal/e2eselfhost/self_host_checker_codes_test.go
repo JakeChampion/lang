@@ -2886,6 +2886,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// field is then judged there, as E043.
 		{"struct-lit-infers-arguments", "struct Box[T] { v: T }\nfunction main(): i32 { var b = Box { v: 1 }; var z: string = b; return 0; }\n"},
 		{"struct-lit-settles-at-destination-ok", "struct Box[T] { v: T }\nstruct Pair[A, B] { a: A, b: B }\nstruct W[T] { items: T[] }\nfunction take(b: Box[i64]): i64 { return b.v; }\nfunction mk(): Box[f64] { return Box { v: 1 }; }\nfunction main(): i32 { var b: Box[i64] = Box { v: 1 }; var p: Pair[i64, string] = Pair { a: 3, b: \"x\" }; var w: W[string] = W { items: [] }; var n: i64 = take(Box { v: 5 }); var bb: Box[Box[i64]] = Box { v: Box { v: 1 } }; return 0; }\n"},
+		// The first written field that fixes a type argument binds it, and a
+		// later field that contradicts it is E043, as native binds.
+		{"struct-lit-fields-disagree-e043", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var p = Same { a: 1, b: \"x\" }; return 0; }\n"},
+		{"struct-lit-literal-binds-first-e043", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n"},
+		{"struct-lit-later-literal-settles-ok", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var u = Same { a: y, b: 1 }; var r: i64 = u.b; return 0; }\n"},
 		{"struct-lit-field-e043-var", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[string] = Box { v: 1 }; return 0; }\n"},
 		{"struct-lit-field-e043-return", "struct Box[T] { v: T }\nfunction mk(): Box[string] { return Box { v: 1 }; }\nfunction main(): i32 { return 0; }\n"},
 		{"struct-lit-field-e043-argument", "struct Box[T] { v: T }\nfunction take(b: Box[string]): i32 { return 0; }\nfunction main(): i32 { return take(Box { v: 3 }); }\n"},
