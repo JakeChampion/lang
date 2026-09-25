@@ -554,6 +554,11 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // — the form the backends splice straight into an immediate of its own width,
 // and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
+    // The unit value is the constant 0 in an i32-shaped slot, as the AST lowering has it.
+    if (is_void(result)) {
+        if (ins.imm != 0 || ins.str != "") { return "unit constant"; }
+        return "";
+    }
     if (!is_integer(result) && !is_char(result)) { return "integer constant type"; }
     if (text_constant(result)) {
         if (ins.str == "" || ins.imm != 0) { return "constant needs its literal text"; }
@@ -1741,7 +1746,7 @@ function schema_error(f: Func): string {
     // reads it: every operator and container contract asks for a concrete
     // operand, so a read refuses there.
     for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
-    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
+    for t in f.params { if (!semtypes.concrete(t, true)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
     why = placement_error(f);
@@ -1758,7 +1763,7 @@ function contracts_error(calls: Contract[]): string {
         if (c.name == "") { return "empty call contract name"; }
         if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
         if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
-        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
+        for t in c.params { if (!semtypes.concrete(t, true)) { return "unresolved call parameter type"; } }
         if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
         i = i + 1;
     }
