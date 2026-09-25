@@ -2900,6 +2900,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"retired-method-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = []; xs = xs.set(Same { a: 1, b: y }); return 0; }\n"},
 		{"undefined-function-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; return nope(Same { a: 1, b: y }); }\n"},
 		{"struct-receiver-unresolved-args-unchecked", "struct Same[T] { a: T, b: T }\nstruct P { x: i32, f: (Same[i64]) => i32 }\nfunction main(): i32 { var y: i64 = 5; var p: P = P { x: 1, f: (s: Same[i64]): i32 => 0 }; var a: i32 = p.nope(Same { a: 1, b: y }); var b: i32 = p.x(Same { a: 1, b: y }); var c: i32 = p.f(Same { a: 1, b: y }); return 0; }\n"},
+		// An array-literal field binds through its element type; an empty one
+		// binds nothing and settles at what the others fix (#10269).
+		{"struct-lit-array-field-infers", "struct W[T] { items: T[] }\nstruct P[T] { a: T[], b: T }\nfunction main(): i32 { var y: i64 = 3; var w = W { items: [y, 1] }; var v = W { items: [1, 2] }; var f = W { items: [1.5] }; var z: string = w; var z2: string = v; var z3: string = f; return 0; }\n"},
+		{"struct-lit-empty-array-field-e040", "struct W[T] { items: T[] }\nstruct P[T] { a: T[], b: T }\nfunction main(): i32 { var w = W { items: [] }; return 0; }\n"},
+		{"struct-lit-empty-array-field-settles-ok", "struct W[T] { items: T[] }\nstruct P[T] { a: T[], b: T }\nfunction main(): i32 { var p = P { a: [], b: 5 }; var q = P { a: [], b: \"x\" }; var w: W[i64] = W { items: [] }; return p.b + q.a.len(); }\n"},
+		{"struct-lit-update-empty-array-field-ok", "struct W[T] { items: T[] }\nfunction main(): i32 { var w: W[i32] = W { items: [1] }; var v = W { ...w, items: [] }; return v.items.len(); }\n"},
+		{"struct-lit-array-field-binds-first-e043", "struct W[T] { items: T[] }\nstruct P[T] { a: T[], b: T }\nfunction main(): i32 { var w = P { a: [1], b: 5 as i64 }; return 0; }\n"},
 		{"struct-lit-later-literal-settles-ok", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var u = Same { a: y, b: 1 }; var r: i64 = u.b; return 0; }\n"},
 		{"struct-lit-field-e043-var", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[string] = Box { v: 1 }; return 0; }\n"},
 		{"struct-lit-field-e043-return", "struct Box[T] { v: T }\nfunction mk(): Box[string] { return Box { v: 1 }; }\nfunction main(): i32 { return 0; }\n"},
