@@ -4694,16 +4694,44 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
   return none;
 }
 
-// struct_lit_type is a struct literal's type: a generic struct carries the
-// arguments its fields fix (`Box { v: 1 }` is Box[i32]), and the rest unknown.
-function struct_lit_type(name: string, tparams: string[], bn: string[], bt: typeinfo.Type[]): typeinfo.Type {
-  if (tparams.len() == 0) { return t_struct(name); }
+// struct_lit_args are a generic struct literal's type arguments: each is bound
+// by the first written field that fixes it, as native binds them, and the rest
+// stay unknown.
+function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): typeinfo.Type[] {
+  var bn: string[] = [];
+  var bt: typeinfo.Type[] = [];
+  var i: i32 = 0;
+  while (i < sl.field_names.len()) {
+    var fi: i32 = field_index(ssig, sl.field_names[i]);
+    if (fi >= 0 && fi < ssig.field_type_names.len()) {
+      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.structs.names, s.unions.names, bn, bt);
+      bn = bn2;
+      bt = bt2;
+    }
+    i = i + 1;
+  }
   var args: typeinfo.Type[] = [];
-  for tp in tparams {
+  for tp in ssig.type_params {
     var bi: i32 = util.index_of_str(bn, tp);
     if (bi >= 0) { args = args.append(bt[bi]); } else { args = args.append(t_unknown("unbound " + tp)); }
   }
-  return typeinfo.TypeStruct { name: name, args: args };
+  return args;
+}
+
+// lit_field_clash is the index of the first written field whose value its
+// declared type refuses under `args`, or -1.
+function lit_field_clash(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[], s: Scope): i32 {
+  var i: i32 = 0;
+  while (i < sl.field_names.len()) {
+    var fi: i32 = field_index(ssig, sl.field_names[i]);
+    if (fi >= 0) {
+      var ft: typeinfo.Type = lit_field_type(ssig, fi, args, s);
+      var vt: typeinfo.Type = check_expr(sl.field_values[i], s);
+      if (!type_contains_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[i], ft, s) && !coercible(vt, ft, s)) { return i; }
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // projected_ret resolves a generic's return spelled through a projection on a
@@ -5136,8 +5164,6 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         swritten = swritten.append(false);
         sdi = sdi + 1;
       }
-      var sbn: string[] = [];
-      var sbt: typeinfo.Type[] = [];
       var sli: i32 = 0;
       while (sli < sl.field_names.len()) {
         var sfi: i32 = field_index(ssig, sl.field_names[sli]);
@@ -5163,14 +5189,14 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
             && !coercible(ft, ssig.field_types[sfi], s)) {
           return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
         }
-        if (sfi < ssig.field_type_names.len()) {
-          let (sbn2, sbt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[sfi]), ft, ssig.type_params, s.structs.names, s.unions.names, sbn, sbt);
-          sbn = sbn2;
-          sbt = sbt2;
-        }
         sli = sli + 1;
       }
-      return struct_lit_type(sl.type_name, ssig.type_params, sbn, sbt);
+      if (ssig.type_params.len() == 0) { return t_struct(sl.type_name); }
+      var largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
+      if (lit_field_clash(sl, ssig, largs, s) >= 0) {
+        return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
+      }
+      return typeinfo.TypeStruct { name: sl.type_name, args: largs };
     },
     ast.ExprFieldAccess(fa) => {
       // A qualified UNIT variant `Color.Red` in VALUE position is not a field
@@ -11605,10 +11631,13 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
   return [];
 }
 
-// `args` are the literal's type arguments where its destination names them,
-// else empty: a generic field is judged at its type under them.
-function call_diags_struct_lit(sl: ast.ExprStructLit, args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
+// `dest_args` are the literal's type arguments where its destination names
+// them. Without them a generic literal's own are used (struct_lit_args), so a
+// field that contradicts an earlier one is refused as native refuses it.
+function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   var fsig: StructSig = s.lookup_struct(sl.type_name);
+  var args: typeinfo.Type[] = dest_args;
+  if (args.len() == 0 && fsig.type_params.len() > 0) { args = struct_lit_args(sl, fsig, s); }
   var vi: i32 = 0;
   while (vi < sl.field_values.len()) {
     var fdest: typeinfo.Type = t_unknown("no declared field");
