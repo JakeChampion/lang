@@ -1041,6 +1041,33 @@ function fold_lit_cond(pat: ast.Pattern, guard: ast.Expr, has_guard: boolean): (
 }
 
 function p_wildcard(): ast.Pattern { return ast.PatWildcard { tag: 0 }; }
+// decl_sentinel is a `decl:` sentinel at the cursor: parse_unknown_errors_module
+// reports its text as P001, for a declaration part the parser discards rather
+// than records, so no declaration gate could see it.
+function decl_sentinel(p: Par, text: string): ast.Stmt {
+    return s_unknown(p, "decl:" + text);
+}
+
+// skip_body_item steps past the rest of a malformed trait or impl body item: to
+// a `;` at depth 0 (consumed), past a `{ … }` block, or up to the body's own `}`
+// (left for the caller), so one bad item raises one diagnostic.
+function skip_body_item(p: Par): Par {
+    var q: Par = p;
+    var depth: i32 = 0;
+    while (!q.at_end()) {
+        var pc: string = q.peek_punct();
+        if (depth == 0 && pc == "}") { return q; }
+        if (depth == 0 && pc == ";") { return q.advance(); }
+        if (pc == "{") { depth = depth + 1; }
+        if (pc == "}") {
+            depth = depth - 1;
+            if (depth == 0) { return q.advance(); }
+        }
+        q = q.advance();
+    }
+    return q;
+}
+
 // malformed_fn_decl_message is the one text for a function declaration the
 // parser returned nameless. parse_func_decl does that for several causes it
 // does not tell apart, so the message names none of them as the cause.
@@ -8266,7 +8293,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
 // (missing string, etc.) yields an Import with empty path so
 // the surrounding loop can recover.
 
-function parse_import(p: Par): (Import, Par) {
+function parse_import(p: Par): (Import, ast.Stmt[], Par) {
     var imp_line: i32 = p.peek_line();
     p = p.advance();  // consume `import`
     var path: string = "";
@@ -8281,13 +8308,15 @@ function parse_import(p: Par): (Import, Par) {
     // common, redundant form. `as` is a keyword (peek_keyword, like the cast `x as
     // T`), so it never collides with an identifier.
     var alias: string = "";
+    var bad: ast.Stmt[] = [];
     if (p.peek_keyword() == "as") {
         p = p.advance();  // consume `as`
         alias = p.peek_ident();
         if (alias.len() > 0) { p = p.advance(); }
+        else { bad = bad.append(decl_sentinel(p, "malformed import alias: its name could not be read (a keyword such as `type` or `match` cannot be a name)")); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, resolved: "" }, p);
+    return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, resolved: "" }, bad, p);
 }
 
 // parse_pubuse consumes `use "path".{name1, name2, …};` (cursor on the
@@ -8296,7 +8325,7 @@ function parse_import(p: Par): (Import, Par) {
 // loader pulls in the target module and the bundler can redirect a
 // consumer's `facade.name` to the target's mangled symbol. Malformed
 // input degrades to an empty re-export the caller can recover from.
-function parse_pubuse(p: Par): (Import, Par) {
+function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
     var pu_line: i32 = p.peek_line();
     p = p.advance();  // consume `use`
     var path: string = "";
@@ -8307,6 +8336,7 @@ function parse_pubuse(p: Par): (Import, Par) {
     }
     if (p.at_path_sep()) { p = p.advance(); }
     var names: string[] = [];
+    var bad: ast.Stmt[] = [];
     if (p.peek_punct() == "{") {
         p = p.advance();
         while (!p.at_end() && p.peek_punct() != "}") {
@@ -8314,13 +8344,16 @@ function parse_pubuse(p: Par): (Import, Par) {
             if (nm.len() > 0) { names = names.append(nm); p = p.advance(); }
             if (p.peek_punct() == ",") { p = p.advance(); continue; }
             if (p.peek_punct() == "}") { continue; }
-            // Unexpected token — bail to avoid spinning.
-            if (nm.len() == 0) { p = p.advance(); }
+            // Unexpected token: report it, then step past it to avoid spinning.
+            if (nm.len() == 0) {
+                bad = bad.append(decl_sentinel(p, "malformed re-export: a name in the list could not be read (a keyword such as `type` or `match` cannot be a name)"));
+                p = p.advance();
+            }
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }
-    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, resolved: "" }, p);
+    return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, resolved: "" }, bad, p);
 }
 
 // parse_const_decl consumes `const NAME[: T] = EXPR;` (cursor on the
@@ -18693,7 +18726,7 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // The trait name is parsed and discarded: the self-host resolves
 // `obj.method()` by the receiver's concrete type, not via the
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
-function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string[], string, ImplDecl, Par) {
+function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string[], string, ImplDecl, ast.Stmt[], Par) {
     var out: FuncDecl[] = [];
     var method_names: string[] = [];
     var iline: i32 = p.peek_line();
@@ -18761,6 +18794,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the impl type, as it does in a method signature.
     var assoc_names: string[] = [];
     var assoc_values: string[] = [];
+    var impl_bad: ast.Stmt[] = [];
     while (!p.at_end()) {
         if (p.peek_punct() == "}") { break; }
         var kw: string = p.peek_keyword();
@@ -18769,6 +18803,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
             p = p.advance();
             var ab_name: string = p.peek_ident();
             if (ab_name.len() > 0) { p = p.advance(); }
+            else { impl_bad = impl_bad.append(decl_sentinel(p, "malformed associated type binding: its name could not be read (a keyword such as `type` or `match` cannot be a name)")); }
             if (p.peek_punct() == "=") { p = p.advance(); }
             var (ab_ty, ab_arr, ab_fnret, ab_p) = parse_type_name(p);
             p = ab_p;
@@ -18780,12 +18815,13 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
             continue;
         }
         if (kw != "function") {
-            // Defensive: don't stall on an unexpected token.
-            p = p.advance();
+            impl_bad = impl_bad.append(decl_sentinel(p, "unexpected token in an impl body: expected `function` or `type`"));
+            p = skip_body_item(p.advance());
             continue;
         }
         var (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
+        if (fr_func.name.len() == 0) { p = skip_body_item(p); }
         var m: FuncDecl = fr_func;
         // finalize_impl_method does the receiver-peel / associated-function
         // encoding, the `Self` -> impl_type rewrite, and the bounded-type-
@@ -18802,7 +18838,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the `Greet` trait, and its default methods are never synthesised (#4340).
     return (out, derive_simple_name(strip_struct_base(trait_name)), impl_type, impl_tps, impl_tbs, method_names, trait_spelling,
             ImplDecl { trait_ref: trait_name, type_ref: impl_type, type_params: impl_tpl.tnames, bounds: impl_tpl.tbounds, methods: out, line: iline, col: icol, assoc_names: assoc_names, assoc_values: assoc_values },
-            p);
+            impl_bad, p);
 }
 
 // finalize_impl_method turns a parsed impl/trait-default method `m` into
@@ -19312,8 +19348,9 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
 // method parses with the ordinary parse_func_decl machinery (no receiver
 // clause; its first parameter is `self: Self`); an abstract one ends at
 // `;` and so comes back with an empty body, which we skip.
-function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
+function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stmt[], Par) {
     var defaults: TraitDefault[] = [];
+    var trait_bad: ast.Stmt[] = [];
     var required: string[] = [];
     var required_sigs: FuncDecl[] = [];
     var assoc_sigs: FuncDecl[] = [];
@@ -19379,6 +19416,8 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
                 if (at_name.len() > 0) {
                     p = p.advance();
                     assoc_types = assoc_types.append(at_name);
+                } else {
+                    trait_bad = trait_bad.append(decl_sentinel(p, "malformed associated type declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)"));
                 }
                 if (p.peek_punct() == ";") { p = p.advance(); }
                 continue;
@@ -19386,6 +19425,9 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
             if (p.peek_keyword() == "function") {
                 var (fr_func, fr_p) = parse_func_decl(p);
                 p = fr_p;
+                // check_decl_names reports the nameless method; the rest of its
+                // signature is skipped so it does not read as stray tokens.
+                if (fr_func.name.len() == 0) { p = skip_body_item(p); }
                 decl_methods = decl_methods.append(fr_func);
                 provided = provided.append(fr_func.name);
                 if (fr_func.params.len() == 0 || fr_func.params[0].name != "self") {
@@ -19406,8 +19448,8 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
                     required_sigs = required_sigs.append(fr_func);
                 }
             } else {
-                // Defensive: don't stall on an unexpected token.
-                p = p.advance();
+                trait_bad = trait_bad.append(decl_sentinel(p, "unexpected token in a trait body: expected `function` or `type`"));
+                p = skip_body_item(p.advance());
             }
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
@@ -19415,7 +19457,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, Par) {
     return (defaults,
             TraitReq { trait_name: simple, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "" },
             TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types , is_package: false },
-            p);
+            trait_bad, p);
 }
 
 // skip_decl_modifier consumes a contextual declaration modifier `name`
@@ -20216,13 +20258,15 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                     has_inline_hint = false;
                     var ifn: FuncDecl = FuncDecl { ...ifr_func, import_iface: iar_iface, import_wit: iar_wit, async: i_async, is_pub: decl_pub, is_package: decl_package };
                     funcs = funcs.append(ifn);
-                } else if (p.peek_ident() == "resource") {
+                } else if (p.peek_ident() == "resource" && p.advance().peek_ident().len() > 0) {
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
                     // lower_defers_prepass_module can synthesize the [resource-drop].
                     var (rnr_name, rnr_p) = parse_resource_decl_name(p);
                     p = rnr_p;
                     resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit });
+                } else {
+                    top_stmts = top_stmts.append(decl_sentinel(p, "@import only applies to a function or resource declaration"));
                 }
                 continue;
             }
@@ -20463,23 +20507,26 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             continue;
         }
         if (kw == "import") {
-            var (ir_imp, ir_p) = parse_import(p);
+            var (ir_imp, ir_bad, ir_p) = parse_import(p);
             p = ir_p;
             imports = imports.append(ir_imp);
+            for b in ir_bad { top_stmts = top_stmts.append(b); }
             continue;
         }
         // `pub use "path".{names…};` — a re-export directive. Recorded as a
         // re-export Import so the loader pulls in the target module and the
         // bundler redirects `facade.name` to the target's mangled symbol.
         if (kw == "use") {
-            var (ur_imp, ur_p) = parse_pubuse(p);
+            var (ur_imp, ur_bad, ur_p) = parse_pubuse(p);
             p = ur_p;
             imports = imports.append(ur_imp);
+            for b in ur_bad { top_stmts = top_stmts.append(b); }
             continue;
         }
         if (kw == "trait") {
-            var (tpr_defaults, tpr_req, tpr_decl, tpr_p) = parse_trait_decl(p);
+            var (tpr_defaults, tpr_req, tpr_decl, tpr_bad, tpr_p) = parse_trait_decl(p);
             p = tpr_p;
+            for b in tpr_bad { top_stmts = top_stmts.append(b); }
             traits = traits.append(TraitDecl { ...tpr_decl, is_pub: decl_pub, is_package: decl_package });
             var tdi: i32 = 0;
             while (tdi < tpr_defaults.len()) {
@@ -20494,8 +20541,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
             continue;
         }
         if (kw == "impl") {
-            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_bounds, imr_method_names, imr_trait_spelling, imr_decl, imr_p) = parse_impl_decl(p);
+            var (imr_funcs, imr_trait_name, imr_impl_type, imr_type_params, imr_bounds, imr_method_names, imr_trait_spelling, imr_decl, imr_bad, imr_p) = parse_impl_decl(p);
             p = imr_p;
+            for b in imr_bad { top_stmts = top_stmts.append(b); }
             impl_decls = impl_decls.append(imr_decl);
             // Under verbatim the methods live on the ImplDecl alone: adding them
             // to `funcs` too would print each one twice, once inside its block

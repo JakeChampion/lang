@@ -69,6 +69,15 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
+		// Declaration parts the parser discards rather than records (#10290):
+		// each is reported through a sentinel at its own token.
+		{"trait-assoc-type-nameless", "trait T { type 123; }\nfunction main(): i32 { return 0; }", true, "malformed associated type declaration: its name could not be read"},
+		{"trait-stray-token", "trait T { 123 }\nfunction main(): i32 { return 0; }", true, "unexpected token in a trait body"},
+		{"impl-assoc-binding-nameless", "trait T { type Item; }\nstruct A { x: i32 }\nimpl T for A { type 123 = i32; }\nfunction main(): i32 { return 0; }", true, "malformed associated type binding: its name could not be read"},
+		{"impl-stray-token", "trait T { }\nstruct A { x: i32 }\nimpl T for A { 123 }\nfunction main(): i32 { return 0; }", true, "unexpected token in an impl body"},
+		{"import-alias-keyword", "import \"./lib\" as use;\nfunction main(): i32 { return 0; }", true, "malformed import alias: its name could not be read"},
+		{"pub-use-keyword", "pub use \"./lib\".{use};\nfunction main(): i32 { return 0; }", true, "malformed re-export: a name in the list could not be read"},
+		{"import-resource-nameless", "@import(\"wasi:io@0.2.0\", \"thing\") resource 123;\nfunction main(): i32 { return 0; }", true, "@import only applies to a function or resource declaration"},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
