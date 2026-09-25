@@ -671,7 +671,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
 
 // The raw-floor signature named `name`: one element, or none for any other name.
 function raw_floor_find(name: string): RawFloorSig[] {
-  if (!util.str_has_prefix(name, "__raw_") && !util.str_has_prefix(name, "__syscall")) { return []; }
+  if (!util.str_has_prefix(name, "__raw_") && !util.str_has_prefix(name, "__syscall") && !util.str_has_prefix(name, "__fern_")) { return []; }
   for sig in raw_floor_sigs() { if (sig.name == name) { return [sig]; } }
   return [];
 }

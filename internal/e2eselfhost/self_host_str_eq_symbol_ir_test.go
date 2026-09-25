@@ -12,29 +12,32 @@ import (
 // same shape as the `__rc_dec` / `__fern_rc_dec` hooks next to it in irlower.
 //
 // It exists for helper sources written on the raw-memory floor (#2649). Those
-// hold their strings as i32 box pointers — `keys[i]` read back through
-// `__raw_load_ptr` — and `==` on two i32s is an integer compare, so without
-// this spelling there is no way to reach the comparison at all. That is what
-// blocks `__fern_map_delete`'s string-key arm from being written in Fern.
+// hold a string as the usize address of its box — `keys[i]` read back through
+// `__raw_load_ptr` — and `==` on two usizes is an integer compare, so without
+// this spelling there is no way to reach the comparison at all.
 //
 // Only the self-host accepts it; native registers no such builtin, so a source
 // using it is a self-host dialect program, exactly as the RC hooks are.
-const strEqSymbolSrc = `// The i32 spelling the runtime helpers use: strings held as raw box pointers.
-// Compiled to prove it type-checks; not called, since fabricating a box
-// pointer to pass it would prove nothing about the comparison.
-function eqraw(p: i32, q: i32): boolean { return __fern_str_eq(p, q); }
+const strEqSymbolSrc = `// A string box is {data, len}. box() builds a fresh one over s's bytes, the
+// way a helper holds a key: as the usize address of its box.
+function box(s: string): usize {
+    var p: usize = __raw_alloc(16);
+    __raw_store_ptr(p, 0, __raw_data(s));
+    __raw_store_ptr(p, 1, s.len() as usize);
+    return p;
+}
 
 function main(): i32 {
     var a: string = "hello";
     var b: string = "hel" + "lo";
     var c: string = "world";
-    // Two DISTINCT boxes: literals are interned, so "hello" twice would be
-    // pointer-identical and the comparison would pass without comparing.
+    // Two DISTINCT data blocks: literals are interned, so "hello" twice would
+    // share its bytes and a data-pointer shortcut would pass without comparing.
     if (__raw_data(a) == __raw_data(b)) { return 90; }
-    if (!__fern_str_eq(a, b)) { return 91; }
-    if (__fern_str_eq(a, c)) { return 92; }
-    if (__fern_str_eq("", "")) { } else { return 93; }
-    if (__fern_str_eq("ab", "abc")) { return 94; }
+    if (!__fern_str_eq(box(a), box(b))) { return 91; }
+    if (__fern_str_eq(box(a), box(c))) { return 92; }
+    if (__fern_str_eq(box(""), box(""))) { } else { return 93; }
+    if (__fern_str_eq(box("ab"), box("abc"))) { return 94; }
     return 42;
 }
 `
@@ -95,7 +98,9 @@ func TestSelfHostStrEqSymbolIRArm64(t *testing.T) {
 // TestSelfHostStrEqSymbolTypeChecks pins that the front end ACCEPTS the
 // spelling, which the emit drivers cannot show: `asm_ir_run.fern` does not
 // type-check at all, so a program driven through it compiles whatever it is
-// handed. The control below is what makes this assertion mean something.
+// handed. The controls below are what make this assertion mean something. The
+// typed path is pinned on and strict, so a program the checker accepts but the
+// typed path refuses fails here too.
 func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -114,6 +119,7 @@ func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), cli, p)...)
 		}
+		cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
 		out, _ := cmd.CombinedOutput()
 		return string(out), cmd.ProcessState.ExitCode()
 	}
@@ -124,6 +130,14 @@ func TestSelfHostStrEqSymbolTypeChecks(t *testing.T) {
 		t.Fatalf("the control program type-checked — this front end is not checking, so the assertion below proves nothing (out=%q)", out)
 	} else if !strings.Contains(out, "E003") {
 		t.Fatalf("control rejected but not with E003: %q", out)
+	}
+
+	// A string is not a box address: the checker types the helper's operands
+	// as the table has them.
+	if out, code := check(t, "streq_string", "function main(): i32 {\n    if (__fern_str_eq(\"a\", \"b\")) { return 1; }\n    return 0;\n}\n"); code == 0 {
+		t.Errorf("__fern_str_eq type-checked with string operands; its operands are usize box addresses (out=%q)", out)
+	} else if !strings.Contains(out, "E038") {
+		t.Errorf("string operands to __fern_str_eq rejected but not with E038: %q", out)
 	}
 
 	if out, code := check(t, "streq", strEqSymbolSrc); code != 0 {

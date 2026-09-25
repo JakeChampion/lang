@@ -11,7 +11,7 @@ refused with "call target has no semantic contract".
 The tests now call `__rc_underflow_count()`, and the alias is gone from
 irlower. The diff removes 1,283 mentions of `__rc_underflow()` from 190 test
 files. 1,227 are in the Fern programs and failure messages; 56 are in Go
-comments. 186 of the files held a mention; the other four changed only
+comments. 182 of the files held a call; the other eight changed only
 comment text. Older entries in this log keep the name they measured with.
 
 Three comments had described the alias itself. The rename left each one

@@ -2248,8 +2248,9 @@ tier → leak.
      **AST-only debug builtin `__fern_rc_underflow_count`** (the IR gate's
      `is_fern_helper` has no entry, so a call to it bailed — *not* the container
      construction, which lowers fine post-#5861). **Closed for the register
-     backends** by re-spelling those corpora to the IR-canonical `__rc_underflow`
-     (an inline counter read `irlower` already lowers): #5929 (rc-runtime) +
+     backends** by re-spelling those corpora to `__rc_underflow`
+     (an inline counter read `irlower` already lowers; since replaced by
+     `__rc_underflow_count`, the one spelling both compilers accept): #5929 (rc-runtime) +
      #5933 (borrow_infer / str_rcbox / str_slice_rcbox / strarr_elem_reclaim /
      struct_enum_field_reclaim / struct_str_field_reclaim + arm64 strarr_field).
      The **wasm** rc corpora deliberately keep `__fern_rc_underflow_count` (wasm
