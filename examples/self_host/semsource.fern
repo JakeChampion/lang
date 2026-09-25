@@ -4609,25 +4609,44 @@ function close_module(all: Produced[], names: string[]): Produced[] {
 // A result that holds a view reads a parameter's bytes, so its caller keeps
 // that argument alive while the result lives: the result is anchored to the
 // one parameter every returned view reads (`ssasem.result_anchor`), to a
-// fixpoint because an anchor can pass through a callee's. A result that
-// reads a local, two parameters, or anything else escapes its source, and is
-// refused along with its callers. Every body then carries the whole table,
-// which is what anchors a call's result in the caller's graph.
+// fixpoint because an anchor can pass through a callee's. A plain view
+// result with no one source returns copies instead; any other result holding
+// views with no one source escapes it, and is refused along with its callers.
+// Every body then carries the whole table, which is what anchors a call's
+// result in the caller's graph.
 function anchor_module(all: Produced[], names: string[]): Produced[] {
     var anchors: ssasem.Anchor[] = [];
-    var changed: boolean = true;
-    while (changed) {
-        changed = false;
-        var i: i32 = 0;
-        while (i < all.len()) {
-            if (all[i].ok && semtypes.holds_view(all[i].func.result) && ssasem.anchor_of(anchors, names[i]) == 0 - 2) {
-                var k: i32 = ssasem.result_anchor(all[i].func, anchors, names);
-                if (k >= 0 - 1) {
-                    anchors = anchors.append(ssasem.Anchor { name: names[i], param: k });
-                    changed = true;
+    var copied: boolean = true;
+    while (copied) {
+        var changed: boolean = true;
+        while (changed) {
+            changed = false;
+            var i: i32 = 0;
+            while (i < all.len()) {
+                if (all[i].ok && semtypes.holds_view(all[i].func.result) && ssasem.anchor_of(anchors, names[i]) == 0 - 2) {
+                    var k: i32 = ssasem.result_anchor(all[i].func, anchors, names);
+                    if (k >= 0 - 1) {
+                        anchors = anchors.append(ssasem.Anchor { name: names[i], param: k });
+                        changed = true;
+                    }
                 }
+                i = i + 1;
             }
-            i = i + 1;
+        }
+        // A plain view result with no one source returns a copy of each view:
+        // a counted string retagged, which anchors nothing. Its callers then
+        // settle on the next round.
+        copied = false;
+        var j: i32 = 0;
+        while (j < all.len()) {
+            var p: Produced = all[j];
+            if (p.ok && ssasem.is_view(p.func.result) && ssasem.anchor_of(anchors, names[j]) == 0 - 2
+                    && ssasem.result_anchor(p.func, anchors, names) == 0 - 2) {
+                all = all.with(j, Produced { ...p, func: copy_returned_views(p.func) });
+                anchors = anchors.append(ssasem.Anchor { name: names[j], param: 0 - 1 });
+                copied = true;
+            }
+            j = j + 1;
         }
     }
     var out: Produced[] = [];
@@ -4647,6 +4666,25 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
         anchored = anchored.append(p);
     }
     return anchored;
+}
+
+// Each `return v` of a view becomes `return (v + "") as str`.
+function copy_returned_views(f: ssasem.Func): ssasem.Func {
+    var values: typeinfo.Type[] = f.values;
+    var blocks: ssa.SBlock[] = [];
+    for b in f.graph.blocks {
+        var v: i32 = b.term.value;
+        if (b.term.kind_tag == 1 && v >= 0 && ssasem.is_view(values[v])) {
+            var empty: i32 = values.len();
+            var copy: i32 = empty + 1;
+            var view: i32 = empty + 2;
+            values = values.append(t_string()).append(t_string()).append(t_str());
+            var insts: ssa.SInst[] = b.insts.append(inst(5, empty, [], 0, "")).append(inst(9, copy, [v, empty], 0, "+")).append(inst(ssasem.str_as(), view, [copy], 0, ""));
+            b = ssa.SBlock { ...b, insts: insts, term: t_ret(view) };
+        }
+        blocks = blocks.append(b);
+    }
+    return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
 }
 
 function template_entry(key: string, ok: boolean, why: string, bodyless: boolean): Produced {

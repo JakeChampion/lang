@@ -3994,8 +3994,9 @@ function main(): i32 {
 }
 `},
 	// A view of either of two parameters has no one argument its caller could
-	// keep alive for it. (A view of a local is the checker's E065.)
-	{name: "a-view-result-of-either-parameter-is-refused", atLeast: 0, refuses: "view result escapes its source", src: `
+	// keep alive for it, so the function returns a copy of it, which anchors
+	// nothing. (A view of a local is the checker's E065.)
+	{name: "a-view-result-of-either-parameter-is-a-copy", atLeast: 2, noLeak: true, src: `
 import "std/i32";
 function either(a: string, b: string, first: boolean): str {
     if (first) { return a; }
@@ -4004,6 +4005,29 @@ function either(a: string, b: string, first: boolean): str {
 function main(): i32 {
     var v: str = either(7.to_string(), 42.to_string(), false);
     return v.len() - 2;
+}
+`},
+	// The copy through a caller: `through` returns `either`'s result, which
+	// settles once `either` returns copies, and `either` is also handed a copy
+	// back as one of its own arguments.
+	{name: "a-copied-view-result-passes-through-a-caller", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function either(a: str, b: str, first: boolean): str {
+    if (first) { return slice_unchecked(a, 1, a.len()); }
+    return b;
+}
+function through(a: string, b: string, k: i32): str { return either(a, b, k % 2 == 0); }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 40) {
+        var x: string = "ab" + i.to_string();
+        var v: str = through(x, "q" + i.to_string(), i);
+        var w: str = either(v, x, i % 3 == 0);
+        t = t + v.len() + w.len();
+        i = i + 1;
+    }
+    return t % 256;
 }
 `},
 	// An array of views of one parameter is anchored to it as a single view
