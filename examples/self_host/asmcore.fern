@@ -5709,7 +5709,26 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
     if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
         return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col };
     }
+    // A value-position block ending in a `;`-terminated statement: E061, the
+    // code native and the self-host checker report for it.
+    if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
+        return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col };
+    }
+    // A declaration the parser discarded (a local function's) carries the
+    // declaration gate's own text, so it reads as check_decl_names' would.
+    var decl: string = decl_sentinel_text(kind);
+    if (decl.len() > 0) {
+        return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col };
+    }
     return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
+}
+
+// decl_sentinel_text is the message of a `decl:` sentinel, in either spelling
+// the scan produces, or "" for any other kind.
+function decl_sentinel_text(kind: string): string {
+    if (util.str_has_prefix(kind, "decl:")) { return slice_unchecked(kind, 5, kind.len()) + ""; }
+    if (util.str_has_prefix(kind, "stmt: decl:")) { return slice_unchecked(kind, 11, kind.len()) + ""; }
+    return "";
 }
 
 // UnkScan threads the pre-check's state through astwalk's fold: the
@@ -6571,7 +6590,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
     });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function or struct.
+// check_decl_names rejects a module holding a NAMELESS function or struct, or a
+// parameter written with no type.
 //
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
@@ -6603,7 +6623,11 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
                 message: "function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)",
                 line: mod.funcs[i].line, col: 0 });
         }
+        errs = untyped_param_errs(mod.funcs[i], errs);
         i = i + 1;
+    }
+    for td in mod.trait_decls {
+        for tm in td.methods { errs = untyped_param_errs(tm, errs); }
     }
     var si: i32 = 0;
     while (si < mod.structs.len()) {
@@ -6614,6 +6638,44 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         si = si + 1;
     }
     return errs;
+}
+
+// refuse_decl_names prints check_decl_names' diagnostics for every module and
+// reports whether there were any. It reads modules as parsed: the
+// local-function lift adds capture parameters with no type, so a module past
+// module_with_builtins would be refused for them.
+pub function refuse_decl_names(mods: parser.Module[]): boolean {
+    var errs: util.Diag[] = [];
+    for m in mods { errs = util.append_diags(errs, check_decl_names(m)); }
+    if (errs.len() == 0) { return false; }
+    eprint(util.format_diags(errs));
+    return true;
+}
+
+// refuse_parse_unknowns prints the parser's sentinel diagnostics for every
+// module and reports whether there were any. It is for the driver paths that
+// return without reaching the checker or the emitters' prologue, which report
+// sentinels otherwise; a stdin driver runs it ahead of refuse_decl_names, the
+// order that prologue uses.
+pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
+    var errs: util.Diag[] = [];
+    for m in mods { errs = util.append_diags(errs, parse_unknown_errors_module(m)); }
+    if (errs.len() == 0) { return false; }
+    eprint(util.format_diags(errs));
+    return true;
+}
+
+// untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
+// which parse_param records with an empty type.
+function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[] {
+    var out: util.Diag[] = errs;
+    for param in fd.params {
+        if (param.type_name.len() == 0) {
+            out = out.append(util.Diag { code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
+                line: fd.line, col: fd.col });
+        }
+    }
+    return out;
 }
 
 // check_top_level_stmts refuses a statement written at module level in a module

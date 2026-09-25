@@ -26,9 +26,12 @@ import "./lexer";
 import "./parser";
 import "./rundriver";
 import "./asm_ir";
+import "./asmcore";
 
 function main(): i32 {
     var mod: parser.Module = rundriver.parse_stdin("asm_run");
+    if (asmcore.refuse_parse_unknowns([mod])) { return 1; }
+    if (asmcore.refuse_decl_names([mod])) { return 1; }
     var emitted: string = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
     print(emitted);
     return 0;

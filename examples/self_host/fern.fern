@@ -1323,7 +1323,7 @@ function bundle_visibility_diags(b: Bundle): boolean {
 // gate rather than two copies of the loop (#7447). The parser has no error
 // channel, so a keyword written where a declaration name belongs leaves an
 // EMPTY name and consumes nothing — asmcore.check_decl_names is where that is
-// caught, and it was reachable only from the two wasm drivers.
+// caught, and each emitting driver calls it on the module as parsed.
 function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
     var ds: util.Diag[] = asmcore.check_decl_names(mod);
     if (ds.len() == 0) { return false; }

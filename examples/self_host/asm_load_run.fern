@@ -19,6 +19,7 @@ import "./flatten";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./asmcore";
 import "./treeshake";
 import "./ircore";
 import "./irlower";
@@ -259,6 +260,11 @@ function main(): i32 {
             paths = add_imports(paths, m, root);
         }
     }
+
+    var parsed: parser.Module[] = [entry_mod];
+    for lm in loaded { parsed = parsed.append(lm.mod); }
+    if (asmcore.refuse_decl_names(parsed)) { return 1; }
+    if (asmcore.refuse_parse_unknowns(parsed)) { return 1; }
 
     // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
     // (which mangles entry_mod / loaded in place) so bundle_per_module sees the

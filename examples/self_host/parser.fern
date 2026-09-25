@@ -5799,6 +5799,16 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // built — matching a plain closure-valued local.)
         var (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
+        // The FuncDecl is discarded below, so check_decl_names never sees it;
+        // what that gate would refuse is reported through a `decl:` sentinel.
+        if (fr_func.name.len() == 0) {
+            return (s_unknown_at("decl:local function declaration has no name (a keyword cannot be used as one, and a destructured parameter needs a type)", fr_func.line, fr_func.col), p);
+        }
+        for prm in fr_func.params {
+            if (prm.type_name.len() == 0) {
+                return (s_unknown_at("decl:parameter \"" + prm.name + "\" of \"" + fr_func.name + "\" has no type: expected \":\" after its name", fr_func.line, fr_func.col), p);
+            }
+        }
         if (stmts_mention(fr_func.body, fr_func.name)) {
             // Self-recursive local function: the closure can't reference
             // itself (the name binds after the lambda captures), so this
@@ -19198,7 +19208,8 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     }
     var has_self: boolean = false;
     if (m.params.len() > 0) {
-        if (m.params[0].name == "self") { has_self = true; }
+        // An untyped `self` stays a parameter, for check_decl_names to refuse.
+        if (m.params[0].name == "self" && m.params[0].type_name.len() > 0) { has_self = true; }
     }
     if (!has_self) {
         // Associated function: keep ALL params (none is a receiver),

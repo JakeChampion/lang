@@ -35,6 +35,7 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./wasm_ir";
+import "./asmcore";
 import "./irlower";
 import "./ircore";
 import "./modloader";
@@ -399,6 +400,9 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
+            var parsed: parser.Module[] = [entry];
+            for lm in loaded { parsed = parsed.append(lm.mod); }
+            if (asmcore.refuse_decl_names(parsed) || asmcore.refuse_parse_unknowns(parsed)) { return 1; }
             return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
         },
         Err(e) => {

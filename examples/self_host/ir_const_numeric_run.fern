@@ -19,6 +19,7 @@ import "./ircore";
 import "./asm_ir";
 import "./asm_arm64_ir";
 import "./wasm_ir";
+import "./asmcore";
 
 struct Rebuilt { cache: irlower.LowerResult[], i64s: i32, f64s: i32 }
 
@@ -67,6 +68,7 @@ function main(): i32 {
     var target: string = "x86-64-linux";
     if (av.len() > 2 && av[1] == "-target") { target = av[2]; }
     var mod: parser.Module = rundriver.parse_stdin("ir_const_numeric_run");
+    if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) { return 1; }
     if (target == "wasm32-wasi") {
         var lm: parser.Module = wasm_ir.route_normalized(mod);
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
