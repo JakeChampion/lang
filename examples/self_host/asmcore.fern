@@ -6592,8 +6592,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 
 // check_decl_names rejects a module holding a NAMELESS function, trait, trait
 // requirement, struct, enum or type alias, or a parameter written with no type.
-// mod.resources is not walked: `resource` is not a declaration form in the
-// current grammar, so nothing can produce a nameless one yet.
+// mod.resources is not walked yet: a ResourceDecl carries no position, and an
+// `@import(…) resource` with no readable name records one nameless (#10290).
 //
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
