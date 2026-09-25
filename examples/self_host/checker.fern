@@ -5578,9 +5578,7 @@ function is_dyn_slot(t: typeinfo.Type): boolean {
 
 // nominal_args_clash reports whether two instances of one generic struct or
 // enum disagree on an argument. An argument unknown on either side is no
-// constraint, as a tuple element is not (type_eq compares the name alone), and
-// neither is a `dyn` slot, whose conformance dyn_conforms and
-// ctor_payload_diags judge.
+// constraint, as a tuple element is not (type_eq compares the name alone).
 function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
   if (!same_nominal(from, to)) { return false; }
   var fa: typeinfo.Type[] = nominal_args(from);
@@ -5588,7 +5586,7 @@ function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: Unio
   if (fa.len() != ta.len()) { return false; }
   var i: i32 = 0;
   while (i < fa.len()) {
-    if (!is_unknown(fa[i]) && !is_unknown(ta[i]) && !is_dyn_slot(ta[i]) && !nested_assignable(fa[i], ta[i], unions)) { return true; }
+    if (!is_unknown(fa[i]) && !is_unknown(ta[i]) && !nested_assignable(fa[i], ta[i], unions)) { return true; }
     i = i + 1;
   }
   return false;
@@ -9711,9 +9709,41 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
         }
       }
     },
+    typeinfo.TypeUnion(_) => {
+      return ctor_boxes_into(e, want, s);
+    },
     _ => {
       return false;
     }
+  }
+  return false;
+}
+
+// ctor_boxes_into: a variant construction is a coercion site, so its payload
+// may box into a `dyn` argument of the destination enum. ctor_payload_diags
+// judges that payload's conformance; every other argument must still agree.
+function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    var vname: string = "";
+    if let ast.ExprIdent(id) = c.callee { vname = id.name; }
+    if let ast.ExprFieldAccess(fa) = c.callee { vname = fa.field; }
+    if (union_of_variant(vname, s.unions).len() == 0 && mx_builtin_enum_of(vname).len() == 0) { return false; }
+    var got: typeinfo.Type = check_expr(e, s);
+    if (!same_nominal(got, want)) { return false; }
+    var ga: typeinfo.Type[] = nominal_args(got);
+    var wa: typeinfo.Type[] = nominal_args(want);
+    if (ga.len() != wa.len()) { return false; }
+    var boxed: boolean = false;
+    var i: i32 = 0;
+    while (i < ga.len()) {
+      if (is_dyn_slot(wa[i]) && !is_unknown(ga[i]) && !is_dyn_slot(ga[i])) {
+        boxed = true;
+      } else if (!is_unknown(ga[i]) && !is_unknown(wa[i]) && !nested_assignable(ga[i], wa[i], s.unions.unions)) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return boxed;
   }
   return false;
 }
