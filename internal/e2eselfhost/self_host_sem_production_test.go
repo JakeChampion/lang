@@ -4001,6 +4001,36 @@ function main(): i32 {
     return 0;
 }
 `},
+	// The process, clock and random leaves: i64 syscall words, usize
+	// scratch and allocation blocks. umask, priority and sync are retyped too,
+	// but the filesystem bundle they are emitted in routes only as a whole.
+	{name: "process-helpers-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true,
+		reports: []string{
+			"runtime __fern_random_bytes: produced", "runtime __fern_random_i32: produced",
+			"runtime __fern_isatty: produced", "runtime __fern_process_alive: produced",
+			"runtime __fern_cpu_count: produced", "runtime __fern_sleep_ms: produced",
+			"runtime __fern_sleep_ns: produced",
+		}, src: `
+function main(): i32 {
+    sleep_ms(1 as i64);
+    sleep_ns(1000 as i64);
+    var r: i32 = random_i32();
+    var bs: u8[] = random_bytes(8);
+    var n: i32 = cpu_count();
+    var tty: boolean = isatty(99);
+    var alive: boolean = process_alive(1);
+    var pr: i32 = priority();
+    var old: i32 = umask(18);
+    sync();
+    var score: i32 = bs.len();
+    if (n > 0) { score = score + 10; }
+    if (!tty) { score = score + 100; }
+    if (alive) { score = score + 1000; }
+    if (pr > (0 - 21) && pr < 20) { score = score + 10000; }
+    if (umask(old) == 18) { score = score + 20000; }
+    return score % 256;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `

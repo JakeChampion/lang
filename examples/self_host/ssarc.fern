@@ -2727,6 +2727,7 @@ function os_query_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "environ") { return Lowered { found: true, r: emit(r, ir.op_environ()) }; }
     if (ins.str == "proc_fork") { return Lowered { found: true, r: emit(r, ir.op_proc_fork()) }; }
     if (ins.str == "isatty") { return Lowered { found: true, r: emit(r, ir.op_isatty()) }; }
+    if (ins.str == "process_alive") { return Lowered { found: true, r: emit(r, ir.op_process_alive()) }; }
     if (ins.str == "uname_field") { return Lowered { found: true, r: emit(r, ir.op_uname_field()) }; }
     if (ins.str == "umask") { return Lowered { found: true, r: emit(r, ir.op_umask()) }; }
     if (ins.str == "proc_waitpid") { return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) }; }

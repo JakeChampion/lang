@@ -2142,7 +2142,11 @@ What is left, in order:
    the string and string-array helpers (`str_cmp`, the case, `trim`,
    `repeat`, `replace`, `split`, `lines`, `bytes`, `string_from_bytes` and
    `join` bodies), and the three stdio writers behind `write`, `eprint` and
-   `putchar` are done. The AST lowering takes a retyped syscall word too: an
+   `putchar` are done, and so are the process, clock and random leaves
+   (`sleep_ms`, `sleep_ns`, `random_i32`, `random_bytes`, `cpu_count`,
+   `isatty`, `process_alive`). `umask`, `priority` and `sync` are retyped
+   too, but they are emitted inside the filesystem bundle, which routes only
+   once every helper in it checks. The AST lowering takes a retyped syscall word too: an
    `i64` operand lowers at 64 bits, and `usize as i64` widens the address
    without masking it. `print_int` and `read_int` are left for #10244, which
    retires them: native rejects both. `__fern_arr_slice` needs an array's box address,
