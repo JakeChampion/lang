@@ -29,6 +29,7 @@ import "./flatten";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./asmcore";
 import "./irlower";
 import "./ir";
 import "./irverify";
@@ -1137,6 +1138,7 @@ function main(): i32 {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
+            if (asmcore.refuse_decl_names(merged)) { return 1; }
             merged = modloader.merge_builtins(dir, merged);
             // target_os() / target_arch() are the -target's environment and ISA
             // as string literals, not calls: the compile driver folds them here

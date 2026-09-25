@@ -24,6 +24,7 @@ import "./lexer";
 import "./parser";
 import "./rundriver";
 import "./asm_ir";
+import "./asmcore";
 import "./asm_arm64_ir";
 import "./irlower";
 import "./ircore";
@@ -100,6 +101,7 @@ function run(): i32 {
         return 2;
     }
     var mod: parser.Module = rundriver.parse_stdin("asm_ir_run");
+    if (asmcore.refuse_decl_names(mod)) { return 1; }
     var lm: parser.Module = ircore.lift_lambdas(mod);
     // Build the whole-program signature view: this module's own funcs/structs
     // plus every -ir-sigs sibling's. Each module is run through

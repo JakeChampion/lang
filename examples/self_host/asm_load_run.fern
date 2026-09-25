@@ -19,6 +19,7 @@ import "./flatten";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
+import "./asmcore";
 import "./treeshake";
 import "./ircore";
 import "./irlower";
@@ -349,6 +350,7 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    if (asmcore.refuse_decl_names(merged)) { return 1; }
 
     // Prune unreachable functions (sound, name-based reachability from main)
     // so a stdlib-importing program's merged module fits the IR budget. Raw

@@ -6075,10 +6075,6 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
     var errs: util.Diag[] = parse_unknown_errors_module(mod);
     if (errs.len() > 0) { return errs; }
-    // The declaration gate, here because both native emitters run this
-    // prologue: a driver that skips its own call still refuses the module.
-    errs = check_decl_names(mod);
-    if (errs.len() > 0) { return errs; }
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
@@ -6625,6 +6621,17 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         si = si + 1;
     }
     return errs;
+}
+
+// refuse_decl_names prints check_decl_names' diagnostics and reports whether
+// there were any. It reads the module as parsed: the local-function lift adds
+// capture parameters with no type, so a module past module_with_builtins
+// would be refused for them.
+pub function refuse_decl_names(mod: parser.Module): boolean {
+    var errs: util.Diag[] = check_decl_names(mod);
+    if (errs.len() == 0) { return false; }
+    eprint(util.format_diags(errs));
+    return true;
 }
 
 // untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
