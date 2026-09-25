@@ -932,6 +932,25 @@ function main(): i32 {
     }
     return total % 256;
 }`},
+	// A chained append on an array FIELD read. The AST lowering took the outer
+	// receiver for an i32 and refused the module ("call to unknown symbol
+	// i32.append"); the compiler's own copy_returned_views is this shape.
+	{name: "a-chained-append-on-an-array-field", atLeast: 1, noLeak: true, src: `
+struct TA { w: i32, s: string }
+struct Blk { id: i32, xs: TA[] }
+function main(): i32 {
+    var blocks: Blk[] = [Blk { id: 1, xs: [] }, Blk { id: 2, xs: [TA { w: 1, s: "a" }] }];
+    var out: Blk[] = [];
+    for b in blocks {
+        if (b.id == 2) {
+            var xs: TA[] = b.xs.append(TA { w: 2, s: "b" + "c" }).append(TA { w: 3, s: "d" });
+            b = Blk { ...b, xs: xs };
+        }
+        out = out.append(b);
+    }
+    return out[1].xs.len() + out[1].xs[1].s.len() + out.len() - 7;
+}
+`},
 	// The same phi as the row above, with a LITERAL on the entry edge rather
 	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
 	// that `std/format`'s two refused functions are both built on. Produced as
