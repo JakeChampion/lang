@@ -3959,6 +3959,32 @@ function main(): i32 {
     return s.len();
 }
 `},
+	// The string and string-array helpers, retyped against the raw floor.
+	{name: "string-helpers-take-the-typed-path", atLeast: 1, noLeak: true,
+		reports: []string{
+			"runtime __fern_str_cmp: produced", "runtime __fern_str_to_upper: produced",
+			"runtime __fern_str_to_lower: produced", "runtime __fern_str_repeat: produced",
+			"runtime __fern_str_trim: produced", "runtime __fern_str_replace: produced",
+			"runtime __fern_string_from_bytes: produced", "runtime __fern_str_split: produced",
+			"runtime __fern_str_bytes: produced", "runtime __fern_arr_str_join: produced",
+			"runtime __fern_str_lines: produced",
+		}, src: `
+import "std/string";
+
+function main(): i32 {
+    var t: string = "  Hello, World  ".trim();
+    print(t.to_ascii_upper() + "|" + t.to_ascii_lower() + "|" + "ab".repeat(3) + "|" + t.replace("o", "0"));
+    var parts: string[] = "a,b,,c".split(",");
+    print(parts.join("-"));
+    var cs: string[] = "héllo".split("");
+    var ls: string[] = "x\r\ny\n".lines();
+    var bs: u8[] = "AZ".bytes();
+    print(string_from_bytes_unchecked(bs));
+    var lt: i32 = 0;
+    if ("abc" < "abd") { lt = 1; }
+    return parts.len() * 10 + cs.len() + ls.len() * 100 + lt * 1000;
+}
+`},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
 	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `

@@ -2138,8 +2138,14 @@ Fern-source helper; it serves them as hand-written WAT.
 What is left, in order:
 
 1. The helper sources are rewritten against those types, which is what routes
-   each one. `chr`, `str_concat` and the four integer `to_string` helpers are
-   done. The rest were never checked, so they hold every address as an `i32`
+   each one. `chr`, `str_concat`, the four integer `to_string` helpers, and
+   the string and string-array helpers (`str_cmp`, the case, `trim`,
+   `repeat`, `replace`, `split`, `lines`, `bytes`, `string_from_bytes` and
+   `join` bodies) are done. `__fern_arr_slice` needs an array's box address,
+   which the raw floor has no intrinsic for. A helper that calls another
+   helper (`i32_lcm` calls `gcd` as a method; `open_with` calls
+   `__fern_open_res`) is checked alone and fails on the callee.
+   The rest were never checked, so they hold every address as an `i32`
    and pass `i32` words to the syscalls; each needs its locals retyped and its
    syscall operands cast. The ones that build an `IoError`, `FileStat` or
    `ProcessResult` also need the builtin declarations in the module they are

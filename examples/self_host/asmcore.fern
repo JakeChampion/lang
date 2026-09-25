@@ -3173,7 +3173,7 @@ pub function (s: EmitState) mark_str_from_bytes(): EmitState {
 // slots, so a u8[] argument round-trips identically): a[i] reads the slot,
 // __raw_store8 keeps its low byte. Heap is its sole dep. Empty array → "".
 pub function rt_src_string_from_bytes(): string {
-    return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
+    return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
 }
 
 // No str_concat edge: the body sizes and fills one exact-size block with no
@@ -3232,11 +3232,11 @@ pub function (s: EmitState) mark_str_case(): EmitState {
 // Nested ifs instead of `&&` to stay in the proven subset.
 // Both gated on the single str_case need (mark_str_case emits both bodies).
 pub function rt_src_str_to_upper(): string {
-    return "function __fern_str_to_upper(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i]; if (c >= 97) { if (c <= 122) { c = c - 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
+    return "function __fern_str_to_upper(s: string): string { var n: i32 = s.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i] as i32; if (c >= 97) { if (c <= 122) { c = c - 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
 }
 
 pub function rt_src_str_to_lower(): string {
-    return "function __fern_str_to_lower(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i]; if (c >= 65) { if (c <= 90) { c = c + 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
+    return "function __fern_str_to_lower(s: string): string { var n: i32 = s.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { var c: i32 = s[i] as i32; if (c >= 65) { if (c <= 90) { c = c + 32; } } __raw_store8(p, i, c); i = i + 1; } return __raw_string(p, n); }";
 }
 
 pub function (s: EmitState) mark_str_repeat(): EmitState {
@@ -3249,7 +3249,7 @@ pub function (s: EmitState) mark_str_repeat(): EmitState {
 // copies `s` byte-by-byte `count` times, boxes it. n <= 0 → empty string. Heap
 // is its sole dep. Replaces the hand-written register-ABI body on every backend.
 pub function rt_src_str_repeat(): string {
-    return "function __fern_str_repeat(s: string, n: i32): string { var slen: i32 = s.len(); var count: i32 = n; if (count < 0) { count = 0; } var total: i32 = slen * count; var cap: i32 = total; if (cap == 0) { cap = 1; } var p: i32 = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < count) { var j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j]); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
+    return "function __fern_str_repeat(s: string, n: i32): string { var slen: i32 = s.len(); var count: i32 = n; if (count < 0) { count = 0; } var total: i32 = slen * count; var cap: i32 = total; if (cap == 0) { cap = 1; } var p: usize = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < count) { var j: i32 = 0; while (j < slen) { __raw_store8(p, w, s[j] as i32); w = w + 1; j = j + 1; } k = k + 1; } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_str_trim(): EmitState {
@@ -3268,7 +3268,7 @@ pub function (s: EmitState) mark_str_reverse(): EmitState {
 // copies s[n-1-i] into p[i], boxes it. Heap is its sole dep. Replaces the
 // hand-written register-ABI body on every backend.
 pub function rt_src_str_reverse(): string {
-    return "function __fern_str_reverse(s: string): string { var n: i32 = s.len(); var p: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, s[n - 1 - i]); i = i + 1; } return __raw_string(p, n); }";
+    return "function __fern_str_reverse(s: string): string { var n: i32 = s.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, s[n - 1 - i] as i32); i = i + 1; } return __raw_string(p, n); }";
 }
 
 pub function (s: EmitState) mark_str_replace(): EmitState {
@@ -3286,8 +3286,8 @@ pub function (s: EmitState) mark_str_replace(): EmitState {
 // and copying other bytes. Heap is
 // its sole dep. Replaces the hand-written register-ABI body on every backend.
 pub function rt_src_str_replace(): string {
-    return "function __fern_str_dup(h: string): string { var n: i32 = h.len(); if (n == 0) { return \"\"; } var p: i32 = __raw_alloc(n); __memcpy(p, __raw_data(h), n); return __raw_string(p, n); } " +
-        "function __fern_str_replace(h: string, o: string, nw: string): string { var lenH: i32 = h.len(); var lenO: i32 = o.len(); if (lenO == 0) { return __fern_str_dup(h); } var lenN: i32 = nw.len(); var count: i32 = 0; var i: i32 = 0; while (i + lenO <= lenH) { var j: i32 = 0; var m: i32 = 1; while (j < lenO) { if (h[i + j] != o[j]) { m = 0; j = lenO; } else { j = j + 1; } } if (m == 1) { count = count + 1; i = i + lenO; } else { i = i + 1; } } if (count == 0) { return __fern_str_dup(h); } var total: i32 = lenH + count * (lenN - lenO); var cap: i32 = total; if (cap == 0) { cap = 1; } var p: i32 = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < lenH) { var m2: i32 = 0; if (k + lenO <= lenH) { var jj: i32 = 0; m2 = 1; while (jj < lenO) { if (h[k + jj] != o[jj]) { m2 = 0; jj = lenO; } else { jj = jj + 1; } } } if (m2 == 1) { var t: i32 = 0; while (t < lenN) { __raw_store8(p, w, nw[t]); w = w + 1; t = t + 1; } k = k + lenO; } else { __raw_store8(p, w, h[k]); w = w + 1; k = k + 1; } } return __raw_string(p, total); }";
+    return "function __fern_str_dup(h: string): string { var n: i32 = h.len(); if (n == 0) { return \"\"; } var p: usize = __raw_alloc(n); __memcpy(p, __raw_data(h), n); return __raw_string(p, n); } " +
+        "function __fern_str_replace(h: string, o: string, nw: string): string { var lenH: i32 = h.len(); var lenO: i32 = o.len(); if (lenO == 0) { return __fern_str_dup(h); } var lenN: i32 = nw.len(); var count: i32 = 0; var i: i32 = 0; while (i + lenO <= lenH) { var j: i32 = 0; var m: i32 = 1; while (j < lenO) { if (h[i + j] != o[j]) { m = 0; j = lenO; } else { j = j + 1; } } if (m == 1) { count = count + 1; i = i + lenO; } else { i = i + 1; } } if (count == 0) { return __fern_str_dup(h); } var total: i32 = lenH + count * (lenN - lenO); var cap: i32 = total; if (cap == 0) { cap = 1; } var p: usize = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < lenH) { var m2: i32 = 0; if (k + lenO <= lenH) { var jj: i32 = 0; m2 = 1; while (jj < lenO) { if (h[k + jj] != o[jj]) { m2 = 0; jj = lenO; } else { jj = jj + 1; } } } if (m2 == 1) { var t: i32 = 0; while (t < lenN) { __raw_store8(p, w, nw[t] as i32); w = w + 1; t = t + 1; } k = k + lenO; } else { __raw_store8(p, w, h[k] as i32); w = w + 1; k = k + 1; } } return __raw_string(p, total); }";
 }
 
 pub function (s: EmitState) mark_i32_pow(): EmitState {
@@ -3434,7 +3434,7 @@ pub function rt_src_arr_i32_min_max_opt(): string {
 // helper it replaces. The string param is read-only (never returned/stored), so
 // borrow analysis keeps it borrowed: no RC free of the caller's string.
 pub function rt_src_str_to_i32(): string {
-    return "function __fern_str_to_i32(s: string): i32 { var acc: i32 = 0; var neg: i32 = 0; var first: i32 = 1; for b in s { if (first == 1 && b == 45) { neg = 1; } else { var d: i32 = b - 48; if (d < 0 || d > 9) { break; } acc = acc * 10 + d; } first = 0; } if (neg == 1) { return 0 - acc; } return acc; }";
+    return "function __fern_str_to_i32(s: string): i32 { var acc: i32 = 0; var neg: i32 = 0; var first: i32 = 1; for b in s { if (first == 1 && b == 45) { neg = 1; } else { var d: i32 = (b as i32) - 48; if (d < 0 || d > 9) { break; } acc = acc * 10 + d; } first = 0; } if (neg == 1) { return 0 - acc; } return acc; }";
 }
 
 // rt_src_str_cmp backs string ordering (< <= > >=) → __fern_str_cmp(a, b),
@@ -3446,7 +3446,7 @@ pub function rt_src_str_to_i32(): string {
 // string byte-load lowers on both the AST and IR paths (parallel two-string
 // iteration can't use `for ... in`).
 pub function rt_src_str_cmp(): string {
-    return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i]; var cb: i32 = b[i]; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
+    return "function __fern_str_cmp(a: string, b: string): i32 { var la: i32 = a.len(); var lb: i32 = b.len(); var n: i32 = la; if (lb < n) { n = lb; } var i: i32 = 0; while (i < n) { var ca: i32 = a[i] as i32; var cb: i32 = b[i] as i32; if (ca != cb) { return ca - cb; } i = i + 1; } return la - lb; }";
 }
 
 // rt_src_arr_str_join backs `xs.join(sep)` on string arrays (#2649). TWO PASSES
@@ -3463,7 +3463,7 @@ pub function rt_src_str_cmp(): string {
 // in 60 s against native's 497 ms, with __fern_str_concat 77% of the run and
 // growing 4.2x per doubling of the input. This is #9077's string half.
 pub function rt_src_arr_str_join(): string {
-    return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); if (n == 0) { return \"\"; } var ls: i32 = sep.len(); var total: i32 = ls * (n - 1); var i: i32 = 0; while (i < n) { total = total + xs[i].len(); i = i + 1; } var p: i32 = __raw_alloc(total); var off: i32 = 0; var j: i32 = 0; while (j < n) { if (j > 0) { __memcpy(__raw_addr(p, off), __raw_data(sep), ls); off = off + ls; } var e: string = xs[j]; var le: i32 = e.len(); __memcpy(__raw_addr(p, off), __raw_data(e), le); off = off + le; j = j + 1; } return __raw_string(p, total); }";
+    return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); if (n == 0) { return \"\"; } var ls: i32 = sep.len(); var total: i32 = ls * (n - 1); var i: i32 = 0; while (i < n) { total = total + xs[i].len(); i = i + 1; } var p: usize = __raw_alloc(total); var off: i32 = 0; var j: i32 = 0; while (j < n) { if (j > 0) { __memcpy(__raw_addr(p, off), __raw_data(sep), ls); off = off + ls; } var e: string = xs[j]; var le: i32 = e.len(); __memcpy(__raw_addr(p, off), __raw_data(e), le); off = off + le; j = j + 1; } return __raw_string(p, total); }";
 }
 
 pub function rt_src_arr_i32_max(): string {
@@ -3486,7 +3486,7 @@ pub function rt_src_arr_i32_max(): string {
 // same MAXIMAL-SUBPART stop on a broken tail (`F1 80 62` is two pieces).
 // Bundled rather than need-gated: split is its only caller.
 pub function rt_src_str_split(): string {
-    return "function __fern_utf8_step(s: string, i: i32, n: i32): i32 { var b0: i32 = s[i]; var want: i32 = 0; if (b0 < 128) { want = 1; } if (b0 >= 194 && b0 < 224) { want = 2; } if (b0 >= 224 && b0 < 240) { want = 3; } if (b0 >= 240 && b0 < 245) { want = 4; } if (want <= 1) { return 1; } if (i + 1 >= n) { return 1; } var lo: i32 = 128; if (b0 == 224) { lo = 160; } if (b0 == 240) { lo = 144; } var hi: i32 = 191; if (b0 == 237) { hi = 159; } if (b0 == 244) { hi = 143; } var c1: i32 = s[i + 1]; if (c1 < lo) { return 1; } if (c1 > hi) { return 1; } var k2: i32 = 2; while (k2 < want) { if (i + k2 >= n) { return k2; } var ck: i32 = s[i + k2]; if (ck < 128) { return k2; } if (ck > 191) { return k2; } k2 = k2 + 1; } return want; } function __fern_str_split(s: string, sep: string): string[] { var lenS: i32 = s.len(); var lenSep: i32 = sep.len(); var out: string[] = []; if (lenSep == 0) { var k: i32 = 0; while (k < lenS) { var w: i32 = __fern_utf8_step(s, k, lenS); out = out.append(slice_unchecked(s, k, k + w) + \"\"); k = k + w; } return out; } var start: i32 = 0; var i: i32 = 0; while (i + lenSep <= lenS) { var j: i32 = 0; var m: i32 = 1; while (j < lenSep) { if (s[i + j] != sep[j]) { m = 0; j = lenSep; } else { j = j + 1; } } if (m == 1) { out = out.append(slice_unchecked(s, start, i) + \"\"); i = i + lenSep; start = i; } else { i = i + 1; } } out = out.append(slice_unchecked(s, start, lenS) + \"\"); return out; }";
+    return "function __fern_utf8_step(s: string, i: i32, n: i32): i32 { var b0: i32 = s[i] as i32; var want: i32 = 0; if (b0 < 128) { want = 1; } if (b0 >= 194 && b0 < 224) { want = 2; } if (b0 >= 224 && b0 < 240) { want = 3; } if (b0 >= 240 && b0 < 245) { want = 4; } if (want <= 1) { return 1; } if (i + 1 >= n) { return 1; } var lo: i32 = 128; if (b0 == 224) { lo = 160; } if (b0 == 240) { lo = 144; } var hi: i32 = 191; if (b0 == 237) { hi = 159; } if (b0 == 244) { hi = 143; } var c1: i32 = s[i + 1] as i32; if (c1 < lo) { return 1; } if (c1 > hi) { return 1; } var k2: i32 = 2; while (k2 < want) { if (i + k2 >= n) { return k2; } var ck: i32 = s[i + k2] as i32; if (ck < 128) { return k2; } if (ck > 191) { return k2; } k2 = k2 + 1; } return want; } function __fern_str_split(s: string, sep: string): string[] { var lenS: i32 = s.len(); var lenSep: i32 = sep.len(); var out: string[] = []; if (lenSep == 0) { var k: i32 = 0; while (k < lenS) { var w: i32 = __fern_utf8_step(s, k, lenS); out = out.append(slice_unchecked(s, k, k + w) + \"\"); k = k + w; } return out; } var start: i32 = 0; var i: i32 = 0; while (i + lenSep <= lenS) { var j: i32 = 0; var m: i32 = 1; while (j < lenSep) { if (s[i + j] != sep[j]) { m = 0; j = lenSep; } else { j = j + 1; } } if (m == 1) { out = out.append(slice_unchecked(s, start, i) + \"\"); i = i + lenSep; start = i; } else { i = i + 1; } } out = out.append(slice_unchecked(s, start, lenS) + \"\"); return out; }";
 }
 
 // rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]
@@ -3499,7 +3499,7 @@ pub function rt_src_str_split(): string {
 // about log2(n) times per call, which on a 64 KiB chunk is sixteen copies of up
 // to half a megabyte — `cksum -a bsd` spent 4x its own runtime there (#9277).
 pub function rt_src_str_bytes(): string {
-    return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var b: i32 = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, s[i]); i = i + 1; } return __raw_array(b); }";
+    return "function __fern_str_bytes(s: string): i32[] { var n: i32 = s.len(); var b: usize = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, s[i] as usize); i = i + 1; } return __raw_array(b); }";
 }
 
 // rt_src_str_lines backs `s.lines()` (#2649).
@@ -3529,7 +3529,7 @@ pub function rt_src_str_lines(): string {
 // until anonymous slice temps get a view-box reclaim. A sentinel `go` flag
 // drives the scan. Empty / all-whitespace input → start==end → "".
 pub function rt_src_str_trim(): string {
-    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start]; if (c == 32 || c >= 9 && c <= 13) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1]; if (c2 == 32 || c2 >= 9 && c2 <= 13) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
+    return "function __fern_str_trim(s: string): string { var n: i32 = s.len(); var start: i32 = 0; var go: i32 = 1; while (go == 1) { if (start >= n) { go = 0; } else { var c: i32 = s[start] as i32; if (c == 32 || c >= 9 && c <= 13) { start = start + 1; } else { go = 0; } } } var end: i32 = n; var go2: i32 = 1; while (go2 == 1) { if (end <= start) { go2 = 0; } else { var c2: i32 = s[end - 1] as i32; if (c2 == 32 || c2 >= 9 && c2 <= 13) { end = end - 1; } else { go2 = 0; } } } return slice_unchecked(s, start, end) + \"\"; }";
 }
 
 pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
