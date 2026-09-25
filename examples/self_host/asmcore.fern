@@ -6621,12 +6621,13 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     return errs;
 }
 
-// refuse_decl_names prints check_decl_names' diagnostics and reports whether
-// there were any. It reads the module as parsed: the local-function lift adds
-// capture parameters with no type, so a module past module_with_builtins
-// would be refused for them.
+// refuse_decl_names prints the parser's diagnostics, else check_decl_names',
+// and reports whether there were any. It reads the module as parsed: the
+// local-function lift adds capture parameters with no type, so a module past
+// module_with_builtins would be refused for them.
 pub function refuse_decl_names(mod: parser.Module): boolean {
-    var errs: util.Diag[] = check_decl_names(mod);
+    var errs: util.Diag[] = parse_unknown_errors_module(mod);
+    if (errs.len() == 0) { errs = check_decl_names(mod); }
     if (errs.len() == 0) { return false; }
     eprint(util.format_diags(errs));
     return true;
