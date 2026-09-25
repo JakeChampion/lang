@@ -37,6 +37,18 @@ func diagPositions(out, entry string) []string {
 	return got
 }
 
+// diagFullLines is diagPositions keeping each diagnostic's whole line.
+func diagFullLines(out, entry string) []string {
+	var got []string
+	for _, line := range strings.Split(out, "\n") {
+		if diagPosRE.MatchString(line) {
+			got = append(got, strings.TrimPrefix(line, entry+":"))
+		}
+	}
+	sort.Strings(got)
+	return got
+}
+
 func selfHostCheckDriver(t *testing.T) (string, []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -58,6 +70,8 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
+		// exact compares whole diagnostic lines, message text included.
+		exact bool
 	}{
 		{
 			// One error in the entry and one at the same line in a sibling, so
@@ -77,6 +91,27 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 					"function main(): i32 { return f(1, \"x\"); }\n",
 			},
 		},
+		{
+			// An index argument carries its own position, the `[`, so E051
+			// names the argument's line in a call spread over two.
+			name: "owned_index_argument",
+			files: map[string]string{
+				"main.fern": "function take(own s: string): i32 { return s.len(); }\n" +
+					"function f(xs: string[]): i32 {\n    return take(\n        xs[0]);\n}\n" +
+					"function main(): i32 { return f([\"a\"]); }\n",
+			},
+		},
+		{
+			// E050 quotes the line of the move. In a sibling module that line
+			// is decoded like the position is.
+			name:  "sibling_moved_at",
+			exact: true,
+			files: map[string]string{
+				"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.f(\"x\"); }\n",
+				"lib.fern": "pub function take(own s: string): i32 { return s.len(); }\n" +
+					"pub function f(own s: string): i32 {\n    var n: i32 = take(s);\n    return n + s.len();\n}\n",
+			},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -92,6 +127,9 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			sout, _ := cmd.CombinedOutput()
 			want := diagPositions(string(nout), entry)
 			got := diagPositions(string(sout), entry)
+			if tc.exact {
+				want, got = diagFullLines(string(nout), entry), diagFullLines(string(sout), entry)
+			}
 			if len(want) == 0 {
 				t.Fatalf("native reported nothing — the probe is not exercising the path:\n%s", nout)
 			}
