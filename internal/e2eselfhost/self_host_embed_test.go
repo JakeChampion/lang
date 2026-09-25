@@ -201,7 +201,7 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 			nativeBuild, _ := nativeCmd.CombinedOutput()
 			shCmd := exec.Command(driverBin, append(shArgs, src, stdlib)...)
 			// Every bundle shape takes the typed path, the empty one included.
-			shCmd.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+			shCmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
 			shBuild, _ := shCmd.CombinedOutput()
 
 			nativeOK := nativeCmd.ProcessState.ExitCode() == 0
