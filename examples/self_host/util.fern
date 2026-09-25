@@ -778,18 +778,48 @@ pub function is_diagnostic_code(code: string): boolean {
   return true;
 }
 
+// A bundle numbers each imported module's lines from its own base, so one
+// line number says which file it is in as well as where; the entry's base is 0
+// (go/token's FileSet, with the base on the line).
+const LINE_SPAN: i32 = 1048576;
+
+pub function line_base(index: i32): i32 { return (index + 1) * LINE_SPAN; }
+
+pub function pos_line(line: i32): i32 { return line % LINE_SPAN; }
+
+// pos_file is the display path of the module `line` falls in, or "" for the
+// entry. `files[k]` is the module tokenized from line_base(k).
+pub function pos_file(files: string[], line: i32): string {
+  var k: i32 = line / LINE_SPAN - 1;
+  if (k < 0 || k >= files.len()) { return ""; }
+  return files[k];
+}
+
+// pos_str renders a position as native does: `path:line:col`, with the path
+// omitted for the entry.
+pub function pos_str(files: string[], line: i32, col: i32): string {
+  var at: string = i32_to_string(pos_line(line)) + ":" + i32_to_string(col);
+  var f: string = pos_file(files, line);
+  if (f.len() == 0) { return at; }
+  return f + ":" + at;
+}
+
 // format_diags renders diagnostics one-per-line as
 // `error[CODE]: message (line:col)` — the self-host counterpart of the Go
 // driver's diag.Format. Used by the checking drivers to surface a rejection
 // to stderr before exiting non-zero (bootstrap error-reporting).
 pub function format_diags(diags: Diag[]): string {
+  return format_diags_in(diags, []);
+}
+
+pub function format_diags_in(diags: Diag[], files: string[]): string {
   var out: string = "";
   var i: i32 = 0;
   while (i < diags.len()) {
     var d: Diag = diags[i];
     var tag: string = "";
     if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
-    out = out + tag + d.message + " (" + i32_to_string(d.line) + ":" + i32_to_string(d.col) + ")\n";
+    out = out + tag + d.message + " (" + pos_str(files, d.line, d.col) + ")\n";
     i = i + 1;
   }
   return out;

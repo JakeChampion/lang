@@ -996,18 +996,24 @@ function scan_fstring(l: Lex, start_line: i32, start_col: i32): NumResult {
 // for comments. Callers that want them (doc extraction, formatting) call
 // tokenize_full.
 pub function tokenize(src: string): Token[] {
-    return tokenize_impl(src, false).tokens;
+    return tokenize_impl(src, false, 1).tokens;
+}
+
+// tokenize_from numbers the first line `first_line`: a bundle's imported
+// module starts at its util.line_base.
+pub function tokenize_from(src: string, first_line: i32): Token[] {
+    return tokenize_impl(src, false, first_line).tokens;
 }
 
 // tokenize_full is the top-level entrypoint. Mirrors the Go lexer's
 // `Tokenize` — a Token[] terminated by TokEof, plus the `//` comments
 // seen along the way, in source order.
 pub function tokenize_full(src: string): LexResult {
-    return tokenize_impl(src, true);
+    return tokenize_impl(src, true, 1);
 }
 
-function tokenize_impl(src: string, keep: boolean): LexResult {
-    var l: Lex = Lex { src: src, i: 0, n: src.len(), line: 1, col: 1 };
+function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
+    var l: Lex = Lex { src: src, i: 0, n: src.len(), line: first_line, col: 1 };
     var out: Token[] = [];
     var comments: Comment[] = [];
     // Tracks whether the previously-emitted token was a `.` punct,
