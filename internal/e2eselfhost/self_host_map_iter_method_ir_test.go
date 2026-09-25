@@ -45,8 +45,8 @@ function main(): i32 { return f(); }`
 	if err != nil || len(asm) == 0 {
 		t.Fatalf("driver failed: %v", err)
 	}
-	// The iterator box is allocated inline.
-	if !strings.Contains(string(asm), "movq $16, %rdi") {
+	// The iterator is an rc-headed two-slot box, allocated inline.
+	if !strings.Contains(string(asm), "movq $2, %rdi\n    call __fern_arr_box") {
 		t.Fatal("map_iter did not reach the IR path (no inline iterator-box alloc in asm)")
 	}
 	progBin := buildBin(t, gcc, dir, "map_iter_method", string(asm))
