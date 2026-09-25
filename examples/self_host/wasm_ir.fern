@@ -1441,8 +1441,10 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
 // releases a cursor. A module can hold a cursor it did not make, a consumed
 // `MapIter` parameter, so the op that makes one is not enough to gate on.
 pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
-    function is_cursor_op(o: ir.Op): boolean { return o.kind_tag >= 133 && o.kind_tag <= 137; }
-    return any_op(cache, is_cursor_op) || module_calls_direct(cache, "__fern_mapiter_free");
+    for kind in ["map_iter", "mapiter_has_next", "mapiter_key", "mapiter_value", "mapiter_advance"] {
+        if (module_emits_op_cached(cache, kind)) { return true; }
+    }
+    return module_calls_direct(cache, "__fern_mapiter_free");
 }
 
 // module_uses_map_w64 reports whether any function emits an 8-byte-VALUED map op
