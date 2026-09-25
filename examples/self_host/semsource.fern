@@ -956,10 +956,13 @@ function record_type(sig: checker.StructSig): typeinfo.Type {
 
 // A variant literal supplies its payload fields in declaration order; the
 // value is its enum.
-function variant(name: string, whole: typeinfo.Type, args: ast.Expr[], s: State): Value {
+function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: State): Value {
     var layout: i32 = union_layout(s, union_name(whole));
     if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) { return refused(s, "unsupported variant literal"); }
     var shape: Payloads = literal_payloads(s, whole, name, layout);
+    // A `void` payload's literal writes `Ok(())`: the one argument carries nothing.
+    var args: ast.Expr[] = written;
+    if (shape.unit && written.len() == 1 && parser.is_unit_expr(written[0])) { args = []; }
     if (!shape.found || !semtypes.concrete(whole, false) || args.len() != shape.types.len()) { return refused(s, "unsupported variant literal"); }
     var ids: i32[] = [];
     var i: i32 = 0;

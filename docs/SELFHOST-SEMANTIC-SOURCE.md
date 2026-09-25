@@ -2142,7 +2142,9 @@ What is left, in order:
    and a string byte a `u8` widened with `as`. Done: `chr`, `str_concat`, the
    integer `to_string` helpers, the string and string-array helpers, the
    stdio writers, the process, clock and random leaves, and the filesystem
-   bundle's `io_error`, `sync`, `umask` and `priority`.
+   bundle's `io_error`, `sync`, `umask`, `priority` and its path-taking
+   leaves (`create_dir`, `remove_file`, `rename`, `chmod`, `truncate`, the
+   link, ownership, credential and signal leaves).
 
    The AST lowering still lowers every helper when the typed path is off, so
    it takes the retyped spellings as well: a 64-bit syscall operand lowers at

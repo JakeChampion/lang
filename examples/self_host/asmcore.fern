@@ -1652,7 +1652,7 @@ pub function rt_src_process_alive(t: string): string {
 // the helper never saw the text its caller parsed the pid out of; a decimal
 // spelling of `pid` would not be the operand either.
 pub function rt_src_signal_send(t: string): string {
-    return "function __fern_signal_send(pid: i32, sig: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid, sig, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+    return "function __fern_signal_send(pid: i32, sig: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "kill") + ", pid as i64, sig as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_set_process_group backs `set_process_group(pid, pgid)`
@@ -1667,7 +1667,7 @@ pub function rt_src_signal_send(t: string): string {
 // names a variant for, so each becomes Other("", strerror) - the path is
 // empty because the helper took two integers and never saw a file.
 pub function rt_src_set_process_group(t: string): string {
-    return "function __fern_set_process_group(pid: i32, pgid: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpgid") + ", pid, pgid, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+    return "function __fern_set_process_group(pid: i32, pgid: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpgid") + ", pid as i64, pgid as i64, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_rlimit_nofile backs `rlimit_nofile()` (syscall-leaf) -> the SOFT
@@ -2118,7 +2118,7 @@ pub function rt_src_utf8_valid(): string {
 // FRESH path string, so the borrowed `path` param is never stored. Same body on
 // every native target; only the unlinkat number and AT_FDCWD come from `t`.
 pub function rt_src_remove_file(t: string): string {
-    return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_remove_file(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_create_dir_all backs `create_dir_all(path)` (#2649, syscall-leaf) →
@@ -2163,7 +2163,7 @@ pub function needs_any(s: EmitState, names: string[]): boolean {
 }
 
 pub function rt_src_chdir(t: string): string {
-    return "function __fern_chdir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz, 0, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_chdir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chdir") + ", pathz as i64, 0, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_chroot backs `chroot(path)` → Result[void, IoError]. chroot(2), the
@@ -2174,7 +2174,7 @@ pub function rt_src_chdir(t: string): string {
 // EPERM is the answer for any caller without CAP_SYS_CHROOT, which is what
 // `chroot: cannot change root directory to 'x'` reports (#9678).
 pub function rt_src_chroot(t: string): string {
-    return "function __fern_chroot(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chroot") + ", pathz, 0, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_chroot(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "chroot") + ", pathz as i64, 0, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_setuid and rt_src_setgid back `setuid(id)` / `setgid(id)` →
@@ -2198,7 +2198,7 @@ pub function rt_src_setgid(t: string): string {
 }
 
 function rt_src_cred_set(t: string, name: string): string {
-    return "function __fern_" + name + "(id: i64): Result[void, IoError] { if (id < 0) { return Err(__fern_io_error(22, \"\")); } if (id > 4294967295) { return Err(__fern_io_error(22, \"\")); } var rc: i32 = __syscall3(" + sysno(t, name) + ", id as i32, 0, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+    return "function __fern_" + name + "(id: i64): Result[void, IoError] { if (id < 0) { return Err(__fern_io_error(22, \"\")); } if (id > 4294967295) { return Err(__fern_io_error(22, \"\")); } var rc: i32 = __syscall3(" + sysno(t, name) + ", (id as i32) as i64, 0, 0) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_setgroups backs `setgroups(gids)` → Result[void, IoError]: the
@@ -2211,7 +2211,7 @@ function rt_src_cred_set(t: string, name: string): string {
 // supplementary groups" — and the one `chroot --groups=""` makes, so it
 // reaches the kernel rather than answering Ok without asking.
 pub function rt_src_setgroups(t: string): string {
-    return "function __fern_setgroups(gids: i64[]): Result[void, IoError] { var n: i32 = gids.len(); if (n == 0) { var rc0: i32 = __syscall3(" + sysno(t, "setgroups") + ", 0, 0, 0); if (rc0 < 0) { return Err(__fern_io_error(0 - rc0, \"\")); } return Ok(()); } var v: i32 = 0; while (v < n) { if (gids[v] < 0) { return Err(__fern_io_error(22, \"\")); } if (gids[v] > 4294967295) { return Err(__fern_io_error(22, \"\")); } v = v + 1; } var buf: i32 = __raw_alloc(n * 4); var i: i32 = 0; while (i < n) { var g: i64 = gids[i]; __raw_store8(buf, i * 4, (g % 256) as u8); __raw_store8(buf, i * 4 + 1, ((g / 256) % 256) as u8); __raw_store8(buf, i * 4 + 2, ((g / 65536) % 256) as u8); __raw_store8(buf, i * 4 + 3, ((g / 16777216) % 256) as u8); i = i + 1; } var rc: i32 = __syscall3(" + sysno(t, "setgroups") + ", n, buf, 0); var buf_own: string = __raw_string(buf, n * 4); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+    return "function __fern_setgroups(gids: i64[]): Result[void, IoError] { var n: i32 = gids.len(); if (n == 0) { var rc0: i32 = __syscall3(" + sysno(t, "setgroups") + ", 0, 0, 0) as i32; if (rc0 < 0) { return Err(__fern_io_error(0 - rc0, \"\")); } return Ok(()); } var v: i32 = 0; while (v < n) { if (gids[v] < 0) { return Err(__fern_io_error(22, \"\")); } if (gids[v] > 4294967295) { return Err(__fern_io_error(22, \"\")); } v = v + 1; } var buf: usize = __raw_alloc(n * 4); var i: i32 = 0; while (i < n) { var g: i64 = gids[i]; __raw_store8(buf, i * 4, (g % 256) as i32); __raw_store8(buf, i * 4 + 1, ((g / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((g / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((g / 16777216) % 256) as i32); i = i + 1; } var rc: i32 = __syscall3(" + sysno(t, "setgroups") + ", n as i64, buf as i64, 0) as i32; var buf_own: string = __raw_string(buf, n * 4); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_signal_mask backs `signal_mask(how, mask)` (#9090, syscall-leaf) →
@@ -2246,7 +2246,7 @@ pub function rt_src_signal_disposition_read(t: string): string {
 }
 
 pub function rt_src_create_dir(t: string): string {
-    return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz, mode); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_create_dir(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "mkdirat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_remove_dir backs `remove_dir(path)` (#8883, syscall-leaf) →
@@ -2254,7 +2254,7 @@ pub function rt_src_create_dir(t: string): string {
 // rmdir(2): a non-empty directory is ENOTEMPTY and a regular file ENOTDIR,
 // both reaching the caller rather than being folded away.
 pub function rt_src_remove_dir(t: string): string {
-    return "function __fern_remove_dir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz, " + at_removedir(t) + "); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_remove_dir(path: string): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_removedir(t) + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_create_link backs `create_link(target, path)` (#8883, syscall-leaf) →
@@ -2268,7 +2268,7 @@ pub function rt_src_remove_dir(t: string): string {
 // text to prove the pointer __raw_string boxes came from __raw_alloc, and a
 // binding it cannot see is a binding it cannot check (#7351).
 pub function rt_src_create_link(t: string): string {
-    return "function __fern_create_link(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz, " + at_fdcwd(t) + ", pathz, 0); var targetz_own: string = __raw_string(targetz, tlen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_create_link(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: usize = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j] as i32); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz as i64, " + at_fdcwd(t) + ", pathz as i64, 0) as i32; var targetz_own: string = __raw_string(targetz, tlen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_create_symlink backs `create_symlink(target, path)` (#8883,
@@ -2276,7 +2276,7 @@ pub function rt_src_create_link(t: string): string {
 // the target is stored verbatim and never resolved, so it takes no dirfd of
 // its own and a link to something absent is created without complaint.
 pub function rt_src_create_symlink(t: string): string {
-    return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: i32 = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j]); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz, " + at_fdcwd(t) + ", pathz); var targetz_own: string = __raw_string(targetz, tlen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_create_symlink(target: string, path: string): Result[void, IoError] { var tlen: i32 = target.len(); var targetz: usize = __raw_alloc(tlen + 1); var j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j] as i32); j = j + 1; } __raw_store8(targetz, tlen, 0); var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "symlinkat") + ", targetz as i64, " + at_fdcwd(t) + ", pathz as i64) as i32; var targetz_own: string = __raw_string(targetz, tlen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_rename backs `rename(old, new)` (#9059, syscall-leaf) →
@@ -2288,7 +2288,7 @@ pub function rt_src_create_symlink(t: string): string {
 // Both operands are NUL-terminated here rather than through a shared preamble,
 // for rt_src_create_link's reason (#7351).
 pub function rt_src_rename(t: string): string {
-    return "function __fern_rename(old: string, newp: string): Result[void, IoError] { var olen: i32 = old.len(); var oldz: i32 = __raw_alloc(olen + 1); var j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j]); j = j + 1; } __raw_store8(oldz, olen, 0); var plen: i32 = newp.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "renameat") + ", " + at_fdcwd(t) + ", oldz, " + at_fdcwd(t) + ", pathz); var oldz_own: string = __raw_string(oldz, olen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_rename(old: string, newp: string): Result[void, IoError] { var olen: i32 = old.len(); var oldz: usize = __raw_alloc(olen + 1); var j: i32 = 0; while (j < olen) { __raw_store8(oldz, j, old[j] as i32); j = j + 1; } __raw_store8(oldz, olen, 0); var plen: i32 = newp.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, newp[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "renameat") + ", " + at_fdcwd(t) + ", oldz as i64, " + at_fdcwd(t) + ", pathz as i64) as i32; var oldz_own: string = __raw_string(oldz, olen + 1); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_read_link backs `read_link(path)` (#8883, syscall-leaf) →
@@ -2315,7 +2315,7 @@ pub function rt_src_read_link(t: string): string {
 // Darwin's takes a flags word, and 0 is the follow-a-final-symlink behaviour
 // chmod(1) has. One __syscall4 therefore serves both.
 pub function rt_src_chmod(t: string): string {
-    return "function __fern_chmod(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_chmod(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_chmod_at backs `chmod_at(path, mode, follow)` (syscall-leaf) →
@@ -2329,12 +2329,12 @@ pub function rt_src_chmod(t: string): string {
 // has no mode on Linux, and the kernel's EOPNOTSUPP (ENOSYS below fchmodat2)
 // reaches the caller as the Err rather than a silent Ok.
 pub function rt_src_chmod_at(t: string): string {
-    var head: string = "function __fern_chmod_at(path: string, mode: i32, follow: boolean): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = 0; ";
+    var head: string = "function __fern_chmod_at(path: string, mode: i32, follow: boolean): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = 0; ";
     var tail: string = " var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
     if (t == "arm64-darwin") {
-        return head + "var fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, fl);" + tail;
+        return head + "var fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, fl as i64) as i32;" + tail;
     }
-    return head + "if (follow) { rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, 0); } else { rc = __syscall4(" + sysno(t, "fchmodat2") + ", " + at_fdcwd(t) + ", pathz, mode & 4095, " + at_symlink_nofollow(t) + "); }" + tail;
+    return head + "if (follow) { rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, 0) as i32; } else { rc = __syscall4(" + sysno(t, "fchmodat2") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, " + at_symlink_nofollow(t) + ") as i32; }" + tail;
 }
 
 // rt_src_truncate backs `truncate(path, length)` (syscall-leaf) →
@@ -2347,7 +2347,7 @@ pub function rt_src_chmod_at(t: string): string {
 // the kernel's EINVAL, where a clamp would resize to something the caller did
 // not name.
 pub function rt_src_truncate(t: string): string {
-    return "function __fern_truncate(path: string, length: i64): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "truncate") + ", pathz, length, 0); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_truncate(path: string, length: i64): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall3(" + sysno(t, "truncate") + ", pathz as i64, length as i64, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_mknod backs `mknod(path, mode, major, minor)` (syscall-leaf) →
@@ -2379,9 +2379,9 @@ pub function rt_src_truncate(t: string): string {
 // fields are disjoint, so the sum is the union.
 pub function rt_src_mknod(t: string): string {
     if (t == "arm64-darwin") {
-        return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 16777215) as i64) + (((major & 255) as i64) * (16777216 as i64)); var m: i32 = mode; if (major < 0 || major > 255 || minor < 0 || minor > 16777215) { m = 61440; } var rc: i32 = __syscall3(" + sysno(t, "mknodat") + ", pathz, m, dev); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+        return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 16777215) as i64) + (((major & 255) as i64) * (16777216 as i64)); var m: i32 = mode; if (major < 0 || major > 255 || minor < 0 || minor > 16777215) { m = 61440; } var rc: i32 = __syscall3(" + sysno(t, "mknodat") + ", pathz as i64, m as i64, dev as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
     }
-    return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 255) as i64) + (((major & 4095) as i64) * (256 as i64)) + (((minor & 1048320) as i64) * (4096 as i64)); var m: i32 = mode; if (major < 0 || major > 4095 || minor < 0 || minor > 1048575) { m = 61440; } var rc: i32 = __syscall4(" + sysno(t, "mknodat") + ", " + at_fdcwd(t) + ", pathz, m, dev); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var dev: i64 = ((minor & 255) as i64) + (((major & 4095) as i64) * (256 as i64)) + (((minor & 1048320) as i64) * (4096 as i64)); var m: i32 = mode; if (major < 0 || major > 4095 || minor < 0 || minor > 1048575) { m = 61440; } var rc: i32 = __syscall4(" + sysno(t, "mknodat") + ", " + at_fdcwd(t) + ", pathz as i64, m as i64, dev as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_chown_at backs `chown_at(path, uid, gid, follow)` (syscall-leaf) →
@@ -2397,7 +2397,7 @@ pub function rt_src_mknod(t: string): string {
 // which is the 0xffffffff `uid_t` the kernel compares against — so `chgrp` is
 // this call with the uid left at -1 and no special case anywhere.
 pub function rt_src_chown_at(t: string): string {
-    return "function __fern_chown_at(path: string, uid: i32, gid: i32, follow: boolean): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } var rc: i32 = __syscall5(" + sysno(t, "fchownat") + ", " + at_fdcwd(t) + ", pathz, uid, gid, fl); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_chown_at(path: string, uid: i32, gid: i32, follow: boolean): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } var rc: i32 = __syscall5(" + sysno(t, "fchownat") + ", " + at_fdcwd(t) + ", pathz as i64, uid as i64, gid as i64, fl as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_set_file_times backs `set_file_times(path, atime_sec, atime_nsec,
@@ -2438,9 +2438,9 @@ pub function rt_src_chown_at(t: string): string {
 // why the flag byte is written straight there. Bit 0 is FSOPT_NOFOLLOW (1).
 pub function rt_src_set_file_times(t: string): string {
     if (t == "arm64-darwin") {
-        return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 24) != 0) { " + clock_read(t, "0") + " if ((flags & 8) != 0) { a0 = sec; a1 = sub * (1000 as i64); } if ((flags & 16) != 0) { m0 = sec; m1 = sub * (1000 as i64); } } var al: i32 = __raw_scratch(64); var z: i32 = 0; while (z < 24) { __raw_store8(al, z, 0); z = z + 1; } __raw_store8(al, 0, 5); var buf: i32 = __raw_addr(al, 32); var n: i32 = 0; var hi: i32 = 0; if ((flags & 4) == 0) { hi = hi + 4; __store_i64(__raw_addr(buf, n), m0); __store_i64(__raw_addr(buf, n + 8), m1); n = n + 16; } if ((flags & 2) == 0) { hi = hi + 16; __store_i64(__raw_addr(buf, n), a0); __store_i64(__raw_addr(buf, n + 8), a1); n = n + 16; } __raw_store8(al, 5, hi); var opt: i32 = 0; if ((flags & 1) != 0) { opt = 1; } if ((flags & 30) == 24) { opt = opt | 64; } var rc: i32 = __syscall5(" + sysno(t, "setattrlist") + ", pathz, al, buf, n, opt); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+        return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 24) != 0) { " + clock_read(t, "0") + " if ((flags & 8) != 0) { a0 = sec; a1 = sub * (1000 as i64); } if ((flags & 16) != 0) { m0 = sec; m1 = sub * (1000 as i64); } } var al: usize = __raw_scratch(64); var z: i32 = 0; while (z < 24) { __raw_store8(al, z, 0); z = z + 1; } __raw_store8(al, 0, 5); var buf: usize = __raw_addr(al, 32); var n: i32 = 0; var hi: i32 = 0; if ((flags & 4) == 0) { hi = hi + 4; __store_i64(__raw_addr(buf, n), m0); __store_i64(__raw_addr(buf, n + 8), m1); n = n + 16; } if ((flags & 2) == 0) { hi = hi + 16; __store_i64(__raw_addr(buf, n), a0); __store_i64(__raw_addr(buf, n + 8), a1); n = n + 16; } __raw_store8(al, 5, hi); var opt: i32 = 0; if ((flags & 1) != 0) { opt = 1; } if ((flags & 30) == 24) { opt = opt | 64; } var rc: i32 = __syscall5(" + sysno(t, "setattrlist") + ", pathz as i64, al as i64, buf as i64, n as i64, opt as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
     }
-    return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 8) != 0) { a0 = (0 as i64); a1 = (1073741823 as i64); } if ((flags & 16) != 0) { m0 = (0 as i64); m1 = (1073741823 as i64); } if ((flags & 2) != 0) { a0 = (0 as i64); a1 = (1073741822 as i64); } if ((flags & 4) != 0) { m0 = (0 as i64); m1 = (1073741822 as i64); } var ts: i32 = __raw_scratch(32); __store_i64(ts, a0); __store_i64(__raw_addr(ts, 8), a1); __store_i64(__raw_addr(ts, 16), m0); __store_i64(__raw_addr(ts, 24), m1); var kf: i32 = 0; if ((flags & 1) != 0) { kf = 256; } var rc: i32 = __syscall4(" + sysno(t, "utimensat") + ", " + at_fdcwd(t) + ", pathz, ts, kf); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var a0: i64 = asec; var a1: i64 = ansec; var m0: i64 = msec; var m1: i64 = mnsec; if ((flags & 8) != 0) { a0 = (0 as i64); a1 = (1073741823 as i64); } if ((flags & 16) != 0) { m0 = (0 as i64); m1 = (1073741823 as i64); } if ((flags & 2) != 0) { a0 = (0 as i64); a1 = (1073741822 as i64); } if ((flags & 4) != 0) { m0 = (0 as i64); m1 = (1073741822 as i64); } var ts: usize = __raw_scratch(32); __store_i64(ts, a0); __store_i64(__raw_addr(ts, 8), a1); __store_i64(__raw_addr(ts, 16), m0); __store_i64(__raw_addr(ts, 24), m1); var kf: i32 = 0; if ((flags & 1) != 0) { kf = 256; } var rc: i32 = __syscall4(" + sysno(t, "utimensat") + ", " + at_fdcwd(t) + ", pathz as i64, ts as i64, kf as i64) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_umask backs `umask(mask)` (#8883, syscall-leaf) → the previous mask.
@@ -2476,7 +2476,7 @@ pub function rt_src_priority(t: string): string {
 // variant for, so each arrives as Other("", strerror) — the empty path being
 // honest, since the op never saw the text its caller parsed the value from.
 pub function rt_src_set_priority(t: string): string {
-    return "function __fern_set_priority(nice: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpriority") + ", 0, 0, nice); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+    return "function __fern_set_priority(nice: i32): Result[void, IoError] { var rc: i32 = __syscall3(" + sysno(t, "setpriority") + ", 0, 0, nice as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_write_file backs `write_file(path, contents)` (#2649, syscall-leaf) →
@@ -3063,7 +3063,7 @@ pub function rt_src_statfs(t: string): string {
 // One body for all three targets, same as stat: only the syscall number, the
 // AT_FDCWD constant and the AT_EACCESS constant come from `t`.
 pub function rt_src_access(t: string): string {
-    return "function __fern_access(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "faccessat") + ", " + at_fdcwd(t) + ", pathz, mode, " + at_eaccess(t) + "); var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
+    return "function __fern_access(path: string, mode: i32): Result[void, IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var rc: i32 = __syscall4(" + sysno(t, "faccessat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64, " + at_eaccess(t) + ") as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz, plen))); } return Ok(()); }";
 }
 
 // rt_src_hostname backs `hostname()` on Linux → the kernel's node name as a
