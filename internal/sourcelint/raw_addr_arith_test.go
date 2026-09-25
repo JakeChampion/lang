@@ -17,8 +17,9 @@ import (
 // `0x100000000` — the address lands in unmapped memory and the access faults
 // (#6386: `__load_i32(buf + 4)` on `__raw_scratch`'s buffer).
 //
-// The address argument therefore has to be a bare pointer or `__raw_addr(p,
-// off)`, which does the add at full pointer width. The two-argument load/stores
+// The address argument therefore has to be a bare pointer, `__raw_addr(p,
+// off)`, which does the add at full pointer width, or `__raw_arr_ptr(a)`, an
+// array's box address with no arithmetic at all. The two-argument load/stores
 // fold their own `off` into the addressing mode; the ONE-argument
 // `__load_i32` / `__load_i64` / `__load_ptr` have no offset operand, which is
 // how #6386 happened.
@@ -50,6 +51,10 @@ var addrTakingIntrinsics = []string{
 // shape) keeps the seam in the middle and is rejected.
 var bareAddrArgRe = regexp.MustCompile(`^(?:"\s*\+\s*)?[A-Za-z_][A-Za-z0-9_]*(?:\s*\+\s*")?$`)
 
+// arrPtrArgRe matches `__raw_arr_ptr(name)`, which lends an array's box address
+// at full width.
+var arrPtrArgRe = regexp.MustCompile(`^__raw_arr_ptr\([A-Za-z_][A-Za-z0-9_]*\)$`)
+
 func TestAsmcoreAddressesAvoidI32Arithmetic(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -70,7 +75,7 @@ func TestAsmcoreAddressesAvoidI32Arithmetic(t *testing.T) {
 				continue
 			}
 			arg = strings.TrimSpace(arg)
-			if strings.HasPrefix(arg, "__raw_addr(") || bareAddrArgRe.MatchString(arg) {
+			if strings.HasPrefix(arg, "__raw_addr(") || bareAddrArgRe.MatchString(arg) || arrPtrArgRe.MatchString(arg) {
 				continue
 			}
 			t.Errorf("asmcore.fern:%d: %s's address argument is `%s` — i32 arithmetic on a raw "+
