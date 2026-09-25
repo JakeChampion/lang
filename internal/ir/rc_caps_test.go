@@ -105,9 +105,10 @@ func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 }
 
 // The owned-by-default shape is gated on the deep drop being WIRED, not on
-// the value being string/array-free: an array-, string- or closure-carrying
-// enum or struct is owned like a box-only one, a non-uniform enum too, and
-// Map / unknown / generic-erased shapes stay borrowed.
+// the value being string/array-free: an array- or string-carrying enum or
+// struct, and a struct or tuple holding a closure, is owned like a box-only
+// one, a non-uniform enum too. Map / unknown / generic-erased shapes and a
+// closure-payload enum stay borrowed.
 func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 	b := capsTestBuilder()
 	i32 := ast.NumberType{}
