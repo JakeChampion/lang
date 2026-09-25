@@ -1385,15 +1385,6 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"trim-empty", `function main(): i32 { return "".trim().len() + 7; }`},
 		{"trim-leading", `function main(): i32 { var t = "   xy".trim(); return t.len() * 10 + t[0]; }`},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`},
-		// String reverse → fresh string with bytes reversed (op_str_reverse). AST
-		// path emits __fern_str_reverse (str_reverse runtime); IR path emits
-		// emit_ir_str_reverse — same content/length.
-		{"reverse-len", `function main(): i32 { return "hello".reverse().len(); }`},
-		{"reverse-first", `function main(): i32 { var r = "abc".reverse(); return r[0]; }`},
-		{"reverse-last", `function main(): i32 { var r = "abc".reverse(); return r[2]; }`},
-		{"reverse-empty", `function main(): i32 { return "".reverse().len() + 4; }`},
-		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`},
-		{"reverse-param", `function rev(s: string): i32 { return s.reverse()[0]; } function main(): i32 { return rev("xyz"); }`},
 		// String replace -> fresh string with every occurrence of old swapped for
 		// new (op_str_replace). AST path emits __fern_str_replace; IR path emits
 		// emit_ir_str_replace -- same content/length.
@@ -1424,15 +1415,6 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"free-replace-grow", `function main(): i32 { var t = str_replace("aaa", "a", "bb"); return t.len(); }`},
 		{"free-nested", `function main(): i32 { var t = str_trim(str_to_upper("  ab  ")); return t.len(); }`},
 		{"free-concat", `function main(): i32 { var t = str_to_upper("ab") + "Z"; return t.len(); }`},
-		// str_to_i32(s): parse a string box to an i32 (the inverse of
-		// i32_to_string). Allocation-free; the IR stack-ABI body must agree with
-		// asm.fern's register-ABI __fern_str_to_i32. Covers plain, negative,
-		// trailing-junk, empty (->0), and the i32_to_string round-trip.
-		{"str2i32-basic", `function main(): i32 { return str_to_i32("42"); }`},
-		{"str2i32-neg", `function main(): i32 { var n = str_to_i32("-5"); if (n < 0) { return 0 - n; } return n; }`},
-		{"str2i32-trailing", `function main(): i32 { return str_to_i32("12x9"); }`},
-		{"str2i32-empty", `function main(): i32 { return str_to_i32("") + 7; }`},
-		{"str2i32-roundtrip", `function main(): i32 { return str_to_i32(i32_to_string(99)); }`},
 		// chr(n): i32 byte -> 1-char string box. The IR stack-ABI body must agree
 		// with asm.fern's register-ABI __fern_chr. Covers len, indexed byte, and
 		// `+` concat of two chr results.

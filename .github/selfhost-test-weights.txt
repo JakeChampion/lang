@@ -70,7 +70,6 @@ TestSelfHostArm64NativeMmcMatchesCrossHost 87
 TestSelfHostArm64NativeViaGoBackend 2
 TestSelfHostArm64OffsetPairGas 2
 TestSelfHostArm64UnsignedDivIR 2
-TestSelfHostArrFieldBuiltinRecvIRX86_64 2
 TestSelfHostArrLenCallIRX86_64 2
 TestSelfHostArrOwnedRetReleaseIRArm64 2
 TestSelfHostArrOwnedRetReleaseWasmIR 2

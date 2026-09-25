@@ -55,7 +55,7 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 		asmSrc.Write(b)
 		asmSrc.WriteByte('\n')
 	}
-	asmSrc.WriteString(asmReadFileDriver)
+	asmSrc.WriteString(withPrintInt(asmReadFileDriver))
 	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
 	if len(asmWat) == 0 {
 		t.Fatal("binary assembler produced 0 bytes")
@@ -76,7 +76,7 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// source → preview1 core WAT → preview1 core binary
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
+			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("preview1 WAT empty")
 			}

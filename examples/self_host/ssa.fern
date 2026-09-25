@@ -213,8 +213,8 @@ function semantic_kind_name(id: i32): string {
         "str_index", "cast", "str_as", "with", "closure_new", "call_value", "cell_new", "cell_get", "cell_set",
         "map_new", "map_insert", "map_has", "map_get_or", "map_len", "map_get",
         "map_keys", "map_values", "map_delete", "map_cleared", "zero", "str_bytes",
-        "arr_sum", "arr_product", "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
-        "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up"];
+        "arr_join", "arr_slice", "map_iter", "mapiter_has_next",
+        "mapiter_key", "mapiter_value", "mapiter_advance", "dyn_up", "dyn_box"];
     var at: i32 = 0 - id - 1;
     if (at < 0 || at >= names.len()) { return "invalid"; }
     return names[at];

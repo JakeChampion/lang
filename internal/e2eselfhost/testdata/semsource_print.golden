@@ -1108,7 +1108,7 @@ func trimmed {
 }
 
 modes 2 result i32
-v0:string v1:string v2:i32 v3:string v4:i32 v5:i32 v6:string v7:i32 v8:i32
+v0:string v1:string v2:i32 v3:string v4:i32 v5:i32
 func shouted {
   b0:
     v0 = param 0
@@ -1117,10 +1117,7 @@ func shouted {
     v3 = call string.to_ascii_lower v0
     v4 = length v3
     v5 = binary + v2 v4
-    v6 = call string.reverse v0
-    v7 = length v6
-    v8 = binary + v5 v7
-    ret v8
+    ret v5
 }
 
 modes 2 2 result i32

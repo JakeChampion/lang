@@ -129,17 +129,13 @@ pub function zero(): i32 { return 0 - 35; }
 // the AST lowering allocates here too (ir.op_str_bytes) and the result is a
 // unit of this frame like any other fresh container.
 pub function str_bytes(): i32 { return 0 - 36; }
-// `xs.sum()` / `xs.product()` over an `i32[]`: the array is read and the answer
-// is a fresh i32 that owns nothing. `xs.join(sep)` over a `string[]` reads both
-// operands and answers a fresh string. Each is one runtime helper, the same one
-// the AST lowering calls.
-pub function arr_sum(): i32 { return 0 - 37; }
-pub function arr_product(): i32 { return 0 - 38; }
-pub function arr_join(): i32 { return 0 - 39; }
+// `xs.join(sep)` over a `string[]` reads both operands and answers a fresh
+// string: one runtime helper, the same one the AST lowering calls.
+pub function arr_join(): i32 { return 0 - 37; }
 // `xs[lo:hi]` on an array of scalars: a fresh array holding a copy of the
 // window, bounds-checked by the runtime. An array whose elements own something
 // is not admitted, since the runtime copies the words without a retain.
-pub function arr_slice(): i32 { return 0 - 40; }
+pub function arr_slice(): i32 { return 0 - 38; }
 
 // Map iteration. `map_iter` hands back the cursor: a fresh counted block that
 // the frame owns and releases, and that is still anchored to the map, since
@@ -148,20 +144,20 @@ pub function arr_slice(): i32 { return 0 - 40; }
 // `mapiter_has_next` answers the bound, `mapiter_key` and `mapiter_value` load
 // the element at the cursor WITHOUT retaining it, and `mapiter_advance` bumps
 // the stored index in place and answers void.
-pub function map_iter(): i32 { return 0 - 41; }
-pub function mapiter_has_next(): i32 { return 0 - 42; }
-pub function mapiter_key(): i32 { return 0 - 43; }
-pub function mapiter_value(): i32 { return 0 - 44; }
-pub function mapiter_advance(): i32 { return 0 - 45; }
+pub function map_iter(): i32 { return 0 - 39; }
+pub function mapiter_has_next(): i32 { return 0 - 40; }
+pub function mapiter_key(): i32 { return 0 - 41; }
+pub function mapiter_value(): i32 { return 0 - 42; }
+pub function mapiter_advance(): i32 { return 0 - 43; }
 // A `dyn Trait` value is the struct or enum box it was widened from, whose
 // shape at offset 0 is what a dispatch reads. The widening is a projection of
 // that box, so a holder of the result owns the box's unit, and its release
 // dispatches on the shape to the concrete's drop (`Func.dyns`).
-pub function dyn_up(): i32 { return 0 - 46; }
+pub function dyn_up(): i32 { return 0 - 44; }
 // A scalar or string widened to dyn has no shape of its own, so it is boxed:
 // a fresh cell laid out as a one-field record, whose shape is the primitive's
 // name (`str`) and whose field holds the value, owning a unit of a string.
-pub function dyn_box(): i32 { return 0 - 47; }
+pub function dyn_box(): i32 { return 0 - 45; }
 pub function is_map_iter_op(kind: i32): boolean {
     return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
         || kind == mapiter_value() || kind == mapiter_advance();
@@ -910,7 +906,7 @@ function is_builtin_op(kind: i32): boolean {
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
-    return kind == arr_sum() || kind == arr_product() || kind == arr_join();
+    return kind == arr_join();
 }
 
 pub function is_cell_op(kind: i32): boolean { return kind == cell_new() || kind == cell_get() || kind == cell_set(); }
@@ -931,18 +927,8 @@ function str_bytes_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "str bytes result";
 }
 
-// The reductions read an `i32[]` and answer a plain i32; the join reads a
-// `string[]` and a separator and answers a fresh string. None of the three
-// keeps an operand, so the receiver is borrowed as a length's is.
-function arr_reduce_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-    if (ins.args.len() != 1) { return "array reduce arity"; }
-    if (!is_i32(result)) { return "array reduce result"; }
-    if let typeinfo.TypeArray(a) = f.values[ins.args[0]] {
-        if (is_i32(a.elem)) { return ""; }
-    }
-    return "array reduce receiver";
-}
-
+// The join reads a `string[]` and a separator and answers a fresh string. It
+// keeps neither operand, so the receiver is borrowed as a length's is.
 function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 2) { return "array join arity"; }
     if (!is_string(result)) { return "array join result"; }
@@ -955,7 +941,6 @@ function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == arr_join()) { return arr_join_error(ins, f, result); }
-    if (ins.kind_tag == arr_sum() || ins.kind_tag == arr_product()) { return arr_reduce_error(ins, f, result); }
     if (ins.kind_tag == length()) { return length_error(ins, f, result); }
     if (ins.kind_tag == slice()) { return slice_error(ins, f, result); }
     if (ins.kind_tag == arr_slice()) { return arr_slice_error(ins, f, result); }

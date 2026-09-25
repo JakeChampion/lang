@@ -43,15 +43,6 @@ import "./ircore";
 // fl_base_for -> heap_base_for — so adding a literal shifts the freelist and
 // the heap rather than landing on them. heap_base is also the rc helpers'
 // low-address guard.
-//
-// There were fixed `fl_base()` / `heap_base()` siblings here, documented as
-// "the values the *_for functions produce when there are no literals". Nothing
-// ever called them, and they had not tracked the two constants they were
-// computed from: their comment derived 48 from str_region_base = 32 plus a
-// 16-byte print scratch, and both are 40 now, so the no-literal answer has
-// been 80 for some time. A stale duplicate of a derived quantity is the same
-// hazard as a hand-picked address (#6229) — deleted rather than re-derived,
-// since the derived path is what every caller already uses.
 pub function fl_cells(): i32 { return 65536; }
 
 // large_fl_cells is the LARGE tier's head-array length (#7735). The small
@@ -295,8 +286,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "now_ns")) { out = out.append("now_ns"); }
     if (module_emits_op_cached(cache, "now_unix_ms")) { out = out.append("now_unix_ms"); }
     if (module_emits_op_cached(cache, "poll")) { out = out.append("poll"); }
-    if (module_emits_op_cached(cache, "print_i64")) { out = out.append("print_i64"); }
-    if (module_emits_op_cached(cache, "print_int")) { out = out.append("print_int"); }
     if (module_emits_op_cached(cache, "print_str")) { out = out.append("print_str"); }
     if (module_emits_op_cached(cache, "putchar")) { out = out.append("putchar"); }
     if (module_emits_op_cached(cache, "random_bytes")) { out = out.append("random_bytes"); }
@@ -317,7 +306,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "read_dir_all")) { out = out.append("read_dir_all"); }
     if (module_emits_op_cached(cache, "read_file")) { out = out.append("read_file"); }
     if (module_emits_op_cached(cache, "read_file_bytes")) { out = out.append("read_file_bytes"); }
-    if (module_emits_op_cached(cache, "read_int")) { out = out.append("read_int"); }
     if (module_emits_op_cached(cache, "read_line")) { out = out.append("read_line"); }
     if (module_emits_op_cached(cache, "read_all_stdin")) { out = out.append("read_all_stdin"); }
     if (module_emits_op_cached(cache, "reader_close")) { out = out.append("reader_close"); }
@@ -376,7 +364,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
     if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
-    if (module_calls_arr_i32_helper(cache)) { out = out.append("@uses_arr_i32_helpers"); }
     if (module_uses_chr(cache)) { out = out.append("@uses_chr"); }
     if (module_uses_divrem(cache)) { out = out.append("@uses_divrem"); }
     if (module_uses_i32_to_string(cache)) { out = out.append("@uses_i32_to_string"); }
@@ -394,7 +381,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_str_lines(cache)) { out = out.append("@uses_str_lines"); }
     if (module_uses_str_repeat(cache)) { out = out.append("@uses_str_repeat"); }
     if (module_uses_str_replace(cache)) { out = out.append("@uses_str_replace"); }
-    if (module_uses_str_reverse(cache)) { out = out.append("@uses_str_reverse"); }
     if (module_uses_str_slice(cache)) { out = out.append("@uses_str_slice"); }
     if (module_uses_memchr(cache)) { out = out.append("@uses_memchr"); }
     if (module_uses_rmemchr(cache)) { out = out.append("@uses_rmemchr"); }
@@ -407,7 +393,6 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_scale_f64(cache)) { out = out.append("@uses_scale_f64"); }
     if (module_uses_crc32_cksum(cache)) { out = out.append("@uses_crc32_cksum"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
-    if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
     if (module_uses_strbuf(cache)) { out = out.append("@uses_strbuf"); }
     if (module_uses_buf(cache)) { out = out.append("@uses_buf"); }
@@ -536,20 +521,6 @@ function offset_of_value(vals: string[], v: string): i32 {
     return 0 - 1;
 }
 
-// print_scratch_bytes is the scratch reserved immediately above the string
-// literal region, for the two decimal-formatting buffers: 16 bytes for
-// $__fern_print_int at [end, end+16) and 24 for $__fern_print_int64 at
-// [end+16, end+40) (an i64's widest decimal is 20 chars plus a sign).
-//
-// It used to be 16 — print_int's alone — so $__fern_print_int64's buffer ran
-// 24 bytes INTO the freelist head array that starts at fl_base. A module that
-// printed an i64 and then allocated a small block popped a "free block pointer"
-// that was in fact the printed digits: `print_int(1234567890123)` followed by 50
-// two-field struct allocations trapped with `memory fault at wasm address
-// 0x3938373a` — ASCII "873:", the tail of the number. The i64-print suite never
-// caught it because none of its cases allocate after printing.
-pub function print_scratch_bytes(): i32 { return 40; }
-
 // ---- static aggregate constants (#6149) -------------------------------------
 // An aggregate literal whose every field is a compile-time scalar literal
 // (irlower's const_struct) is placed in the data section instead of allocated.
@@ -608,19 +579,18 @@ pub function const_agg_rel(cv: string[], idx: i32): i32 {
     return off;
 }
 
-// const_agg_region_base is where the constants start: above the string region
-// and its print scratch, 8-aligned. const_agg_offset is the absolute address of
+// const_agg_region_base is where the constants start: above the string region,
+// 8-aligned. const_agg_offset is the absolute address of
 // block `idx` in a flat (whole-program or linked) list.
 pub function const_agg_region_base(sv: string[]): i32 {
-    return (str_offset(sv, sv.len()) + print_scratch_bytes() + 7) / 8 * 8;
+    return (str_offset(sv, sv.len()) + 7) / 8 * 8;
 }
 pub function const_agg_offset(sv: string[], cv: string[], idx: i32): i32 {
     return const_agg_region_base(sv) + const_agg_rel(cv, idx);
 }
 
 // fl_base_for / heap_base_for recompute the freelist + heap bases from the
-// static data below them: the string literals, the print scratch, and the
-// aggregate constants. The *_for_strs variants take those lists directly rather
+// static data below them: the string literals and the aggregate constants. The *_for_strs variants take those lists directly rather
 // than deriving them from a cache (#5331 step 4b). A linked multi-unit module
 // lays every unit's literals and constants out contiguously in one flat list, so
 // there is no single cache to derive them from — but the arithmetic is
@@ -1247,182 +1217,6 @@ pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: 
     return out;
 }
 
-// arr_i32_fern_helper reports whether a call_direct callee is one of the i32
-// builtin helpers irlower lowers for every backend — xs.sum() / .product() /
-// .index_of() / .contains(), n.pow(k), n.gcd(m) / n.lcm(m), xs.min() / .max()
-// (#3457). On the
-// register backends their bodies are compiled from Fern source
-// (asmcore.rt_src_*) by asm_ir.emit_ir_runtime / asm_arm64.emit_runtime; wasm
-// has no such mechanism, so arr_i32_helpers below emits hand-written WAT
-// equivalents, gated on this scan. They were briefly DEFERRED to the wasm AST
-// path instead — which was never a real fallback, since that path does not
-// implement them either (it emits `i32.const 0` for xs.sum()).
-//
-// PARAMETER ORDER on the two-argument helpers is the reverse of the register
-// signature. irlower pushes the ARGUMENT first and the receiver second (the
-// register callees bind params in reverse push order, #5666), and a wasm `call`
-// binds the first-pushed value to param 0 — so the WAT signatures are
-// (target, xs) and (exp, base). wasm.arr_str_join_helper's `(param $sep i32)
-// (param $xs i32)` is the same convention.
-function arr_i32_fern_helper(name: string): boolean {
-    return name == "__fern_arr_i32_sum"
-        || name == "__fern_arr_i32_product"
-        || name == "__fern_i32_pow"
-        || name == "__fern_i32_gcd"
-        || name == "__fern_i32_lcm"
-        || name == "__fern_arr_i32_index_of"
-        || name == "__fern_arr_i32_index_of_opt"
-        || name == "__fern_arr_i32_min_opt"
-        || name == "__fern_arr_i32_max_opt";
-}
-
-// arr_i32_helpers is the WAT for that set. Array layout is $__fern_arr_box's —
-// [len@0][cap@4][elems@8], 4-byte i32 stride (see wasm.args_func, which builds
-// one) — and min/max return the same i32-payload Option box opt_make emits:
-// $__fern_str_box(8) with [tag@0][payload@4], tag 0 = Some, 1 = None. Emitted
-// as one block gated on @uses_arr_i32_helpers, mirroring the other helper
-// bundles; the cost of the unused members is a few hundred bytes of WAT in a
-// module that already uses one of them.
-pub function arr_i32_helpers(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arr_i32_sum (param $a i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $i i32) (local $s i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $s (i32.add (local.get $s) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $s))\n";
-    o = o + "  (func $__fern_arr_i32_product (param $a i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $i i32) (local $p i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "    (local.set $p (i32.const 1))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $p (i32.mul (local.get $p) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $p))\n";
-    // Not found is -1, matching asmcore.rt_src_arr_i32_index_of; `contains` is
-    // the `>= 0` test irlower emits around the result.
-    o = o + "  (func $__fern_arr_i32_index_of (param $t i32) (param $a i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $i i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (if (i32.eq (local.get $t) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "        (then (return (local.get $i))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (i32.const -1))\n";
-    // pow: exponent first (see the parameter-order note above). A negative
-    // exponent yields 0 and 0^0 yields 1, matching asmcore.rt_src_i32_pow.
-    o = o + "  (func $__fern_i32_pow (param $e i32) (param $b i32) (result i32)\n";
-    o = o + "    (local $r i32) (local $i i32)\n";
-    o = o + "    (local.set $r (i32.const 1))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $e)))\n";
-    o = o + "      (local.set $r (i32.mul (local.get $r) (local.get $b)))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $r))\n";
-    // gcd / lcm: Euclid on the absolute values, matching asmcore.rt_src_i32_gcd
-    // / _lcm and std/i32.gcd / .lcm. gcd(0, 0) == 0 and gcd(a, 0) == abs(a) fall
-    // out of the loop; lcm is 0 when either operand is 0. Both are symmetric, so
-    // the (other, n) parameter order above is not observable here — it is kept
-    // to match the register backends rather than because a test would catch it.
-    o = o + "  (func $__fern_i32_gcd (param $o i32) (param $n i32) (result i32)\n";
-    o = o + "    (local $a i32) (local $b i32) (local $t i32)\n";
-    o = o + "    (local.set $a (local.get $n))\n";
-    o = o + "    (if (i32.lt_s (local.get $a) (i32.const 0)) (then (local.set $a (i32.sub (i32.const 0) (local.get $a)))))\n";
-    o = o + "    (local.set $b (local.get $o))\n";
-    o = o + "    (if (i32.lt_s (local.get $b) (i32.const 0)) (then (local.set $b (i32.sub (i32.const 0) (local.get $b)))))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.eqz (local.get $b)))\n";
-    o = o + "      (local.set $t (local.get $b))\n";
-    o = o + "      (local.set $b (i32.rem_s (local.get $a) (local.get $b)))\n";
-    o = o + "      (local.set $a (local.get $t))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $a))\n";
-    o = o + "  (func $__fern_i32_lcm (param $o i32) (param $n i32) (result i32)\n";
-    o = o + "    (local $g i32) (local $q i32) (local $b i32)\n";
-    o = o + "    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))\n";
-    o = o + "    (if (i32.eqz (local.get $o)) (then (return (i32.const 0))))\n";
-    o = o + "    (local.set $g (call $__fern_i32_gcd (local.get $o) (local.get $n)))\n";
-    o = o + "    (local.set $q (i32.div_s (local.get $n) (local.get $g)))\n";
-    o = o + "    (if (i32.lt_s (local.get $q) (i32.const 0)) (then (local.set $q (i32.sub (i32.const 0) (local.get $q)))))\n";
-    o = o + "    (local.set $b (local.get $o))\n";
-    o = o + "    (if (i32.lt_s (local.get $b) (i32.const 0)) (then (local.set $b (i32.sub (i32.const 0) (local.get $b)))))\n";
-    o = o + "    (i32.mul (local.get $q) (local.get $b)))\n";
-    o = o + arr_i32_extremum_helper("min", "i32.lt_s");
-    o = o + arr_i32_extremum_helper("max", "i32.gt_s");
-    o = o + arr_i32_index_of_opt_helper();
-    return o;
-}
-
-// arr_i32_index_of_opt_helper backs `xs.index_of(x)` — the Option-returning
-// twin of $__fern_arr_i32_index_of above, which keeps the -1 sentinel for
-// `.contains`. Box layout and parameter order are the extremum helper's:
-// [tag@0][payload@4] with tag 0 = Some, and (target, xs) per the #5666 note.
-function arr_i32_index_of_opt_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arr_i32_index_of_opt (param $t i32) (param $a i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $i i32) (local $box i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "    (local.set $box (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (if (i32.eq (local.get $t) (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "        (then\n";
-    o = o + "          (i32.store (local.get $box) (i32.const 0))\n";
-    o = o + "          (i32.store (i32.add (local.get $box) (i32.const 4)) (local.get $i))\n";
-    o = o + "          (return (local.get $box))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (i32.store (local.get $box) (i32.const 1))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 0))\n";
-    o = o + "    (local.get $box))\n";
-    return o;
-}
-
-// arr_i32_extremum_helper is the shared min/max body: the empty-array guard and
-// the Option box live INSIDE the helper, exactly as they do in the Fern source
-// the register backends compile (asmcore.rt_src_arr_i32_min_max_opt), so the
-// call site is an unconditional call on every backend.
-function arr_i32_extremum_helper(which: string, cmp: string): string {
-    var o: string = "";
-    o = o + "  (func $__fern_arr_i32_" + which + "_opt (param $a i32) (result i32)\n";
-    o = o + "    (local $n i32) (local $i i32) (local $m i32) (local $e i32) (local $box i32)\n";
-    o = o + "    (local.set $n (i32.load (local.get $a)))\n";
-    o = o + "    (local.set $box (call $__fern_str_box (i32.const 8)))\n";
-    o = o + "    (if (i32.eqz (local.get $n))\n";
-    o = o + "      (then\n";
-    o = o + "        (i32.store (local.get $box) (i32.const 1))\n";
-    o = o + "        (i32.store (i32.add (local.get $box) (i32.const 4)) (i32.const 0))\n";
-    o = o + "        (return (local.get $box))))\n";
-    o = o + "    (local.set $m (i32.load (i32.add (local.get $a) (i32.const 8))))\n";
-    o = o + "    (local.set $i (i32.const 1))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $n)))\n";
-    o = o + "      (local.set $e (i32.load (i32.add (local.get $a) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4))))))\n";
-    o = o + "      (if (" + cmp + " (local.get $e) (local.get $m)) (then (local.set $m (local.get $e))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (i32.store (local.get $box) (i32.const 0))\n";
-    o = o + "    (i32.store (i32.add (local.get $box) (i32.const 4)) (local.get $m))\n";
-    o = o + "    (local.get $box))\n";
-    return o;
-}
-
-// module_calls_arr_i32_helper scans the lowered cache for a call to any of those
-// helpers — a callee-NAME scan rather than an op-kind one, so it cannot use
-// module_emits_op_cached. Drives the @uses_arr_i32_helpers need.
-pub function module_calls_arr_i32_helper(cache: irlower.LowerResult[]): boolean {
-    function is_arr_i32_call(o: ir.Op): boolean { return o.kind_tag == 149 && arr_i32_fern_helper(o.str); }  // call_direct
-    return any_op(cache, is_arr_i32_call);
-}
-
 // module_emits_op_cached reports whether any lowered function emits an op of
 // `kind` — the shared scanner the random/byte-source helper gates use (issue
 // #2747). It reads the pre-lowered cache (lower_all_for) rather than re-lowering
@@ -1475,11 +1269,6 @@ pub function module_uses_str_trim(cache: irlower.LowerResult[]): boolean {
     return module_emits_op_cached(cache, "str_trim");
 }
 
-// module_uses_str_reverse reports whether any function emits the str_reverse op,
-// so wasm.str_reverse_helper is emitted for the IR path. (IR-only, like trim.)
-pub function module_uses_str_reverse(cache: irlower.LowerResult[]): boolean {
-    return module_emits_op_cached(cache, "str_reverse");
-}
 
 // module_uses_str_replace reports whether any function emits the str_replace op,
 // so wasm.str_replace_helper is emitted for the IR path. (IR-only, like trim.)
@@ -1533,13 +1322,6 @@ pub function module_uses_u32_to_string(cache: irlower.LowerResult[]): boolean {
 // helper (@uses_arr_str_join).
 pub function module_calls_arr_str_join(cache: irlower.LowerResult[]): boolean {
     return module_calls_direct(cache, "__fern_arr_str_join");
-}
-
-// module_uses_str_to_i32 reports whether any function emits the str_to_i32(s)
-// runtime call — so wasm.str_to_i32_helper is emitted. Allocation-free, so it
-// has no heap dependency.
-pub function module_uses_str_to_i32(cache: irlower.LowerResult[]): boolean {
-    return module_calls_direct(cache, "__fern_str_to_i32");
 }
 
 // module_uses_strbuf reports whether any function emits a global string-builder
@@ -1660,12 +1442,12 @@ pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
 // every backend; wasm lowers them through a funcref table (fn_support_section),
 // the register backends through the function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
-    // read_line / read_int / args / read_file / write_file all lower on the wasm
-    // IR path now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in the
-    // matching wasi imports + helpers when the module uses them. read_line /
-    // read_int read stdin (fd 0) via fd_read — read_line boxes the line (newline
-    // stripped), read_int parses a leading integer; args() reads argv (wasmtime
-    // supplies it, argv[0] = program name); read_file / write_file open paths
+    // read_line / args / read_file / write_file all lower on the wasm IR path
+    // now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in the
+    // matching wasi imports + helpers when the module uses them. read_line reads
+    // stdin (fd 0) via fd_read and boxes the line (newline stripped); args()
+    // reads argv (wasmtime supplies it, argv[0] = program name); read_file /
+    // write_file open paths
     // under preopen fd 3 (run with `--dir`), returning Result[string, IoError] /
     // Result[(), IoError]. read_chunk / reader_close (the streaming reader API) now
     // lower on the wasm IR path too: wasm_ir emits `call $__fern_reader_read_chunk`
@@ -1932,11 +1714,6 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // backends compile it from asmcore Fern source, and wasm now serves it
         // with the $__fern_{i64,u64}_to_str WAT bodies (i64_to_string_helper /
         // u64_to_string_helper), gated on @uses_{i64,u64}_to_string.
-        // The i32 builtin helpers (sum / product / pow / index_of / contains /
-        // min / max) are NO LONGER deferred: wasm_ir.arr_i32_helpers emits WAT
-        // bodies for them, gated on @uses_arr_i32_helpers. Deferring them was
-        // never a real fallback anyway — the AST path did not implement them
-        // either (xs.sum() emitted `i32.const 0` there).
         // xs.join(sep) NOW lowers on the wasm IR path (#5328): the register
         // backends' __fern_arr_str_join runtime call is served by a matching
         // $__fern_arr_str_join shim over the $__fern_str_join WAT worker
@@ -2045,8 +1822,8 @@ pub function component_refused_need(needs: string[], io: boolean): string {
         // which mode 2 emits; with no io there is no import to satisfy it.
         if (n == "@uses_random") { if (io) { i = i + 1; continue; } return n; }
         if (n[0] == 64) { i = i + 1; continue; }   // 64 = '@': a pure predicate
-        if (io && (n == "print_int" || n == "print_i64" || n == "print_str"
-            || n == "eprint_str" || n == "putchar" || n == "exit")) { i = i + 1; continue; }
+        if (io && (n == "print_str" || n == "eprint_str" || n == "putchar"
+            || n == "exit")) { i = i + 1; continue; }
         // A Writer is stdout() or stderr(), fd 1 or 2, so its writes reach the
         // same $fd_write shim print and eprint do.
         if (io && (n == "writer_write" || n == "write_some")) { i = i + 1; continue; }
@@ -2604,7 +2381,7 @@ pub function needs_wall_clock(needs: string[]): boolean {
 // defines instead of importing, so the emitted bodies need no mode awareness:
 //
 //   $fd_write — the preview1 signature over the preview2 stream. Every IR
-//     writer ($__fern_print_str / $__fern_print_int / $__fern_eprint_str /
+//     writer ($__fern_print_str / $__fern_eprint_str /
 //     putchar) already routes through it with the fd in hand, so unlike the AST
 //     path's stdout-only shim this one DISPATCHES on fd: 2 takes the stderr
 //     handle, anything else stdout. That is what lets eprint and print share
@@ -3878,8 +3655,8 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
 // is no cross-backend tag set to agree on -- only wasm turns all of them into
 // a call to an imported WASI function.
 function is_host_op_kind(tag: i32): boolean {
-    return tag == 161 || tag == 162 || tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
-        tag == 183 || tag == 209 || tag == 168 || tag == 167 || tag == 169 || tag == 233 || tag == 170 ||
+    return tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
+        tag == 183 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 ||
         tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
         tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 166 ||
         tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 ||
@@ -3898,16 +3675,6 @@ function is_host_op_kind(tag: i32): boolean {
 // its own emit_str_op (#6917): a tag added to the predicate with no arm here
 // would otherwise emit whatever the last arm emits.
 function emit_host_op_wat(o: ir.Op): string {
-    if (o.kind_tag == 161) {  // print_int
-        // stack: n -> write n's decimal text to stdout (no newline). The helper
-        // returns void, so push a dummy i32 for the statement-level drop.
-        return "    call $__fern_print_int\n    i32.const 0\n";
-    }
-    if (o.kind_tag == 162) {  // print_i64
-        // stack: n(i64) -> write n's decimal text to stdout (no newline) via the
-        // i64 helper. Void return, so push a dummy i32 for the statement drop.
-        return "    call $__fern_print_int64\n    i32.const 0\n";
-    }
     if (o.kind_tag == 163) {  // print_str
         // stack: strblock ptr -> write its bytes to stdout (no newline). The
         // helper returns void, so push a dummy i32 for the statement-level drop.
@@ -3945,12 +3712,6 @@ function emit_host_op_wat(o: ir.Op): string {
         // ($__fern_read_line, param fd i32, result i32) is emitted caller-side in
         // wasm_ir_run with the fd_read import + the heap runtime.
         return "    call $__fern_read_line\n";
-    }
-    if (o.kind_tag == 167) {  // read_int
-        // 0-arg -> parse a leading integer from stdin (fd 0), push it (i32).
-        // The helper ($__fern_read_int) reads into scratch and allocates
-        // nothing; emitted caller-side with the fd_read import.
-        return "    call $__fern_read_int\n";
     }
     if (o.kind_tag == 169) {  // read_file
         // stack: path strblock ptr -> read the whole named file, push a
@@ -4436,19 +4197,19 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = emit_wasm_hostname(bctmp, parts);
     } else if (o.kind_tag == 189) {  // wasm_timer_pollable
         parts = emit_wasm_wasm_timer_pollable(parts);
-    } else if (o.kind_tag == 190) {  // wasm_pollable_drop
+    } else if (o.kind_tag == 161) {  // wasm_pollable_drop
         // wasm_pollable_drop(p: i32) -> i32. Drop the wasi:io/poll pollable
         // resource (wasi:io/poll.[resource-drop]pollable), then push 0 for the
         // op's i32 result. Preview-2 direct import, same component path.
         parts = parts.append("    call $__fern_wasi_pollable_drop\n");
         parts = parts.append("    i32.const 0\n");
-    } else if (o.kind_tag == 191) {  // wasm_block
+    } else if (o.kind_tag == 162) {  // wasm_block
         parts = emit_wasm_wasm_block(parts);
     } else if (o.kind_tag == 208) {  // udp_send
         // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
         // malformed host literal. All three args are on the stack (#4375).
         parts = parts.append("    call $__fern_udp_send\n");
-    } else if (o.kind_tag == 193) {  // tcp_connect
+    } else if (o.kind_tag == 110) {  // tcp_connect
         // tcp_connect(host_be, port) -> 16-byte connection struct pointer,
         // or -errno. Both args are already on the stack (#4318).
         parts = parts.append("    call $__fern_tcp_connect\n");
@@ -4477,7 +4238,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // poll(fds, timeout_ms) -> first ready index, or -1 on timeout.
         // Both args are already on the stack (#4316 follow-up).
         parts = parts.append("    call $__fern_poll\n");
-    } else if (o.kind_tag == 192) {  // wasm_poll
+    } else if (o.kind_tag == 167) {  // wasm_poll
         parts = emit_wasm_wasm_poll(parts);
     } else if (o.kind_tag == 174) {  // temp_dir
         parts = emit_wasm_temp_dir(parts);
@@ -4913,10 +4674,6 @@ function emit_str_op_wat(o: ir.Op): string {
     if (o.kind_tag == 109) {  // str_trim
         // stack: s -> $__fern_str_trim(s) -> fresh block (whitespace stripped).
         return "    call $__fern_str_trim\n";
-    }
-    if (o.kind_tag == 110) {  // str_reverse
-        // stack: s -> $__fern_str_reverse(s) -> fresh block (bytes reversed).
-        return "    call $__fern_str_reverse\n";
     }
     if (o.kind_tag == 111) {  // str_replace
         // stack: h, old, new -> $__fern_str_replace(...) -> fresh block.
@@ -5725,8 +5482,8 @@ pub function fd_seek_import(): string {
 pub function fd_fdstat_get_import(): string {
     return "  (import \"wasi_snapshot_preview1\" \"fd_fdstat_get\" (func $fd_fdstat_get (param i32 i32) (result i32)))\n";
 }
-// stdin_fd_read_import emits the standalone wasi fd_read import that read_line /
-// read_int use to read stdin (fd 0). file_imports ALSO imports fd_read for
+// stdin_fd_read_import emits the standalone wasi fd_read import that read_line
+// uses to read stdin (fd 0). file_imports ALSO imports fd_read for
 // read_file, so the caller (wasm_ir_run) must emit only one of the two — this
 // one when the module reads stdin but does NOT do path-based file I/O.
 pub function stdin_fd_read_import(): string {
@@ -7295,25 +7052,6 @@ pub function str_trim_helper(): string {
     o = o + "    (local.get $p))\n";
     return o;
 }
-// str_reverse_helper emits the IR-path $__fern_str_reverse(s) — a fresh block
-// with `s`'s bytes in reverse order, copied via $__fern_str_box. wasm's AST path
-// has no reverse, so this is IR-only. Gated on module_uses_str_reverse.
-pub function str_reverse_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_str_reverse (param $s i32) (result i32)\n";
-    o = o + "    (local $l i32) (local $p i32) (local $i i32)\n";
-    o = o + "    (local.set $l (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $l))))\n";
-    o = o + "    (i32.store (local.get $p) (local.get $l))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $l)))\n";
-    o = o + "      (i32.store8 (i32.add (i32.add (local.get $p) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.sub (i32.sub (local.get $l) (local.get $i)) (i32.const 1)))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (local.get $p))\n";
-    return o;
-}
 // str_lines_helper emits the IR-path $__fern_str_lines(s) — split s on '\n' then
 // drop a trailing empty segment when s is empty or ends with '\n' (so "a\nb\n"
 // is 2 lines). Builds a "\n" delim block, calls $__fern_str_split, then
@@ -7688,7 +7426,6 @@ pub function arr_slice_helper(): string {
     return o;
 }
 
-// str_to_i32_helper emits $__fern_str_to_i32: parse a `[len@0][bytes@4]` string
 // emit_wasm_buf_op emits the capacity-carrying string builder's seven ops
 // (#8773). WAT's operand order already matches the helpers' parameter order, so
 // each arm is the bare call; the four void helpers push a dummy i32 for the
@@ -8880,35 +8617,6 @@ pub function reader_close_func(): string {
     o = o + "    (local.get $opt))\n";
     return o;
 }
-// read_int_func emits $__fern_read_int (no args -> i32). Reads up to 16 bytes
-// from fd 0 into the 16-byte scratch at addr 16 (write-then-parse, no concurrent
-// use — same scratch-reuse the clock helpers do), then parses a leading optional
-// '-' + decimal digits, stopping at the first non-digit (newline / EOF). Unlike
-// read_line it allocates nothing (the result is a bare i32), matching the
-// register backends — so a read_int-only module needs no heap runtime.
-pub function read_int_func(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_read_int (result i32)\n";
-    o = o + "    (local $nread i32) (local $i i32) (local $acc i32) (local $neg i32) (local $c i32)\n";
-    o = o + "    (i32.store (i32.const 0) (i32.const 16))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.const 16))\n";
-    o = o + "    (if (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)) (then (i32.store (i32.const 8) (i32.const 0))))\n";
-    o = o + "    (local.set $nread (i32.load (i32.const 8)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (local.set $acc (i32.const 0))\n";
-    o = o + "    (local.set $neg (i32.const 0))\n";
-    o = o + "    (if (i32.and (i32.gt_u (local.get $nread) (i32.const 0)) (i32.eq (i32.load8_u (i32.const 16)) (i32.const 45))) (then\n";
-    o = o + "      (local.set $neg (i32.const 1)) (local.set $i (i32.const 1))))\n";
-    o = o + "    (block $d (loop $c\n";
-    o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $nread)))\n";
-    o = o + "      (local.set $c (i32.sub (i32.load8_u (i32.add (i32.const 16) (local.get $i))) (i32.const 48)))\n";
-    o = o + "      (br_if $d (i32.gt_u (local.get $c) (i32.const 9)))\n";
-    o = o + "      (local.set $acc (i32.add (i32.mul (local.get $acc) (i32.const 10)) (local.get $c)))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $c)))\n";
-    o = o + "    (if (result i32) (local.get $neg) (then (i32.sub (i32.const 0) (local.get $acc))) (else (local.get $acc))))\n";
-    return o;
-}
 
 // optarrarr_free_func: the $__fern_optarrarr_free WAT body (#4365) — the
 // Option[<scalar-arr>][] reclaim, wasm sibling of the x86/arm64
@@ -9482,77 +9190,6 @@ pub function udivrem_helpers(t: string, suffix: string): string {
     parts = parts.append("    (select (local.get $a) (" + t + ".rem_u (local.get $a) (local.get $safe)) (" + t + ".eqz (local.get $b))))\n");
     return util.str_join_chunks(parts);
 }
-// print_int64_helper mirrors print_int_helper for i64 values, formatting
-// into a 24-byte scratch buffer at `buf` (i64's widest decimal is 20
-// chars incl. sign). No trailing newline.
-pub function print_int64_helper(buf: i32): string {
-    var b: string = util.i32_to_string(buf);
-    var be: string = util.i32_to_string(buf + 24);
-    var o: string = "";
-    o = o + "  (func $__fern_print_int64 (param $n i64)\n";
-    o = o + "    (local $i i32)\n";
-    o = o + "    (local $neg i32)\n";
-    o = o + "    (if (i64.eqz (local.get $n)) (then\n";
-    o = o + "      (i32.store8 (i32.const " + b + ") (i32.const 48))\n";
-    o = o + "      (i32.store (i32.const 0) (i32.const " + b + "))\n";
-    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "      (return)))\n";
-    o = o + "    (local.set $neg (i64.lt_s (local.get $n) (i64.const 0)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $n (i64.sub (i64.const 0) (local.get $n)))))\n";
-    o = o + "    (local.set $i (i32.const " + be + "))\n";
-    o = o + "    (block $done (loop $lp\n";
-    o = o + "      (br_if $done (i64.eqz (local.get $n)))\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.wrap_i64 (i64.add (i64.const 48) (i64.rem_u (local.get $n) (i64.const 10)))))\n";
-    o = o + "      (local.set $n (i64.div_u (local.get $n) (i64.const 10)))\n";
-    o = o + "      (br $lp)))\n";
-    o = o + "    (if (local.get $neg) (then\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
-    o = o + "    (i32.store (i32.const 0) (local.get $i))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.sub (i32.const " + be + ") (local.get $i)))\n";
-    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
-    return o;
-}
-// print_int_helper emits the `$__fern_print_int` runtime: format an i32
-// as decimal into a 16-byte scratch buffer at `buf` (placed above all
-// string data) and fd_write it. Digits are written backwards from the
-// buffer end; negatives get a leading '-'. The magnitude is taken with
-// unsigned div/rem after a (possibly overflowing) negation, which yields
-// the correct digits even for INT_MIN (0 - INT_MIN = INT_MIN, whose
-// unsigned value is exactly 2147483648). No trailing newline — matching
-// the native print_int.
-pub function print_int_helper(buf: i32): string {
-    var b: string = util.i32_to_string(buf);
-    var be: string = util.i32_to_string(buf + 16);
-    var o: string = "";
-    o = o + "  (func $__fern_print_int (param $n i32)\n";
-    o = o + "    (local $i i32)\n";
-    o = o + "    (local $neg i32)\n";
-    o = o + "    (if (i32.eqz (local.get $n)) (then\n";
-    o = o + "      (i32.store8 (i32.const " + b + ") (i32.const 48))\n";
-    o = o + "      (i32.store (i32.const 0) (i32.const " + b + "))\n";
-    o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
-    o = o + "      (return)))\n";
-    o = o + "    (local.set $neg (i32.lt_s (local.get $n) (i32.const 0)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $n (i32.sub (i32.const 0) (local.get $n)))))\n";
-    o = o + "    (local.set $i (i32.const " + be + "))\n";
-    o = o + "    (block $done (loop $lp\n";
-    o = o + "      (br_if $done (i32.eqz (local.get $n)))\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.add (i32.const 48) (i32.rem_u (local.get $n) (i32.const 10))))\n";
-    o = o + "      (local.set $n (i32.div_u (local.get $n) (i32.const 10)))\n";
-    o = o + "      (br $lp)))\n";
-    o = o + "    (if (local.get $neg) (then\n";
-    o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-    o = o + "      (i32.store8 (local.get $i) (i32.const 45))))\n";
-    o = o + "    (i32.store (i32.const 0) (local.get $i))\n";
-    o = o + "    (i32.store (i32.const 4) (i32.sub (i32.const " + be + ") (local.get $i)))\n";
-    o = o + "    (drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8))))\n";
-    return o;
-}
 // leak_check_on — FERN_LEAKCHECK read at emit time, the wasm half of the
 // census (#5362; the x86/arm64 self-host precedent). Counts at the
 // allocator's rounded-8 block size on both sides — $__fern_alloc's rounded
@@ -9605,7 +9242,7 @@ function lc_bump_free(nexpr: string): string {
 // their $fd_write shims cannot be assumed. The line is built in a buffer
 // taken from the bump heap AT REPORT TIME (the process is exiting, and this
 // avoids touching the computed data-pool layout); labels are packed-word
-// stores; digits are $__fern_print_int64's loop. fd_write's iovec scratch
+// stores; digits are written backwards by $__fern_lc_wrnum. fd_write's iovec scratch
 // at 0/4 is free at exit.
 pub function lc_report_and_exit_wrapper(): string {
     if (!leak_check_on()) { return ""; }
@@ -10144,34 +9781,6 @@ pub function map_w64_helpers(): string {
     o = o + "    (i64.load (i32.add (i32.add (i32.load (i32.add (local.get $box) (i32.const 4))) (i32.const 8)) (i32.mul (i32.load (i32.add (local.get $box) (i32.const 8))) (i32.const 8)))))\n";
     return o;
 }
-// block into an i32. Optional leading '-', then decimal digits, stops at the
-// first non-digit; empty block → 0. Allocation-free (no heap dependency) — the
-// wasm companion to asm_ir's __fn___fern_str_to_i32 (the wasm AST backend had no
-// str_to_i32, so this is authored fresh; the IR path is its only consumer).
-pub function str_to_i32_helper(): string {
-    var o: string = "";
-    o = o + "  (func $__fern_str_to_i32 (param $s i32) (result i32)\n";
-    o = o + "    (local $len i32) (local $i i32) (local $acc i32) (local $neg i32) (local $c i32)\n";
-    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-    o = o + "    (local.set $i (i32.const 0))\n";
-    o = o + "    (local.set $acc (i32.const 0))\n";
-    o = o + "    (local.set $neg (i32.const 0))\n";
-    // optional leading '-' (45): only when there is at least one byte.
-    o = o + "    (if (i32.and (i32.gt_s (local.get $len) (i32.const 0)) (i32.eq (i32.load8_u (i32.add (local.get $s) (i32.const 4))) (i32.const 45))) (then\n";
-    o = o + "      (local.set $neg (i32.const 1)) (local.set $i (i32.const 1))))\n";
-    o = o + "    (block $d (loop $l\n";
-    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-    o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-    // stop at the first non-digit (< '0'(48) or > '9'(57)).
-    o = o + "      (br_if $d (i32.lt_s (local.get $c) (i32.const 48)))\n";
-    o = o + "      (br_if $d (i32.gt_s (local.get $c) (i32.const 57)))\n";
-    o = o + "      (local.set $acc (i32.add (i32.mul (local.get $acc) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))\n";
-    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-    o = o + "      (br $l)))\n";
-    o = o + "    (if (local.get $neg) (then (local.set $acc (i32.sub (i32.const 0) (local.get $acc)))))\n";
-    o = o + "    (local.get $acc))\n";
-    return o;
-}
 // arr_push_owned_helper emits $__fern_arr_push_owned: the sole-owner self-append
 // (irlower's !aliased `a = a.append(v)`). Wraps $__fern_arr_push and, iff the push
 // GREW (reallocated, result != old), frees the dead old buffer via the shared
@@ -10387,9 +9996,9 @@ function preview1_imports(needs: string[]): string {
     // wasi random_get import (issue #2747) — must precede the function
     // section. Emitted when the module uses random_bytes / random_i32.
     if (need(needs, "@uses_random")) { parts = parts.append(random_get_import()); }
-    // print_int / print_str / eprint_str / putchar write via WASI fd_write
+    // print_str / eprint_str / putchar write via WASI fd_write
     // — import it only when the module writes to stdout or stderr.
-    if (leak_check_on() || need(needs, "print_int") || need(needs, "print_i64") || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write") || need(needs, "write_some")) {
+    if (leak_check_on() || need(needs, "print_str") || need(needs, "eprint_str") || need(needs, "putchar") || need(needs, "write_file") || need(needs, "writer_write") || need(needs, "write_some")) {
         parts = parts.append("  (import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))\n");
     }
     // read_file / write_file open paths under preopen fd 3: path_open +
@@ -10405,12 +10014,12 @@ function preview1_imports(needs: string[]): string {
     // fd_close come from file_imports above) — emit the standalone fd_readdir
     // import once across both.
     if (need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all")) { parts = parts.append(readdir_fd_import()); }
-    // read_line / read_int / read_chunk read stdin (fd 0) via fd_read.
+    // read_line / read_chunk read stdin (fd 0) via fd_read.
     // file_imports above already imports fd_read for path-based file I/O, so
     // emit the standalone fd_read import ONLY when the module reads stdin but
     // does NOT do file I/O — otherwise fd_read would be imported twice (an
     // invalid module).
-    if ((need(needs, "read_line") || need(needs, "read_int") || need(needs, "read_chunk") || need(needs, "read_all_stdin")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
+    if ((need(needs, "read_line") || need(needs, "read_chunk") || need(needs, "read_all_stdin")) && !(need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need_open_file(needs) || need(needs, "truncate"))) {
         parts = parts.append(stdin_fd_read_import());
     }
     // reader_close calls preview1 fd_close. file_imports supplies fd_close for
@@ -10731,7 +10340,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_local_port") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_local_port") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10930,11 +10539,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "open_with")) { parts = parts.append(open_with_func()); }
     if (need(needs, "writer_write")) { parts = parts.append(writer_write_func()); }
     if (need(needs, "write_some")) { parts = parts.append(writer_write_some_func()); }
-    // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates);
-    // $__fern_read_int parses an int into scratch (no heap). Emitted when the
-    // module reads stdin.
+    // $__fern_read_line boxes a line of stdin (heap-gated via op_allocates).
     if (need(needs, "read_line")) { parts = parts.append(read_line_func()); }
-    if (need(needs, "read_int")) { parts = parts.append(read_int_func()); }
     // $__fern_read_all_stdin reads fd 0 to EOF into one string block (#5623);
     // allocates, so it uses the heap runtime gated above.
     if (need(needs, "read_all_stdin")) { parts = parts.append(read_all_stdin_func()); }
@@ -10950,8 +10556,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "reader_seek")) { parts = parts.append(reader_seek_func()); }
     if (need(needs, "fd_flags")) { parts = parts.append(fd_flags_func()); }
     if (need(needs, "writer_truncate")) { parts = parts.append(writer_truncate_func()); }
-    // $__fern_str_to_i32 backs str_to_i32(s); allocation-free, own gate.
-    if (need(needs, "@uses_str_to_i32")) { parts = parts.append(str_to_i32_helper()); }
     // $__fern_chr backs chr(n); allocates (heap gate ORs in module_uses_chr).
     if (need(needs, "@uses_chr")) { parts = parts.append(chr_helper()); }
     if (need(needs, "@uses_str_cmp")) { parts = parts.append(strcmp_helper()); }
@@ -10975,13 +10579,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // register backends' __fern_arr_str_join runtime call. Self-contained (only
     // $__fern_str_box), emitted only when used.
     if (need(needs, "@uses_arr_str_join")) { parts = parts.append(arr_str_join_helper()); }
-    // The i32 builtin helpers backing xs.sum() / .product() / .index_of() /
-    // .contains(), n.pow(k) and xs.min() / .max() (#3457). The register backends
-    // compile these from Fern source (asmcore.rt_src_*); wasm has no such
-    // mechanism, so the WAT lives in arr_i32_helpers — deliberately NOT
-    // in this file, which #3457 deletes. min/max allocate their Option box via
-    // $__fern_str_box, which @allocates already pulls in.
-    if (need(needs, "@uses_arr_i32_helpers")) { parts = parts.append(arr_i32_helpers()); }
     // Scalar string search predicates (starts_with / ends_with / index_of /
     // contains) — self-contained, emitted only when used.
     // ASCII case transforms (to_upper / to_lower) — self-contained, emitted
@@ -10992,7 +10589,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // String trim — self-contained, emitted only when used (IR-only on wasm).
     if (need(needs, "@uses_str_trim")) { parts = parts.append(str_trim_helper()); }
     // String reverse — self-contained, emitted only when used (IR-only on wasm).
-    if (need(needs, "@uses_str_reverse")) { parts = parts.append(str_reverse_helper()); }
     // String replace — self-contained, emitted only when used (IR-only on wasm).
     if (need(needs, "@uses_str_replace")) { parts = parts.append(str_replace_helper()); }
     // String lines — split on \n + trailing-empty trim (IR-only on wasm).
@@ -11043,11 +10639,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // the function names.
     if (mode != 2 && need(needs, "random_bytes")) { parts = parts.append(random_bytes_ir_func()); }
     if (mode != 2 && need(needs, "random_i32")) { parts = parts.append(random_i32_func()); }
-    // The two decimal buffers, in the print_scratch_bytes() reservation right
-    // above the string blocks: print_int's 16 bytes first, print_int64's 24
-    // after them, so a module printing both widths never clobbers either.
-    if (need(needs, "print_int")) { parts = parts.append(print_int_helper(str_offset(sv, sv.len()))); }
-    if (need(needs, "print_i64")) { parts = parts.append(print_int64_helper(str_offset(sv, sv.len()) + 16)); }
     if (need(needs, "print_str")) { parts = parts.append(print_str_helper()); }
     if (need(needs, "eprint_str")) { parts = parts.append(eprint_str_helper()); }
     if (need(needs, "str_bytes")) { parts = parts.append(str_bytes_func()); }
@@ -13669,7 +13260,7 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 pub function component_shape(mod: parser.Module): i32 {
     var calls: Map[string, boolean] = called_names(mod);
     var io: boolean = calls.has("print") || calls.has("write")
-        || calls.has("putchar") || calls.has("print_int") || calls.has("stdout");
+        || calls.has("putchar") || calls.has("stdout");
     var rd: boolean = calls.has("read_file") || calls.has("read_file_bytes");
     var wr: boolean = calls.has("write_file");
     var env: boolean = calls.has("env");

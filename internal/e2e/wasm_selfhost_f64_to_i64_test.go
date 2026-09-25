@@ -34,19 +34,19 @@ func TestWasmSelfHostF64ToI64(t *testing.T) {
 	}{
 		// Via a typed local, and directly on a literal — both > 2^32 so an i32
 		// truncation would print the wrong value.
-		{"via-local", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_int(r); return 0; }", "5000000000"},
-		{"direct-print", "function main(): i32 { print_int(9000000000.0 as i64); return 0; }", "9000000000"},
+		{"via-local", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_i64(r); return 0; }", "5000000000"},
+		{"direct-print", "function main(): i32 { print_i64(9000000000.0 as i64); return 0; }", "9000000000"},
 		// Truncation toward zero (3.9 → 3) and a negative value.
-		{"truncates", "function main(): i32 { var x: f64 = 3.9; print_int(x as i64); return 0; }", "3"},
-		{"negative", "function main(): i32 { var x: f64 = -4000000000.0; print_int(x as i64); return 0; }", "-4000000000"},
+		{"truncates", "function main(): i32 { var x: f64 = 3.9; print_i64(x as i64); return 0; }", "3"},
+		{"negative", "function main(): i32 { var x: f64 = -4000000000.0; print_i64(x as i64); return 0; }", "-4000000000"},
 		// Result of an f64 expression cast to i64.
-		{"expr", "function main(): i32 { var a: f64 = 2500000000.0; print_int((a * 2.0) as i64); return 0; }", "5000000000"},
+		{"expr", "function main(): i32 { var a: f64 = 2500000000.0; print_i64((a * 2.0) as i64); return 0; }", "5000000000"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
+			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}

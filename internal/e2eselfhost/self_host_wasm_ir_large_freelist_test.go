@@ -86,7 +86,7 @@ function main(): i32 {
 		} else {
 			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
 		}
-		cmd.Stdin = bytes.NewReader([]byte(src(iters)))
+		cmd.Stdin = bytes.NewReader([]byte(withPrintInt(src(iters))))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("%s: wasm_ir_run -ir failed: %v", name, err)

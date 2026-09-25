@@ -71,15 +71,9 @@ function main(): i32 {
     }
     return r; // 127
 }`},
-	// std/array's `xs.index_of(target)` → Option[i32] (#4387). On this path an
-	// i32[] receiver does NOT run the stdlib body: it takes a lowering intercept
-	// to __fern_arr_i32_index_of_opt, with its scrutinee type coming from
-	// builtin_arr_opt_ret_type — so native and self-host can disagree on the
-	// return SHAPE while agreeing on every value, which is what this oracles.
-	// Three receivers, three lowerings: a local and a struct FIELD (both
-	// intercepted, the field one being the #6784 shape) and a string[] (not
-	// intercepted — the stdlib generic). `.contains` uses the raw -1 scan that
-	// the intercept kept, so it is checked on the same receivers.
+	// std/array's `xs.index_of(target)` → Option[i32] (#4387) runs the stdlib
+	// generic, as native does, on a local, a struct FIELD (the #6784 shape) and a
+	// string[] receiver; `.contains` on the same receivers.
 	{"array-index-of", `import "std/array";
 struct H { xs: i32[] }
 function main(): i32 {
@@ -102,6 +96,40 @@ function main(): i32 {
     if (xs.contains(88))   { return 16; }
     if (!h.xs.contains(8)) { return 17; }
     return 42;
+}`},
+	// A one-letter struct name is a type, not a type variable: the monomorphiser
+	// read `P` as one, left `p.ss`'s type unknown, and never folded the
+	// string[] method call on it (#10256).
+	{"one-letter-struct-field-method", `import "std/array";
+struct P { ss: string[] }
+function main(): i32 {
+    var p: P = P { ss: ["a", "b", "c"] };
+    var ps: P[] = [p];
+    match (p.ss.index_of("c")) { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
+    if (!ps[0].ss.contains("b")) { return 3; }
+    return 42;
+}`},
+	// A map's keys() / values() snapshot is an array, so an array method
+	// chained onto it folds like one on a local (the snapshot's type was
+	// unknown to the monomorphiser).
+	{"map-snapshot-array-methods", `import "core/map";
+import "std/array";
+function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 10, "b": 20, "c": 12 };
+    if (!m.keys().contains("b")) { return 1; }
+    match (m.values().max()) { Some(v) => { if (v != 20) { return 2; } }, None => { return 3; } }
+    return m.values().sum();
+}`},
+	// std/i32's methods run their own bodies. The self-host used to call a
+	// runtime helper of its own for pow / gcd / lcm, and its pow answered 1 for a
+	// negative exponent where the stdlib answers 0 (#10244).
+	{"i32-methods", `import "std/i32";
+function main(): i32 {
+    var n: i32 = 2;
+    var r: i32 = n.pow(0 - 1) + n.pow(5);
+    var g: i32 = 0 - 48;
+    r = r + g.gcd(18) + n.lcm(0 - 3);
+    return r; // 0 + 32 + 6 + 6
 }`},
 	// The persistent collections (#6794) through the self-host loader: generic
 	// enums / structs with receiver methods whose bodies call bounded free

@@ -73,7 +73,7 @@ func TestSelfHostWasmIRPoll(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
+		cmd.Stdin = bytes.NewReader([]byte(withPrintInt(src)))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("driver failed: %v", err)

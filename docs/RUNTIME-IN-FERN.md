@@ -2,11 +2,12 @@
 
 Status (2026-07): **the Tier-0–2 helper migration is complete** — the
 byte-building Tier-2 set (`chr`, `str_concat`, `i32_to_string`,
-`str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
+`str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 `string_from_bytes`, `str_split`) now lowers as Fern functions via the
 raw-memory intrinsics (`RUNTIME-INTRINSICS.md`), on top of the earlier
-Tier-0/1 slices (`__fern_i32_pow`, the five `__fern_arr_i32_*` reducers,
-`__fern_str_to_i32`, and the str predicates/utilities). The **syscall
+Tier-0/1 slices (the str predicates/utilities). `__fern_i32_pow`, the
+`__fern_arr_i32_*` reducers, `__fern_str_to_i32` and `__fern_str_reverse`,
+which the slices below describe, were removed by #10244. The **syscall
 leaves** followed on the x86-64 IR path (`random_bytes`, `random_i32`, the
 three clocks, and the whole fs family) over the `__syscall3` / `__syscall4` /
 `__raw_scratch` / `__raw_environ` sub-floor, and as of 2026-08 they are
@@ -696,6 +697,9 @@ remainder splits three ways:
   print_i64` and printed nothing. Not a diagnostic — a silently dropped call,
   which `FERN_STRICT_IR=1` did not catch either.
 
+  `print_int` and `read_int` have since been retired altogether (#10244):
+  neither checker accepts either name, so their helpers and IR ops are gone.
+
 - **The two stdin leaves that return no box** — `read_int` and `read_all_stdin`
   — **have since moved**, on both register backends. Splitting them out from the
   Option-returning three is what made them cheap: neither has a box-layout
@@ -857,8 +861,7 @@ remainder splits three ways:
   buffer pointer, capacity) that persist across calls, and the floor has no
   first-class static storage. `__raw_scratch` is not it: both backends DISCARD its size operand and
   push `&__fern_scratch`, a single shared 256-byte object that `stat`, the
-  clocks, `poll`, `timer_fd`, the sockets, `putchar`, `print_int` and `read_int`
-  all borrow. An accumulator has to survive arbitrary intervening execution, so
+  clocks, `poll`, `timer_fd`, the sockets and `putchar` all borrow. An accumulator has to survive arbitrary intervening execution, so
   sharing that buffer would let any `write_file` mid-emit clobber it.
 
   There IS a composition that reaches a persistent global word today, and it is
@@ -1204,5 +1207,5 @@ can follow without inventing new machinery.
 Validated on x86-64: `TestSelfHostAsmIRPath/str2i32-*` (behaviour incl.
 roundtrip), `TestSelfHostIRRuntimeHelperClosure` (per-module link of all 46
 need-roots), both fixpoint suites (self-hosting preserved), and
-`TestSelfHostRuntimeHelperStrToI32IsFernIR` (locks in the Fern symbol + the
+`TestSelfHostRuntimeHelpersAreFernIR` (locks in the Fern symbol + the
 absence of the hand-asm wrapper). arm64 unchanged.

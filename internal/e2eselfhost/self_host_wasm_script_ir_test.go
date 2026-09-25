@@ -56,7 +56,7 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
+			src := []byte(withPrintInt(tc.src))
 			route := strings.TrimSpace(string(runCapture(t, gcc, runner, driverBin, src, "-decide")))
 			if route != "ir" {
 				t.Fatalf("%s routed %q, want \"ir\" — scripts no longer lower", tc.name, route)

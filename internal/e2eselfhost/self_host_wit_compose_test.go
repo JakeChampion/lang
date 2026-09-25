@@ -68,7 +68,7 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 		src.WriteByte('\n')
 	}
 	src.WriteString(witPayloadFunc(t, "FERN_BIN", "fern"))
-	src.WriteString(selfHostComposeWorldDriver)
+	src.WriteString(withPrintInt(selfHostComposeWorldDriver))
 
 	driverWat := runCapture(t, gcc, runner, driverBin, []byte(src.String()))
 	if len(driverWat) == 0 {
@@ -203,7 +203,7 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 		src.WriteByte('\n')
 	}
 	src.WriteString(witBytesFunc("USER_BIN", payload))
-	src.WriteString(selfHostComposeUserDriver)
+	src.WriteString(withPrintInt(selfHostComposeUserDriver))
 
 	driverWat := runCapture(t, gcc, runner, driverBin, []byte(src.String()))
 	if len(driverWat) == 0 {

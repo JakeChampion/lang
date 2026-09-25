@@ -101,10 +101,8 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
 
 		// Mode 2 — stdout. The $fd_write shim serves every writer, so print /
-		// write / print_int / putchar all use the same two imports.
+		// write / putchar all use the same two imports.
 		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`, true,
-			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
-		{"io-print-int", true, `function main(): i32 { print_int(42); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},

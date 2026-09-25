@@ -11,7 +11,7 @@ import (
 
 // `read_all_stdin()` on the self-host IR path (#5623).
 //
-// irlower intercepts the neighbouring stdin builtins — print / read_int /
+// irlower intercepts the neighbouring stdin builtins — print / read_line /
 // stdin — but had no case for read_all_stdin, so emit_module_ir_gated saw a
 // call_direct to a symbol that is not a __fern_* helper, not a C call and not a
 // module function, and made the WHOLE module IR-ineligible.

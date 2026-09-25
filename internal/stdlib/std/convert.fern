@@ -37,7 +37,7 @@ pub trait Into[T] {
 // `TryFrom` (the constructor's home, more composable) and call it as an
 // associated function; `TryInto` is for when only the source type is yours.
 // The result carries a `string` reason on failure, matching the rest of the
-// stdlib's parse/convert surface (e.g. `str_to_i32`):
+// stdlib's parse/convert surface:
 //
 //     impl convert.TryFrom[i64] for Small {
 //         function try_from(v: i64): Result[Self, string] {

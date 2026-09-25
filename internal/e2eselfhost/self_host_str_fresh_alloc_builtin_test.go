@@ -21,7 +21,7 @@ import (
 // str_fresh_alloc_method is the warrant, and it is strictly smaller than
 // str_borrowing_method: that predicate is about what a method does to its
 // RECEIVER and also admits the scalar predicates, while this one is about what it
-// RETURNS. The runtime bodies decide it — __fern_str_to_upper, _to_lower, _reverse
+// RETURNS. The runtime bodies decide it — __fern_str_to_upper, _to_lower
 // and _repeat all allocate unconditionally and return the new box, with repeat
 // forcing a 1-byte cap so even an empty result allocates. `trim` returns a view and
 // `replace` returns the receiver unchanged when the needle is absent.
@@ -41,21 +41,6 @@ var strFreshAllocBuiltinCases = []struct {
 	// after.
 	{"str-fresh-builtin-len-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).to_ascii_upper().len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
-    if (a != b) { return 97; }
-    if (b2 - b1 >= 32768) { return 98; }
-    return 0;
-}`, 0},
-	// reverse allocates unconditionally too, and the same admission covers it.
-	{"str-fresh-builtin-reverse-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function round(pre: string): i32 { return w(pre).reverse().len(); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
     var pre: string = "abcdefgh";

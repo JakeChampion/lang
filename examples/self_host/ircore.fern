@@ -93,7 +93,6 @@ pub function is_fern_helper(name: string): boolean {
         || is_map_release_helper(name)
         || is_boxed_key_map_release_helper(name)
         || is_text_helper(name)
-        || is_i32_helper(name)
         // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
         // the REPLACED array-field buffers of the superseded old box (cow + snap
         // guarded) before freeing the box. All three backends emit a real per-type
@@ -253,9 +252,6 @@ function is_text_helper(name: string): boolean {
         // emit_ir_runtime_fern_fn, exactly as the 32-bit pair is.
         || name == "__fern_i64_to_string"
         || name == "__fern_u64_to_string"
-        // str_to_i32(s)'s decimal-parse helper (allocation-free stack-arg body
-        // under __fn___fern_str_to_i32, also from emit_ir_runtime).
-        || name == "__fern_str_to_i32"
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
         || name == "__fern_chr"
@@ -268,31 +264,6 @@ function is_text_helper(name: string): boolean {
         // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
         // (wasm.arr_str_join_helper).
         || name == "__fern_arr_str_join";
-}
-
-// The integer and integer-array helpers.
-function is_i32_helper(name: string): boolean {
-    // i32[] sum / product (#3457): `xs.sum()` / `xs.product()` lower to calls
-    // to these Fern helpers. Without them here, calls_only_known treats the
-    // target as an unknown USER function and bails the module.
-    return name == "__fern_arr_i32_sum"
-        || name == "__fern_arr_i32_product"
-        || name == "__fern_i32_pow"
-        // n.gcd(m) / n.lcm(m) (#2649) — pure-scalar Fern helpers, like pow.
-        // lcm's own body calls gcd, so both must be recognised here: without
-        // the gcd entry, calls_only_known reads lcm's inner call as an unknown
-        // USER function and bails the module.
-        || name == "__fern_i32_gcd"
-        || name == "__fern_i32_lcm"
-        || name == "__fern_arr_i32_index_of"
-        // xs.index_of(x) (#4387): the Option-returning scan. The raw sentinel
-        // helper above still backs xs.contains(x).
-        || name == "__fern_arr_i32_index_of_opt"
-        // xs.min() / xs.max() (#3457): the Option-returning extremum helpers —
-        // the guard and the box live in their Fern bodies, so the call site is
-        // an ordinary call_direct like sum/product.
-        || name == "__fern_arr_i32_min_opt"
-        || name == "__fern_arr_i32_max_opt";
 }
 
 // is_struct_drop_name reports whether a call_direct callee is a per-type
@@ -388,9 +359,9 @@ pub function ir_helper_symbol(name: string): string {
 
 // all_eligible reports whether every function in the module is IR-eligible
 // AND every direct call targets a function defined in the module (or an IR
-// runtime helper). A call to a BUILTIN (read_int / print_int / chr /
-// i32_to_string / ...) lowers to call_direct but has no `__fn_<name>` body —
-// the IR path can't emit it, so such a module is REFUSED. There is no fallback
+// runtime helper). A call to a BUILTIN (chr / i32_to_string / ...) lowers to
+// call_direct but has no `__fn_<name>` body — the IR path can't emit it, so
+// such a module is REFUSED. There is no fallback
 // emitter behind this — a bail is a diagnostic, not a routing decision — so a
 // builtin reaching here is a gap to close in lowering.
 // eligible_core is the target-independent eligibility check: a non-empty module
@@ -1104,10 +1075,8 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 // silent miscompile.
 pub function all_runtime_need_roots(): string[] {
     return [
-        "alloc_u8", "args", "arr_i32_index_of", "arr_i32_index_of_opt", "arr_i32_min_max", "arr_i32_min_max_opt",
-        "arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
-        "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap", "i32_gcd",
-        "i32_lcm", "i32_pow",
+        "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
+        "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         // The map roots that "maps" does NOT reach. Each is marked directly by
         // the arm64 emitter, and runtime_need_deps declares no root with any of
@@ -1122,12 +1091,12 @@ pub function all_runtime_need_roots(): string[] {
         "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
         "chdir", "chroot", "setuid", "setgid", "setgroups",
         "signal_mask", "signal_disposition",
-        "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
+        "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
-        "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
+        "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-        "str_read_line", "str_repeat", "str_replace", "str_reverse",
-        "optarrarr_free", "str_split", "str_to_i32", "str_trim", "strarrarr_free", "strbuf", "buf",
+        "str_read_line", "str_repeat", "str_replace",
+        "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
         // The platform helpers. These were absent for as long as the list
         // existed, which made the "closed set" claim above false: the
         // bootstrap compiler marks none of them, so nothing noticed until a
@@ -1163,8 +1132,8 @@ pub function all_runtime_need_roots(): string[] {
         "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_connect", "tcp_send", "tcp_recv", "udp_send",
         "tcp_close", "tcp_pollable", "poll", "timer_fd",
         "wasm_timer_pollable", "wasm_pollable_drop", "wasm_block", "wasm_poll",
-        // wide-int stringifiers + the Option-returning i32 min/max:
-        "i64_to_string", "u64_to_string", "arr_i32_min_max_opt",
+        // wide-int stringifiers:
+        "i64_to_string", "u64_to_string",
         // The allocation counter (#9596). `__heap_bump_bytes` needs no root —
         // it lowers to an inline read of a word the heap already defines — but
         // `alloc_count` owns both the counter word and the tick in
@@ -1220,7 +1189,7 @@ pub function module_ir_eligible(mod: parser.Module): boolean {
 // Each backend used to return a COMMENT where an instruction belongs — "# ir:
 // unsupported bin <name>" on x86-64, "// ir:" on arm64, ";; ir:" in the WAT —
 // so the operation was silently DROPPED and the program ran on with whatever
-// happened to be in the result register. That is how `print_i64` printed
+// happened to be in the result register. That is how an i64 print printed
 // nothing and `udp_send` sent nothing, each for as long as it took someone to
 // notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
 // either: this path never consulted it.

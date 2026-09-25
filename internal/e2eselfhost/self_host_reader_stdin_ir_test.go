@@ -19,7 +19,7 @@ import (
 // Reader path). Each case is a single-module program (Reader/stdin/read_chunk are
 // builtins) fed a stdin string and oracle-checked against the interpreter with the
 // same stdin. x86-64 only — there is no wasm stdin runtime (wasm_eligible rejects
-// read_chunk/reader_close, mirroring read_int/read_line).
+// read_chunk/reader_close, mirroring read_line).
 //
 // Both helpers are Fern runtime functions (#2649, asmcore.rt_src_reader_read_chunk /
 // rt_src_reader_close), so the emitted calls carry the stack-ABI `__fn___` prefix;

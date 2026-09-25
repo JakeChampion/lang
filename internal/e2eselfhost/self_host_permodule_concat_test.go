@@ -141,17 +141,8 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 //
 // The rescue landed once (#5937) with CI fully green — every aarch64 lane
 // included — and was still a regression, because nothing in the suite drove the
-// path. Run against this fixture it did not link:
-//
-//	undefined reference to `__fn_i32__gcd'
-//
-// The concat's entry unit always emits __fern_i32_lcm (i32_gcd and i32_lcm are
-// both in asm_ir.all_runtime_need_roots), and the arm64 per-module UNIT path
-// emitted lcm's `.gcd()` call as `__fn_i32__gcd` while the gcd body was emitted
-// as `__fn___fern_i32_gcd`. #5937 was reverted, and the mismatch is now fixed at
-// the source: irlower lowers `.gcd()` / `.lcm()` to op_call_direct on the
-// __fern_i32_* helpers for every backend, so lcm's inner call resolves to the gcd
-// body emitted beside it.
+// path: run against this fixture, a runtime helper's call into another helper
+// did not link (#5937 was reverted).
 //
 // This test is what makes that verifiable rather than asserted: the link step is
 // the assertion, since a dangling cross-unit symbol is invisible to emit-only
@@ -189,12 +180,6 @@ func TestSelfHostPerModuleConcatArm64(t *testing.T) {
 		t.Fatalf("arm64 over-budget concat emit failed: %v (len=%d)", err, len(asm))
 	}
 	assertConcatProduced(t, asm)
-	// The specific symbol the reverted #5937 dangled. Checked by name as well as
-	// by the link below, so a failure names the cause instead of only the effect.
-	if regexp.MustCompile(`i32__gcd`).Match(asm) {
-		t.Errorf("emitted a reference to __fn_i32__gcd — the arm64 unit path's " +
-			"lcm/gcd symbol mismatch is back (irlower should lower .gcd() to __fern_i32_gcd)")
-	}
 
 	// Assembling + linking with the aarch64 toolchain is the real assertion: this
 	// is what a dangling cross-unit runtime symbol fails.

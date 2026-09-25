@@ -387,8 +387,9 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
 // directory of the module that imported it. A dependency's `import "./util"`
 // names a file beside the DEPENDENCY, and a dependency's own dependencies are
 // declared in the dependency's manifest — so an import cannot be resolved
-// without knowing where it was written (#6756).
-struct ImportQueue { paths: string[], dirs: string[] }
+// without knowing where it was written (#6756). `unrooted` is the first
+// `std/…` or `core/…` import met with no stdlib root to load it from.
+struct ImportQueue { paths: string[], dirs: string[], unrooted: string }
 
 // queued reports whether this import path has already been queued FROM this
 // same directory.
@@ -407,9 +408,13 @@ function queued(paths: string[], dirs: string[], ip: string, from_dir: string): 
 function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, root: string, deps: string[]): ImportQueue {
     var paths: string[] = q.paths;
     var dirs: string[] = q.dirs;
+    var unrooted: string = q.unrooted;
     var i: i32 = 0;
     while (i < mod.imports.len()) {
         var ip: string = mod.imports[i].path;
+        if (root.len() == 0 && unrooted.len() == 0 && util.is_stdlib_path(ip) && !util.should_load(ip, root, deps)) {
+            unrooted = ip;
+        }
         // Keyed on the path AND the directory it was written in. `./sort` from
         // the entry and `./sort` from a module in sub/ are the same string and
         // different files, so deduping on the string alone queued one of them
@@ -421,7 +426,7 @@ function queue_imports(q: ImportQueue, mod: parser.Module, from_dir: string, roo
         }
         i = i + 1;
     }
-    return ImportQueue { paths: paths, dirs: dirs };
+    return ImportQueue { paths: paths, dirs: dirs, unrooted: unrooted };
 }
 
 // is_flag is true for an argument that begins with '-'. A bare `-` is not a
@@ -1239,7 +1244,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     var pkgs: caps.Pkg[] = [root_pkg(man)];
     var no_mods: flatten.LoadedModule[] = [];
 
-    var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [] }, entry_mod, dir_slash, root, deps);
+    var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], unrooted: "" }, entry_mod, dir_slash, root, deps);
     var loaded: flatten.LoadedModule[] = [];
     var files: string[] = [];
     var done_paths: string[] = [];
@@ -1280,6 +1285,10 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             pkgs = add_pkg(pkgs, from_man, from, ipath);
             q = queue_imports(q, m, mdir, root, fern_toml.dep_names(read_manifest(mdir)));
         }
+    }
+    if (q.unrooted.len() > 0) {
+        eprint("fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file\n");
+        return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
     }
     var merged: parser.Module = flatten.bundle(flatten.resolve_imports(entry_mod, dir_slash, root), loaded);
     // Fill omitted trailing args from default parameter values up front, so the

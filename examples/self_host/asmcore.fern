@@ -540,10 +540,6 @@ pub function rt_src_u64_to_string(): string {
     return "function __fern_u64_to_string(n: u64): string { var v: u64 = n; if (v == (0 as u64)) { var z: usize = __raw_alloc(1); __raw_store8(z, 0, 48); return __raw_string(z, 1); } var nd: i32 = 0; var t: u64 = v; while (t != (0 as u64)) { nd = nd + 1; t = t / (10 as u64); } var p: usize = __raw_alloc(nd); var i: i32 = nd - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __raw_string(p, nd); }";
 }
 
-pub function (s: EmitState) mark_str_to_i32(): EmitState {
-    return s.need("str_to_i32");
-}
-
 // chr(n): i32 byte -> 1-char string box. Allocates, so pull in the heap.
 pub function (s: EmitState) mark_chr(): EmitState {
     return s.need("heap").need("chr");
@@ -1832,47 +1828,6 @@ pub function rt_src_putchar(t: string): string {
     return "function __fern_putchar(c: i32): i32 { var p: usize = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p as i64, 1) as i32; }";
 }
 
-// rt_src_print_int backs `print_int(n)` → n's decimal text on fd 1, no newline.
-//
-// It takes an i64 so ONE helper serves both print ops: an i32 arrives in the
-// stack slot already sign-extended, so op_print_int and the wider op_print_i64
-// both call this. That is also the fix for op_print_i64 having had no register-
-// backend handler at all — `print_int` on an i64 emitted `# ir: unsupported bin
-// print_i64` and dropped the call, printing nothing.
-//
-// The magnitude is taken in u64 so INT64_MIN prints: `0 - n` leaves it negative
-// in i64, but reinterpreted as u64 it is the right magnitude. Both hand-asm
-// bodies got that case wrong — x86-64's `negq` overflowed back to INT64_MIN and
-// then divided it unsigned, arm64's `sdiv` produced negative digits. Same trick
-// rt_src_i64_to_string uses.
-//
-// 24 scratch bytes hold the widest output: 20 digits plus a sign.
-pub function rt_src_print_int(t: string): string {
-    return "function __fern_print_int(n: i64): i32 { var p: i32 = __raw_scratch(24); var neg: i32 = 0; var m: i64 = n; if (n < (0 as i64)) { neg = 1; m = (0 as i64) - n; } var v: u64 = m as u64; if (v == (0 as u64)) { __raw_store8(p, 0, 48); return __syscall3(" + sysno(t, "write") + ", 1, p, 1); } var nd: i32 = 0; var t2: u64 = v; while (t2 != (0 as u64)) { nd = nd + 1; t2 = t2 / (10 as u64); } var total: i32 = nd + neg; if (neg == 1) { __raw_store8(p, 0, 45); } var i: i32 = total - 1; while (v != (0 as u64)) { __raw_store8(p, i, 48 + ((v % (10 as u64)) as i32)); v = v / (10 as u64); i = i - 1; } return __syscall3(" + sysno(t, "write") + ", 1, p, total); }";
-}
-
-// The two stdin leaves that return no box (#2649) — a bare integer and a bare
-// string — so unlike read_line / reader_read_chunk they carry no Option-layout
-// question. Both fix a bug the hand-asm had on every target.
-
-// rt_src_read_int backs `read_int()` → one read(2) of up to 16 bytes from fd 0,
-// parsed as an optionally-signed decimal. Bytes past the number (the newline, and
-// anything else in that 16-byte window) are consumed and discarded: there is no
-// pushback, which is why read_int and read_line cannot be mixed on one stream.
-//
-// It returns i64 because the hand-asm accumulated in a 64-bit register, and the
-// op site pushes a 64-bit slot either way.
-//
-// The `n < 0` clamp is the fix. The hand-asm computed its end pointer as
-// `buf + n` from the RAW read return, so a failed read (fd 0 closed → -EBADF)
-// put the end BEHIND the start. The loop tests pointer equality and only ever
-// advances, so it could never reach that end: it walked uninitialised stack until
-// it happened to hit a non-digit, and a leading '-' in the garbage even flipped
-// the sign. Witnessed returning 9999 out of a dead frame rather than 0.
-pub function rt_src_read_int(t: string): string {
-    return "function __fern_read_int(): i64 { var p: i32 = __raw_scratch(16); var n: i32 = __syscall3(" + sysno(t, "read") + ", 0, p, 16); if (n < 0) { n = 0; } var i: i32 = 0; var neg: i32 = 0; if (n > 0) { if (__raw_load8(p, 0) == 45) { neg = 1; i = 1; } } var acc: i64 = 0 as i64; while (i < n) { var c: i32 = __raw_load8(p, i); if (c < 48) { i = n; } else { if (c > 57) { i = n; } else { acc = acc * (10 as i64) + ((c - 48) as i64); i = i + 1; } } } if (neg == 1) { acc = (0 as i64) - acc; } return acc; }";
-}
-
 // rt_src_read_all_stdin backs `read_all_stdin()` → fd 0 drained to EOF into one
 // string. `__raw_string` is exactly what the hand-asm did by hand (it called
 // __fern_str_box, which is what the op lowers to), so the returned box is
@@ -3159,14 +3114,6 @@ pub function (s: EmitState) mark_arr_slice(): EmitState {
     return s.need("heap").need("arr_slice");
 }
 
-pub function (s: EmitState) mark_arr_i32_index_of(): EmitState {
-    return s.need("arr_i32_index_of");
-}
-
-pub function (s: EmitState) mark_arr_i32_index_of_opt(): EmitState {
-    return s.need("heap").need("arr_i32_index_of_opt");
-}
-
 // mark_str_from_bytes gates the Fern __fern_string_from_bytes runtime function
 // (#2649) on its own str_from_bytes need. The AST call sites previously only
 // marked heap (the hand-asm body rode the always-emitted heap block); the Fern
@@ -3189,18 +3136,6 @@ pub function rt_src_string_from_bytes(): string {
 // runtime_need_deps declares the same edge for close_needs.
 pub function (s: EmitState) mark_arr_str_join(): EmitState {
     return s.need("heap").need("arr_str_join");
-}
-
-pub function (s: EmitState) mark_arr_i32_sum(): EmitState {
-    return s.need("arr_i32_sum");
-}
-
-pub function (s: EmitState) mark_arr_i32_min_max(): EmitState {
-    return s.need("arr_i32_min_max");
-}
-
-pub function (s: EmitState) mark_arr_i32_product(): EmitState {
-    return s.need("arr_i32_product");
 }
 
 // str_lines's helper builds its string[] with .append() → arr_push /
@@ -3267,18 +3202,6 @@ pub function (s: EmitState) mark_str_trim(): EmitState {
     return s.need("heap").need("str_concat").need("str_trim");
 }
 
-pub function (s: EmitState) mark_str_reverse(): EmitState {
-    return s.need("heap").need("str_reverse");
-}
-
-// rt_src_str_reverse backs `s.reverse()` (#2649) — a fresh string box with `s`'s
-// bytes in reverse order, via the raw-memory intrinsic floor. Allocates n bytes,
-// copies s[n-1-i] into p[i], boxes it. Heap is its sole dep. Replaces the
-// hand-written register-ABI body on every backend.
-pub function rt_src_str_reverse(): string {
-    return "function __fern_str_reverse(s: string): string { var n: i32 = s.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, s[n - 1 - i] as i32); i = i + 1; } return __raw_string(p, n); }";
-}
-
 pub function (s: EmitState) mark_str_replace(): EmitState {
     return s.need("heap").need("str_replace");
 }
@@ -3296,22 +3219,6 @@ pub function (s: EmitState) mark_str_replace(): EmitState {
 pub function rt_src_str_replace(): string {
     return "function __fern_str_dup(h: string): string { var n: i32 = h.len(); if (n == 0) { return \"\"; } var p: usize = __raw_alloc(n); __memcpy(p, __raw_data(h), n); return __raw_string(p, n); } " +
         "function __fern_str_replace(h: string, o: string, nw: string): string { var lenH: i32 = h.len(); var lenO: i32 = o.len(); if (lenO == 0) { return __fern_str_dup(h); } var lenN: i32 = nw.len(); var count: i32 = 0; var i: i32 = 0; while (i + lenO <= lenH) { var j: i32 = 0; var m: i32 = 1; while (j < lenO) { if (h[i + j] != o[j]) { m = 0; j = lenO; } else { j = j + 1; } } if (m == 1) { count = count + 1; i = i + lenO; } else { i = i + 1; } } if (count == 0) { return __fern_str_dup(h); } var total: i32 = lenH + count * (lenN - lenO); var cap: i32 = total; if (cap == 0) { cap = 1; } var p: usize = __raw_alloc(cap); var w: i32 = 0; var k: i32 = 0; while (k < lenH) { var m2: i32 = 0; if (k + lenO <= lenH) { var jj: i32 = 0; m2 = 1; while (jj < lenO) { if (h[k + jj] != o[jj]) { m2 = 0; jj = lenO; } else { jj = jj + 1; } } } if (m2 == 1) { var t: i32 = 0; while (t < lenN) { __raw_store8(p, w, nw[t] as i32); w = w + 1; t = t + 1; } k = k + lenO; } else { __raw_store8(p, w, h[k] as i32); w = w + 1; k = k + 1; } } return __raw_string(p, total); }";
-}
-
-pub function (s: EmitState) mark_i32_pow(): EmitState {
-    return s.need("i32_pow");
-}
-
-pub function (s: EmitState) mark_i32_gcd(): EmitState {
-    return s.need("i32_gcd");
-}
-
-// lcm's helper calls gcd's. The AST emit path has no close_needs, so the mark
-// helper must pull in the transitive dep (i32_gcd) directly, and
-// runtime_need_deps declares the edge too, for the IR path's close_needs; both
-// kept in sync.
-pub function (s: EmitState) mark_i32_lcm(): EmitState {
-    return s.need("i32_gcd").need("i32_lcm");
 }
 
 // rt_src_arr_slice backs `a[start:end]` (#2649), the one array helper written
@@ -3357,94 +3264,6 @@ pub function rt_src_arr_slice(t: string): string {
     return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0) as i32; } var m: i32 = end - start; var p: usize = __raw_arr_box(m); var dst: usize = __raw_addr(p, 8); var src: usize = __raw_addr(__raw_arr_ptr(a), 8); var skip: i32 = start; while (skip > 0) { var cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } var left: i32 = m; while (left > 0) { var cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
 }
 
-// rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
-// the integer-power runtime helper backing `n.pow(e)`. It is the first runtime
-// helper written in Fern instead of a hand-written asm string (issue #2649):
-// each backend's emit_runtime_fern_fn parses this and lowers it through the
-// normal function emitter, so it links as __fn___fern_i32_pow and is called via
-// the ordinary stack convention. Shared here (not per-backend) so the helper
-// logic has a single source of truth across x86-64 and arm64. Pure scalar (a
-// multiply loop) — Tier 0 in docs/RUNTIME-IN-FERN.md: no helper dependency and
-// no circularity (its body uses `*`/`-`/`while`, never `.pow()` itself).
-pub function rt_src_i32_pow(): string {
-    return "function __fern_i32_pow(base: i32, exp: i32): i32 { var r: i32 = 1; var e: i32 = exp; while (e > 0) { r = r * base; e = e - 1; } return r; }";
-}
-
-// rt_src_i32_gcd / rt_src_i32_lcm back `n.gcd(m)` / `n.lcm(m)` (#2649), mirroring
-// std/i32.gcd / .lcm. gcd is pure scalar (Euclid on the absolute values — Tier 0,
-// no helper deps). lcm calls `.gcd()` (so its helper `call`s __fn___fern_i32_gcd):
-// runtime_need_deps maps i32_lcm → i32_gcd so close_needs emits gcd's body too.
-// gcd(0,0)=0, gcd(a,0)=|a|; lcm is 0 when either operand is 0, else |n/gcd|*|other|.
-pub function rt_src_i32_gcd(): string {
-    return "function __fern_i32_gcd(n: i32, other: i32): i32 { var a: i32 = n; if (a < 0) { a = 0 - a; } var b: i32 = other; if (b < 0) { b = 0 - b; } while (b != 0) { var t: i32 = b; b = a % b; a = t; } return a; }";
-}
-
-pub function rt_src_i32_lcm(): string {
-    return "function __fern_i32_lcm(n: i32, other: i32): i32 { if (n == 0) { return 0; } if (other == 0) { return 0; } var g: i32 = n.gcd(other); var q: i32 = n / g; if (q < 0) { q = 0 - q; } var b: i32 = other; if (b < 0) { b = 0 - b; } return q * b; }";
-}
-
-// The i32-array reducers backing `xs.sum()` / `.product()` / `.index_of(x)` /
-// `.min()` / `.max()` — runtime helpers written in Fern instead of hand-written
-// asm (#2649). Tier 1 in docs/RUNTIME-IN-FERN.md: they take a borrowed array
-// param (the exit sweep skips params, so no RC traffic) and bottom out in
-// inline-lowered `xs.len()` / `xs[i]` indexing and i32 arithmetic — no helper
-// call and no allocation, so they reuse emit_runtime_fern_fn unchanged. (min/max
-// return the raw extremum; the call site handles empty→None and the Option box.)
-pub function rt_src_arr_i32_sum(): string {
-    return "function __fern_arr_i32_sum(xs: i32[]): i32 { var s: i32 = 0; var i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }";
-}
-
-pub function rt_src_arr_i32_product(): string {
-    return "function __fern_arr_i32_product(xs: i32[]): i32 { var p: i32 = 1; var i: i32 = 0; while (i < xs.len()) { p = p * xs[i]; i = i + 1; } return p; }";
-}
-
-// rt_src_arr_i32_index_of is the RAW scan: first index or -1. It still backs
-// `xs.contains(x)`, which reads the sentinel as `>= 0` and never sees an Option.
-pub function rt_src_arr_i32_index_of(): string {
-    return "function __fern_arr_i32_index_of(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
-}
-
-// rt_src_arr_i32_index_of_opt backs `xs.index_of(x)`, which returns Option[i32].
-// Same shape as the min/max pair below: the Option box lives INSIDE the Fern
-// helper, so the call site is an unconditional call and no Option construction
-// is hand-emitted as IR ops. It allocates, so its need pulls in the heap
-// runtime — unlike the raw sentinel scan above, which does not.
-pub function rt_src_arr_i32_index_of_opt(): string {
-    return "function __fern_arr_i32_index_of_opt(xs: i32[], target: i32): Option[i32] { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return Some(i); } i = i + 1; } return None; }";
-}
-
-// rt_src_arr_i32_min / _max backed `xs.min()` / `.max()` on the AST path. The
-// call site handles the empty array (→ None) and wraps the result in
-// Option[i32], so these helpers take a NON-EMPTY borrowed array and return the
-// extremum i32 — the same clean Tier 1 reduce-with-comparison shape as
-// sum/product (#2649).
-pub function rt_src_arr_i32_min(): string {
-    return "function __fern_arr_i32_min(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] < m) { m = xs[i]; } i = i + 1; } return m; }";
-}
-
-// rt_src_arr_i32_min_max_opt is the IR path's pair (#3457): ONE helper per
-// extremum that carries the empty-array guard AND the Option box itself, so the
-// call site is an unconditional call — the sum/product shape — instead of the
-// AST emitter's open-coded `len == 0` branch plus two hand-built 16-byte boxes.
-// Keeping the branch in Fern source is what makes these tractable on the IR
-// path at all: `emit_ir_runtime_fern_fn` already compiles Option/Result-
-// returning helpers (rt_src_read_file), so no Option construction has to be
-// hand-emitted as IR ops on three backends. They allocate, so unlike the fold
-// helpers their need pulls in the heap runtime.
-pub function rt_src_arr_i32_min_max_opt(): string {
-    return "function __fern_arr_i32_min_opt(xs: i32[]): Option[i32] { if (xs.len() == 0) { return None; } var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] < m) { m = xs[i]; } i = i + 1; } return Some(m); } function __fern_arr_i32_max_opt(xs: i32[]): Option[i32] { if (xs.len() == 0) { return None; } var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return Some(m); }";
-}
-
-// rt_src_str_to_i32 backs `str_to_i32(s)` — parse a borrowed string into an
-// i32 (#2649). Written with `for b in s` (string byte iteration + break, both
-// IR-eligible) rather than s[i] indexing so it lowers cleanly on the IR path. Optional leading '-', then decimal digits, stopping at
-// the first non-digit (empty / non-numeric → 0) — matching the hand-written
-// helper it replaces. The string param is read-only (never returned/stored), so
-// borrow analysis keeps it borrowed: no RC free of the caller's string.
-pub function rt_src_str_to_i32(): string {
-    return "function __fern_str_to_i32(s: string): i32 { var acc: i32 = 0; var neg: i32 = 0; var first: i32 = 1; for b in s { if (first == 1 && b == 45) { neg = 1; } else { var d: i32 = (b as i32) - 48; if (d < 0 || d > 9) { break; } acc = acc * 10 + d; } first = 0; } if (neg == 1) { return 0 - acc; } return acc; }";
-}
-
 // rt_src_str_cmp backs string ordering (< <= > >=) → __fern_str_cmp(a, b),
 // returning a signed i32: <0 if a<b, 0 if equal, >0 if a>b (#2649). Lexicographic
 // byte compare (unsigned bytes, like the asm's movzbq) with a length tiebreak;
@@ -3472,10 +3291,6 @@ pub function rt_src_str_cmp(): string {
 // growing 4.2x per doubling of the input. This is #9077's string half.
 pub function rt_src_arr_str_join(): string {
     return "function __fern_arr_str_join(xs: string[], sep: string): string { var n: i32 = xs.len(); if (n == 0) { return \"\"; } var ls: i32 = sep.len(); var total: i32 = ls * (n - 1); var i: i32 = 0; while (i < n) { total = total + xs[i].len(); i = i + 1; } var p: usize = __raw_alloc(total); var off: i32 = 0; var j: i32 = 0; while (j < n) { if (j > 0) { __memcpy(__raw_addr(p, off), __raw_data(sep), ls); off = off + ls; } var e: string = xs[j]; var le: i32 = e.len(); __memcpy(__raw_addr(p, off), __raw_data(e), le); off = off + le; j = j + 1; } return __raw_string(p, total); }";
-}
-
-pub function rt_src_arr_i32_max(): string {
-    return "function __fern_arr_i32_max(xs: i32[]): i32 { var m: i32 = xs[0]; var i: i32 = 1; while (i < xs.len()) { if (xs[i] > m) { m = xs[i]; } i = i + 1; } return m; }";
 }
 
 // rt_src_str_split backs `str_split(s, sep)` / `s.split(sep)` (#2649) — a string[]
@@ -4705,7 +4520,6 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         if (fa.field == "lines") { return ty_array_string(); }
         if (fa.field == "bytes") { return ty_array_i32(); }
         if (fa.field == "as_bytes") { return ty_array_i32(); }
-        if (fa.field == "reverse") { return ty_string(); }
         if (fa.field == "first_byte" || fa.field == "last_byte") { return ty_i32(); }
         if (fa.field == "trim") { return ty_string(); }
         if (fa.field == "to_ascii_upper") { return ty_string(); }
@@ -4818,8 +4632,6 @@ function builtin_i32_names(): string[] {
         "proc_exec_as",
         "f64_bits", "f32_bits",
         "len",
-        "read_int",
-        "str_to_i32",
         // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
         // machine words carried as i32; __raw_string is the one that
         // produces a typed string. The stores return i32 (the value
@@ -5574,12 +5386,7 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
         || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
-        || name == "str_reverse" || name == "str_replace"
-        // The Option-returning array helpers box their result via
-        // __fern_arr_box. Their call sites mark heap too, so this edge is
-        // byte-neutral through that route; it is what makes the closure right
-        // when the need is seeded from all_runtime_need_roots instead.
-        || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
+        || name == "str_replace"
         || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
@@ -5619,12 +5426,6 @@ pub function runtime_need_deps(name: string): string[] {
         // The sole-owner reclaim-on-grow append shares __fern_arr_push's grow path.
         var d2: string[] = ["arr_push"];
         return d2;
-    }
-    if (name == "i32_lcm") {
-        // __fern_i32_lcm's body calls `.gcd()` → __fn___fern_i32_gcd. Pure
-        // scalar, so no heap. (gcd itself has no deps.)
-        var dlcm: string[] = ["i32_gcd"];
-        return dlcm;
     }
     if (name == "arr_str_join") {
         // Sizes and fills one exact-size block, so the heap is all it reaches.
@@ -5739,16 +5540,8 @@ pub function (s: EmitState) any_need(names: string[]): boolean {
     return false;
 }
 
-pub function (s: EmitState) mark_print_int(): EmitState {
-    return s.need("print_int");
-}
-
 pub function (s: EmitState) mark_heap(): EmitState {
     return s.need("heap");
-}
-
-pub function (s: EmitState) mark_read_int(): EmitState {
-    return s.need("read_int");
 }
 
 pub function escape_for_ascii(s: string): string {
@@ -6506,7 +6299,7 @@ function callgate_name_in(names: string[], name: string): boolean {
 function emitter_call_names(): string[] {
     return [
         "str_repeat", "str_replace", "str_split", "str_trim",
-        "str_to_i32", "str_to_lower", "str_to_upper",
+        "str_to_lower", "str_to_upper",
         "i32_to_string", "int__int_to_string", "print_str"
     ];
 }
@@ -7023,14 +6816,14 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_str_concat", "__fn___fern_str_eq",
         "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
         "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",
-        "__fn___fern_str_replace", "__fn___fern_str_reverse", "__fn___fern_str_trim",
+        "__fn___fern_str_replace", "__fn___fern_str_trim",
         "__fn___fern_str_to_lower", "__fn___fern_str_to_upper",
         // The stdout/stderr leaves are Fern on BOTH register backends now (#2649),
         // so only the stack-ABI symbols exist; the register-ABI __fern_print_str /
-        // __fern_print_int / __fern_eprint_str / __fern_putchar are gone.
-        "__fn___fern_print_str", "__fn___fern_print_int",
+        // __fern_eprint_str / __fern_putchar are gone.
+        "__fn___fern_print_str",
         "__fn___fern_eprint_str", "__fn___fern_putchar",
-        "__fn___fern_read_int", "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
+        "__fn___fern_read_line", "__fn___fern_read_file", "__fn___fern_read_file_bytes",
         "__fn___fern_reader_read_chunk", "__fn___fern_reader_close", "__fn___fern_write_file",
         "__fern_remove_dir_all", "__fn___fern_remove_dir_all", "__fn___fern_temp_dir", "__fern_read_dir", "__fn___fern_read_dir",
         "__fern_read_dir_all", "__fn___fern_read_dir_all", "__fn___fern_remove_file",
@@ -7097,7 +6890,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_alloc_reuse",
         "__fn___fern_rc_underflow_count", "__fn___fern_i32_to_string", "__fn___fern_u32_to_string",
         "__fn___fern_i64_to_string", "__fn___fern_u64_to_string",
-        "__fn___fern_str_to_i32", "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
+        "__fn___fern_str_cmp", "__fn___fern_chr", "__fn___fern_snapshot_dec",
         // string RC reclaim (#2649): a LIBRARY module that reclaims a fresh string
         // (`var b = a + a` → __fern_str_free) references this symbol; the entry
         // owns the single definition (emit_ir_runtime), so export it for the
@@ -7121,13 +6914,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         // ALL arrays, making it eligible where the string-carrying EmitState /
         // FuncDecl spreads take the inline per-field path and never call out.
         "__fn___fern_struct_copy",
-        // i32[] sum / product (#3457): a LIBRARY module calling xs.sum() emits
-        // `call __fn___fern_arr_i32_sum`; the entry owns the definition. A
-        // registered NEED root is not the same as an exported SYMBOL.
-        "__fn___fern_arr_i32_sum", "__fn___fern_arr_i32_product", "__fn___fern_i32_pow",
-        "__fn___fern_i32_gcd", "__fn___fern_i32_lcm",
-        "__fn___fern_arr_i32_index_of",
-        "__fn___fern_arr_i32_min_opt", "__fn___fern_arr_i32_max_opt",
         // The register entries of the helpers that have one (ssa_reg_helper),
         // called from every unit like the stack entries they sit beside.
         "__fn___fern_arr_dec.r", "__fn___fern_str_free.r",

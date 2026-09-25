@@ -2,33 +2,31 @@
 
 This is the **implementation design** for the primitive floor sketched in
 `RUNTIME-IN-FERN.md` (§"The hard part: circularity and the primitive floor").
-The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
-`str_to_i32`, `str_cmp`, `str_eq`,
+The Tier-0/1 helpers — `str_cmp`, `str_eq`,
 `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`
-— are now Fern runtime functions. (`str_chars` was one of them until #7231
+— are now Fern runtime functions. (`i32_pow`, `i32_gcd`/`lcm`, the
+`arr_i32_*` reducers, `str_to_i32` and `str_reverse` were too, until #10244
+removed them: every spelling that reached them was one the checkers reject,
+and with the stdlib import the program calls the stdlib's own method.) (`str_chars` was one of them until #7231
 retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 `arr_str_index_of` was too, until #7596 removed it: its only emitter was the
 `string[]` `index_of` / `contains` lowering intercept that #7451 deleted.)
 
 > **Status update (2026-07): the intrinsics below shipped and the Tier-2
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
-> `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
+> `str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 > `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
 > **Status update (2026-08, the stdout/stderr leaves.)** `print_str`,
-> `print_int`, `putchar` and `eprint_str` are Fern on all three native targets
-> (`asmcore.rt_src_print_str` / `rt_src_print_int` / `rt_src_putchar` /
-> `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
+> `putchar` and `eprint_str` are Fern on all three native targets
+> (`asmcore.rt_src_print_str` / `rt_src_putchar` / `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
 > whose number `sysno` already carried for `tcp_send`, and the two that need a
 > scratch byte — `putchar`'s character, `eprint_str`'s newline — take it from the
 > `__raw_scratch` buffer the clocks added, which is why they join its gate.
 >
-> `print_int` takes an **i64**, so one helper serves both `op_print_int` and the
-> wider `op_print_i64`: an i32 reaches the stack slot already sign-extended. That
-> is what closes the gap where `op_print_i64` (kind 162) had no register-backend
-> handler and `print_int` on an i64 printed nothing. Taking the magnitude in
-> `u64` also makes INT64_MIN print, which neither hand-asm body managed.
+> `print_int`, `eprint_int` and `read_int` were retired rather than migrated
+> (#10244): neither checker accepts those names.
 >
 > **Status update (2026-08, the syscall floor reaches arm64.)** `random_bytes`
 > is the first syscall leaf to be Fern on **both** register backends: the
@@ -389,13 +387,13 @@ function __fern_str_concat(a: string, b: string): string {
 ```
 
 `str_to_upper`/`_lower` (case-flip per byte), `str_repeat` (n copies),
-`str_reverse` (reversed copy), `str_replace` (scan + copy with substitution),
+`str_replace` (scan + copy with substitution),
 and `i32_to_string` (digit buffer) are all the same shape: size, alloc, fill,
 box. None needs anything beyond the table above.
 
 ## Lowering, per backend
 
-Recognition mirrors the existing bare-name runtime calls (e.g. `str_to_i32`):
+Recognition mirrors the existing bare-name runtime calls (e.g. `chr`):
 
 - **AST** (`asm.fern` / `asm_arm64.fern`): a new arm in `try_emit_builtin`
   matching the `__raw_*` names, emitting the single instruction inline (no
@@ -430,7 +428,7 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
 2. **`str_concat`** — backs `+` on strings; high-traffic, exercises the
    two-source copy loop.
 3. **`i32_to_string`** — the digit-buffer build; backs `(n).to_string()`.
-4. **`str_to_upper` / `_lower`**, **`str_repeat`**, **`str_reverse`**,
+4. **`str_to_upper` / `_lower`**, **`str_repeat`**,
    **`str_replace`** — the remaining per-byte string builders, one slice each
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.
@@ -448,14 +446,14 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    hand-written body left in it is Darwin's `fork`, whose child marker arrives in
    `x1` where a `__syscall*` returns one integer.
    wasm keeps its WASI bundles — it has no generic syscall.
-6. **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
-   `eprint_str`. **Done on all three native targets**, needing no new primitive.
+6. **The stdout/stderr leaves** — `print_str`, `putchar`, `eprint_str`.
+   **Done on all three native targets**, needing no new primitive.
 7. **The stdin / Reader leaves.** Split by whether the helper returns a box.
-   **Done:** `read_int` and `read_all_stdin`, which return a bare integer and a
-   bare string — no Option, so no layout question. Each fixed an unchecked
-   syscall return used as a bound (a failed `read` walking uninitialised stack;
-   a 32 MiB buffer with no cursor bound), and the arm64 dead `read_all_stdin`
-   twin went with them.
+   **Done:** `read_all_stdin`, which returns a bare string — no Option, so no
+   layout question. It and `read_int` (done alongside it, since retired) each
+   fixed an unchecked syscall return used as a bound (a failed `read` walking
+   uninitialised stack; a 32 MiB buffer with no cursor bound), and the arm64
+   dead `read_all_stdin` twin went with them.
    **Left:** `read_line`, `reader_read_chunk`, `reader_close`. These hand-build
    an `Option[string]` over a **headerless** raw 16-byte strbox where
    `__raw_string` yields the rc-headered one — safe only because nothing decs

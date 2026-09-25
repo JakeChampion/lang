@@ -1135,7 +1135,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// inc → field-drop reclaims them, the heap-leak win) are exactly the fresh,
 		// sole-owned heap strings whose data buffer is exclusively owned
 		// (expr_is_fresh_str): a direct inline concat `a + b`, and the case/shape
-		// transforms `.to_ascii_upper()` / `.to_ascii_lower()` / `.reverse()` / `.repeat(n)`
+		// transforms `.to_ascii_upper()` / `.to_ascii_lower()` / `.repeat(n)`
 		// (+ their str_* free-fn spellings). Every OTHER value is inc'd at
 		// construction so the field-drop only decs the dup (sound, leaks, never an
 		// over-release): a string LITERAL (.rodata static), an aliased local / param
@@ -1182,8 +1182,6 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"strdrop-toupper-field-value", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.to_ascii_upper() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
 		// `.to_ascii_lower()` field value: fresh cased buffer, freed once.
 		{"strdrop-tolower-field-detector", `struct P { name: string } function go(): i32 { var s = "AB"; var p = P { name: s.to_ascii_lower() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow(); }`, 0},
-		// `.reverse()` field value: a real fresh copy, freed once.
-		{"strdrop-reverse-field-detector", `struct P { name: string } function go(): i32 { var s = "abc"; var p = P { name: s.reverse() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow(); }`, 0},
 		// `.repeat(n)` field value: a fresh n-copy buffer, freed once.
 		{"strdrop-repeat-field-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 6) { return 99; } return __rc_underflow(); }`, 0},
 		// Free-function spelling `str_to_upper(s)`: same fresh op_str_to_upper, freed.

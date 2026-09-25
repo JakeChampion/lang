@@ -7,15 +7,8 @@ import "testing"
 // `-1` sentinel while `core/cmp`'s free `index_of` returned an Option, which is
 // the same-name-different-contract pair #4387 opened on.
 //
-// The receiver shapes matter more than the values here. On the self-host IR
-// path an `i32[]` receiver goes through a lowering intercept to a runtime helper
-// (`__fern_arr_i32_index_of_opt`) rather than the stdlib body, and the intercept
-// keys on the receiver: a LOCAL, a struct FIELD (the #6784 shape, which also
-// needs `builtin_arr_opt_ret_type` to recover the scrutinee type of an inline
-// `match`), and a `string[]` receiver — which is NOT intercepted and goes
-// through the stdlib generic — are three different lowerings of one call.
-// `.contains` is checked alongside because it still reads the raw `-1` scan,
-// so a change that conflated the two helpers would show up here.
+// The receivers are a LOCAL, a struct FIELD (the #6784 shape) and a `string[]`,
+// with `.contains` checked alongside on the same receivers.
 const arrayIndexOfProg = `import "std/array";
 
 struct H { xs: i32[] }
@@ -31,7 +24,7 @@ function main(): i32 {
     // struct-field receiver, inline match (scrutinee type via the builtin registry)
     match (h.xs.index_of(9))  { Some(i) => { if (i != 2) { return 4; } }, None => { return 5; } }
     match (h.xs.index_of(99)) { Some(_) => { return 6; },                 None => {} }
-    // string[] receiver — the stdlib generic, not the intercept
+    // string[] receiver
     match (ss.index_of("c")) { Some(i) => { if (i != 2) { return 7; } }, None => { return 8; } }
     match (ss.index_of("z")) { Some(_) => { return 9; },                 None => {} }
     // first match wins on a duplicate, and an empty array is None
@@ -42,7 +35,7 @@ function main(): i32 {
     // bound to a local first — the non-inline scrutinee path
     var o: Option[i32] = xs.index_of(8);
     match (o) { Some(i) => { if (i != 1) { return 13; } }, None => { return 14; } }
-    // .contains still uses the raw -1 scan on the same receivers
+    // .contains on the same receivers
     if (!xs.contains(8))   { return 15; }
     if (xs.contains(88))   { return 16; }
     if (!h.xs.contains(8)) { return 17; }

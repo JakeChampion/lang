@@ -45,7 +45,7 @@ func TestSelfHostWasmComponent(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentWrapDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("component assembler produced 0 bytes")
 	}
@@ -62,7 +62,7 @@ func TestSelfHostWasmComponent(t *testing.T) {
 		{"struct", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 1, y: 2 }; return p.x + p.y; }"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
+			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("WAT emitter produced 0 bytes")
 			}
@@ -160,7 +160,7 @@ func TestSelfHostWasmComponentFull(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("component-full assembler produced 0 bytes")
 	}
@@ -304,7 +304,7 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("component assembler produced 0 bytes")
 	}
@@ -330,7 +330,7 @@ func TestSelfHostWasmComponentEndToEnd(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// source -> preview2 core WAT
-			coreWat := runCapture(t, gcc, runner, p2Bin, []byte(tc.source))
+			coreWat := runCapture(t, gcc, runner, p2Bin, []byte(withPrintInt(tc.source)))
 			if len(coreWat) == 0 {
 				t.Fatal("preview2 core WAT empty")
 			}
@@ -462,7 +462,7 @@ func TestSelfHostWasmComponentFullIO(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIODriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-component assembler produced 0 bytes")
 	}
@@ -559,7 +559,7 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIODriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io component assembler produced 0 bytes")
 	}
@@ -577,14 +577,13 @@ func TestSelfHostWasmComponentStdout(t *testing.T) {
 		{"write", `function main(): i32 { write("hi"); return 0; }`, "hi", 0},
 		{"write-newline", `function main(): i32 { write("hello world\n"); return 0; }`, "hello world\n", 0},
 		{"fstring", `function main(): i32 { var n: i32 = 21; write(f"answer={n * 2}"); return 0; }`, "answer=42", 0},
-		{"print-int", `function main(): i32 { print_int(42); return 0; }`, "42", 0},
 		{"multi-write", `function main(): i32 { var i: i32 = 0; while (i < 3) { write("ab"); i = i + 1; } return 0; }`, "ababab", 0},
 		{"err-path", `function main(): i32 { write("x"); return 5; }`, "x", 1},
 		{"putchar", `function main(): i32 { putchar(72); putchar(105); putchar(33); return 0; }`, "Hi!", 0},
 		{"putchar-loop", `function main(): i32 { var c: i32 = 97; while (c < 101) { putchar(c); c = c + 1; } return 0; }`, "abcd", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			coreWat := runCapture(t, gcc, runner, ioBin, []byte(tc.source))
+			coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(tc.source)))
 			if len(coreWat) == 0 {
 				t.Fatal("preview2 io core WAT empty")
 			}
@@ -698,7 +697,7 @@ func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs component assembler produced 0 bytes")
 	}
@@ -798,7 +797,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs component assembler produced 0 bytes")
 	}
@@ -808,7 +807,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -1020,7 +1019,7 @@ func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-write component assembler produced 0 bytes")
 	}
@@ -1126,7 +1125,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-write component assembler produced 0 bytes")
 	}
@@ -1136,7 +1135,7 @@ func TestSelfHostWasmComponentWriteFile(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -1279,7 +1278,7 @@ func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSRWDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw component assembler produced 0 bytes")
 	}
@@ -1387,7 +1386,7 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSRWDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw component assembler produced 0 bytes")
 	}
@@ -1397,7 +1396,7 @@ func TestSelfHostWasmComponentReadWriteFile(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -1525,7 +1524,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIORandomDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-random component assembler produced 0 bytes")
 	}
@@ -1621,7 +1620,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIORandomDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-random component assembler produced 0 bytes")
 	}
@@ -1631,7 +1630,7 @@ func TestSelfHostWasmComponentRandom(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -1752,7 +1751,7 @@ func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-env component assembler produced 0 bytes")
 	}
@@ -1849,7 +1848,7 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-env component assembler produced 0 bytes")
 	}
@@ -1859,7 +1858,7 @@ func TestSelfHostWasmComponentEnv(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -1980,7 +1979,7 @@ func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-args component assembler produced 0 bytes")
 	}
@@ -2077,7 +2076,7 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-args component assembler produced 0 bytes")
 	}
@@ -2087,7 +2086,7 @@ func TestSelfHostWasmComponentArgs(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -2199,7 +2198,7 @@ func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOClockDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock component assembler produced 0 bytes")
 	}
@@ -2295,7 +2294,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOClockDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock component assembler produced 0 bytes")
 	}
@@ -2305,7 +2304,7 @@ func TestSelfHostWasmComponentClock(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -2443,7 +2442,7 @@ func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOClockMonoDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock-mono component assembler produced 0 bytes")
 	}
@@ -2539,7 +2538,7 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOClockMonoDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-clock-mono component assembler produced 0 bytes")
 	}
@@ -2549,7 +2548,7 @@ func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -2655,7 +2654,7 @@ func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSReadEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-read-env component assembler produced 0 bytes")
 	}
@@ -2755,7 +2754,7 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSReadEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-read-env component assembler produced 0 bytes")
 	}
@@ -2765,7 +2764,7 @@ func TestSelfHostWasmComponentReadEnv(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -2879,7 +2878,7 @@ func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSRWEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
 	}
@@ -2983,7 +2982,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSRWEnvDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-env component assembler produced 0 bytes")
 	}
@@ -2993,7 +2992,7 @@ func TestSelfHostWasmComponentReadWriteEnv(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -3107,7 +3106,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIORandomWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-random-write component assembler produced 0 bytes")
 	}
@@ -3208,7 +3207,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIORandomWriteDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-random-write component assembler produced 0 bytes")
 	}
@@ -3218,7 +3217,7 @@ func TestSelfHostWasmComponentRandomWrite(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -3328,7 +3327,7 @@ func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOEprintDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-eprint component assembler produced 0 bytes")
 	}
@@ -3430,7 +3429,7 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOEprintDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-eprint component assembler produced 0 bytes")
 	}
@@ -3440,7 +3439,7 @@ func TestSelfHostWasmComponentEprint(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -3563,7 +3562,7 @@ func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOExitDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-exit component assembler produced 0 bytes")
 	}
@@ -3663,7 +3662,7 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOExitDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-exit component assembler produced 0 bytes")
 	}
@@ -3673,7 +3672,7 @@ func TestSelfHostWasmComponentExit(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, ioBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, ioBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 io core WAT empty")
 		}
@@ -3793,7 +3792,7 @@ func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSArgsReadDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-args-read component assembler produced 0 bytes")
 	}
@@ -3890,7 +3889,7 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSArgsReadDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-args-read component assembler produced 0 bytes")
 	}
@@ -3900,7 +3899,7 @@ func TestSelfHostWasmComponentArgsRead(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}
@@ -4019,7 +4018,7 @@ func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentFullIOFSRWArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-args component assembler produced 0 bytes")
 	}
@@ -4123,7 +4122,7 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 		asmSrc.WriteByte('\n')
 	}
 	asmSrc.WriteString(componentCompileIOFSRWArgsDriver)
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(asmSrc.String())))
 	if len(asmWat) == 0 {
 		t.Fatal("io-fs-rw-args component assembler produced 0 bytes")
 	}
@@ -4133,7 +4132,7 @@ func TestSelfHostWasmComponentArgsReadWrite(t *testing.T) {
 	}
 
 	build := func(t *testing.T, source string) string {
-		coreWat := runCapture(t, gcc, runner, fsBin, []byte(source))
+		coreWat := runCapture(t, gcc, runner, fsBin, []byte(withPrintInt(source)))
 		if len(coreWat) == 0 {
 			t.Fatal("preview2 fs core WAT empty")
 		}

@@ -36,10 +36,6 @@ func TestSelfHostReadErrorWasmIR(t *testing.T) {
     write("x");
     return read_all_stdin().len();
 }`, 0},
-		{"read_int_is_zero", `function main(): i32 {
-    write("x");
-    return read_int();
-}`, 0},
 	}
 
 	for _, tc := range cases {
