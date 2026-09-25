@@ -1243,10 +1243,11 @@ pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
 
 // module_uses_map_w64 reports whether any function emits an 8-byte-VALUED map op
 // the wasm IR path handles via the cell helpers (map_set 125, map_get_or 129,
-// map_values 132, map_get 127, or map_iter 133 with widekind 1 = i64/u64 or 2 =
-// f64), so emit_ir_module_units emits map_w64_helpers. #5253.
+// map_values 132, map_get 127, map_iter 133 or mapiter_value 136 with widekind
+// 1 = i64/u64 or 2 = f64), so emit_ir_module_units emits map_w64_helpers.
+// #5253.
 pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
-    function is_map_w64(o: ir.Op): boolean { return (o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133) && o.i64_imm != 0; }
+    function is_map_w64(o: ir.Op): boolean { return (o.kind_tag == 125 || o.kind_tag == 129 || o.kind_tag == 132 || o.kind_tag == 127 || o.kind_tag == 133 || o.kind_tag == 136) && o.i64_imm != 0; }
     return any_op(cache, is_map_w64);
 }
 
