@@ -9766,6 +9766,29 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     ]);
 }
 
+// A typed runtime body can call a need-gated runtime block emitted before it,
+// so the runtime is emitted into a capture and emitted again, from the state
+// before it, with the needs it added, until they stop growing.
+function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    var s: asmcore.EmitState = s0;
+    var settled: boolean = false;
+    var out: asmcore.EmitState = s0;
+    while (!settled) {
+        s = s.close_needs();
+        var h: usize = buf_new(65536);
+        var t: asmcore.EmitState = emit_ir_runtime(asmcore.EmitState { ...s, capture: h }, darwin);
+        var text: string = buf_take(h);
+        if (t.needed.len() == s.needed.len()) {
+            settled = true;
+            var back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
+            out = back.write(text);
+        } else {
+            s = asmcore.EmitState { ...s0, needed: t.needed };
+        }
+    }
+    return out;
+}
+
 pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     s = emit_rt_clock_and_print(s, darwin);
     s = emit_rt_readiness(s, darwin);
@@ -9876,7 +9899,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
     s = emit_arm64_reclaim_drop_bodies(s);
-    s = emit_ir_runtime(s, darwin);
+    s = emit_ir_runtime_settled(s, darwin);
     return strbuf_take();
 }
 
@@ -9985,7 +10008,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
     // .rodata pools (emit_runtime calls emit_rodata_pools_arm64). A non-entry
     // module emits ONLY its own pools — no runtime, no _start.
     if (is_entry) {
-        s = emit_ir_runtime(s, false);
+        s = emit_ir_runtime_settled(s, false);
     } else {
         s = emit_rodata_pools_arm64(s, false);
     }

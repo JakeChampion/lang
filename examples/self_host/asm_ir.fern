@@ -9412,7 +9412,35 @@ function emit_unit_flat_with(mod: parser.Module, is_entry: boolean, globl_defs: 
     // define the symbols. (Until runtime needs are aggregated whole-program,
     // the entry only knows its OWN needs; a non-entry module that itself
     // allocates relies on the entry having pulled the heap runtime in.)
-    if (is_entry) {
+    if (is_entry) { s = emit_entry_runtime_settled(s, all_structs); }
+    return strbuf_take();
+}
+
+// A typed runtime body can call a need-gated runtime block emitted before it,
+// so the runtime is emitted into a capture and emitted again, from the state
+// before it, with the needs it added, until they stop growing.
+function emit_entry_runtime_settled(s0: asmcore.EmitState, all_structs: irlower.StructTab): asmcore.EmitState {
+    var s: asmcore.EmitState = s0;
+    var settled: boolean = false;
+    var out: asmcore.EmitState = s0;
+    while (!settled) {
+        s = s.close_needs();
+        var h: usize = buf_new(65536);
+        var t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h }, all_structs);
+        var text: string = buf_take(h);
+        if (t.needed.len() == s.needed.len()) {
+            settled = true;
+            var back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
+            out = back.write(text);
+        } else {
+            s = asmcore.EmitState { ...s0, needed: t.needed };
+        }
+    }
+    return out;
+}
+
+// The shared `__fern_*` runtime the entry module emits.
+function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab): asmcore.EmitState {
     // __fern_str_to_i32 (#2649): the first runtime helper hosted on the IR path
     // as a Fern function — lowered through the IR pipeline rather than emitted
     // as hand-written asm. Emitted in .text (we're in .rodata after the literal
@@ -10002,6 +10030,5 @@ function emit_unit_flat_with(mod: parser.Module, is_entry: boolean, globl_defs: 
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86_64"), all_structs, s);
     }
-    }
-    return strbuf_take();
+    return s;
 }
