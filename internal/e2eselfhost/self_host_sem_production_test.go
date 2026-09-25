@@ -3837,6 +3837,38 @@ function main(): i32 {
     return v.len() - 2;
 }
 `},
+	// An array of views of one parameter is anchored to it as a single view
+	// result is, whether it is built by append, in a loop, or by a literal and
+	// .with. The AST lowering leaked the view boxes (#10215).
+	{name: "an-array-of-a-parameters-views-is-anchored-to-it", atLeast: 4, noLeak: true, src: `
+import "std/string";
+import "std/i32";
+function g(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 2)); o = o.append(slice_unchecked(x, 2, 5)); return o; }
+function pairs(x: string): str[] {
+    var o: str[] = [];
+    var i: i32 = 0;
+    while (i + 2 <= x.len()) { o = o.append(slice_unchecked(x, i, i + 2)); i = i + 2; }
+    return o;
+}
+function swapped(x: string): str[] {
+    var o: str[] = [slice_unchecked(x, 0, 1), slice_unchecked(x, 1, 2)];
+    return o.with(0, slice_unchecked(x, 2, 4));
+}
+function main(): i32 {
+    var xs: str[] = g("ab" + 12345.to_string());
+    var n: i32 = xs.len() + xs[1].len();
+    var k: i32 = 0;
+    while (k < 20) {
+        var ps: str[] = pairs("cd" + (k * 1000).to_string());
+        n = n + ps.len();
+        if (ps[0].starts_with("cd")) { n = n + 1; }
+        k = k + 1;
+    }
+    var ws: str[] = swapped("q" + 4567.to_string());
+    if (ws[0].starts_with("56")) { n = n + 100; }
+    return n - 183;
+}
+`},
 	// A checked string slice is an Option[str], and binds and returns as one.
 	// The driver's pre-lowering check typed it as its source string and
 	// refused both with E003 and E002, where native accepts them.

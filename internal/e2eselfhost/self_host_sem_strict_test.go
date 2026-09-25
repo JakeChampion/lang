@@ -70,9 +70,9 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 	}
 
-	// An array of views has no anchor on the typed path yet (#10215).
-	refused := `function g(x: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 2)); return o; }
-function main(): i32 { var xs: str[] = g("abc"); return xs.len(); }
+	// An array holding views of two parameters has no one argument to anchor to.
+	refused := `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
+function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
 `
 	code, out := compile(refused, "FERN_SEM_IR_STRICT=1")
 	if code != 3 {

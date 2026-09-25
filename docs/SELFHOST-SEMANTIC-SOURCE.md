@@ -423,11 +423,14 @@ Unsupported constructs refuse the whole function with a reason.
   call's result to that argument, which is what keeps a temporary receiver
   alive past the call. A result reading a local, or either of two
   parameters, is refused ("view result escapes its source"). The parameter
-  stays lent: a returned view reads it without taking its unit. A view as an array element — an
-  array literal's, or `.append`'s — is refused too ("view element escapes its
-  source"): the array may outlive the source. A map INSERT's key is the same
-  position — it joins the key column, which releases it when the map is
-  released — and is refused for the same reason. A map READ's key is not:
+  stays lent: a returned view reads it without taking its unit. A view as an
+  array element — an array literal's, `.append`'s or `.with`'s — makes the
+  array a value gathering views (`ssasem.gathers_views`), anchored the same
+  way: to its one source inside the body, and as a result to the one
+  parameter its views read. Each element is released through the view's own
+  release when the array is dropped. A map INSERT's key has no such anchor —
+  it joins the key column, which releases it when the map is released — and
+  is refused ("view element escapes its source"). A map READ's key is not:
   `get_or`, `has` and `delete` hash and compare it and `operation_supplies`
   counts no unit for it, so a view there is an ordinary lend and takes the
   retag a borrowed `string` parameter offers. Both checkers refuse the

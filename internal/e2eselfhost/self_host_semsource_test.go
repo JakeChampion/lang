@@ -424,7 +424,8 @@ function narrow_float(x: f32): f32 { return x + 1.0; }
 // is declared is lent (a retag that borrows the box); a view passed to a
 // borrowed 'string' parameter is the retag the other way. A view result reads
 // the one parameter it is anchored to; one that reads a local, or either of
-// two parameters, escapes its source and is refused.
+// two parameters, escapes its source and is refused. An array of views is
+// anchored to its source the same way.
 function view_len(v: str): i32 { return v.len(); }
 function view_of(s: string): i32 {
     var v: str = slice_unchecked(s, 1, 3);
@@ -443,14 +444,15 @@ function refused_view_of_either(a: string, b: string, c: boolean): str {
     if (c) { return a; }
     return b;
 }
-function refused_view_element(s: string): i32 {
+function view_element(s: string): i32 {
     var xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 1));
     return xs.len();
 }
 
 // One element replaced: the receiver's unit is handed over as an append's
-// is, and the value is held by the array handed back, so a view is refused.
+// is, and the array handed back holds the value. A view of s into an array
+// holding views of vs's own source reads two sources, and is refused.
 function replace_at(own xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
 function refused_with_view(own vs: str[], s: string): str[] { return vs.with(0, slice_unchecked(s, 0, 1)); }
 
