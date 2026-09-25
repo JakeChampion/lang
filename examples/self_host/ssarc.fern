@@ -2058,6 +2058,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ssasem.is_function_op(ins.kind_tag)) { r = function_site(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.map_insert() || ins.kind_tag == ssasem.map_delete()) { r = map_mutation(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.call() && fern_helper_call(ins.str, ins.args.len())) { r = helper_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (dyn_call(ins)) { r = dyn_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
@@ -2082,6 +2083,24 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 function held(own r: irlower.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
     if (ins.result >= p.held.len() || !p.held[ins.result]) { return r; }
     return helper(r, ins.result, "__fern_rc_inc");
+}
+
+// A runtime helper (ircore.is_fern_helper) binds its parameters in reverse
+// push order (#5666): the backends push a helper call's operands as they come,
+// where a user call's go last first. So the last argument goes in first, as
+// irlower pushes them. __fern_map_find is the one such helper a typed body
+// calls with more than one argument.
+function fern_helper_call(name: string, argc: i32): boolean {
+    return argc > 1 && name == "__fern_map_find";
+}
+
+function helper_call(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    var i: i32 = ins.args.len() - 1;
+    while (i >= 0) {
+        r = emit(r, ir.op_load_local(ins.args[i]));
+        i = i - 1;
+    }
+    return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
 // A tuple read the plan admitted as a TAKE nulls the slot it read. The source
@@ -2890,6 +2909,8 @@ function raw_floor_ops(): RawOps[] {
         RawOps { name: "__raw_scratch", ops: [ir.op_raw_scratch()] },
         RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },
         RawOps { name: "__raw_splice_pipe", ops: [ir.op_raw_splice_pipe()] },
+        RawOps { name: "__raw_call1", ops: [ir.op_call_indirect(1)] },
+        RawOps { name: "__raw_call2", ops: [ir.op_call_indirect(2)] },
         RawOps { name: "__syscall3", ops: [ir.op_syscall3()] },
         RawOps { name: "__syscall4", ops: [ir.op_syscall4()] },
         RawOps { name: "__syscall5", ops: [ir.op_syscall5()] },
@@ -2944,6 +2965,7 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 // differs from the builtin's name.
 function runtime_helper_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "chr") { return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_chr", 1)) }; }
+    if (ins.str == "__fern_str_eq") { return Lowered { found: true, r: emit(r, ir.op_str_eq()) }; }
     return Lowered { found: false, r: r };
 }
 
