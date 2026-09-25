@@ -5039,9 +5039,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     },
     ast.ExprArray(a) => {
       if (a.elements.len() == 0) {
-        // Empty literal — element type undecidable at this
-        // site. Future improvement: propagate expected
-        // type from context.
+        // A literal the compiler built names its element type (embed's
+        // `__fern_assets()` over an empty bundle); a written one cannot.
+        if (a.elem_ty.len() > 0) { return t_array(s.resolve_type(a.elem_ty)); }
         return t_array(t_unknown("empty array literal"));
       }
       // An unsuffixed literal takes a concrete sibling's type, as in
