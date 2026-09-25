@@ -2138,29 +2138,30 @@ Fern-source helper; it serves them as hand-written WAT.
 What is left, in order:
 
 1. The helper sources are rewritten against those types, which is what routes
-   each one. `chr`, `str_concat`, the four integer `to_string` helpers, and
-   the string and string-array helpers (`str_cmp`, the case, `trim`,
-   `repeat`, `replace`, `split`, `lines`, `bytes`, `string_from_bytes` and
-   `join` bodies), and the three stdio writers behind `write`, `eprint` and
-   `putchar` are done, and so are the process, clock and random leaves
-   (`sleep_ms`, `sleep_ns`, `random_i32`, `random_bytes`, `cpu_count`,
-   `isatty`, `process_alive`). `umask`, `priority` and `sync` are retyped
-   too, but they are emitted inside the filesystem bundle, which routes only
-   once every helper in it checks. The AST lowering takes a retyped syscall word too: an
-   `i64` operand lowers at 64 bits, and `usize as i64` widens the address
-   without masking it. `print_int` and `read_int` are left for #10244, which
-   retires them: native rejects both. `__fern_arr_slice` needs an array's box address,
-   which the raw floor has no intrinsic for. A helper that calls another
-   helper (`i32_lcm` calls `gcd` as a method; `open_with` calls
-   `__fern_open_res`) is checked alone and fails on the callee.
-   The rest were never checked, so they hold every address as an `i32`
-   and pass `i32` words to the syscalls; each needs its locals retyped and its
-   syscall operands cast. The ones that build an `IoError`, `FileStat` or
-   `ProcessResult` also need the builtin declarations in the module they are
-   checked in. `__fern_map_find` and `__fern_map_delete_rel` call through a
-   bare code address (`eqfn(k, key)`), which has no typed spelling yet.
-   `__fern_str_eq` takes either a string or a raw pointer today, and needs one
-   signature.
+   each one: a block or scratch pointer is a `usize`, a syscall word an `i64`,
+   and a string byte a `u8` widened with `as`. Done: `chr`, `str_concat`, the
+   integer `to_string` helpers, the string and string-array helpers, the
+   stdio writers, the process, clock and random leaves, and the filesystem
+   bundle's `io_error`, `sync`, `umask` and `priority`.
+
+   The AST lowering still lowers every helper when the typed path is off, so
+   it takes the retyped spellings as well: a 64-bit syscall operand lowers at
+   64 bits, and `usize as i64` widens without masking. `runtime_bodies`
+   checks a source with the builtin enums injected, as a program's module
+   has them, and returns the drop helpers a body defines after the bodies;
+   the backends emit each named body once per file.
+
+   A bundle routes only when every helper in it checks, so the filesystem
+   bundle takes the typed path for a program only once all the fs helpers
+   that program needs are retyped. `__fern_arr_slice` needs an array's box
+   address, which the raw floor has no intrinsic for. A helper that calls
+   another helper outside its source (`open_with` calls `__fern_open_res`)
+   is checked alone and fails on the callee. `__fern_map_find` and
+   `__fern_map_delete_rel` call through a bare code address (`eqfn(k,
+   key)`), which has no typed spelling yet. `__fern_str_eq` takes either a
+   string or a raw pointer today, and needs one signature. `print_int`,
+   `read_int`, `str_to_i32` and string `.reverse()` are left for #10244,
+   which retires them: native rejects all four.
 2. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column.
 3. The AST lowering is deleted, along with the differential legs that compare

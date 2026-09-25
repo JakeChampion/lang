@@ -3746,11 +3746,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     }
     // Cache entries past the declarations are bodies with no FuncDecl, each
     // naming the symbol it defines.
-    var xi: i32 = mod.funcs.len();
-    while (xi < cache.len()) {
-        s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs);
-        xi = xi + 1;
-    }
+    s = emit_named_bodies(cache, mod.funcs.len(), s, vsigs);
     // Ahead of _start, which gates its envp save on the heap need. close_needs
     // is what turns a root like str_concat into that heap need, so reading it
     // first would leave __fern_envp null in a program that still gets the heap
@@ -3852,6 +3848,19 @@ function runtime_ast_bodies(fns: parser.FuncDecl[], all_structs: irlower.StructT
     return out;
 }
 
+// Bodies with no FuncDecl, each naming the symbol it defines; `.weak`, so a
+// sibling unit emitting the same one co-links, and once per file.
+function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
+    var xi: i32 = from;
+    while (xi < cache.len()) {
+        if (!s.has_named(cache[xi].name)) {
+            s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
+        }
+        xi = xi + 1;
+    }
+    return s;
+}
+
 pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
@@ -3860,12 +3869,14 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab
     var agg0: i32 = s.const_aggs.len();
     var sh0: i32 = s.shape_lits.len();
     var bodies: irlower.LowerResult[] = s.rt_lower(src);
-    if (bodies.len() != fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
+    if (bodies.len() < fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
         i = i + 1;
     }
+    // Past the declarations: the drop helpers the typed lowering defines.
+    s = emit_named_bodies(bodies, fns.len(), s, vsigs);
     if (s.shape_lits.len() > sh0) {
         s = asmcore.emit_shape_lits_from(s, sh0);
         s = s.write("    .text\n");

@@ -4031,6 +4031,30 @@ function main(): i32 {
     return score % 256;
 }
 `},
+	// The filesystem bundle: io_error builds an IoError, so its typed
+	// lowering defines the enum's drop helper, and the program defines the
+	// same one. The file carries it once.
+	{name: "fs-bundle-takes-the-typed-path", atLeast: 2, nativeOnly: true, noLeak: true,
+		reports: []string{
+			"runtime __fern_path_copy: produced", "runtime __fern_io_error: produced",
+			"runtime __fern_sync: produced", "runtime __fern_umask: produced",
+			"runtime __fern_priority: produced",
+		}, src: `
+function mk(p: string): IoError { return NotFound(p + "!"); }
+function main(): i32 {
+    var old: i32 = umask(18);
+    sync();
+    var pr: i32 = priority();
+    var back: i32 = umask(old);
+    var n: i32 = 0;
+    match (mk("path")) {
+        NotFound(p) => { n = p.len(); },
+        _ => { n = 99; }
+    }
+    if (pr > (0 - 21) && pr < 20 && back == 18) { return n; }
+    return 1;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
