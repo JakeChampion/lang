@@ -60314,7 +60314,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // An `own` struct or string param this frame still holds at exit is
     // released by the sweep ("OWNREL:" deep / "OWNRELB:" box-only / "OWNRELS:").
     reclaim = append_all(reclaim, own_struct_param_release_rows_of(fn, asg_targets, structs, sg.strfld_ok_types, sg.borrowable_params, sg.recv_borrow_fns, sg.handback_params, oup));
-    reclaim = append_all(reclaim, own_string_param_release_rows_of(fn, asg_targets, sg.borrowable_params, sg.recv_borrow_fns));
+    reclaim = append_all(reclaim, own_string_param_release_rows_of(fn, asg_targets, sg.borrowable_params, sg.recv_borrow_fns, structs, sg.strfld_ok_types, fn_moves_top.sites, reclaim));
     // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
     // the slice-bound locals whose every use borrows the view (view_frame_names_of).
     // Prefix-tagged like the registries above; inert for every other
@@ -65129,17 +65129,62 @@ function own_struct_param_release_rows_of(fn: parser.FuncDecl, reassigned: strin
 // shadowed, never reassigned, and never aliased, stored, passed on or captured.
 // A bare `return p` is the move, and that exit elides the release
 // (returned_own_struct_param_slot).
-function own_string_param_release_rows_of(fn: parser.FuncDecl, reassigned: string[], borrowable: string[], recv_borrow: string[]): string[] {
+function own_string_param_release_rows_of(fn: parser.FuncDecl, reassigned: string[], borrowable: string[], recv_borrow: string[], structs: StructTab, sfok: string[], msites: string[], credited: string[]): string[] {
     var out: string[] = [];
     for pd in fn.params {
         var nm: string = pd.name;
         if (!pd.own || pd.type_name != "string") { continue; }
         if (local_decl_count(fn.body, nm) != 0 || util.index_of_str(reassigned, nm) >= 0) { continue; }
         var no_alias_ok: string[] = [];
-        if (body_unsafe_for_alias_ret_ok(fn.body, nm, borrowable, recv_borrow, no_alias_ok, true)) { continue; }
+        var counted: string[] = str_field_counted_lit_sites(fn.body, nm, structs, sfok, msites, credited, fn.body, []);
+        if (body_unsafe_for_alias_ret_counted(fn.body, nm, borrowable, recv_borrow, no_alias_ok, true, counted)) { continue; }
         out = out.append("OWNRELS:" + nm);
     }
     return out;
+}
+
+// str_field_counted_lit_sites: the struct literals that store `name` bare into a
+// `string` field under a retain (struct_lit_rc_field_retained), keyed by the
+// literal's position for body_unsafe_for_alias_ret_counted. Such a store is a
+// counted share, not an escape, once the holder's field drop gives the retain
+// back: a returned literal's holder is the caller's to drop, and so is a bound
+// one returned bare; any other bound one must be a credited local whose type
+// routes field reclaim. `body` is the whole function, where the bare return is
+// looked for.
+function str_field_counted_lit_sites(stmts: ast.Stmt[], name: string, structs: StructTab, sfok: string[], msites: string[], credited: string[], body: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtReturn(r) => {
+                if let ast.ExprStructLit(sl) = r.value {
+                    if (struct_lit_rc_field_retained(sl, name, structs, msites, "string")) {
+                        a = push_str_unique(a, util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col));
+                    }
+                }
+            },
+            ast.StmtVar(v) => {
+                if let ast.ExprStructLit(sl) = v.init {
+                    var dropped: boolean = body_returns_bare_ident(body, v.name)
+                        || (util.index_of_str(credited, reclaim_site_key_of(v.name, v.line, v.col)) >= 0
+                            && struct_routes_field_reclaim_at(structs, sfok, sl.type_name));
+                    if (dropped && struct_lit_rc_field_retained(sl, name, structs, msites, "string")) {
+                        a = push_str_unique(a, util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col));
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                a = str_field_counted_lit_sites(f.then_body, name, structs, sfok, msites, credited, body, a);
+                a = str_field_counted_lit_sites(f.else_body, name, structs, sfok, msites, credited, body, a);
+            },
+            ast.StmtWhile(w) => { a = str_field_counted_lit_sites(w.body, name, structs, sfok, msites, credited, body, a); },
+            ast.StmtFor(fo) => { a = str_field_counted_lit_sites(fo.body, name, structs, sfok, msites, credited, body, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = str_field_counted_lit_sites(arm.body, name, structs, sfok, msites, credited, body, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
 }
 
 pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, growset: string[]): string[] {
