@@ -1041,9 +1041,6 @@ function fold_lit_cond(pat: ast.Pattern, guard: ast.Expr, has_guard: boolean): (
 }
 
 function p_wildcard(): ast.Pattern { return ast.PatWildcard { tag: 0 }; }
-// s_unknown builds the statement-level parse-error sentinel at the position of
-// the token the parser stopped on. It takes the parser rather than offering a
-// positionless overload so a sentinel cannot be raised without a position.
 // malformed_fn_decl_message is the one text for a function declaration the
 // parser returned nameless. parse_func_decl does that for several causes it
 // does not tell apart, so the message names none of them as the cause.
@@ -1051,6 +1048,9 @@ pub function malformed_fn_decl_message(): string {
     return "malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name)";
 }
 
+// s_unknown builds the statement-level parse-error sentinel at the position of
+// the token the parser stopped on. It takes the parser rather than offering a
+// positionless overload so a sentinel cannot be raised without a position.
 function s_unknown(p: Par, kind: string): ast.Stmt {
     return s_unknown_at(kind, p.peek_line(), p.peek_col());
 }
