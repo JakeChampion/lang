@@ -202,7 +202,8 @@ func semCompileRun(t *testing.T, gcc string, runner []string, fernBin, stdlibRoo
 	if sem {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
 		if skip != "" {
-			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip)
+			// A skipped declaration keeps the AST lowering on purpose.
+			cmd.Env = append(cmd.Env, "FERN_SEM_IR_SKIP="+skip, "FERN_SEM_IR_STRICT=")
 		}
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
