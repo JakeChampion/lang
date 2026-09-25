@@ -81,7 +81,7 @@ function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
 	if !strings.Contains(out, "FERN_SEM_IR: g:") || !strings.Contains(out, "FERN_SEM_IR_STRICT") {
 		t.Fatalf("strict did not name the refusal:\n%s", out)
 	}
-	if code, out := compile(refused); code != 0 {
+	if code, out := compile(refused, "FERN_SEM_IR_STRICT="); code != 0 {
 		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 }
