@@ -697,6 +697,9 @@ remainder splits three ways:
   print_i64` and printed nothing. Not a diagnostic — a silently dropped call,
   which `FERN_STRICT_IR=1` did not catch either.
 
+  `print_int` and `read_int` have since been retired altogether (#10244):
+  neither checker accepts either name, so their helpers and IR ops are gone.
+
 - **The two stdin leaves that return no box** — `read_int` and `read_all_stdin`
   — **have since moved**, on both register backends. Splitting them out from the
   Option-returning three is what made them cheap: neither has a box-layout
@@ -858,8 +861,7 @@ remainder splits three ways:
   buffer pointer, capacity) that persist across calls, and the floor has no
   first-class static storage. `__raw_scratch` is not it: both backends DISCARD its size operand and
   push `&__fern_scratch`, a single shared 256-byte object that `stat`, the
-  clocks, `poll`, `timer_fd`, the sockets, `putchar`, `print_int` and `read_int`
-  all borrow. An accumulator has to survive arbitrary intervening execution, so
+  clocks, `poll`, `timer_fd`, the sockets and `putchar` all borrow. An accumulator has to survive arbitrary intervening execution, so
   sharing that buffer would let any `write_file` mid-emit clobber it.
 
   There IS a composition that reaches a persistent global word today, and it is

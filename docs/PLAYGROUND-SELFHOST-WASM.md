@@ -414,10 +414,9 @@ What is left:
 
    What the interpreter still lacks is the reader/writer handles and anything
    touching the filesystem or the clock. (An earlier revision of this list also
-   named `print_int` / `eprint_int`; they are not user-callable — native
-   answers E001 on both. `__fern_print_int` is a runtime helper the backends
-   emit for `i32.to_string`, and a program prints a number by importing
-   `std/i32` and concatenating, which the string arm already covers.)
+   named `print_int` / `eprint_int`; neither is a builtin on either compiler,
+   and a program prints a number by importing `std/i32` and concatenating,
+   which the string arm already covers.)
 
    The sharper limit was the DRIVER, not the evaluator: `interp_run.fern` has
    no module loader, so an interpreted program could not resolve `std/i32` and

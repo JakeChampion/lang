@@ -175,8 +175,8 @@ side:
   entry-for-entry, so a builtin tagged on one side and not the other
   fails a fast Go test. `frontend_ungated()` is the one list with no
   native counterpart: names the self-host front end registers as
-  builtins that native's checker does not (`len`, `chr`, `print_int`,
-  …), each held to being absent from native's registry.
+  builtins that native's checker does not (`len`, `chr`,
+  `read_all_stdin`, …), each held to being absent from native's registry.
 - **Package identity comes from the ENTRY manifest.** Native resolves a
   module's package from the nearest governing `fern.toml`; the
   self-host driver's loader resolves every import from the entry

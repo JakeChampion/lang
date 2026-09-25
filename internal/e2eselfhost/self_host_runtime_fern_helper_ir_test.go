@@ -259,7 +259,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			[]string{"\n__fern_remove_dir_all:", ".Lrda_copy", ".Lrda_it"},
 		},
 		{
-			// print_str — the first of the four stdout/stderr leaves (#2649), all
+			// print_str — the first of the three stdout/stderr leaves (#2649), all
 			// plain write(2). The old register-ABI hand-asm body
 			// (__fern_print_str:) is gone; op_print_str calls the stack-ABI
 			// __fn___fern_print_str, whose body writes straight out of the
@@ -268,15 +268,6 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			`function main(): i32 { print_str("x"); return 0; }`,
 			"__fn___fern_print_str",
 			[]string{"\n__fern_print_str:"},
-		},
-		{
-			// print_int — takes an i64 so one helper serves op_print_int and
-			// op_print_i64. The old hand-asm body (__fern_print_int:) and its
-			// digit loop's local labels (.Lpi_*) are gone.
-			"print_int",
-			`function main(): i32 { print_int(1); return 0; }`,
-			"__fn___fern_print_int",
-			[]string{"\n__fern_print_int:", ".Lpi_div"},
 		},
 		{
 			// putchar — the byte-level twin of print_str. The hand-asm staged its
@@ -294,16 +285,6 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			`function main(): i32 { eprint("x"); return 0; }`,
 			"__fn___fern_eprint_str",
 			[]string{"\n__fern_eprint_str:"},
-		},
-		{
-			// read_int — the stdin half of the write(2)/read(2) pair (#2649). The
-			// old hand-asm body (__fern_read_int:) and its digit loop's local
-			// labels (.Lri_*) are gone; op_read_int calls the stack-ABI
-			// __fn___fern_read_int, whose body parses out of __raw_scratch.
-			"read_int",
-			`function main(): i32 { return read_int(); }`,
-			"__fn___fern_read_int",
-			[]string{"\n__fern_read_int:", ".Lri_loop"},
 		},
 		{
 			// read_all_stdin — fd 0 drained to EOF into one box. The old hand-asm

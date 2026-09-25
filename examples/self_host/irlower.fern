@@ -12240,26 +12240,6 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "Err" && c.args.len() == 1) {
         return lower_opt_make_payload(1, c.args[0], s);
     }
-    // Built-in `print_int(n)` — write n's decimal text to stdout
-    // (no newline). Lowers the i32 arg then op_print_int, which each
-    // backend emits as a call into the same __fern_print_int runtime
-    // helper the AST path uses. A reserved builtin name (like
-    // map_new / Some / len), so it never shadows a user function.
-    if (cid.name == "print_int" && c.args.len() == 1) {
-        // An i64 argument must keep its full 64 bits: lower it via
-        // lower_i64 and print through the wider op (op_print_i64 →
-        // $__fern_print_int64), mirroring the AST path's print_int64
-        // dispatch. Passing an i64 to the i32 $__fern_print_int would
-        // be a wasm type mismatch (invalid module).
-        if (infer_expr_width(c.args[0], s) == 64) {
-            var pi64: LowerState = lower_i64(c.args[0], s);
-            if (!pi64.ok) { return pi64; }
-            return pi64.emit(ir.op_print_i64());
-        }
-        var pis: LowerState = lower_expr(c.args[0], s);
-        if (!pis.ok) { return pis; }
-        return pis.emit(ir.op_print_int());
-    }
     // Built-in `putchar(c)` — write c's low byte to stdout
     // (write(1, &byte, 1), no newline). Lowers the i32 arg then
     // op_putchar, which each backend emits as a call into the same
@@ -12333,18 +12313,9 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         prs = prs.emit(ir.op_const_str("\n"));
         return prs.emit(ir.op_print_str());
     }
-    // Built-in `read_int()` — read a line from stdin, parse a leading
-    // optional-sign decimal, push the i32. A value op (leaves the
-    // result on the stack). No wasm stdin support, so wasm_eligible
-    // rejects read_int modules; x86 / arm64 lower it.
-    if (cid.name == "read_int" && c.args.len() == 0) {
-        return s.emit(ir.op_read_int());
-    }
     // Built-in `read_all_stdin()` — read fd 0 to EOF into one
     // string box (#5623). A value op; the result str-tracks via
-    // expr_is_str's matching case. Like read_int there is no wasm
-    // stdin, so wasm_eligible rejects read_all_stdin modules;
-    // x86 / arm64 lower it.
+    // expr_is_str's matching case. Every IR backend lowers it.
     if (cid.name == "read_all_stdin" && c.args.len() == 0) {
         return s.emit(ir.op_read_all_stdin());
     }
@@ -12628,18 +12599,11 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return s.emit(ir.op_args());
     }
     // Built-in `eprint(s)` — write a string's bytes to stderr (fd 2,
-    // no newline). `eprint_int(n)` is its int companion: i32_to_string
-    // then eprint_str (no third helper). Both lower to op_eprint_str.
+    // no newline), lowered to op_eprint_str.
     if (cid.name == "eprint" && c.args.len() == 1) {
         var eps: LowerState = lower_expr(c.args[0], s);
         if (!eps.ok) { return eps; }
         return eps.emit(ir.op_eprint_str());
-    }
-    if (cid.name == "eprint_int" && c.args.len() == 1) {
-        var eis: LowerState = lower_expr(c.args[0], s);
-        if (!eis.ok) { return eis; }
-        eis = eis.emit(ir.op_call_direct("__fern_i32_to_string", 1));
-        return eis.emit(ir.op_eprint_str());
     }
     // Built-in global string-builder primitives — the amortised-O(1)
     // output accumulator the self-host emitters use (asmcore's

@@ -33,9 +33,7 @@ import (
 // whose program the reference interpreter can also run are additionally
 // oracle-checked against it (`oracle: true`). The env / args / file / clock
 // cases cannot be: they read a wasmtime-supplied environment or wall clock the
-// interpreter does not share. Nor can const-i64, whose print_int(i64) the
-// native signature still rejects (#5477) — const-i64-oracled covers the same
-// const through an i32 result so the oracle applies.
+// interpreter does not share.
 //
 // This test is deliberately NOT quarantined: TestSelfHostWasmRun (whose subtests
 // originally surfaced these) stays out of the CI shards until its remaining
@@ -94,22 +92,12 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 		},
 		// --- const width inference ---
 		{
-			// The 64-bit OUTPUT path: print_int(i64) widens to
-			// $__fern_print_int64. Not oracle-checked — print_int's native
-			// signature is i32-only (#5477), so the interpreter rejects this
-			// program even though the const itself now type-checks.
+			// The 64-bit OUTPUT path: BIG + 1 reaches print_i64's i64 parameter
+			// with all 64 bits, and the exit code (BIG % 97 == 73) only matches
+			// the interpreter's if the const kept them too.
 			name:   "const-i64",
-			src:    `const BIG: i64 = 5000000000; function main(): i32 { print_int(BIG + 1); return 0; }`,
+			src:    `const BIG: i64 = 5000000000; function main(): i32 { print_i64(BIG + 1); return (BIG % 97) as i32; }`,
 			stdout: "5000000001",
-		},
-		{
-			// The same const through an i32-typed RESULT rather than stdout, so
-			// the reference interpreter can run it: 5000000000 % 97 == 73 only
-			// if the const kept its 64 bits. Oracled cases return their value
-			// instead of printing it because print_int is a self-host-only
-			// builtin the native checker does not accept (#5477).
-			name:   "const-i64-oracled",
-			src:    `const BIG: i64 = 5000000000; function main(): i32 { return (BIG % 97) as i32; }`,
 			oracle: true,
 		},
 		{
@@ -132,7 +120,7 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 			} else {
 				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
+			cmd.Stdin = bytes.NewReader([]byte(withPrintInt(tc.src)))
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed: %v", err)
@@ -150,7 +138,7 @@ func TestSelfHostWasmIRWasiHelpers(t *testing.T) {
 			}
 			want := 0
 			if tc.oracle {
-				want = interpExit(t, interpBin, tc.src)
+				want = interpExit(t, interpBin, withPrintInt(tc.src))
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != want {
 				t.Errorf("%s: wasm exited %d, want %d", tc.name, got, want)

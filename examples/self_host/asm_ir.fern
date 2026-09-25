@@ -1965,7 +1965,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "heap", "i32_to_string", "u32_to_string", "chr",
-        "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
+        "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
@@ -3045,14 +3045,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_large_push\n");
     s = s.write("    popq %rax\n");
     s = s.write("    ret\n");                      // %rax = new
-    // __fern_print_int and __fern_print_str are Fern runtime functions (#2649):
-    // asmcore.rt_src_print_int / rt_src_print_str, lowered through the IR pipeline
-    // via emit_ir_runtime_fern_fn in the entry block, not hand-written bodies here.
-    // __fern_read_int and __fern_read_all_stdin are Fern runtime functions (#2649):
-    // asmcore.rt_src_read_int / rt_src_read_all_stdin, lowered through the IR
-    // pipeline via emit_ir_runtime_fern_fn in the entry block. read_int parses out
-    // of the static __fern_scratch, so it joins that gate; read_all_stdin still
-    // allocates its own 32 MiB buffer and so stays with the heap runtime.
+    // __fern_print_str and __fern_read_all_stdin are Fern runtime functions (#2649):
+    // asmcore.rt_src_print_str / rt_src_read_all_stdin, lowered through the IR
+    // pipeline via emit_ir_runtime_fern_fn in the entry block, not hand-written
+    // bodies here. read_all_stdin allocates its own 32 MiB buffer and so stays
+    // with the heap runtime.
     // __fern_read_line, __fern_reader_read_chunk and __fern_reader_close are Fern
     // runtime functions (#2649): asmcore.rt_src_read_line / rt_src_reader_read_chunk
     // / rt_src_reader_close, lowered through the IR pipeline via
@@ -7372,17 +7369,17 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // shim for std/async's with_deadline.
         s = s.write("    popq %rdi\n    call __fern_wasm_timer_pollable\n    pushq %rax\n");
         s = s.need("wasm_timer_pollable");
-    } else if (o.kind_tag == 190) {  // wasm_pollable_drop
+    } else if (o.kind_tag == 161) {  // wasm_pollable_drop
         // [p]; __fern_wasm_pollable_drop(%rdi=p) -> 0 on native (a pollable
         // is just an fd; nothing to drop). Portability shim.
         s = s.write("    popq %rdi\n    call __fern_wasm_pollable_drop\n    pushq %rax\n");
         s = s.need("wasm_pollable_drop");
-    } else if (o.kind_tag == 191) {  // wasm_block
+    } else if (o.kind_tag == 162) {  // wasm_block
         // [p]; __fern_wasm_block(%rdi=p) -> 0 on native (no pollable to wait
         // on; a deadline uses poll(2)). Push the 0 result.
         s = s.write("    popq %rdi\n    call __fern_wasm_block\n    pushq %rax\n");
         s = s.need("wasm_block");
-    } else if (o.kind_tag == 192) {  // wasm_poll
+    } else if (o.kind_tag == 167) {  // wasm_poll
         // [pollables ptr]; __fern_wasm_poll(%rdi=ptr) -> -1 on native (no real
         // pollables; readiness uses poll(2)). Push the -1 result.
         s = s.write("    popq %rdi\n    call __fern_wasm_poll\n    pushq %rax\n");
@@ -7480,23 +7477,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = emit_ir_op_heap_mark(o, s);
     } else if (o.kind_tag == 230) {  // heap_release_to
         s = emit_ir_op_heap_release_to(o, s);
-    } else if (o.kind_tag == 161 || o.kind_tag == 162) {  // print_int, print_i64
-        // [n] IS param[0]; call the Fern-compiled __fn___fern_print_int (#2649)
-        // via the stack ABI. Push the syscall return so the statement-level drop
-        // balances.
-        //
-        // Both ops route here: the helper takes an i64, and an i32 reaches the
-        // stack slot already sign-extended. print_i64 had no case at all before,
-        // so `print_int` on an i64 emitted an unsupported-op comment and printed
-        // nothing.
-        s = s.write("    call __fn___fern_print_int\n    addq $8, %rsp\n    pushq %rax\n");
-        s = s.need("print_int");
-    } else if (o.kind_tag == 167) {  // read_int
-        // no args -> call the Fern-compiled __fn___fern_read_int (#2649) and
-        // push the result (a value op). A zero-arg helper's stack and register
-        // conventions coincide, so there is nothing to marshal.
-        s = s.write("    call __fn___fern_read_int\n    pushq %rax\n");
-        s = s.need("read_int");
     } else if (o.kind_tag == 209) {  // read_all_stdin
         // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
         // fd 0 to EOF in ONE fresh string box, pushed as a value op. Allocates,
@@ -9655,8 +9635,8 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         "read_file", "read_file_bytes", "random_i32", "sleep_ms",
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
-        "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "print_int", "putchar",
-        "eprint", "read_int", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
+        "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
+        "eprint", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
@@ -9670,10 +9650,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
     // they sit with the clocks rather than in the heap runtime: a program that only
     // prints must still link.
-    if (s.has_need("read_int")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_int("x86_64"), all_structs, s);
-    }
     if (s.has_need("read_all_stdin")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin("x86_64"), all_structs, s);
@@ -9685,10 +9661,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("str_print")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86_64"), all_structs, s);
-    }
-    if (s.has_need("print_int")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_int("x86_64"), all_structs, s);
     }
     if (s.has_need("putchar")) {
         s = s.write("    .text\n");

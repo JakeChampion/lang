@@ -2082,27 +2082,6 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"",
 		},
 		{
-			"eprint-int-zero-stdout-clean",
-			"function main(): i32 { eprint_int(0); return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"eprint-int-positive",
-			"function main(): i32 { eprint_int(42); return 0; }",
-			0,
-			"",
-			"",
-		},
-		{
-			"eprint-int-and-print",
-			"function main(): i32 { write(\"out=\"); print_int(1); write(\"\\n\"); eprint(\"err=\"); eprint_int(2); return 0; }",
-			0,
-			"out=1\n",
-			"",
-		},
-		{
 			"exit-from-helper",
 			"function check(): i32 { exit(7); return 0; } function main(): i32 { check(); return 99; }",
 			7,
@@ -2214,7 +2193,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			} else {
 				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
 			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.source))
+			cmd.Stdin = bytes.NewReader([]byte(withPrintInt(tc.source)))
 			emittedAsm, err := cmd.Output()
 			if err != nil {
 				t.Fatalf("driver run: %v\n--- source ---\n%s", err, tc.source)

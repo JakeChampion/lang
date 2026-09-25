@@ -54,6 +54,7 @@ var selfHostImportClosure = e2eharness.SelfHostImportClosure
 
 const uuidV4Program = e2eharness.UuidV4Program
 
+var withPrintInt = e2eharness.WithPrintInt
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
 var x86_64Tooling = e2eharness.X86_64Tooling

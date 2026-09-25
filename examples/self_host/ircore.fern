@@ -359,9 +359,9 @@ pub function ir_helper_symbol(name: string): string {
 
 // all_eligible reports whether every function in the module is IR-eligible
 // AND every direct call targets a function defined in the module (or an IR
-// runtime helper). A call to a BUILTIN (read_int / print_int / chr /
-// i32_to_string / ...) lowers to call_direct but has no `__fn_<name>` body —
-// the IR path can't emit it, so such a module is REFUSED. There is no fallback
+// runtime helper). A call to a BUILTIN (chr / i32_to_string / ...) lowers to
+// call_direct but has no `__fn_<name>` body — the IR path can't emit it, so
+// such a module is REFUSED. There is no fallback
 // emitter behind this — a bail is a diagnostic, not a routing decision — so a
 // builtin reaching here is a gap to close in lowering.
 // eligible_core is the target-independent eligibility check: a non-empty module
@@ -1091,9 +1091,9 @@ pub function all_runtime_need_roots(): string[] {
         "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
         "chdir", "chroot", "setuid", "setgid", "setgroups",
         "signal_mask", "signal_disposition",
-        "print_int", "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
+        "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
         "read_file_bytes",
-        "read_int", "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
+        "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp",
         "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
         "str_read_line", "str_repeat", "str_replace",
         "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
@@ -1189,7 +1189,7 @@ pub function module_ir_eligible(mod: parser.Module): boolean {
 // Each backend used to return a COMMENT where an instruction belongs — "# ir:
 // unsupported bin <name>" on x86-64, "// ir:" on arm64, ";; ir:" in the WAT —
 // so the operation was silently DROPPED and the program ran on with whatever
-// happened to be in the result register. That is how `print_i64` printed
+// happened to be in the result register. That is how an i64 print printed
 // nothing and `udp_send` sent nothing, each for as long as it took someone to
 // notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
 // either: this path never consulted it.

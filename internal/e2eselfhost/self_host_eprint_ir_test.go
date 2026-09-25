@@ -8,20 +8,18 @@ import (
 	"testing"
 )
 
-// eprintIRCases exercise the `eprint(s)` / `eprint_int(n)` stderr builtins on the
-// IR path. They lower to an `eprint_str` IR op (not a call_direct, so they
-// sidestep the call eligibility gate). The register backends emit a call to
+// eprintIRCases exercise the `eprint(s)` stderr builtin on the IR path. It
+// lowers to an `eprint_str` IR op (not a call_direct, so it sidesteps the call
+// eligibility gate). The register backends emit a call to
 // __fn___fern_eprint_str, the Fern-compiled helper (asmcore.rt_src_eprint_str);
 // wasm calls its own WASI $__fern_eprint_str. Both write to fd 2, then a newline:
 // `eprint` is the stderr line-printer, mirroring `print` and the Go-backend /
-// interp / wasm `eprint`. eprint_int desugars to i32_to_string then eprint_str.
-// stderr pins the bytes.
+// interp / wasm `eprint`. stderr pins the bytes.
 var eprintIRCases = []struct {
 	name, src, want string
 }{
 	{"eprint-literal", `function main(): i32 { eprint("hi"); return 0; }`, "hi\n"},
 	{"eprint-var", `function main(): i32 { var s: string = "abc"; eprint(s); return 0; }`, "abc\n"},
-	{"eprint-int", `function main(): i32 { eprint_int(42); return 0; }`, "42\n"},
 	{"eprint-concat", `function main(): i32 { eprint("x" + "y"); return 0; }`, "xy\n"},
 }
 

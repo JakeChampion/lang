@@ -45,7 +45,7 @@ func TestWasmSelfHostF64Coerce(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
+			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}

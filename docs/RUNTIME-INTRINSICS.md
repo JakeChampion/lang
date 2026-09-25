@@ -19,18 +19,14 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > raw-memory intrinsics.
 >
 > **Status update (2026-08, the stdout/stderr leaves.)** `print_str`,
-> `print_int`, `putchar` and `eprint_str` are Fern on all three native targets
-> (`asmcore.rt_src_print_str` / `rt_src_print_int` / `rt_src_putchar` /
-> `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
+> `putchar` and `eprint_str` are Fern on all three native targets
+> (`asmcore.rt_src_print_str` / `rt_src_putchar` / `rt_src_eprint_str`). They needed no floor addition at all: each is a `write(2)`
 > whose number `sysno` already carried for `tcp_send`, and the two that need a
 > scratch byte — `putchar`'s character, `eprint_str`'s newline — take it from the
 > `__raw_scratch` buffer the clocks added, which is why they join its gate.
 >
-> `print_int` takes an **i64**, so one helper serves both `op_print_int` and the
-> wider `op_print_i64`: an i32 reaches the stack slot already sign-extended. That
-> is what closes the gap where `op_print_i64` (kind 162) had no register-backend
-> handler and `print_int` on an i64 printed nothing. Taking the magnitude in
-> `u64` also makes INT64_MIN print, which neither hand-asm body managed.
+> `print_int`, `eprint_int` and `read_int` were retired rather than migrated
+> (#10244): neither checker accepts those names.
 >
 > **Status update (2026-08, the syscall floor reaches arm64.)** `random_bytes`
 > is the first syscall leaf to be Fern on **both** register backends: the
@@ -450,14 +446,14 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
    hand-written body left in it is Darwin's `fork`, whose child marker arrives in
    `x1` where a `__syscall*` returns one integer.
    wasm keeps its WASI bundles — it has no generic syscall.
-6. **The stdout/stderr leaves** — `print_str`, `print_int`, `putchar`,
-   `eprint_str`. **Done on all three native targets**, needing no new primitive.
+6. **The stdout/stderr leaves** — `print_str`, `putchar`, `eprint_str`.
+   **Done on all three native targets**, needing no new primitive.
 7. **The stdin / Reader leaves.** Split by whether the helper returns a box.
-   **Done:** `read_int` and `read_all_stdin`, which return a bare integer and a
-   bare string — no Option, so no layout question. Each fixed an unchecked
-   syscall return used as a bound (a failed `read` walking uninitialised stack;
-   a 32 MiB buffer with no cursor bound), and the arm64 dead `read_all_stdin`
-   twin went with them.
+   **Done:** `read_all_stdin`, which returns a bare string — no Option, so no
+   layout question. It and `read_int` (done alongside it, since retired) each
+   fixed an unchecked syscall return used as a bound (a failed `read` walking
+   uninitialised stack; a 32 MiB buffer with no cursor bound), and the arm64
+   dead `read_all_stdin` twin went with them.
    **Left:** `read_line`, `reader_read_chunk`, `reader_close`. These hand-build
    an `Option[string]` over a **headerless** raw 16-byte strbox where
    `__raw_string` yields the rc-headered one — safe only because nothing decs

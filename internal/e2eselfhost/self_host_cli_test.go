@@ -2492,7 +2492,7 @@ function main(): i32 {
 		build := func(t *testing.T, name, src string) string {
 			t.Helper()
 			srcPath := filepath.Join(dir, "compw_"+name+".fern")
-			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			if err := os.WriteFile(srcPath, []byte(withPrintInt(src)), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compw_"+name+".wasm")
@@ -2582,7 +2582,7 @@ function main(): i32 {
 		build := func(t *testing.T, name, src string) string {
 			t.Helper()
 			srcPath := filepath.Join(dir, "compc_"+name+".fern")
-			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			if err := os.WriteFile(srcPath, []byte(withPrintInt(src)), 0o644); err != nil {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compc_"+name+".wasm")

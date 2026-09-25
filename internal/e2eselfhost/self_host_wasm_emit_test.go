@@ -137,7 +137,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"write-with-embedded-newline", "function main(): i32 { write(\"a\\nb\"); return 0; }", 0, "a\nb"},
 		{"print-in-function", "function greet(): i32 { print(\"hi from greet\"); return 7; } function main(): i32 { return greet(); }", 7, "hi from greet\n"},
 		{"print-dedup-same-literal", "function main(): i32 { write(\"x\"); write(\"x\"); return 0; }", 0, "xx"},
-		// print_int: integer → decimal formatted into memory.
+		// print_int: the Fern printer withPrintInt supplies — recursion + putchar.
 		{"print-int-literal", "function main(): i32 { print_int(42); return 0; }", 0, "42"},
 		{"print-int-zero", "function main(): i32 { print_int(0); return 0; }", 0, "0"},
 		{"print-int-negative", "function main(): i32 { print_int(0 - 7); return 0; }", 0, "-7"},
@@ -519,22 +519,22 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// i64 value path. Literals / arithmetic that exceed the i32 range
 		// must round-trip through 64-bit locals + the i64 formatter; bare
 		// literals in i64 sinks (var/return/arg) coerce to i64.const.
-		{"i64-literal-print", "function main(): i32 { var x: i64 = 5000000000; print_int(x); return 0; }", 0, "5000000000"},
-		{"i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 2000000000; print_int(a + b); return 0; }", 0, "5000000000"},
-		{"i64-sub", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 1000000000; print_int(a - b); return 0; }", 0, "4000000000"},
-		{"i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; print_int(a * b); return 0; }", 0, "10000000000"},
-		{"i64-div", "function main(): i32 { var a: i64 = 10000000000; print_int(a / 7); return 0; }", 0, "1428571428"},
-		{"i64-rem", "function main(): i32 { var a: i64 = 10000000000; print_int(a % 7); return 0; }", 0, "4"},
-		{"i64-negative", "function main(): i32 { var a: i64 = 0; var b: i64 = 5000000000; print_int(a - b); return 0; }", 0, "-5000000000"},
-		{"i64-div-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_int(a / z); return 0; }", 0, "0"},
-		{"i64-rem-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_int(a % z); return 0; }", 0, "9000000000"},
-		{"i64-func-return", "function big(): i64 { return 9000000000; } function main(): i32 { print_int(big()); return 0; }", 0, "9000000000"},
-		{"i64-param", "function dbl(x: i64): i64 { return x * 2; } function main(): i32 { print_int(dbl(3000000000)); return 0; }", 0, "6000000000"},
-		{"i64-param-var", "function add1(x: i64): i64 { return x + 1; } function main(): i32 { var t: i64 = 9999999999; print_int(add1(t)); return 0; }", 0, "10000000000"},
-		{"i64-reassign", "function main(): i32 { var a: i64 = 1000000000; a = a * 5; print_int(a); return 0; }", 0, "5000000000"},
+		{"i64-literal-print", "function main(): i32 { var x: i64 = 5000000000; print_i64(x); return 0; }", 0, "5000000000"},
+		{"i64-add", "function main(): i32 { var a: i64 = 3000000000; var b: i64 = 2000000000; print_i64(a + b); return 0; }", 0, "5000000000"},
+		{"i64-sub", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 1000000000; print_i64(a - b); return 0; }", 0, "4000000000"},
+		{"i64-mul", "function main(): i32 { var a: i64 = 100000; var b: i64 = 100000; print_i64(a * b); return 0; }", 0, "10000000000"},
+		{"i64-div", "function main(): i32 { var a: i64 = 10000000000; print_i64(a / 7); return 0; }", 0, "1428571428"},
+		{"i64-rem", "function main(): i32 { var a: i64 = 10000000000; print_i64(a % 7); return 0; }", 0, "4"},
+		{"i64-negative", "function main(): i32 { var a: i64 = 0; var b: i64 = 5000000000; print_i64(a - b); return 0; }", 0, "-5000000000"},
+		{"i64-div-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_i64(a / z); return 0; }", 0, "0"},
+		{"i64-rem-by-zero-guarded", "function main(): i32 { var a: i64 = 9000000000; var z: i64 = 0; print_i64(a % z); return 0; }", 0, "9000000000"},
+		{"i64-func-return", "function big(): i64 { return 9000000000; } function main(): i32 { print_i64(big()); return 0; }", 0, "9000000000"},
+		{"i64-param", "function dbl(x: i64): i64 { return x * 2; } function main(): i32 { print_i64(dbl(3000000000)); return 0; }", 0, "6000000000"},
+		{"i64-param-var", "function add1(x: i64): i64 { return x + 1; } function main(): i32 { var t: i64 = 9999999999; print_i64(add1(t)); return 0; }", 0, "10000000000"},
+		{"i64-reassign", "function main(): i32 { var a: i64 = 1000000000; a = a * 5; print_i64(a); return 0; }", 0, "5000000000"},
 		{"i64-compare-gt", "function main(): i32 { var a: i64 = 5000000000; if (a > 4000000000) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 		{"i64-compare-eq", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 5000000000; if (a == b) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
-		{"i64-loop-accumulate", "function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 5) { sum = sum + 1000000000; i = i + 1; } print_int(sum); return 0; }", 0, "5000000000"},
+		{"i64-loop-accumulate", "function main(): i32 { var sum: i64 = 0; var i: i32 = 0; while (i < 5) { sum = sum + 1000000000; i = i + 1; } print_i64(sum); return 0; }", 0, "5000000000"},
 
 		// Clock builtins are non-deterministic; assert structural facts
 		// only. monotonic_ns is non-decreasing (b - a >= 0); now_unix_ms is
@@ -571,8 +571,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-ceil", "function main(): i32 { print_int(__ceil_f64(3.1) as i32); return 0; }", 0, "4"},
 		{"f64-trunc", "function main(): i32 { print_int(__trunc_f64(3.9) as i32); return 0; }", 0, "3"},
 		{"f64-abs", "function main(): i32 { print_int(__abs_f64(-5.0) as i32); return 0; }", 0, "5"},
-		{"f64-to-i64-cast", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_int(r); return 0; }", 0, "5000000000"},
-		{"f64-to-i64-direct-print", "function main(): i32 { print_int(9000000000.0 as i64); return 0; }", 0, "9000000000"},
+		{"f64-to-i64-cast", "function main(): i32 { var x: f64 = 5000000000.0; var r: i64 = x as i64; print_i64(r); return 0; }", 0, "5000000000"},
+		{"f64-to-i64-direct-print", "function main(): i32 { print_i64(9000000000.0 as i64); return 0; }", 0, "9000000000"},
 		// Un-annotated f64 locals: `var x = 1.5` (no `: f64`) must declare its
 		// wasm local as f64 to match the f64 value stored — the type is inferred
 		// from the initialiser (literal / float arith / negation / `as f64`).
@@ -933,7 +933,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// the const's return type driving string / i64 / f64 typing).
 		{"const-i32", "const LIMIT: i32 = 100; function main(): i32 { print_int(LIMIT + 1); return 0; }", 0, "101"},
 		{"const-string-fstring", "const NAME: string = \"bob\"; function main(): i32 { write(f\"hello {NAME}\"); return 0; }", 0, "hello bob"},
-		{"const-i64", "const BIG: i64 = 5000000000; function main(): i32 { print_int(BIG + 1); return 0; }", 0, "5000000001"},
+		{"const-i64", "const BIG: i64 = 5000000000; function main(): i32 { print_i64(BIG + 1); return 0; }", 0, "5000000001"},
 		{"const-f64", "const HALF: f64 = 3.5; function main(): i32 { print_int((HALF * 2.0) as i32); return 0; }", 0, "7"},
 		{"const-shadowed-by-local", "const X: i32 = 5; function main(): i32 { var X: i32 = 99; print_int(X); return 0; }", 0, "99"},
 		// More combinations (all already worked; locked in as regressions).
@@ -1011,7 +1011,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.source))
+			wat := runCapture(t, gcc, runner, driverBin, []byte(withPrintInt(tc.source)))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}

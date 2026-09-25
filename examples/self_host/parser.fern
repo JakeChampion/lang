@@ -8386,7 +8386,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_type: stri
 pub function builtin_function_names(): string[] {
     return [
         // I/O + process + environment
-        "print", "write", "eprint", "print_int", "eprint_int", "putchar",
+        "print", "write", "eprint", "putchar",
         "exit", "args", "env", "subprocess",
         // Crash-only supervision (docs/CRASH-ONLY-SERVE.md D2'): fork the
         // process / exec into another program / reap a child. std/tcp's
@@ -8418,7 +8418,7 @@ pub function builtin_function_names(): string[] {
         // is the NICE value: -20 is the most favourable and 19 the least.
         "priority", "set_priority",
         // stdin / readers
-        "stdin", "stdout", "stderr", "isatty", "read_line", "read_int", "read_all_stdin",
+        "stdin", "stdout", "stderr", "isatty", "read_line", "read_all_stdin",
         // the two halves of the compile target's name, literals once compiled
         "target_os", "target_arch",
         "open_reader", "open_writer", "open_appender", "open_exclusive",
