@@ -6573,7 +6573,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
     });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function or struct.
+// check_decl_names rejects a module holding a NAMELESS function or struct, or a
+// parameter written with no type.
 //
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
@@ -6605,7 +6606,11 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
                 message: "function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)",
                 line: mod.funcs[i].line, col: 0 });
         }
+        errs = untyped_param_errs(mod.funcs[i], errs);
         i = i + 1;
+    }
+    for td in mod.trait_decls {
+        for tm in td.methods { errs = untyped_param_errs(tm, errs); }
     }
     var si: i32 = 0;
     while (si < mod.structs.len()) {
@@ -6616,6 +6621,19 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         si = si + 1;
     }
     return errs;
+}
+
+// untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
+// which parse_param records with an empty type.
+function untyped_param_errs(fd: parser.FuncDecl, errs: util.Diag[]): util.Diag[] {
+    var out: util.Diag[] = errs;
+    for param in fd.params {
+        if (param.type_name.len() == 0) {
+            out = out.append(util.Diag { code: "P001", message: "parameter \"" + param.name + "\" of \"" + fd.name + "\" has no type: expected \":\" after its name",
+                line: fd.line, col: fd.col });
+        }
+    }
+    return out;
 }
 
 // check_top_level_stmts refuses a statement written at module level in a module

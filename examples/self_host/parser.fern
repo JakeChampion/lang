@@ -19198,7 +19198,8 @@ function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[]
     }
     var has_self: boolean = false;
     if (m.params.len() > 0) {
-        if (m.params[0].name == "self") { has_self = true; }
+        // An untyped `self` stays a parameter, for check_decl_names to refuse.
+        if (m.params[0].name == "self" && m.params[0].type_name.len() > 0) { has_self = true; }
     }
     if (!has_self) {
         // Associated function: keep ALL params (none is a receiver),

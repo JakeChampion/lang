@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostDeclNamesGate pins that the self-host drivers REJECT a declaration
-// with no name, rather than carrying a nameless function through the pipeline.
+// with no name, or a parameter with no type, rather than carrying a nameless function through the pipeline.
 //
 // The self-host parser is deliberately permissive — `Par` has no error channel,
 // so a token it cannot use is skipped and the drivers' gates catch the
@@ -43,13 +43,14 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		name   string
 		src    string
 		reject bool
+		cause  string
 	}{
 		// `use` is the one that actually cost us. The others are keywords a
 		// reasonable person might reach for as an identifier.
-		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true},
-		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true},
-		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true},
-		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true},
+		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "has no name"},
+		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "has no name"},
+		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "has no name"},
+		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "has no name"},
 
 		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
 		// receiver method — the gate must not fire on any of them.
@@ -59,9 +60,15 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// deliberately) and the native parser rejects it. That is a real
 		// divergence, but a different one — the name is present, not empty — so
 		// asserting agreement on it here would fail for an unrelated reason.
-		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false},
-		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false},
-		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { var s = S { }; return s.twice(); }", false},
+		// A parameter with no type (#10260): the parser records it with an
+		// empty type, on a free function, a method and a trait requirement.
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
+		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "has no type"},
+		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "has no type"},
+
+		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
+		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
+		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { var s = S { }; return s.twice(); }", false, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
@@ -77,7 +84,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 				if code == 0 || len(out) != 0 {
 					t.Fatalf("driver exited %d with %d bytes, want a refusal — a nameless declaration reached the emitter", code, len(out))
 				}
-				if !strings.Contains(stderr, "has no name") {
+				if !strings.Contains(stderr, tc.cause) {
 					t.Errorf("refusal did not name the cause:\n%s", stderr)
 				}
 				return
