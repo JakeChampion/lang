@@ -194,10 +194,9 @@ pub function is_handle(t: typeinfo.Type): boolean {
 }
 
 // `MapIter[K, V]` — the map cursor. It wears a record's nominal like a handle
-// does, but it holds an ADDRESS rather than a descriptor: a bare 16-byte block
-// over the map's own storage. No rc header, so the frame counts nothing and
-// releases nothing; every read through it reads the map, so it is lent for as
-// long as the map lives.
+// does, but it holds an ADDRESS rather than a descriptor: a counted block over
+// the map's own storage. Every read through it reads the map, so it must not
+// outlive the map.
 pub function is_map_iter(t: typeinfo.Type): boolean {
     if let typeinfo.TypeStruct(s) = t { return s.name == "MapIter" && s.args.len() == 2; }
     return false;
