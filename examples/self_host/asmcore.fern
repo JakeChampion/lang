@@ -5826,7 +5826,7 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
     while (fi < mod.funcs.len()) {
         var where: string = "in fn '" + mod.funcs[fi].name + "'";
         if (mod.funcs[fi].name.len() == 0) {
-            errs = errs.append(util.Diag { code: "P001", message: "malformed function declaration",
+            errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(),
                 line: mod.funcs[fi].line, col: mod.funcs[fi].col });
             where = "in malformed function declaration";
         }
@@ -6620,14 +6620,19 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name.len() == 0) {
             errs = errs.append(util.Diag { code: "P001",
-                message: "function declaration has no name: either a keyword was written as its name, or a destructured parameter could not be read",
+                message: parser.malformed_fn_decl_message(),
                 line: mod.funcs[i].line, col: 0 });
         }
         errs = untyped_param_errs(mod.funcs[i], errs);
         i = i + 1;
     }
     for td in mod.trait_decls {
-        for tm in td.methods { errs = untyped_param_errs(tm, errs); }
+        for tm in td.methods {
+            if (tm.name.len() == 0) {
+                errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: 0 });
+            }
+            errs = untyped_param_errs(tm, errs);
+        }
     }
     var si: i32 = 0;
     while (si < mod.structs.len()) {

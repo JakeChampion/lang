@@ -1044,6 +1044,13 @@ function p_wildcard(): ast.Pattern { return ast.PatWildcard { tag: 0 }; }
 // s_unknown builds the statement-level parse-error sentinel at the position of
 // the token the parser stopped on. It takes the parser rather than offering a
 // positionless overload so a sentinel cannot be raised without a position.
+// malformed_fn_decl_message is the one text for a function declaration the
+// parser returned nameless. parse_func_decl does that for several causes it
+// does not tell apart, so the message names none of them as the cause.
+pub function malformed_fn_decl_message(): string {
+    return "malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name)";
+}
+
 function s_unknown(p: Par, kind: string): ast.Stmt {
     return s_unknown_at(kind, p.peek_line(), p.peek_col());
 }
@@ -5802,7 +5809,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // The FuncDecl is discarded below, so check_decl_names never sees it;
         // what that gate would refuse is reported through a `decl:` sentinel.
         if (fr_func.name.len() == 0) {
-            return (s_unknown_at("decl:local function declaration has no name: either a keyword was written as its name, or a destructured parameter could not be read", fr_func.line, fr_func.col), p);
+            return (s_unknown_at("decl:" + malformed_fn_decl_message(), fr_func.line, fr_func.col), p);
         }
         for prm in fr_func.params {
             if (prm.type_name.len() == 0) {
