@@ -4055,6 +4055,52 @@ function main(): i32 {
     return 1;
 }
 `},
+	// `Ok(())` builds a Result whose success payload is void: the one
+	// written argument carries nothing.
+	{name: "unit-result-literal", atLeast: 2, noLeak: true, src: `
+function check(x: i32): Result[void, IoError] {
+    if (x < 0) { return Err(NotFound("negative")); }
+    return Ok(());
+}
+function main(): i32 {
+    var n: i32 = 0;
+    match (check(3)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
+    match (check(0 - 3)) { Ok(_) => { n = n + 100; }, Err(NotFound(p)) => { n = n + p.len(); }, Err(_) => { n = n + 1000; } }
+    return n;
+}
+`},
+	// The path-taking filesystem leaves, each a Result[void, IoError]: the
+	// whole bundle, io_error included, takes the typed path.
+	{name: "fs-leaves-take-the-typed-path", atLeast: 3, nativeOnly: true, noLeak: true,
+		reports: []string{
+			"runtime __fern_create_dir: produced", "runtime __fern_chmod: produced",
+			"runtime __fern_create_symlink: produced", "runtime __fern_rename: produced",
+			"runtime __fern_remove_file: produced", "runtime __fern_remove_dir: produced",
+			"runtime __fern_set_priority: produced", "runtime __fern_truncate: produced",
+		}, src: `
+function ok(r: Result[void, IoError]): i32 {
+    match (r) { Ok(_) => { return 1; }, Err(_) => { return 0; } }
+}
+function missing(r: Result[void, IoError]): i32 {
+    match (r) { Err(NotFound(p)) => { return p.len(); }, _ => { return 100; } }
+}
+function main(): i32 {
+    var d: string = "/tmp/fern_sem_fs_leaves";
+    remove_file(d + "/t");
+    remove_dir(d);
+    var n: i32 = 0;
+    n = n + ok(create_dir(d, 493));
+    n = n + ok(chmod(d, 448));
+    n = n + ok(create_symlink("nowhere", d + "/s"));
+    n = n + ok(rename(d + "/s", d + "/t"));
+    n = n + ok(remove_file(d + "/t"));
+    n = n + ok(remove_dir(d));
+    n = n + ok(set_priority(priority()));
+    n = n + missing(truncate(d + "/gone", 2 as i64));
+    n = n + missing(remove_file(d + "/gone"));
+    return n;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
