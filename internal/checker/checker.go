@@ -16453,9 +16453,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// coercibility per element rather than mutual equality.
 		hint := c.elemHint
 		c.elemHint = nil
+		// A destination reaches each element as its element type, not
+		// as the whole array type the enclosing var or return set.
+		var elemExpected ast.Type
+		if at, ok := c.expectedType.(ast.ArrayType); ok {
+			elemExpected = at.Elem
+		}
+		c.expectedType = nil
+		checkElem := func(el ast.Expr) ast.Type {
+			c.expectedType = elemExpected
+			t := c.checkExpr(el, s)
+			c.expectedType = nil
+			return t
+		}
 		if dt, ok := hint.(ast.DynTraitType); ok {
 			for i := range n.Elems {
-				t := c.checkExpr(n.Elems[i], s)
+				t := checkElem(n.Elems[i])
 				// Record the concrete→`dyn Trait` coercion against the
 				// element holder (compiled backends box it into the
 				// `[data, vtable]` fat pointer via Info.DynCoercions —
@@ -16500,7 +16513,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// elements that are already enum values or don't match a variant.
 		if eu, ok := hint.(ast.EnumType); ok {
 			for i := range n.Elems {
-				et := c.checkExpr(n.Elems[i], s)
+				et := checkElem(n.Elems[i])
 				et = c.maybeWrapForUnion(eu, &n.Elems[i], et, s)
 				if et != nil && !c.assignable(eu, et) {
 					c.errfCode(n.Elems[i].Pos(), "E034", "array element type %s, expected %s", et, eu)
@@ -16509,9 +16522,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = eu
 			return ast.ArrayType{Elem: eu}
 		}
-		elemT := c.checkExpr(n.Elems[0], s)
+		elemT := checkElem(n.Elems[0])
 		for _, el := range n.Elems[1:] {
-			t := c.checkExpr(el, s)
+			t := checkElem(el)
 			if t == nil || elemT == nil {
 				continue
 			}

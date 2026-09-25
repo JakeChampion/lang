@@ -226,7 +226,7 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 // parameter of its own. The spelling is a variable either way, bound by the
 // instantiation the body is produced under.
 function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
-    if (fd.type_params.len() > 0 || fd.type_param_count > 0) { return true; }
+    if (fd.type_params.len() > 0 || fd.all_type_params.len() > 0) { return true; }
     if (spelled_typevar(fd.ret_type, scope)) { return true; }
     for p in fd.params { if (spelled_typevar(p.type_name, scope)) { return true; } }
     return spelled_typevar(fd.receiver_type, scope);
@@ -1572,7 +1572,7 @@ function array_module_method(contracts: ssasem.Contract[], field: string): i32 {
 // sibling. The instance is asked for on this call's request, the way any other
 // generic call asks, so the method body is produced once per element type.
 function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-    if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    if (c.type_args.len() > 0) { return refused(s, "unsupported call target"); }
     var prefix: string = "";
     if let typeinfo.TypeArray(_) = s.values[recv.id] { prefix = "__arrm_"; }
     if (ssasem.is_map(s.values[recv.id])) { prefix = "__mapm_"; }
@@ -1612,7 +1612,7 @@ function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value,
 // The builtin methods with a contract here. Every other builtin, and every
 // local function value, is still outside this boundary.
 function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-    if (c.type_argc > 0) { return refused(s, "unsupported call target"); }
+    if (c.type_args.len() > 0) { return refused(s, "unsupported call target"); }
     if (semtypes.is_cell(s.values[recv.id])) { return cell_method(c, fa, recv, s, statement); }
     if (ssasem.is_map(s.values[recv.id])) { return map_method(c, fa, recv, s); }
     if (semtypes.is_map_iter(s.values[recv.id])) { return map_iter_method(c, fa, recv, s, statement); }
@@ -2048,7 +2048,7 @@ function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
 }
 
 function is_slice_call(name: string, c: ast.ExprCall): boolean {
-    return name == "slice_unchecked" && c.args.len() == 3 && c.type_argc == 0;
+    return name == "slice_unchecked" && c.args.len() == 3 && c.type_args.len() == 0;
 }
 
 // A closure VALUE: the environment box the lift builds, holding the hoisted

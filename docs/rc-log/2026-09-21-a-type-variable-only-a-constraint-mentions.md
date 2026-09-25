@@ -99,18 +99,8 @@ with it. Their cascades root elsewhere.
 
 ## The half held back
 
-The self-host CHECKER still types a generic call's result the old way: it has no
-bound-driven inference, so `iter.nth(iter.range(0, 9), 4)` reads
-`Option[unknown]` where native reads `Option[i32]`. That is not cosmetic — an
-`unknown` is treated leniently everywhere, so
-
-```fern
-var xs: string[] = iter.to_array(iter.range(0, 5));
-```
-
-compiles clean on the self-host and answers 5, while native refuses it with
-E021. The parse now carries what the check would need, but the check itself
-needs the impl table in every scope (it decides a TYPE now, so two passes over
-one body would otherwise disagree about the same call) and three supporting
-gaps closed in the type resolver. That is **#9925**, with a working draft
-already measured green and held out of this change on size.
+The self-host checker's half landed with #9925. Every scope carries the impl
+table, a bounded parameter's impl binds the type variables its bound names, and
+a destination that the arguments leave open is compared against the impl. So
+`iter.nth(iter.range(0, 9), 4)` reads `Option[i32]` on both compilers, and
+`var xs: string[] = iter.to_array(iter.range(0, 5))` is E021 on both.
