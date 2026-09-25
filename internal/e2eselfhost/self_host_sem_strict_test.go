@@ -12,7 +12,8 @@ import (
 // FERN_SEM_IR_STRICT=1 turns the silent fallback to the AST lowering into a
 // failed compile: exit 3, after the refusals FERN_SEM_IR_REPORT would print.
 // A module the typed path produces whole compiles as it would without the flag,
-// and without the flag a refused one still compiles.
+// and without the flag a refused one still compiles. A runtime helper the typed
+// path refuses fails the compile the same way.
 func TestSelfHostSemIRStrict(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
@@ -23,12 +24,12 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	compile := func(src string, env ...string) (int, string) {
+	compileFor := func(target, src string, env ...string) (int, string) {
 		path := filepath.Join(t.TempDir(), "main.fern")
 		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(fernBin, "-target", "x86-64-linux", path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
+		cmd := exec.Command(fernBin, "-target", target, path, stdlibRoot, "-o", filepath.Join(t.TempDir(), "prog"))
 		cmd.Env = append(os.Environ(), env...)
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
@@ -42,10 +43,31 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 		return 0, stderr.String()
 	}
+	compile := func(src string, env ...string) (int, string) {
+		return compileFor("x86-64-linux", src, env...)
+	}
 
 	produced := "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(2, 3); }\n"
 	if code, out := compile(produced, "FERN_SEM_IR_STRICT=1"); code != 0 {
 		t.Fatalf("a module produced whole: exit %d under strict\n%s", code, out)
+	}
+
+	// Each target spells the clock, id and termios helpers' sources on its own
+	// syscalls. termios_get calls the fs bundle's __fern_io_error.
+	helpers := `function main(): i32 {
+    var ids: u32 = geteuid() + getegid() + getuid() + getgid();
+    var t: i64 = monotonic_ns() + now_unix_ms() + now_ns();
+    if (t < 0 || ids == 4294967295 as u32) { return 1; }
+    match (termios_get(99)) {
+        Ok(words) => { return words.len(); },
+        Err(e) => { return 0; }
+    }
+}
+`
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+		if code, out := compileFor(target, helpers, "FERN_SEM_IR_STRICT=1"); code != 0 {
+			t.Errorf("%s: the runtime helpers: exit %d under strict\n%s", target, code, out)
+		}
 	}
 
 	// An array of views has no anchor on the typed path yet (#10215).

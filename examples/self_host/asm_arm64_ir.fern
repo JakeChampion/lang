@@ -8539,6 +8539,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("mknod")) { fs_src = fs_src + " " + asmcore.rt_src_mknod(tgt); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size(tgt); }
         if (s.has_need("set_window_size")) { fs_src = fs_src + " " + asmcore.rt_src_set_window_size(tgt); }
+        if (s.has_need("termios_get")) { fs_src = fs_src + " " + asmcore.rt_src_termios_get(tgt); }
+        if (s.has_need("termios_set")) { fs_src = fs_src + " " + asmcore.rt_src_termios_set(tgt); }
         if (s.has_need("chown_at")) { fs_src = fs_src + " " + asmcore.rt_src_chown_at(tgt); }
         if (s.has_need("chmod_at")) { fs_src = fs_src + " " + asmcore.rt_src_chmod_at(tgt); }
         if (s.has_need("set_file_times")) { fs_src = fs_src + " " + asmcore.rt_src_set_file_times(tgt); }
@@ -8647,15 +8649,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("getgroups")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups(tgt), s.struct_decls, s);
-    }
-    // Through this path rather than the batched fs_src string, for the reason
-    // getgroups is: the read half appends to an i64[], so its body reaches
-    // __fern_arr_push_owned and only this one marks what a body needs.
-    if (s.has_need("termios_get")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_get(tgt), s.struct_decls, s);
-    }
-    if (s.has_need("termios_set")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_set(tgt), s.struct_decls, s);
     }
     if (s.has_need("hostname")) {
         if (darwin) {

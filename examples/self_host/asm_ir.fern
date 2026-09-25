@@ -9706,6 +9706,8 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         if (s.has_need("statfs")) { fs_src = fs_src + " " + asmcore.rt_src_statfs("x86_64"); }
         if (s.has_need("window_size")) { fs_src = fs_src + " " + asmcore.rt_src_window_size("x86_64"); }
         if (s.has_need("set_window_size")) { fs_src = fs_src + " " + asmcore.rt_src_set_window_size("x86_64"); }
+        if (s.has_need("termios_get")) { fs_src = fs_src + " " + asmcore.rt_src_termios_get("x86_64"); }
+        if (s.has_need("termios_set")) { fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86_64"); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64"); }
         if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64"); }
@@ -9815,18 +9817,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("getgroups")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86_64"), all_structs, s);
-    }
-    // The termios pair goes through this path rather than the batched fs_src
-    // string for the reason getgroups does: the read half APPENDS to an i64[],
-    // so its body reaches __fern_arr_push_owned, and only
-    // emit_ir_runtime_fern_fn marks what a generated body needs.
-    if (s.has_need("termios_get")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_get("x86_64"), all_structs, s);
-    }
-    if (s.has_need("termios_set")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_termios_set("x86_64"), all_structs, s);
     }
     if (s.has_need("environ")) {
         s = s.write("    .text\n");

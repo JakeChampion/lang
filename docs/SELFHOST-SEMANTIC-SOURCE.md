@@ -2087,8 +2087,9 @@ function type nested in a function value's signature.
 
 The typed path is the default, and a module it does not produce whole falls
 back to the AST lowering (`irlower`) with nothing to say so.
-`FERN_SEM_IR_STRICT=1` makes that fallback a hard error instead. The refusals
-are printed as `FERN_SEM_IR_REPORT` would print them, and the compile exits 3.
+`FERN_SEM_IR_STRICT=1` makes that fallback a hard error instead, for a
+program's module and for each runtime helper it appends. The refusals are
+printed as `FERN_SEM_IR_REPORT` would print them, and the compile exits 3.
 It is the measurement the retirement waits on: the AST lowering can go when
 nothing needs it.
 
@@ -2131,8 +2132,9 @@ The x86-64 and arm64 backends ask for a helper's typed lowering first:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
 `semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
 pipeline. A source that does not type-check, or that the typed path does not
-produce whole, keeps the AST lowering. `FERN_SEM_IR_REPORT` prints
-`runtime <name>: produced` for each helper it took. Wasm compiles no
+produce whole, keeps the AST lowering, or under `FERN_SEM_IR_STRICT` fails
+the compile. `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
+helper it took. Wasm compiles no
 Fern-source helper; it serves them as hand-written WAT.
 
 What is left, in order:
