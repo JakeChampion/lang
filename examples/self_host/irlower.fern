@@ -30594,7 +30594,9 @@ function param_is_borrowable(borrowable: string[], name: string, idx: i32): bool
 // The retain is what the forgiveness is buying, so the move site is the gate
 // that matters: a store the move analysis claims takes over `src`'s reference
 // outright and emits no inc (moves_local_at at the lowering site), which makes
-// a release of `src` as well an over-release rather than a leak. Any second
+// a release of `src` as well an over-release rather than a leak. So `msites`
+// must be the sites the emitter elides at, the top-level moves: a loop-body
+// move still retains, and the source's release is what gives that back. Any second
 // occurrence anywhere in the literal — another field, the base — refuses: that
 // one is some other use the retain does not cover.
 function struct_lit_rc_field_retained(sl: ast.ExprStructLit, src: string, structs: StructTab, msites: string[], fty: string): boolean {
@@ -42295,7 +42297,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     return out;
 }
 
-function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[], cnt_handback: string[], cntret: string[]): string[] {
+function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], emit_msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[], cnt_handback: string[], cntret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, [], sfok);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
@@ -42466,7 +42468,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     var lits_pre: string[] = collect_litstr_local_names(body, []);
     var sc1: i32 = 0;
     while (sc1 < lits_pre.len()) { str_cands = push_str_unique(str_cands, lits_pre[sc1]); sc1 = sc1 + 1; }
-    out = reclaimable_string(body, borrowable, tup_ok, msites, reassigned, recv_borrow, sfok, str_cands, strs, structs, out);
+    out = reclaimable_string(body, borrowable, tup_ok, emit_msites, reassigned, recv_borrow, sfok, str_cands, strs, structs, out);
     // Literal-init string locals (#6582) — same two gates as the fresh producers
     // above, plus the `.to_string()` identity-alias exclusion. See the
     // collect_litstr_local_names block for why this is not folded into
@@ -42589,7 +42591,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // validates each one individually.
     var sarr_producers: string[] = strarr_producer_names_of(fresh_ret, body);
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
-    out = reclaimable_strarr(body, borrowable, msites, sarrs, sfok, str_fresh_ret, sarr_producers, structs, out);
+    out = reclaimable_strarr(body, borrowable, emit_msites, sarrs, sfok, str_fresh_ret, sarr_producers, structs, out);
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
     // own prefix so the binding-site type confirmation is required alongside.
     // Same strarr_unsafe_for gate: it is the non-escape half of the proof, and
@@ -60231,7 +60233,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // moves. The emitter still consumes only the top-level view.
     var fn_moves_top: MlOut = rc_ml_compute_toplevel(fn, structs);
     var fn_moves_all: MlOut = rc_ml_extend_loops(fn, structs, fn_moves_top);
-    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns);
+    var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -78713,7 +78715,7 @@ while (sei < scenums.len()) {
     return out;
 }
 
-function reclaimable_string(body: ast.Stmt[], borrowable: string[], tup_ok: string[], msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: StructTab, out: string[]): string[] {
+function reclaimable_string(body: ast.Stmt[], borrowable: string[], tup_ok: string[], emit_msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: StructTab, out: string[]): string[] {
 var si: i32 = 0;
 while (si < strs.len()) {
     // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
@@ -78754,7 +78756,7 @@ while (si < strs.len()) {
     // the source keeps the claim its own release balances. Tagged per
     // candidate rather than seeded into tup_ok once, because the move gate
     // inside is a question about THIS name's use at THIS literal.
-    var sfsites: string[] = rc_counted_field_sites(body, snm, structs, sfok, msites, out, "string", []);
+    var sfsites: string[] = rc_counted_field_sites(body, snm, structs, sfok, emit_msites, out, "string", []);
     var str_tup_ok: string[] = tup_ok;
     var sfi: i32 = 0;
     while (sfi < sfsites.len()) { str_tup_ok = str_tup_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
@@ -79040,7 +79042,7 @@ while (mi < maps.len()) {
     return out;
 }
 
-function reclaimable_strarr(body: ast.Stmt[], borrowable: string[], msites: string[], sarrs: string[], sfok: string[], str_fresh_ret: string[], strarr_producers: string[], structs: StructTab, out: string[]): string[] {
+function reclaimable_strarr(body: ast.Stmt[], borrowable: string[], emit_msites: string[], sarrs: string[], sfok: string[], str_fresh_ret: string[], strarr_producers: string[], structs: StructTab, out: string[]): string[] {
 var sri: i32 = 0;
 while (sri < sarrs.len()) {
     // #7282 string[] limb (#7391): a plain `var x: string[] = xs` alias
@@ -79058,7 +79060,7 @@ while (sri < sarrs.len()) {
     // holder is never constructed. __fern_str_arr_free's rc gate is what
     // makes granting both owners the walk safe — only the last one at rc 1
     // performs it.
-    var sasfld: string[] = rc_counted_field_sites(body, sanm, structs, sfok, msites, out, "string[]", []);
+    var sasfld: string[] = rc_counted_field_sites(body, sanm, structs, sfok, emit_msites, out, "string[]", []);
     if (!strarr_unsafe_for_alias(body, sanm, borrowable, str_fresh_ret, strarr_producers, sasal, sasfld)) {
         out = out.append("SARR:" + sarrs[sri]);
         out = credit_alias_sites(out, "SARR:", sasal);
