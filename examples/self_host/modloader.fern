@@ -405,6 +405,9 @@ function strip_fern_ext(s: string): string {
 // declared dependencies live in its own manifest. Resolving everything
 // against the entry meant a dependency's own dependencies never loaded at
 // all — silently, since an unresolvable import is skipped (#6756).
+//
+// Each module's lines are numbered from its util.line_base, for every caller:
+// a position read off the result decodes through util.pos_line.
 pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatten.LoadedModule[] {
     let (loaded, files) = load_imports_with_files(ov, dir, entry);
     return loaded;
