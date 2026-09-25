@@ -141,10 +141,10 @@ pub function arr_join(): i32 { return 0 - 39; }
 // is not admitted, since the runtime copies the words without a retain.
 pub function arr_slice(): i32 { return 0 - 40; }
 
-// Map iteration. `map_iter` hands back the cursor: a bare 16-byte block
-// (`__fern_alloc`, no rc header) holding the map's address and an index, so it
-// is an address the frame never counts and never releases, and every read
-// through it reads the map's own columns. The other four take that cursor —
+// Map iteration. `map_iter` hands back the cursor: a fresh counted block that
+// the frame owns and releases, and that is still anchored to the map, since
+// every read through it reads the map's own columns. The other four take that
+// cursor —
 // `mapiter_has_next` answers the bound, `mapiter_key` and `mapiter_value` load
 // the element at the cursor WITHOUT retaining it, and `mapiter_advance` bumps
 // the stored index in place and answers void.
@@ -274,10 +274,6 @@ pub function reference(t: typeinfo.Type): boolean {
     // A stream handle wears a record's nominal but holds a descriptor, so it
     // occupies a scalar slot and there is no address to count.
     if (semtypes.is_handle(t)) { return false; }
-    // A map cursor wears one too and IS an address, but its block carries no rc
-    // header, so there is no count either: it is lent for the map's lifetime and
-    // the frame neither takes a unit of it nor gives one back.
-    if (semtypes.is_map_iter(t)) { return false; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeArray(_) = t { return true; }
     if let typeinfo.TypeTuple(_) = t { return true; }
@@ -1953,10 +1949,9 @@ function guard_error(f: Func): string {
 
 // The operations whose result reads its source's storage, so each borrows that
 // source exactly as a projection does. A widening, a narrowing and a string
-// retag hand back the same box. A map cursor is its own block, but it holds the
-// map's address and nothing else, so a read through it is a read of the map;
-// its key and value reads are in turn projections of the cursor, which anchors
-// them to the map through it.
+// retag hand back the same box. A map cursor is its own block, but a read
+// through it is a read of the map, so it anchors the map as a slice anchors its
+// source; its key and value reads are in turn projections of the cursor.
 function projects(kind: i32): boolean {
     return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
         || kind == variant_get() || kind == variant_up() || kind == variant_as()

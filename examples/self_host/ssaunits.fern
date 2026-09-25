@@ -187,24 +187,22 @@ function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for t in tup.elements { if (!supported(t, f)) { return false; } }
     return true;
 }
-// The types this pass plans no unit for: the scalars, and the stream handles,
-// which are a descriptor and so one of them.
-// The types that carry no unit at all: the scalars, a stream handle, which is
-// its descriptor, and a map cursor, whose block has no rc header. The cursor
-// still has to outlive nothing and be outlived by its map, which the anchor on
-// `ssasem.projects` states rather than the ledger.
+// The types that carry no unit at all: the scalars, and a stream handle, which
+// is its descriptor.
 function unit_free(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(_) = t { return true; }
     if let typeinfo.TypeBool(_) = t { return true; }
     if let typeinfo.TypeFloat(_) = t { return true; }
     if let typeinfo.TypeVoid(_) = t { return true; }
-    return semtypes.is_handle(t) || semtypes.is_map_iter(t);
+    return semtypes.is_handle(t);
 }
 function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (unit_free(t)) { return true; }
     if let typeinfo.TypeString(_) = t { return true; }
     if let typeinfo.TypeFunc(_) = t { return true; }
     if let typeinfo.TypeDyn(_) = t { return true; }
+    // A map cursor's unit is its own block; what it reads stays the map's.
+    if (semtypes.is_map_iter(t)) { return true; }
     if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     // A cell holds one unit of its own and one slot; no declaration names it.
@@ -345,7 +343,8 @@ function hands_out(kind: i32): boolean {
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
         || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
         || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
-        || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice();
+        || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice()
+        || kind == ssasem.map_iter();
 }
 // A phi is a literal too when every operand is: assumed of every phi, then
 // withdrawn from each one with another operand, to a fixpoint, so a loop

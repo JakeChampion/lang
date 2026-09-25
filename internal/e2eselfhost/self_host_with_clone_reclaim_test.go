@@ -141,6 +141,6 @@ func assertBalancedCensus(t *testing.T, stderr string) {
 		t.Fatal("allocs=0 — the probe exercised no allocation")
 	}
 	if allocs != frees || live != 0 {
-		t.Errorf("%s — every `.with` clone must be released as the next one supersedes it", summary)
+		t.Errorf("%s — want a balanced census", summary)
 	}
 }

@@ -88,6 +88,35 @@ pub function array_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 // is exact: any OTHER __fern_* / __rc_* call is NOT provided here, so
 // calls_only_known refuses the module rather than emitting a call with no body.
 pub function is_fern_helper(name: string): boolean {
+    return is_rc_helper(name)
+        || is_release_helper(name)
+        || is_map_release_helper(name)
+        || is_boxed_key_map_release_helper(name)
+        || is_text_helper(name)
+        || is_i32_helper(name)
+        // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
+        // the REPLACED array-field buffers of the superseded old box (cow + snap
+        // guarded) before freeing the box. All three backends emit a real per-type
+        // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
+        // emit_wasm_field_reclaim_body).
+        || is_field_reclaim_name(name)
+        // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
+        // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
+        // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
+        // nested-struct field, recursively). All three backends emit a real per-type
+        // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
+        // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
+        // field-drop so the broad struct reclaim fits #3452.
+        || is_struct_drop_name(name)
+        // per-type struct-VALUE column walk of a reclaimable map:
+        // __map_vals_struct_drop_<T> releases each value box's own rc fields
+        // (through the backend's element walk over __struct_drop_<T>) before the
+        // map's one-dec column free takes the boxes.
+        || is_map_vals_struct_drop_name(name);
+}
+
+// The count primitives and the element retain and reuse built on them.
+function is_rc_helper(name: string): boolean {
     return name == "__fern_rc_inc"
         || name == "__fern_rc_dec"
         // #4873 grow-bracket share helpers: the backend-selectable rc touch
@@ -99,17 +128,33 @@ pub function is_fern_helper(name: string): boolean {
         // at base-4 would corrupt the neighbouring allocation.
         || name == "__fern_arr_share_inc"
         || name == "__fern_arr_share_dec"
-        // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
-        // data buffer + 16-byte box. Default ir_helper_symbol maps it to
-        // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
-        // only the irlower reclaim sites emit the call.
-        // the map runtime's shared key search (#2649): walk the keys array,
-        // return the hit's index or -1. Default ir_helper_symbol maps it to
-        // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
-        // "maps" need. Its only caller in Fern is __fern_map_delete — the
-        // hand-asm map_set / map_get / map_has reach it by symbol.
-        || name == "__fern_map_find"
-        || name == "__fern_str_free"
+        || name == "__fern_rc_is_unique"
+        // element retain ahead of an un-share copy: one rc_inc per element of
+        // a pointer-element array, so the copy and the original both hold a
+        // count of each. Default ir_helper_symbol maps it to
+        // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
+        // Never user-callable — only the in-place field append / with emit it.
+        || name == "__fern_arr_inc_elems"
+        // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
+        // when its cap matches, else freelists it and allocs fresh — so a reuse
+        // site guarded by __fern_rc_is_unique degrades instead of corrupting.
+        // Never user-callable — only irlower's reuse emitters emit it.
+        || name == "__fern_alloc_reuse"
+        || name == "__fern_rc_underflow_get"
+        // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
+        // superseded old box (rc-guarded shallow free) unless it is `new` or the
+        // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
+        || name == "__fern_snapshot_dec"
+        || name == "__fern_mapiter_free";
+}
+
+// The releases of strings and nested arrays.
+function is_release_helper(name: string): boolean {
+    // string RC reclaim (#2649): frees a fresh, non-escaping heap string's
+    // data buffer + 16-byte box. Default ir_helper_symbol maps it to
+    // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
+    // only the irlower reclaim sites emit the call.
+    return name == "__fern_str_free"
         // string VIEW reclaim (#6544): __fern_str_free plus the one case it
         // must skip — a `s[a:b]` box, which carries the immortal rc sentinel
         // because its bytes belong to the source. At a site that has proved the
@@ -136,13 +181,17 @@ pub function is_fern_helper(name: string): boolean {
         // exit sweep / rebind emits them.
         || name == "__fern_arrarr_free"
         || name == "__fern_strarrarr_free"
-        || name == "__fern_optarrarr_free"
-        // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
-        // local's keys + values buffers AND the raw 16-byte mapbox. Default
-        // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
-        // routes it to $__fern_map_release (which additionally deep-drops string
-        // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
-        || name == "__fern_map_free"
+        || name == "__fern_optarrarr_free";
+}
+
+// The map releases whose key column is an integer or a string.
+function is_map_release_helper(name: string): boolean {
+    // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
+    // local's keys + values buffers AND the raw 16-byte mapbox. Default
+    // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
+    // routes it to $__fern_map_release (which additionally deep-drops string
+    // K/V). Never user-callable — only irlower's emit_map_buffers_free emits it.
+    return name == "__fern_map_free"
         // #4353: string-VALUE-column deep-release variant — frees the vals
         // column via __fern_str_arr_free (each fresh value box + the buffer)
         // instead of the shallow arr_dec; keys still shallow. Register-only;
@@ -160,37 +209,38 @@ pub function is_fern_helper(name: string): boolean {
         || name == "__fern_map_free_ksva"
         || name == "__fern_map_free_vsa"
         || name == "__fern_map_free_ksvsa"
-        // #9966: the BOX-KEY siblings — the key column freed via
-        // __fern_arrarr_free for an all-scalar struct or enum key, the value
-        // column as its own suffix says.
-        || name == "__fern_map_free_ka"
-        || name == "__fern_map_free_kavs"
-        || name == "__fern_map_free_kava"
-        || name == "__fern_map_free_kavsa"
         // The column-of-boxes pair (box, release): the runtime walks the value
         // column calling the release the semantic lowering names for the
         // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
         || name == "__fern_map_free_vf"
-        || name == "__fern_map_free_ksvf"
+        || name == "__fern_map_free_ksvf";
+}
+
+// The map releases whose key column holds boxes.
+function is_boxed_key_map_release_helper(name: string): boolean {
+    // #9966: the BOX-KEY siblings — the key column freed via
+    // __fern_arrarr_free for an all-scalar struct or enum key, the value
+    // column as its own suffix says.
+    return name == "__fern_map_free_ka"
+        || name == "__fern_map_free_kavs"
+        || name == "__fern_map_free_kava"
+        || name == "__fern_map_free_kavsa"
         // The keyed-column members (#9962): (box, key release), and for a
         // column of boxes beside it (box, key release, value release).
         || name == "__fern_map_free_kf"
         || name == "__fern_map_free_kfvs"
         || name == "__fern_map_free_kfvsa"
-        || name == "__fern_map_free_kfvf"
-        || name == "__fern_rc_is_unique"
-        // element retain ahead of an un-share copy: one rc_inc per element of
-        // a pointer-element array, so the copy and the original both hold a
-        // count of each. Default ir_helper_symbol maps it to
-        // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
-        // Never user-callable — only the in-place field append / with emit it.
-        || name == "__fern_arr_inc_elems"
-        // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
-        // when its cap matches, else freelists it and allocs fresh — so a reuse
-        // site guarded by __fern_rc_is_unique degrades instead of corrupting.
-        // Never user-callable — only irlower's reuse emitters emit it.
-        || name == "__fern_alloc_reuse"
-        || name == "__fern_rc_underflow_get"
+        || name == "__fern_map_free_kfvf";
+}
+
+// The map key search and the helpers that convert to and from text.
+function is_text_helper(name: string): boolean {
+    // the map runtime's shared key search (#2649): walk the keys array,
+    // return the hit's index or -1. Default ir_helper_symbol maps it to
+    // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
+    // "maps" need. Its only caller in Fern is __fern_map_delete — the
+    // hand-asm map_set / map_get / map_has reach it by symbol.
+    return name == "__fern_map_find"
         // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
         // stack-arg body under __fn___fern_i32_to_string).
         || name == "__fern_i32_to_string"
@@ -209,10 +259,23 @@ pub function is_fern_helper(name: string): boolean {
         // chr(n)'s 1-char-string-box helper (stack-arg body under
         // __fn___fern_chr; allocates, so it needs the heap runtime).
         || name == "__fern_chr"
-        // i32[] sum / product (#3457): `xs.sum()` / `xs.product()` lower to calls
-        // to these Fern helpers. Without them here, calls_only_known treats the
-        // target as an unknown USER function and bails the module.
-        || name == "__fern_arr_i32_sum"
+        // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
+        // runtime function (asmcore.rt_src_arr_str_join) that fills one
+        // exact-size block, so the heap is its only runtime dep. Body under
+        // __fn___fern_arr_str_join,
+        // emitted in each native backend's runtime block. Only
+        // irlower's lower_arr_str_join emits the call. wasm emits a matching
+        // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
+        // (wasm.arr_str_join_helper).
+        || name == "__fern_arr_str_join";
+}
+
+// The integer and integer-array helpers.
+function is_i32_helper(name: string): boolean {
+    // i32[] sum / product (#3457): `xs.sum()` / `xs.product()` lower to calls
+    // to these Fern helpers. Without them here, calls_only_known treats the
+    // target as an unknown USER function and bails the module.
+    return name == "__fern_arr_i32_sum"
         || name == "__fern_arr_i32_product"
         || name == "__fern_i32_pow"
         // n.gcd(m) / n.lcm(m) (#2649) — pure-scalar Fern helpers, like pow.
@@ -229,39 +292,7 @@ pub function is_fern_helper(name: string): boolean {
         // the guard and the box live in their Fern bodies, so the call site is
         // an ordinary call_direct like sum/product.
         || name == "__fern_arr_i32_min_opt"
-        || name == "__fern_arr_i32_max_opt"
-        // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
-        // runtime function (asmcore.rt_src_arr_str_join) that fills one
-        // exact-size block, so the heap is its only runtime dep. Body under
-        // __fn___fern_arr_str_join,
-        // emitted in each native backend's runtime block. Only
-        // irlower's lower_arr_str_join emits the call. wasm emits a matching
-        // $__fern_arr_str_join shim over the hand-written $__fern_str_join WAT
-        // (wasm.arr_str_join_helper).
-        || name == "__fern_arr_str_join"
-        // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
-        // superseded old box (rc-guarded shallow free) unless it is `new` or the
-        // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
-        || name == "__fern_snapshot_dec"
-        // per-type field-level move tracking (#3457): __field_reclaim_<T> frees
-        // the REPLACED array-field buffers of the superseded old box (cow + snap
-        // guarded) before freeing the box. All three backends emit a real per-type
-        // body (x86 emit_ir_field_reclaims, arm64 emit_arm64_field_reclaim_one, wasm
-        // emit_wasm_field_reclaim_body).
-        || is_field_reclaim_name(name)
-        // per-type deep struct-drop (#3457): __struct_drop_<T> deep-drops the
-        // rc-array FIELDS of a reclaimable struct box at scope exit (a scalar
-        // field's buffer; a struct/enum-array field's elements + buffer; an acyclic
-        // nested-struct field, recursively). All three backends emit a real per-type
-        // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
-        // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
-        // field-drop so the broad struct reclaim fits #3452.
-        || is_struct_drop_name(name)
-        // per-type struct-VALUE column walk of a reclaimable map:
-        // __map_vals_struct_drop_<T> releases each value box's own rc fields
-        // (through the backend's element walk over __struct_drop_<T>) before the
-        // map's one-dec column free takes the boxes.
-        || is_map_vals_struct_drop_name(name);
+        || name == "__fern_arr_i32_max_opt";
 }
 
 // is_struct_drop_name reports whether a call_direct callee is a per-type
@@ -334,6 +365,9 @@ pub function c_call_arity(name: string): i32 {
 pub function ir_helper_symbol(name: string): string {
     if (name == "__fern_rc_inc") { return "__fn___fern_rc_inc"; }
     if (name == "__fern_rc_dec") { return "__fn___fern_arr_dec"; }
+    // A map cursor is a two-slot array box that owns nothing; wasm's also owns
+    // its snapshots and has a release of its own.
+    if (name == "__fern_mapiter_free") { return "__fn___fern_arr_dec"; }
     // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
     // pair on the register backends (zero new runtime); the distinct NAMES let
     // each backend pick its own pair (wasm_ir maps them to $__fern_rc_inc /

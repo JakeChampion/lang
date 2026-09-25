@@ -176,6 +176,7 @@ function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
     if (ssasem.is_map(t)) { return map_release_name(t); }
+    if (semtypes.is_map_iter(t)) { return "__fern_mapiter_free"; }
     return "__fern_rc_dec";
 }
 
@@ -547,6 +548,8 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     // for. `caller_sigs` asks this of every parameter type, so a handle
     // reaches here on any program that opens one.
     if (semtypes.is_handle(t)) { return false; }
+    // A cursor's release frees whatever its backend's block owns.
+    if (semtypes.is_map_iter(t)) { return false; }
     if let typeinfo.TypeFunc(_) = t { return env_records(f, t).len() > 0; }
     if (ssasem.is_dyn(t)) {
         for c in dyn_concretes(f, t) { if (ssasem.is_string(c) || has_children(c, f)) { return true; } }
@@ -2353,9 +2356,8 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
     return emit(r, ir.op_load_local(res));
 }
 
-// The cursor cluster. `map_iter` is the only allocation of the five: a bare
-// block holding the map's address and an index, which is why nothing here
-// retains or releases. `key` and `value` load the map's own column element at
+// The cursor cluster. `map_iter` is the only allocation of the five, a fresh
+// unit the frame releases through `__fern_mapiter_free`. `key` and `value` load the map's own column element at
 // the cursor, so the value is the map's and stays borrowed. `advance` moves
 // the index in place and leaves the dummy the statement stores.
 //
