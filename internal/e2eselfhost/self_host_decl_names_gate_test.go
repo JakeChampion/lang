@@ -211,6 +211,12 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"sentinel", sentinel, "parser-side unknown"},
 			// The one sentinel with a native code names it on every driver,
 			// whether or not a checker runs before the gate.
+			// A nameless struct or enum derails the parse, so a stdin driver
+			// reports the parser's sentinels first; the loaders run the
+			// declaration gate first, which is where its text shows.
+			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read"},
+			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read"},
+			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read"},
 			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    var x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))

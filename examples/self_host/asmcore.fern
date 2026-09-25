@@ -6590,8 +6590,8 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
     });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function or struct, or a
-// parameter written with no type.
+// check_decl_names rejects a module holding a NAMELESS function, trait
+// requirement, struct or enum, or a parameter written with no type.
 //
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
@@ -6621,7 +6621,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
         if (mod.funcs[i].name.len() == 0) {
             errs = errs.append(util.Diag { code: "P001",
                 message: parser.malformed_fn_decl_message(),
-                line: mod.funcs[i].line, col: 0 });
+                line: mod.funcs[i].line, col: mod.funcs[i].col });
         }
         errs = untyped_param_errs(mod.funcs[i], errs);
         i = i + 1;
@@ -6629,7 +6629,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     for td in mod.trait_decls {
         for tm in td.methods {
             if (tm.name.len() == 0) {
-                errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: 0 });
+                errs = errs.append(util.Diag { code: "P001", message: parser.malformed_fn_decl_message(), line: tm.line, col: tm.col });
             }
             errs = untyped_param_errs(tm, errs);
         }
@@ -6637,10 +6637,15 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     var si: i32 = 0;
     while (si < mod.structs.len()) {
         if (mod.structs[si].name.len() == 0) {
-            errs = errs.append(util.Diag { code: "P001", message: "struct declaration has no name (a keyword cannot be used as one)",
+            errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("struct"),
                 line: mod.structs[si].line, col: mod.structs[si].col });
         }
         si = si + 1;
+    }
+    for en in mod.enums {
+        if (en.name.len() == 0) {
+            errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col });
+        }
     }
     return errs;
 }
@@ -6668,6 +6673,13 @@ pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
     if (errs.len() == 0) { return false; }
     eprint(util.format_diags(errs));
     return true;
+}
+
+// malformed_type_decl_message is the nameless struct or enum text. The parser
+// returns an empty name for any token that is not an identifier, so it names no
+// cause as the cause, as parser.malformed_fn_decl_message does.
+function malformed_type_decl_message(kw: string): string {
+    return "malformed " + kw + " declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)";
 }
 
 // untyped_param_errs reports each parameter of `fd` written without `: TYPE`,
