@@ -11874,7 +11874,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       var out: util.Diag[] = [];
-      for element in a.elements { out = util.append_diags(out, call_diags(element, s)); }
+      for element in a.elements { out = util.append_diags(out, dest_call_diags(element, elem, s)); }
       return out;
     }
   }
@@ -11882,7 +11882,8 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
 }
 
 // The declared parameter types of a call where the callee resolves: a free
-// function, a struct's method or a function value. Empty otherwise.
+// function, a struct's method, a function value, or a builtin method that
+// stores its argument into a map or an array. Empty otherwise.
 function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -11892,7 +11893,15 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
       }
     },
     ast.ExprFieldAccess(mfa) => {
-      if let typeinfo.TypeStruct(sn) = check_expr(mfa.obj, s) { return s.lookup_method(mfa.field, sn.name).param_types; }
+      var rt: typeinfo.Type = check_expr(mfa.obj, s);
+      if let typeinfo.TypeStruct(sn) = rt { return s.lookup_method(mfa.field, sn.name).param_types; }
+      if let typeinfo.TypeMap(mt) = rt {
+        if (mfa.field == "insert") { return [mt.key, mt.value]; }
+      }
+      if let typeinfo.TypeArray(at) = rt {
+        if (mfa.field == "append" || mfa.field == "push") { return [at.elem]; }
+        if (mfa.field == "with") { return [t_i32(), at.elem]; }
+      }
     },
     _ => {}
   }
