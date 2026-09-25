@@ -368,8 +368,8 @@ pub function (s: EmitState) mark_str_concat(): EmitState {
 // its sole dep (mark_str_concat). No string `+` inside, so no self-recursion.
 // Empty operands are a 0-length __memcpy, which every backend treats as a no-op.
 //
-// The destination half of the second copy needs __raw_addr rather than `p + la`:
-// a raw pointer's surface type is i32, so arm64 would narrow the sum back.
+// The destination of the second copy is __raw_addr(p, la): a usize plus an i32
+// byte count has no `+`.
 pub function rt_src_str_concat(): string {
     return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: usize = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
 }

@@ -320,21 +320,21 @@ one is refused by name before emit — `wasm_ir.wasm_unsupported_builtin` (#6946
 
 | intrinsic | lowers to | notes |
 |---|---|---|
-| `__raw_alloc(n: i32): i32` | `add $24, n; mov n→%rdi; call __fern_alloc; add $24, %rax` → ptr in `%rax` | the bump/freelist primitive; the one call that stays asm. The block is 24 bytes longer than asked for and the pointer points PAST that header, which is where `__raw_string` builds the box — so a heap string is ONE allocation (#7351). A buffer that never becomes a string just carries 24 unused bytes |
-| `__raw_store8(ptr: i32, off: i32, v: i32)` | `movb %v, (%ptr,%off)` | write low byte of `v` |
-| `__raw_load8(ptr: i32, off: i32): i32` | `movzbl (%ptr,%off), %eax` | zero-extended byte read (also expressible as `s[i]`, included for symmetry) |
-| `__raw_store_ptr(ptr: i32, off: i32, v: i32)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
-| `__raw_load_ptr(ptr: i32, off: i32): i32` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
-| `__raw_string(data: i32, len: i32): string` | stamp `{rc, data, len}` into the 24 bytes at `data-24`; the box is `data-16` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface. Allocates NOTHING, and so **requires `data` to be an unadjusted `__raw_alloc` result** — that is the only pointer with the header reserved in front of it. A scratch buffer, an argv entry or an `__raw_addr` interior address writes the box over 24 bytes belonging to something else, which nothing reports at run time; `internal/sourcelint`'s `TestRawStringPointerComesFromRawAlloc` holds the rule |
-| `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
-| `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
-| `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
-| `__syscall5(nr, a1 … a5): i32` | like `__syscall4` plus `a5→%r8` (arm64: `x4`) | the 5-arg sibling. Exists because three leaves have no narrower form: arm64 Linux has no `poll` or `fork`, only `ppoll` and `clone`, and XNU has no `nanosleep`, only `select` |
-| `__syscall6(nr, a1 … a6): i32` | like `__syscall5` plus `a6→%r9` (arm64: `x5`) | networking floor for `recvfrom`, `sendto`, `epoll_pwait2` and Darwin `kevent` (#9853, #4451). The internal self-host runtime passes full machine words; Darwin normalises carry-flag errors to negative errno. Unsupported on wasm and unavailable as a public builtin |
-| `__raw_environ(): i32` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
-| `__raw_arr_box(n: i32): i32` | `mov n→%rdi; call __fern_arr_box` → data ptr | a fresh n-element array box, rc header + length + capacity already written — the array sibling of `__raw_alloc`, and the one array primitive that stays a call. Element i is at `[ptr + (i+1)*W]`, exactly what `__raw_store_ptr` addresses, so a helper fills it without naming the layout |
-| `__raw_array(ptr: i32): i32[]` | nothing | the type-only bridge back to a typed array, the array sibling of `__raw_string`. The data pointer already IS the array value, so this emits no op — only the checker needed convincing |
-| `__raw_addr(ptr: i32, off: i32): i32` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width. Writing `p + off` in the helper source does not work: a raw pointer's surface type is `i32`, so arm64 narrows the sum back (`sxtw x0, w0`) and a high address arrives truncated. Only the **two-argument** `__raw_load8` / `__raw_store8` / `__raw_load_ptr` / `__raw_store_ptr` dodge that by folding their own `off` into the addressing mode. Everything else needs this op: an address **passed** somewhere (a syscall buffer arg), and the one-argument loads below |
+| `__raw_alloc(n: i32): usize` | `add $24, n; mov n→%rdi; call __fern_alloc; add $24, %rax` → ptr in `%rax` | the bump/freelist primitive; the one call that stays asm. The block is 24 bytes longer than asked for and the pointer points PAST that header, which is where `__raw_string` builds the box — so a heap string is ONE allocation (#7351). A buffer that never becomes a string just carries 24 unused bytes |
+| `__raw_store8(ptr: usize, off: i32, v: i32)` | `movb %v, (%ptr,%off)` | write low byte of `v` |
+| `__raw_load8(ptr: usize, off: i32): i32` | `movzbl (%ptr,%off), %eax` | zero-extended byte read (also expressible as `s[i]`, included for symmetry) |
+| `__raw_store_ptr(ptr: usize, off: i32, v: usize)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
+| `__raw_load_ptr(ptr: usize, off: i32): usize` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
+| `__raw_string(data: usize, len: i32): string` | stamp `{rc, data, len}` into the 24 bytes at `data-24`; the box is `data-16` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface. Allocates NOTHING, and so **requires `data` to be an unadjusted `__raw_alloc` result** — that is the only pointer with the header reserved in front of it. A scratch buffer, an argv entry or an `__raw_addr` interior address writes the box over 24 bytes belonging to something else, which nothing reports at run time; `internal/sourcelint`'s `TestRawStringPointerComesFromRawAlloc` holds the rule |
+| `__syscall3(nr: i32, a1: i64, a2: i64, a3: i64): i64` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
+| `__raw_scratch(n: i32): usize` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
+| `__syscall4(nr, a1, a2, a3, a4): i64` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
+| `__syscall5(nr, a1 … a5): i64` | like `__syscall4` plus `a5→%r8` (arm64: `x4`) | the 5-arg sibling. Exists because three leaves have no narrower form: arm64 Linux has no `poll` or `fork`, only `ppoll` and `clone`, and XNU has no `nanosleep`, only `select` |
+| `__syscall6(nr, a1 … a6): i64` | like `__syscall5` plus `a6→%r9` (arm64: `x5`) | networking floor for `recvfrom`, `sendto`, `epoll_pwait2` and Darwin `kevent` (#9853, #4451). The internal self-host runtime passes full machine words; Darwin normalises carry-flag errors to negative errno. Unsupported on wasm and unavailable as a public builtin |
+| `__raw_environ(): usize` | `movq __fern_envp(%rip), %rax` | the process `envp` pointer (saved by `_start`); the `env` leaf walks the array from it |
+| `__raw_arr_box(n: i32): usize` | `mov n→%rdi; call __fern_arr_box` → data ptr | a fresh n-element array box, rc header + length + capacity already written — the array sibling of `__raw_alloc`, and the one array primitive that stays a call. Element i is at `[ptr + (i+1)*W]`, exactly what `__raw_store_ptr` addresses, so a helper fills it without naming the layout |
+| `__raw_array(ptr: usize): i32[]` | nothing | the type-only bridge back to a typed array, the array sibling of `__raw_string`. The data pointer already IS the array value, so this emits no op — only the checker needed convincing |
+| `__raw_addr(ptr: usize, off: i32): usize` | `addq %rcx, %rax` / `add x0, x0, x1` | `ptr + off` at the machine's FULL pointer width. `p + off` does not type-check: `usize` and `i32` have no `+`, and a helper still holding an address as `i32` would have arm64 narrow the sum back (`sxtw x0, w0`). Only the **two-argument** `__raw_load8` / `__raw_store8` / `__raw_load_ptr` / `__raw_store_ptr` dodge that by folding their own `off` into the addressing mode. Everything else needs this op: an address **passed** somewhere (a syscall buffer arg), and the one-argument loads below |
 
 Reading the kernel-written 8-byte fields (`tv_sec` / `tv_nsec`) back into i64
 math reuses the **existing** `__load_i64(addr): i64` intrinsic (#4375) — no new
@@ -362,7 +362,7 @@ argument, then allocs a 16-byte box `{data, 1}`. In Fern:
 
 ```
 function __fern_chr(b: i32): string {
-    var p: i32 = __raw_alloc(1);
+    var p: usize = __raw_alloc(1);
     __raw_store8(p, 0, b);
     return __raw_string(p, 1);
 }
@@ -380,11 +380,9 @@ behavioural `chr` cases.
 function __fern_str_concat(a: string, b: string): string {
     var la: i32 = a.len();
     var lb: i32 = b.len();
-    var p: i32 = __raw_alloc(la + lb);
-    var i: i32 = 0;
-    while (i < la) { __raw_store8(p, i, a[i]); i = i + 1; }
-    var j: i32 = 0;
-    while (j < lb) { __raw_store8(p, la + j, b[j]); j = j + 1; }
+    var p: usize = __raw_alloc(la + lb);
+    __memcpy(p, __raw_data(a), la);
+    __memcpy(__raw_addr(p, la), __raw_data(b), lb);
     return __raw_string(p, la + lb);
 }
 ```
