@@ -877,14 +877,11 @@ function main(): i32 {
     });
     return f(2);
 }`},
-	// A view local rebound in a loop, starting from a view that stays live:
-	// the phi merges the live view with a fresh one, and supplying the phi on
-	// the entry edge means RETAINING the live view, which on a view's immortal
-	// box is a no-op against a release that frees it. Produced, this read
-	// `s` after the loop had released it (a sanitizer use-after-free); the
-	// planner now refuses any plan that retains a view (#9802), and the AST
-	// lowering, which leaks the boxes but answers, stands.
-	{name: "view-loop-rebinds-a-live-view", atLeast: 0, refuses: "a view is lent, never retained", src: `
+	// A view local rebound in a loop, starting from a view that stays live.
+	// Retaining a view is refused (#9802), so `var v: str = s` makes v a fresh
+	// view of s's bytes, and the loop's phi takes it by move. The AST lowering
+	// leaks the boxes.
+	{name: "view-loop-rebinds-a-live-view", atLeast: 1, noLeak: true, src: `
 function main(): i32 {
     var t: string = "abcde" + "fghij";
     var s: str = slice_unchecked(t, 0, 5);
@@ -893,6 +890,24 @@ function main(): i32 {
     while (i < 3) { v = slice_unchecked(t, 5, 10); i = i + 1; }
     var u: string = "xyz" + "w";
     return v.len() + s.len() + u.len();
+}`},
+	// The same loop starting from a borrowed parameter: the phi merges the
+	// parameter with a fresh view, so it is owned, and its entry value is a
+	// fresh view of the parameter.
+	{name: "view-loop-rebinds-a-view-parameter", atLeast: 2, noLeak: true, src: `
+function walk(p: str, n: i32): i32 {
+    var v: str = p;
+    var i: i32 = 0;
+    while (i < n) { v = slice_unchecked(p, 1, p.len()); i = i + 1; }
+    return v.len() * 10 + p.len();
+}
+
+function main(): i32 {
+    var t: string = "abcdef" + "g";
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 20) { total = total + walk(slice_unchecked(t, 0, 5), k % 3); k = k + 1; }
+    return total % 256;
 }`},
 	// The same phi as the row above, with a LITERAL on the entry edge rather
 	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
