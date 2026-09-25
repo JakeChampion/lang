@@ -125,8 +125,9 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 
 // TestSelfHostDeclNamesGateRawPathsX86_64 covers the driver paths that emit or
 // report without the emitters' checked prologue: asm_ir_run's `-ir` fast path,
-// and asm_modload_run's merged, per-module and probe paths. A parser sentinel
-// must not stand in for the declaration gate on any of them.
+// and the loading drivers' merged, per-module, probe and decide paths. Each
+// refuses an untyped parameter, alone or beside a parser sentinel, and the raw
+// modes refuse a sentinel alone.
 func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	irDir := writeSelfHostAsmProject(t)
@@ -157,24 +158,42 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	}
 
 	if len(runner) != 0 {
-		t.Skip("modload driver runs natively; skipping under an exec runner")
+		t.Skip("the loading drivers run natively; skipping under an exec runner")
 	}
-	mlDir := writeSelfHostModloadProject(t)
-	mlBin := buildSelfHostBin(t, gcc, mlDir, "asm_modload_run.fern", "modload")
+	copySelfHostDriver(t, irDir, "asm_load_run.fern")
+	loaders := []struct {
+		name  string
+		bin   string
+		modes [][]string
+	}{
+		{"asm_load_run", buildSelfHostBin(t, gcc, irDir, "asm_load_run.fern", "load"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}, {"-decide"}}},
+		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
+	}
 	stage := t.TempDir()
-	for _, tc := range []struct{ name, src string }{{"untyped", untyped}, {"sentinel-and-untyped", both}} {
-		mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
-		for _, args := range [][]string{nil, {"-per-module-count"}, {"-ir-probe"}} {
-			t.Run("asm_modload_run/"+tc.name+"/"+strings.Join(args, ""), func(t *testing.T) {
-				cmd := exec.Command(mlBin, append([]string{mainPath}, args...)...)
-				combined, _ := cmd.CombinedOutput()
-				if cmd.ProcessState.ExitCode() == 0 {
-					t.Fatalf("driver accepted an untyped parameter:\n%s", combined)
+	for _, ld := range loaders {
+		for _, tc := range []struct{ name, src, cause string }{
+			{"untyped", untyped, "has no type"},
+			{"sentinel-and-untyped", both, "has no type"},
+			{"sentinel", sentinel, "parser-side unknown"},
+		} {
+			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
+			for _, args := range ld.modes {
+				// With no mode flag the checker runs and reports the sentinel
+				// under its own code; the raw modes return before it.
+				if tc.name == "sentinel" && args == nil {
+					continue
 				}
-				if !strings.Contains(string(combined), "has no type") {
-					t.Errorf("refusal did not name the cause:\n%s", combined)
-				}
-			})
+				t.Run(ld.name+"/"+tc.name+"/"+strings.Join(args, ""), func(t *testing.T) {
+					cmd := exec.Command(ld.bin, append([]string{mainPath}, args...)...)
+					combined, _ := cmd.CombinedOutput()
+					if cmd.ProcessState.ExitCode() == 0 {
+						t.Fatalf("driver accepted a malformed module:\n%s", combined)
+					}
+					if !strings.Contains(string(combined), tc.cause) {
+						t.Errorf("refusal did not name the cause:\n%s", combined)
+					}
+				})
+			}
 		}
 	}
 }

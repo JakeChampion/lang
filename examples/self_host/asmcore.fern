@@ -6633,12 +6633,14 @@ pub function refuse_decl_names(mods: parser.Module[]): boolean {
     return true;
 }
 
-// refuse_parse_unknowns prints the parser's sentinel diagnostics and reports
-// whether there were any. A stdin driver runs it ahead of refuse_decl_names,
-// as the emitters' prologue orders the two, and it is the only parser check on
-// asm_ir_run's gated path.
-pub function refuse_parse_unknowns(mod: parser.Module): boolean {
-    var errs: util.Diag[] = parse_unknown_errors_module(mod);
+// refuse_parse_unknowns prints the parser's sentinel diagnostics for every
+// module and reports whether there were any. It is for the driver paths that
+// return without reaching the checker or the emitters' prologue, which report
+// sentinels otherwise; a stdin driver runs it ahead of refuse_decl_names, the
+// order that prologue uses.
+pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
+    var errs: util.Diag[] = [];
+    for m in mods { errs = util.append_diags(errs, parse_unknown_errors_module(m)); }
     if (errs.len() == 0) { return false; }
     eprint(util.format_diags(errs));
     return true;
