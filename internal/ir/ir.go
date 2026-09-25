@@ -12831,11 +12831,17 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		// type, peel the ArrayType down to its element. Works
 		// recursively, so `xss[i][j].field` resolves through
 		// nested arrays.
+		// A view (`[P]`) indexes to its element the same way.
 		if t := b.exprStaticType(x.Array); t != nil {
-			if at, ok := t.(ast.ArrayType); ok {
-				if st, ok := at.Elem.(ast.StructType); ok {
-					return st.Name
-				}
+			var elem ast.Type
+			switch at := t.(type) {
+			case ast.ArrayType:
+				elem = at.Elem
+			case ast.SliceType:
+				elem = at.Elem
+			}
+			if st, ok := elem.(ast.StructType); ok {
+				return st.Name
 			}
 		}
 	case *ast.Call:
