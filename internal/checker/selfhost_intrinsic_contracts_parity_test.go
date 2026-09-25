@@ -96,9 +96,12 @@ type intrinsicFamily struct {
 	members func(map[string]*sigShape) []string
 }
 
-// sigShape is the part of a native signature this gate compares: how many
-// parameters the call takes and what the result spells. The self-host tables
-// are keyed on name and arity, so that is the pairing worth pinning.
+// sigShape is the part of a native signature a family's predicate selects
+// members by: how many parameters the call takes and what the result spells.
+// The gate itself pins presence, not shape: each member must be typed by the
+// self-host checker and contracted somewhere inside intrinsic_contracts, the
+// section selfHostIntrinsicContracts reads, but a contract whose signature
+// drifted still passes.
 type sigShape struct {
 	params int
 	result string
