@@ -414,6 +414,23 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
 }
 
+// TestArrayLitElementReadsElementDestination: an array literal's elements
+// take the element type of its destination, not the array type, so a generic
+// call in one completes its type arguments from the element (#10266).
+func TestArrayLitElementReadsElementDestination(t *testing.T) {
+	pre := `trait C[T] { function c(self: Self): T; } struct A { n: i32 } impl C[i32] for A { function c(self: Self): i32 { return self.n; } } function f[T, I: C[T]](i: I): T { return i.c(); } `
+	if err := checkSource(t, pre+`function main(): i32 { var ys: i32[] = [f(A { n: 2 }), 3]; return ys[0]; }`); err != nil {
+		t.Errorf("valid element call refused: %v", err)
+	}
+	err := checkSource(t, pre+`function main(): i32 { var xs: string[] = [f(A { n: 1 })]; return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "the bound requires C[string] (in f)") {
+		t.Errorf("want the element's E021 against C[string], got: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "E003") {
+		t.Errorf("the element's bound is the error; no E003 for the var: %v", err)
+	}
+}
+
 // TestGenericStructLitNestedInstantiation locks the fix for a regression
 // the destination-seeding above (#3763) introduced: a nested struct literal
 // whose field type reuses the SAME generic name re-seeded its type-args from

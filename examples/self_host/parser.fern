@@ -57,8 +57,8 @@ struct ParamDestr { names: string, marker: string, synth: string, line: i32, col
 // (import_iface, import_wit).
 // bound_traits runs PARALLEL to type_params: bound_traits[i] holds the
 // trait bound(s) on type_params[i] as a `+`-joined list of trait names
-// (module-qualified as written, e.g. `cmp.Ord`; generic-arg bounds like
-// `Iterator[i32]` keep the base name only), or "" for a type param with
+// (each as written, module qualifier and type arguments included, e.g.
+// `cmp.Ord` or `Iterator[T]`), or "" for a type param with
 // no trait bound (an UNBOUNDED param the monomorphiser promoted into
 // type_params — see the promotion loop in parse_func_decl). It exists so
 // the checker can flag E021 generic-bound conformance at call sites
