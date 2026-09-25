@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,9 +126,9 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 
 // TestSelfHostDeclNamesGateRawPathsX86_64 covers the driver paths that emit or
 // report without the emitters' checked prologue: asm_ir_run's `-ir` fast path,
-// and the loading drivers' merged, per-module, probe and decide paths. Each
-// refuses an untyped parameter, alone or beside a parser sentinel, and the raw
-// modes refuse a sentinel alone.
+// and the loading drivers' merged, over-budget, per-module, probe and decide
+// paths. Each refuses an untyped parameter, alone or beside a parser sentinel,
+// and a sentinel alone wherever the checker does not report it first.
 func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	irDir := writeSelfHostAsmProject(t)
@@ -169,8 +170,26 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 		{"asm_load_run", buildSelfHostBin(t, gcc, irDir, "asm_load_run.fern", "load"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}, {"-decide"}}},
 		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
 	}
+	// Past the 512-function IR budget the default path emits per module, which
+	// skips the emitters' prologue; a sentinel must still be refused there.
+	var overBudget strings.Builder
+	for i := 0; i < 600; i++ {
+		fmt.Fprintf(&overBudget, "function filler%d(): i32 { return %d; }\n", i, i)
+	}
+	overBudget.WriteString(sentinel)
 	stage := t.TempDir()
 	for _, ld := range loaders {
+		t.Run(ld.name+"/over-budget-sentinel", func(t *testing.T) {
+			mainPath := writeTemp(t, stage, "over_budget.fern", []byte(overBudget.String()))
+			cmd := exec.Command(ld.bin, mainPath)
+			combined, _ := cmd.CombinedOutput()
+			if cmd.ProcessState.ExitCode() == 0 {
+				t.Fatalf("driver emitted %d bytes for an over-budget module holding a sentinel", len(combined))
+			}
+			if !strings.Contains(string(combined), "parser-side unknown") {
+				t.Errorf("refusal did not name the cause:\n%.2000s", combined)
+			}
+		})
 		for _, tc := range []struct{ name, src, cause string }{
 			{"untyped", untyped, "has no type"},
 			{"sentinel-and-untyped", both, "has no type"},
@@ -178,11 +197,6 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
 			for _, args := range ld.modes {
-				// With no mode flag the checker runs and reports the sentinel
-				// under its own code; the raw modes return before it.
-				if tc.name == "sentinel" && args == nil {
-					continue
-				}
 				t.Run(ld.name+"/"+tc.name+"/"+strings.Join(args, ""), func(t *testing.T) {
 					cmd := exec.Command(ld.bin, append([]string{mainPath}, args...)...)
 					combined, _ := cmd.CombinedOutput()

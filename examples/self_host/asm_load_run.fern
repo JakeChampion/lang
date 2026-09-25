@@ -422,6 +422,9 @@ function main(): i32 {
         eprint(util.format_diags(gated));
         return 1;
     }
+    // The checker reports the sentinels it maps to a code (E061); the rest are
+    // refused here, since the over-budget per-module emit has no prologue.
+    if (asmcore.refuse_parse_unknowns(parsed)) { return 1; }
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it
