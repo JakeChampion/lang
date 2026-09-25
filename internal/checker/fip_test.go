@@ -63,6 +63,38 @@ fip function twice(x: i32): i32 { return inc(inc(x)); }
 function main(): i32 { return 0; }`)
 }
 
+// A builtin that lowers to instructions or a scan allocating nothing is a
+// legal `fip` and `fbip` callee (#9607); verifyFipAllocs (E068) checks what it
+// emits. Each call below is one admitted builtin.
+func TestFipAdmitsNonAllocatingBuiltins(t *testing.T) {
+	for _, call := range []string{
+		`__memchr(s, 44, 0)`, `__rmemchr(s, 44, s.len())`, `__ascii_run(s, 0)`,
+		`__count_byte(s, 44)`, `__sum_bytes(s)`, `__scan_set(s, 0, set)`, `__bsd_sum(s, 0)`,
+		`__count_runs(s, 0, set)`, `__crc32_cksum(0, s)`,
+		`__clz32(x)`, `__ctz32(x)`, `__popcount32(x)`, `__clz64(y)`, `__ctz64(y)`, `__popcount64(y)`,
+		`__ptr_width()`, `(__heap_bump_bytes() as i32)`, `(__heap_alloc_count() as i32)`, `(monotonic_ns() as i32)`,
+	} {
+		for _, kw := range []string{"fip", "fbip"} {
+			wantNoErr(t, kw+" "+call, kw+` function probe(s: string, set: u8[], x: u32, y: u64): i32 { return `+call+`; }
+function main(): i32 { return 0; }`)
+		}
+	}
+	if len(fipNonAllocBuiltins) != 19 {
+		t.Errorf("fipNonAllocBuiltins has %d entries and this test calls 19: add a row for the new one", len(fipNonAllocBuiltins))
+	}
+}
+
+// The admission is by name and only for the builtin: a builtin that allocates
+// stays refused, and so does a module's own function that takes a name the
+// list admits.
+func TestFipRefusesAllocatingBuiltinAndShadow(t *testing.T) {
+	wantE053(t, "allocating builtin", `fip function f(xs: f64[]): f64[] { return __scale_f64(xs, 2.0); }
+function main(): i32 { return 0; }`)
+	wantE053(t, "shadowed builtin", `function monotonic_ns(): i64 { var a: i32[] = [1]; return a.len() as i64; }
+fip function f(): i32 { return monotonic_ns() as i32; }
+function main(): i32 { return 0; }`)
+}
+
 func TestFipRejectsAllocation(t *testing.T) {
 	wantE053(t, "array literal", `fip function f(): i32[] { return [1, 2, 3]; }
 function main(): i32 { return 0; }`)

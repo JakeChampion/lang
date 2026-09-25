@@ -12353,6 +12353,38 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
   return acc;
 }
 
+// redeclares reports whether funcs[di] redeclares an earlier function, method
+// or associated function, or a surface builtin.
+function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
+  var f2: parser.FuncDecl = funcs[di];
+  var earlier: boolean = false;
+  var ej: i32 = 0;
+  while (ej < di) {
+    var pe: parser.FuncDecl = funcs[ej];
+    // Key redeclaration on the receiver TYPE, not the receiver NAME:
+    // an ASSOCIATED function (`impl Default for i32 { function default()
+    // }`) has an empty receiver_name (no `self`) but a SET receiver_type
+    // (`i32`). Keying on receiver_name mis-merged every type's `default`
+    // into one "free function" and flagged E006 across distinct impls
+    // (i32.default vs i64.default …). Free functions have NO receiver
+    // type on either side; type-associated decls (methods OR associated
+    // fns) collide only when name AND receiver type both match.
+    if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
+      earlier = true;
+    }
+    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && util.base_type_name(pe.receiver_type) == util.base_type_name(f2.receiver_type)) {
+      earlier = true;
+    }
+    ej = ej + 1;
+  }
+  // A free function named like a surface builtin redeclares it, as native's
+  // pre-registered signature makes it there.
+  if (f2.receiver_type.len() == 0 && !is_unknown(builtin_sig(f2.name))) {
+    earlier = true;
+  }
+  return earlier;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = util.append_diags([], const_grammar_diags(mod));
   out = util.append_diags(out, handler_state_diags(mod));
@@ -12397,27 +12429,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   var di: i32 = 0;
   while (di < mod.funcs.len()) {
     var f2: parser.FuncDecl = mod.funcs[di];
-    var earlier: boolean = false;
-    var ej: i32 = 0;
-    while (ej < di) {
-      var pe: parser.FuncDecl = mod.funcs[ej];
-      // Key redeclaration on the receiver TYPE, not the receiver NAME:
-      // an ASSOCIATED function (`impl Default for i32 { function default()
-      // }`) has an empty receiver_name (no `self`) but a SET receiver_type
-      // (`i32`). Keying on receiver_name mis-merged every type's `default`
-      // into one "free function" and flagged E006 across distinct impls
-      // (i32.default vs i64.default …). Free functions have NO receiver
-      // type on either side; type-associated decls (methods OR associated
-      // fns) collide only when name AND receiver type both match.
-      if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
-        earlier = true;
-      }
-      if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && util.base_type_name(pe.receiver_type) == util.base_type_name(f2.receiver_type)) {
-        earlier = true;
-      }
-      ej = ej + 1;
-    }
-    if (earlier) {
+    if (redeclares(mod.funcs, di)) {
       if (f2.receiver_type.len() == 0) {
         out = out.append(dg_at("E006", "function \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else {
@@ -14971,6 +14983,24 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 
 // e053_diags walks one annotated function. `fips` / `fbips` are the module's
 // two claim sets; the callee rule picks which of them this function may reach.
+// fip_builtin_callees is native's fipNonAllocBuiltins: the builtins that lower
+// to instructions or a runtime scan allocating nothing and returning a scalar,
+// less any name the module declares itself. irfipverify's E068 stays the
+// backstop for what they emit.
+function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
+  var out: string[] = [];
+  for name in ["__memchr", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set",
+      "__bsd_sum", "__count_runs", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
+      "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns"] {
+    var declared: boolean = false;
+    for fd in funcs {
+      if (fd.name == name) { declared = true; }
+    }
+    if (!declared) { out = out.append(name); }
+  }
+  return out;
+}
+
 function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], variants: string[], s: Scope): util.Diag[] {
   var own: string[] = [];
   for param in efn.params {
@@ -16996,7 +17026,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
       body_diags = util.append_diags(body_diags, e045_annot_diags(an.type_name, an.line, an.col, xsc));
     }
     if (xfn.fip || xfn.fbip) {
-      body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
+      body_diags = util.append_diags(body_diags, e053_diags(xfn, util.append_all(fip_names, fip_builtin_callees(mod.funcs)), fbip_names, e053_variants, xsc));
     }
     if (xfn.ret_str) {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
