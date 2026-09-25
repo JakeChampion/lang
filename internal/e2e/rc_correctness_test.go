@@ -4884,21 +4884,34 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A tuple local holding a capturing closure. The exit sweep's inline
+		// tuple drop released the element with a flat dec, which strands the
+		// closure pair and its environment; the generated __drop_tuple_
+		// releases it through __drop_closure_value.
+		name: "closure_tuple_local_reclaimed",
+		src: `
+function main(): i32 {
+    var bias: i32 = 2;
+    var ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
+    return ctx.1 + (ctx.0("x") - 3) + __rc_underflow_count();
+}`,
+	},
+	{
 		// A tuple carrying a closure, threaded the same way. Until closures
 		// were deep-drop wired it took the leak-mode drops: correct, but the
 		// tuple box the reassignment replaced was never freed.
 		name: "closure_tuple_param_threaded_by_reassignment",
 		src: `
-function no_f(s: string): i32 { return 0; }
 function step(ctx: ((string) => i32, i32)): ((string) => i32, i32) { return (ctx.0, ctx.1 + 1); }
 function steps(ctx: ((string) => i32, i32)): ((string) => i32, i32) {
     ctx = step(ctx);
     return ctx;
 }
 function main(): i32 {
-    var ctx: ((string) => i32, i32) = (no_f, 0);
+    var bias: i32 = 2;
+    var ctx: ((string) => i32, i32) = ((s: string) => s.len() + bias, 0);
     ctx = steps(ctx);
-    return (ctx.1 - 1) + __rc_underflow_count();
+    return (ctx.1 - 1) + (ctx.0("x") - 3) + __rc_underflow_count();
 }`,
 	},
 	{

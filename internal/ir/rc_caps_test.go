@@ -129,10 +129,14 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 	b.info.Structs["Tagged"] = &ast.StructDecl{Name: "Tagged", Fields: []ast.Param{
 		{Name: "buf", Type: ast.StringType{}},
 		{Name: "tag", Type: optionOf(ast.StringType{})}}}
+	b.info.Enums["FnBox"] = &ast.EnumDecl{Name: "FnBox", Variants: []ast.EnumVariant{
+		{Name: "Run", Payloads: []ast.Type{&ast.FuncType{}}},
+		{Name: "Idle"},
+	}}
 	b.info.Structs["WithFn"] = &ast.StructDecl{Name: "WithFn", Fields: []ast.Param{
 		{Name: "f", Type: &ast.FuncType{}},
 		{Name: "n", Type: i32}}}
-		b.info.Structs["MapTagged"] = &ast.StructDecl{Name: "MapTagged", Fields: []ast.Param{
+	b.info.Structs["MapTagged"] = &ast.StructDecl{Name: "MapTagged", Fields: []ast.Param{
 		{Name: "buf", Type: ast.StringType{}},
 		{Name: "tag", Type: optionOf(ast.StructType{Name: "Map"})}}}
 	cases := []struct {
@@ -161,11 +165,15 @@ func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
 		{"array of i32", ast.ArrayType{Elem: i32}, true, false},
 		{"string", ast.StringType{}, true, false},
 		{"slice", ast.SliceType{Elem: i32}, false, false},
-		// A closure field is released by the struct drop through
-		// __drop_closure_value, so a closure-bearing struct is owned like a
-		// string-bearing one; a bare closure param stays borrowed.
-		{"closure", &ast.FuncType{}, true, false},
+		// A closure is wired as a struct field or tuple element, which the
+		// struct and tuple drops release through __drop_closure_value, and
+		// nowhere else: not bare, not as an array element, not as an enum
+		// payload.
+		{"closure", &ast.FuncType{}, false, false},
 		{"closure-bearing struct", ast.StructType{Name: "WithFn"}, true, true},
+		{"tuple with closure", ast.TupleType{Elems: []ast.Type{&ast.FuncType{}, i32}}, true, true},
+		{"array of closures", ast.ArrayType{Elem: &ast.FuncType{}}, false, false},
+		{"closure-payload enum", ast.EnumType{Name: "FnBox"}, false, false},
 		// A generic enum INSTANTIATION is wired: the drop emitter substitutes
 		// the type args (emitEnumSlotDrop), so the capability walk must ask
 		// about the same substituted payloads. Reading the shared decl
