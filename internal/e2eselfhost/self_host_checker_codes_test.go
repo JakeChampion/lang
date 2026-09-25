@@ -214,6 +214,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"method-type-arg-full-written", "enum Box[T, E] { Full(T), Blank(E) }\nfunction (b: Box[T, E]) pair[U](other: Box[U, E]): Box[U, E] { return other; }\nfunction take(b: Box[i32, string]): i32 {\n    match (b) {\n        Full(n) => { return n; },\n        Blank(s) => { return s.len(); }\n    }\n}\nfunction main(): i32 {\n    var b: Box[i32, string] = Full(5);\n    return take(b.pair[i32, string, i32](Full(9)));\n}\n", nil},
 		// A generic enum's arguments take part in assignability: a Box[string,
 		// string] is not a Box[i32, string] (#10248).
+		// A union's arguments take part in assignability (#10197).
+		{"option-argument-mismatch-return", "function g(): Option[f64] { var v: f32 = 1.0; return Some(v); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"option-argument-mismatch-var", "function main(): i32 { var v: f32 = 1.0; var o: Option[f64] = Some(v); return 0; }\n", []string{"E003"}},
 		{"generic-enum-argument-mismatch", "enum Box[T, E] { Full(T), Blank(E) }\nfunction take(b: Box[i32, string]): i32 {\n    match (b) {\n        Full(n) => { return n; },\n        Blank(s) => { return s.len(); }\n    }\n}\nfunction main(): i32 {\n    var y: Box[string, string] = Blank(\"a\");\n    return take(y);\n}\n", []string{"E038"}},
 		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
 		// inside ITS OWN scope: a block-local from its declaration to the end of
@@ -1674,6 +1677,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// program ran and answered wrongly rather than being refused.
 		{"e021-inherent-method-is-not-an-impl", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction (w: Wide) head(): f64 { return w.v; }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
 		{"e021-no-method-at-all", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { return first(Wide { v: 6.5 }) as i32; }\n", []string{"E021"}},
+		{"e021-impl-args-disagree-with-destination", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var s: string = first(Wide { v: 6.5 }); return 0; }\n", []string{"E021"}},
+		{"e021-impl-typed-result-e003", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var d = first(Wide { v: 6.5 }); var s: string = d; return 0; }\n", []string{"E003"}},
 		{"e021-impl-backed-ok", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction first[T, I: Feed[T]](it: I): T { return it.head(); }\nfunction main(): i32 { var d: f64 = first(Wide { v: 6.5 }); return d as i32; }\n", nil},
 		// Cell[T]'s two methods are builtins, so they are in neither the
 		// method table nor the struct table and the ordinary method path
@@ -3125,6 +3130,24 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// core/iter, whose generic-trait requirement signature the E021
 		// conformance check compared unsubstituted and always called a
 		// mismatch, so this one case covers both diagnostics.
+		// A parametrised-trait bound types the call (#9925): `I: Iterator[T]`
+		// at `I = Range` reads T off `impl Iterator[i32] for Range`, so the
+		// result is i32[] / Option[i32]. A destination the arguments leave T
+		// open to binds it instead, and the impl then disagrees: E021, not the
+		// E003 the inferred type would give.
+		{"bound-infers-array-result", "import \"core/iter\";\nfunction main(): i32 { var xs = iter.to_array(iter.range(0, 5)); var s: string = xs[0]; return 0; }\n"},
+		{"bound-infers-option-result", "import \"core/iter\";\nfunction main(): i32 { var r = iter.nth(iter.range(0, 5), 2); var x: string = r; return 0; }\n"},
+		{"bound-infers-generic-impl-ok", "import \"core/iter\";\nfunction main(): i32 { var xs: f64[] = [1.5]; var ys = iter.to_array(iter.of(xs)); var z: f64 = ys[0]; var n: i32 = iter.to_array(iter.range(0, 3))[0]; return n; }\n"},
+		{"bound-infers-argument-e038", "import \"core/iter\";\nfunction take(xs: string[]): i32 { return 0; }\nfunction main(): i32 { return take(iter.to_array(iter.range(0, 5))); }\n"},
+		{"bound-infers-assignment-e003", "import \"core/iter\";\nfunction main(): i32 { var xs: string[] = []; xs = iter.to_array(iter.range(0, 5)); return 0; }\n"},
+		{"bound-dest-var-e021", "import \"core/iter\";\nfunction main(): i32 { var xs: string[] = iter.to_array(iter.range(0, 5)); return 0; }\n"},
+		{"bound-dest-return-e021", "import \"core/iter\";\nfunction f(): string[] { return iter.to_array(iter.range(0, 5)); }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-dest-option-e021", "import \"core/iter\";\nfunction main(): i32 { var m: Option[string] = iter.nth(iter.range(0, 5), 1); return 0; }\n"},
+		{"bound-dest-generic-impl-e021", "import \"core/iter\";\nfunction main(): i32 { var xs: f64[] = [1.5]; var w: string[] = iter.to_array(iter.of(xs)); return 0; }\n"},
+		{"bound-lambda-binds-e021", "import \"core/iter\";\nfunction main(): i32 { return iter.count_by(iter.range(0, 5), (x: string): boolean => true); }\n"},
+		{"bound-qualified-infers-e003", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { var r = grab(iter.range(0, 3)); var x: string = r; return 0; }\n"},
+		{"bound-qualified-dest-e021", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { var y: Option[string] = grab(iter.range(0, 3)); return 0; }\n"},
+		{"bound-dest-agrees-ok", "import \"core/iter\";\nfunction main(): i32 { var xs: i32[] = iter.to_array(iter.range(0, 5)); var m: Option[i32] = iter.nth(iter.range(0, 5), 1); return xs[0]; }\n"},
 		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
 		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [2, 3]; return num.product(xs); }\n"},
 		// The same shape written by the USER, so the bound comes from the
