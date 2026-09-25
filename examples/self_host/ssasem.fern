@@ -395,7 +395,14 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
 pub function is_supported_map(t: typeinfo.Type): boolean {
     if (!is_map(t)) { return false; }
     if (!is_string(map_key(t)) && !narrow_map_value(map_key(t)) && !keyed_map_key(map_key(t))) { return false; }
-    return narrow_map_value(map_value(t)) || counted_map_value(map_value(t));
+    return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || counted_map_value(map_value(t));
+}
+
+// An i64 or u64 value column. The register runtimes hold every cell at eight
+// bytes; wasm boxes each value into a cell of its own (the `_w64` helpers).
+// An f64 column has no wasm helpers, so it is not admitted.
+pub function wide_map_value(v: typeinfo.Type): boolean {
+    return is_integer(v) && is_wide(v);
 }
 
 // A key column of boxes: a record or a union the runtime hashes and compares
@@ -424,7 +431,7 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 // i32-shaped cell — holds no references. Every other element — a wide scalar,
 // a function value, a map — would come back aliasing the map's own.
 pub function retained_column(elem: typeinfo.Type): boolean {
-    return is_string(elem) || narrow_column(elem) || keyed_map_key(elem) || counted_map_value(elem);
+    return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
 
 function narrow_column(t: typeinfo.Type): boolean {
@@ -547,6 +554,11 @@ function copy_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
 // — the form the backends splice straight into an immediate of its own width,
 // and the one the AST lowering already uses for the same literal.
 function integer_constant_error(ins: ssa.SInst, result: typeinfo.Type): string {
+    // The unit value is the constant 0 in an i32-shaped slot, as the AST lowering has it.
+    if (is_void(result)) {
+        if (ins.imm != 0 || ins.str != "") { return "unit constant"; }
+        return "";
+    }
     if (!is_integer(result) && !is_char(result)) { return "integer constant type"; }
     if (text_constant(result)) {
         if (ins.str == "" || ins.imm != 0) { return "constant needs its literal text"; }
@@ -1637,9 +1649,10 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
 // environment box every function value is, so a parameter or result of
 // function type is a slot when its own signature is (#10024). A void result is a word like any other: every backend hands one back from
 // a void body, so the call stands in statement position like any void call.
+// A unit parameter is a word too, the constant 0.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
-    for p in fn.param_types { if (!signature_slot(p)) { return "function signature slot"; } }
+    for p in fn.param_types { if (!is_void(p) && !signature_slot(p)) { return "function signature slot"; } }
     if (!is_void(fn.ret_type) && !signature_slot(fn.ret_type)) { return "function signature slot"; }
     return "";
 }
@@ -1734,7 +1747,7 @@ function schema_error(f: Func): string {
     // reads it: every operator and container contract asks for a concrete
     // operand, so a read refuses there.
     for t in f.values { if (!semtypes.concrete(t, true)) { return "unresolved value type"; } }
-    for t in f.params { if (!semtypes.concrete(t, false)) { return "unresolved parameter type"; } }
+    for t in f.params { if (!semtypes.concrete(t, true)) { return "unresolved parameter type"; } }
     why = contracts_error(f.calls);
     if (why != "") { return why; }
     why = placement_error(f);
@@ -1751,7 +1764,7 @@ function contracts_error(calls: Contract[]): string {
         if (c.name == "") { return "empty call contract name"; }
         if (find_contract(calls, c.name) != i) { return "duplicate call contract"; }
         if (c.modes.len() != c.params.len()) { return "call contract mode dimensions"; }
-        for t in c.params { if (!semtypes.concrete(t, false)) { return "unresolved call parameter type"; } }
+        for t in c.params { if (!semtypes.concrete(t, true)) { return "unresolved call parameter type"; } }
         if (!semtypes.concrete(c.result, true)) { return "unresolved call result type"; }
         i = i + 1;
     }

@@ -877,6 +877,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpCloseRuntime()
 		g.emitTcpPollableRuntime()
 	}
+	if g.usesUdp {
+		g.emitUdpSendRuntime()
+	}
 	if g.usesPoll {
 		g.emitPollRuntime()
 	}
@@ -6658,6 +6661,128 @@ func (g *generator) emitTcpSendRuntime() {
 	g.emit("ldp x29, x30, [sp], #32")
 	g.emit("ret")
 	g.sizeDirective("__fern_tcp_send")
+	g.line(".ltorg")
+}
+
+// emitUdpSendRuntime emits `__fern_udp_send(host, port, data)`: one datagram
+// to a dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host
+// that is not four decimal octets. On a datagram socket connect only records
+// the peer, so connect-then-write sends it. The octets are parsed straight into
+// sin_addr. Frame: x19 fd, x20 port then the result, x21/x22 the data words,
+// host scratch at x29+48, data scratch at x29+64, sockaddr_in at x29+80.
+func (g *generator) emitUdpSendRuntime() {
+	g.line("")
+	g.line(".global __fern_udp_send")
+	g.typeDirective("__fern_udp_send")
+	g.label("__fern_udp_send")
+	g.emit("stp x29, x30, [sp, #-96]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x21, x22, [sp, #32]")
+	twoWord := ast.UseTwoWordStrings(8)
+	if twoWord {
+		// x0/x1 = host, x2 = port, x3/x4 = data.
+		g.emit("mov x20, x2")
+		g.emit("mov x21, x3")
+		g.emit("mov x22, x4")
+		g.emitStrLen2W("w10", "x1")
+		g.emitStrDataPtr2W("x9", "x0", "x1", 48)
+	} else {
+		// x0 = host, x1 = port, x2 = data.
+		g.emit("mov x20, x1")
+		g.emit("mov x21, x2")
+		g.emitStrLen("w10", "x0")
+		g.emitStrDataPtr("x9", "x0", 48)
+	}
+	g.emit("mov w11, #0") // index into host
+	g.emit("mov w12, #0") // the octet so far
+	g.emit("mov w13, #0") // octets completed
+	g.emit("mov w14, #0") // digits in this octet
+	g.label(".Ludp_scan")
+	g.emit("cmp w11, w10")
+	g.emit("b.ge .Ludp_end")
+	g.emit("ldrb w16, [x9, w11, uxtw]")
+	g.emit("cmp w16, #46") // '.'
+	g.emit("b.ne .Ludp_digit")
+	g.emit("cbz w14, .Ludp_bad")
+	g.emit("cmp w13, #3")
+	g.emit("b.ge .Ludp_bad")
+	g.emit("add x17, x29, #84")
+	g.emit("strb w12, [x17, w13, uxtw]")
+	g.emit("add w13, w13, #1")
+	g.emit("mov w12, #0")
+	g.emit("mov w14, #0")
+	g.emit("add w11, w11, #1")
+	g.emit("b .Ludp_scan")
+	g.label(".Ludp_digit")
+	g.emit("sub w16, w16, #48")
+	g.emit("cmp w16, #9")
+	g.emit("b.hi .Ludp_bad") // unsigned: below '0' wraps high too
+	g.emit("mov w17, #10")
+	g.emit("madd w12, w12, w17, w16")
+	g.emit("add w14, w14, #1")
+	g.emit("cmp w12, #255")
+	g.emit("b.gt .Ludp_bad")
+	g.emit("add w11, w11, #1")
+	g.emit("b .Ludp_scan")
+	g.label(".Ludp_end")
+	g.emit("cmp w13, #3")
+	g.emit("b.ne .Ludp_bad")
+	g.emit("cbz w14, .Ludp_bad")
+	g.emit("strb w12, [x29, #87]")
+	if g.darwin {
+		// BSD sockaddr_in: a length byte, then a one-byte family. XNU
+		// rewrites the length from namelen; the family byte is the one that
+		// matters, since a datagram connect gets no AF_UNSPEC fix-up and
+		// in_pcbladdr answers EAFNOSUPPORT. The TCP helpers above survive the
+		// Linux shape only because XNU's TCP paths tolerate family 0.
+		g.emit("mov w0, #16")
+		g.emit("strb w0, [x29, #80]")
+		g.emit("mov w0, #2")
+		g.emit("strb w0, [x29, #81]")
+	} else {
+		g.emit("mov w0, #2")
+		g.emit("strh w0, [x29, #80]") // sin_family = AF_INET
+	}
+	g.emit("rev16 w0, w20") // htons(port)
+	g.emit("strh w0, [x29, #82]")
+	g.emit("str xzr, [x29, #88]") // sin_zero
+	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
+	g.emit("mov x0, #2")
+	g.emit("mov x1, #2")
+	g.emit("mov x2, #0")
+	g.syscall("socket")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Ludp_done")
+	g.emit("mov x19, x0")
+	g.emit("add x1, x29, #80")
+	g.emit("mov x2, #16")
+	g.syscall("connect")
+	g.emit("cmp x0, #0")
+	g.emit("b.lt .Ludp_close")
+	if twoWord {
+		g.emitStrLen2W("w2", "x22")
+		g.emitStrDataPtr2W("x1", "x21", "x22", 64)
+	} else {
+		g.emitStrLen("w2", "x21")
+		g.emitStrDataPtr("x1", "x21", 64)
+	}
+	g.emit("mov x0, x19")
+	g.syscall("write")
+	g.label(".Ludp_close")
+	g.emit("mov x20, x0") // the result, kept across close
+	g.emit("mov x0, x19")
+	g.syscall("close")
+	g.emit("mov x0, x20")
+	g.emit("b .Ludp_done")
+	g.label(".Ludp_bad")
+	g.emit("mov x0, #-3")
+	g.label(".Ludp_done")
+	g.emit("ldp x21, x22, [sp, #32]")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #96")
+	g.emit("ret")
+	g.sizeDirective("__fern_udp_send")
 	g.line(".ltorg")
 }
 
@@ -15859,6 +15984,8 @@ type generator struct {
 	// site reachability so non-server programs don't pay for
 	// the socket boilerplate.
 	usesTcp bool
+	// usesUdp pulls in __fern_udp_send alone.
+	usesUdp bool
 	// usesPoll pulls in `__fern_poll(fds, timeout_ms)` — the std/task
 	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
 	// Darwin pending kqueue).
@@ -20602,6 +20729,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
+		case "udp_send":
+			target = "__fern_" + target
+			g.usesUdp = true
 		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
 			target = "__fern_" + target
 			g.usesTcp = true

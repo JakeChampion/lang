@@ -417,7 +417,7 @@ function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Val
 }
 
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
-    if (parser.is_unit_literal(n)) { return refused(s, "unsupported literal"); }
+    if (parser.is_unit_literal(n)) { return define(s, 1, [], 0, "", t_void()); }
     if (n.is_float) { return float_number(n, s, expected); }
     if (!integer_literal(n.text)) { return refused(s, "unsupported literal"); }
     var ty: typeinfo.Type = literal_type(n.suffix);
@@ -806,7 +806,7 @@ function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinf
     if (!s.ok) { return container; }
     var at: i32 = util.lit_to_i32(fa.field);
     var elem: typeinfo.Type = tuple_element_type(s.values[container.id], at);
-    if (!semtypes.concrete(elem, false)) { return refused(s, "tuple projection contract"); }
+    if (!semtypes.concrete(elem, true)) { return refused(s, "tuple projection contract"); }
     return define(s, ssasem.tuple_get(), [container.id], at, "", elem);
 }
 
@@ -1482,8 +1482,8 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 
 // A column snapshot answers a FRESH array whose ownership follows the column.
 // The runtime copies a string column or a column of boxes with a per-element
-// retain, so the array owns its elements; an i32 column holds no references,
-// so there is nothing to own past the buffer. Every other element type is
+// retain, so the array owns its elements; a column of i32s or of i64s holds no
+// references, so there is nothing to own past the buffer. Every other element type is
 // handed back as a raw alias of the map's own elements — the frame would
 // release what the map still holds, so it is refused here rather than
 // described as owned.
@@ -2410,7 +2410,7 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
 
 function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
     var want: typeinfo.Type = bound_type(s, name, after);
-    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
+    if (!semtypes.concrete(want, true)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
     if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
     return bind(s, name, id);
 }
@@ -2422,7 +2422,7 @@ function destructure_tuple(encoded: string, whole: i32, s: State, after: checker
     var i: i32 = 0;
     while (i < names.len()) {
         var elem: typeinfo.Type = tuple_element_type(ty, i);
-        if (!semtypes.concrete(elem, false)) { return fail(s, "tuple projection contract"); }
+        if (!semtypes.concrete(elem, true)) { return fail(s, "tuple projection contract"); }
         var part: Value = define(s, ssasem.tuple_get(), [whole], i, "", elem);
         s = part.s;
         if (names[i].len() > 0 && names[i][0] == b'(') {
@@ -2494,7 +2494,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (destructures(v)) { return declare_tuple(st, v, s); }
     var after: checker.Scope = checker.bind_stmt(st, s.scope);
     var ty: typeinfo.Type = bound_type(s, v.name, after);
-    if (!semtypes.concrete(ty, false)) { ty = closure_slot_type(v.init, s.contracts); }
+    if (!semtypes.concrete(ty, true)) { ty = closure_slot_type(v.init, s.contracts); }
     // A CALL names its own result, in the contract the call reads to produce
     // itself, so an unannotated binding of one needs no type from the checker:
     // `var m = s.map(f)` on a generic receiver is the shape the checker leaves
@@ -2502,7 +2502,7 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     // initializer is produced once either way; this arm produces it with no
     // expectation and takes the value's type as the binding's.
     if (!semtypes.concrete(ty, false) && is_call(v.init)) { return declare_from_call(v, s, after); }
-    if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
+    if (!semtypes.concrete(ty, true)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     if (value_local_placeholder(v) && !ssasem.is_integer(ty)) {
         var z: Value = define(s, ssasem.zero(), [], 0, "", ty);
         return State { ...bind(z.s, v.name, z.id), scope: after };
@@ -3470,7 +3470,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
     while (at < names.len()) {
         var ty: typeinfo.Type = bound_type(s, names[at], s.scope);
         if (at == 0 && is_closure_body(fd)) { ty = env_type(fd, s.scope, s.template, s.binding, s.name); }
-        if (!semtypes.concrete(ty, false)) { return fail(s, "unresolved parameter type"); }
+        if (!semtypes.concrete(ty, true)) { return fail(s, "unresolved parameter type"); }
         // A function value is lent across a call, never handed over: its box
         // is walked by the frame that built it, the only one whose schema
         // names the captures, so a parameter that would take the unit and
@@ -3901,7 +3901,7 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
     while (at < names.len()) {
         var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, scope, ssasem.unbound());
         if (at == 0 && is_closure_body(fd)) { ty = env_type(fd, scope, generic, ssasem.unbound(), decl_key(fd)); }
-        if (!semtypes.shaped(ty, false)) { return none; }
+        if (!semtypes.shaped(ty, true)) { return none; }
         params = params.append(ty);
         modes = modes.append(decl_param_mode(fd, at, ty));
         at = at + 1;

@@ -51,6 +51,8 @@ func TestSelfHostUnitTypeX86_64(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", "-emit", "asm", src)
+	// Every position the unit takes lowers on the typed path.
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
 	asm, err := cmd.Output()
 	if err != nil {
 		var stderr []byte

@@ -299,10 +299,6 @@ exact in both directions, so a fix cannot leave the table stale. Its sibling
 `internal/platforms` rather than trusting it, so moving a name there has to be
 a real refusal.
 
-The hole runs the other way too: `udp_send` is implemented only in `wasmbin`
-(`wasi_udp.go`) and is missing from `internal/codegen/arm64` and
-`internal/codegen/x86_64`, though `hosted-native` grants `tcp`, which gates it.
-
 ### 2. The CLI driver is the wrong entry point
 
 Both compilers refuse `fern.fern` for wasm on `write_file_exec` — the

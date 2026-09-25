@@ -2403,6 +2403,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_local_port":                  emitTcpLocalPortHelper,
 	"tcp_recv":                        emitTcpRecvHelper,
 	"tcp_send":                        emitTcpSendHelper,
+	"udp_send":                        emitUdpSendHelper,
 	"tcp_close":                       emitTcpCloseHelper,
 	"tcp_pollable":                    emitIdentityHelper("tcp_pollable"),
 	"wasm_timer_pollable":             emitConstHelper("wasm_timer_pollable", -1),

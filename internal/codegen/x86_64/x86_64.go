@@ -919,6 +919,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.emitTcpConnectRuntime()
 		g.emitTcpPollableRuntime()
 	}
+	if g.usesUdp {
+		g.emitUdpSendRuntime()
+	}
 	if g.usesPoll {
 		g.emitPollRuntime()
 	}
@@ -1399,6 +1402,7 @@ type generator struct {
 	// exited yet.
 	usesProcWaitpidNohang bool
 	usesTcp               bool
+	usesUdp               bool
 	usesEnv               bool
 	usesArgs              bool
 	usesAllocU8           bool
@@ -2089,6 +2093,8 @@ func (g *generator) recordUse(target string) {
 		g.usesProcWaitpid = true
 	case "proc_waitpid_nohang":
 		g.usesProcWaitpidNohang = true
+	case "udp_send":
+		g.usesUdp = true
 	case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
@@ -3993,6 +3999,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_signal_default"
 		case "tcp_send":
 			target = "__fern_tcp_send"
+		case "udp_send":
+			target = "__fern_udp_send"
 		case "tcp_connect":
 			target = "__fern_tcp_connect"
 		case "tcp_pollable":
@@ -14311,6 +14319,107 @@ func (g *generator) emitTcpRecvRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_tcp_recv, .-__fern_tcp_recv")
+}
+
+// emitUdpSendRuntime emits __fern_udp_send(host, port, data): one datagram to
+// a dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host that
+// is not four decimal octets. On a datagram socket connect only records the
+// peer, so connect-then-write sends it. The octets are parsed straight into
+// sin_addr; either string may be inline-tagged, so both are materialised
+// into the two scratch slots.
+func (g *generator) emitUdpSendRuntime() {
+	g.line("")
+	g.line(".globl __fern_udp_send")
+	g.line(".type __fern_udp_send, @function")
+	g.label("__fern_udp_send")
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("push rbx") // fd
+	g.emit("push r12") // data
+	g.emit("push r13") // port
+	g.emit("push r14") // the result, kept across close
+	g.emit("sub rsp, 32")
+	g.emit("mov r12, rdx")
+	g.emit("mov r13d, esi")
+	g.emitStrLen("rcx", "rdi")
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 40]")
+	g.emit("xor r8d, r8d")   // index into host
+	g.emit("xor r9d, r9d")   // the octet so far
+	g.emit("xor r10d, r10d") // octets completed
+	g.emit("xor r11d, r11d") // digits in this octet
+	g.label(".Ludp_scan")
+	g.emit("cmp r8d, ecx")
+	g.emit("jge .Ludp_end")
+	g.emit("movzx eax, byte ptr [rdi + r8]")
+	g.emit("cmp eax, 46") // '.'
+	g.emit("jne .Ludp_digit")
+	g.emit("test r11d, r11d")
+	g.emit("jz .Ludp_bad")
+	g.emit("cmp r10d, 3")
+	g.emit("jge .Ludp_bad")
+	g.emit("mov byte ptr [rsp + r10 + 4], r9b")
+	g.emit("inc r10d")
+	g.emit("xor r9d, r9d")
+	g.emit("xor r11d, r11d")
+	g.emit("inc r8d")
+	g.emit("jmp .Ludp_scan")
+	g.label(".Ludp_digit")
+	g.emit("sub eax, 48")
+	g.emit("cmp eax, 9")
+	g.emit("ja .Ludp_bad") // unsigned: below '0' wraps high too
+	g.emit("imul r9d, r9d, 10")
+	g.emit("add r9d, eax")
+	g.emit("inc r11d")
+	g.emit("cmp r9d, 255")
+	g.emit("jg .Ludp_bad")
+	g.emit("inc r8d")
+	g.emit("jmp .Ludp_scan")
+	g.label(".Ludp_end")
+	g.emit("cmp r10d, 3")
+	g.emit("jne .Ludp_bad")
+	g.emit("test r11d, r11d")
+	g.emit("jz .Ludp_bad")
+	g.emit("mov byte ptr [rsp + 7], r9b")
+	g.emit("mov word ptr [rsp], 2") // AF_INET
+	g.emit("mov eax, r13d")
+	g.emit("xchg al, ah") // htons
+	g.emit("mov word ptr [rsp + 2], ax")
+	g.emit("mov qword ptr [rsp + 8], 0")
+	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
+	g.emit("mov edi, 2")
+	g.emit("mov esi, 2")
+	g.emit("xor edx, edx")
+	g.emitSyscall(sysSocket)
+	g.emit("test eax, eax")
+	g.emit("js .Ludp_done")
+	g.emit("mov ebx, eax")
+	g.emit("mov edi, ebx")
+	g.emit("mov rsi, rsp")
+	g.emit("mov edx, 16")
+	g.emitSyscall(sysConnect)
+	g.emit("test eax, eax")
+	g.emit("js .Ludp_close")
+	g.emitStrLen("rdx", "r12")
+	g.emitStrDataPtr("rsi", "r12", "[rbp - 48]")
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysWrite)
+	g.label(".Ludp_close")
+	g.emit("mov r14, rax")
+	g.emit("mov edi, ebx")
+	g.emitSyscall(sysClose)
+	g.emit("mov rax, r14")
+	g.emit("jmp .Ludp_done")
+	g.label(".Ludp_bad")
+	g.emit("mov eax, -3")
+	g.label(".Ludp_done")
+	g.emit("lea rsp, [rbp - 32]")
+	g.emit("pop r14")
+	g.emit("pop r13")
+	g.emit("pop r12")
+	g.emit("pop rbx")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_udp_send, .-__fern_udp_send")
 }
 
 // emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
