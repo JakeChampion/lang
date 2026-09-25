@@ -2142,16 +2142,20 @@ What is left, in order:
    and a string byte a `u8` widened with `as`. Done: `chr`, `str_concat`, the
    integer `to_string` helpers, the string and string-array helpers, the
    stdio writers, the process, clock and random leaves, and the filesystem
-   bundle's `io_error`, `sync`, `umask`, `priority` and its path-taking
-   leaves (`create_dir`, `remove_file`, `rename`, `chmod`, `truncate`, the
-   link, ownership, credential and signal leaves).
+   bundle: `io_error`, `sync`, `umask`, `priority`, the path-taking,
+   credential and signal leaves, `stat` / `lstat` / `statfs`, the file
+   readers and writers, the directory walkers, and the `Reader` / `Writer`
+   handle operations.
 
    The AST lowering still lowers every helper when the typed path is off, so
    it takes the retyped spellings as well: a 64-bit syscall operand lowers at
    64 bits, and `usize as i64` widens without masking. `runtime_bodies`
    checks a source with the builtin enums injected, as a program's module
    has them, and returns the drop helpers a body defines after the bodies;
-   the backends emit each named body once per file.
+   the backends emit each named body once per file. A typed body can call a
+   need-gated block of the hand-written runtime the AST body never reached
+   (`read_dir`'s append calls `__fern_arr_inc_elems`), so each backend emits
+   the entry's runtime into a capture and again with any need it added.
 
    A bundle routes only when every helper in it checks, so the filesystem
    bundle takes the typed path for a program only once all the fs helpers

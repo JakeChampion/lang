@@ -46,6 +46,7 @@ func TestCloseNeedsPrecedesEveryRuntimeGate(t *testing.T) {
 	consumers := []string{
 		"emit_ir_start(", "emit_ir_runtime(", "emit_runtime(", "emit_body(",
 		"emit_rt_heap(", "emit_rt_io_and_string(", "emit_rt_collections_and_proc(",
+		"emit_entry_runtime(", "emit_entry_runtime_settled(", "emit_ir_runtime_settled(",
 	}
 
 	routes := 0

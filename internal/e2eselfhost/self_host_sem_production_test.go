@@ -4101,6 +4101,31 @@ function main(): i32 {
     return n;
 }
 `},
+	// The filesystem bundle's readers and writers. read_dir's typed body
+	// appends to a string[], which calls __fern_arr_inc_elems: a need the
+	// AST lowering never marks, so the runtime is emitted again with it.
+	{name: "fs-bundle-reads-and-writes", atLeast: 1, nativeOnly: true, noLeak: true,
+		reports: []string{
+			"runtime __fern_create_dir_all: produced", "runtime __fern_write_file: produced",
+			"runtime __fern_read_file: produced", "runtime __fern_utf8_valid: produced",
+			"runtime __fern_read_file_bytes: produced", "runtime __fern_stat: produced",
+			"runtime __fern_read_dir: produced", "runtime __fern_remove_dir_all: produced",
+		}, src: `
+function main(): i32 {
+    var d: string = "/tmp/fern_sem_fs_bundle";
+    remove_dir_all(d);
+    var n: i32 = 0;
+    match (create_dir_all(d + "/x/y")) { Ok(_) => { n = n + 1; }, Err(_) => {} }
+    match (write_file(d + "/x/f.txt", "hello world")) { Ok(_) => { n = n + 1; }, Err(_) => {} }
+    match (read_file(d + "/x/f.txt")) { Ok(s) => { n = n + s.len(); }, Err(_) => {} }
+    match (read_file_bytes(d + "/x/f.txt")) { Ok(b) => { n = n + b.len(); }, Err(_) => {} }
+    match (stat(d + "/x/f.txt")) { Ok(st) => { if (st.is_file) { n = n + 100; } }, Err(_) => {} }
+    match (read_dir(d + "/x")) { Ok(es) => { n = n + es.len() * 1000; }, Err(_) => {} }
+    match (read_file(d + "/nope")) { Ok(_) => {}, Err(NotFound(p)) => { n = n + p.len() * 10000; }, Err(_) => {} }
+    match (remove_dir_all(d)) { Ok(_) => { n = n + 1; }, Err(_) => {} }
+    return n % 256;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
