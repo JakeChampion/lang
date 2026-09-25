@@ -2410,7 +2410,7 @@ function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
 
 function bind_projection(s: State, name: string, id: i32, after: checker.Scope): State {
     var want: typeinfo.Type = bound_type(s, name, after);
-    if (!semtypes.concrete(want, false)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
+    if (!semtypes.concrete(want, true)) { return fail(s, "unresolved type of binding " + name + ": " + type_detail(want)); }
     if (!semtypes.equal(want, s.values[id])) { return fail(s, mismatch(name, want, s.values[id])); }
     return bind(s, name, id);
 }
