@@ -403,6 +403,48 @@ func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
 	}
 }
 
+// TestSelfHostRawFloorLookupReachesEveryRow pins raw_floor_find's prefix
+// filter against the table it filters. A raw_floor_sigs row whose name matches
+// none of the prefixes is invisible to the checker: a call to it is argument-
+// checked against nothing, while semsource still contracts it, so the typed
+// path refuses what the checker accepted. The six __fern_* rows sat that way.
+func TestSelfHostRawFloorLookupReachesEveryRow(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "checker.fern"))
+	if err != nil {
+		t.Fatalf("read checker.fern: %v", err)
+	}
+	src := string(b)
+	rows := rawFloorTableNames(t, src, `function raw_floor_sigs\(\): RawFloorSig\[\] \{`)
+	lookup := regexp.MustCompile(`(?s)function raw_floor_find\(.*?\n\}`).FindString(src)
+	if lookup == "" {
+		t.Fatal("checker.fern has no raw_floor_find — point this test at the lookup that replaced it")
+	}
+	var prefixes []string
+	for _, m := range regexp.MustCompile(`str_has_prefix\(name, "([^"]+)"\)`).FindAllStringSubmatch(lookup, -1) {
+		prefixes = append(prefixes, m[1])
+	}
+	if len(rows) == 0 || len(prefixes) == 0 {
+		t.Fatalf("read %d rows and %d prefixes — the patterns have drifted, so this test proves nothing", len(rows), len(prefixes))
+	}
+	var unreached []string
+	for n := range rows {
+		reached := false
+		for _, p := range prefixes {
+			if strings.HasPrefix(n, p) {
+				reached = true
+			}
+		}
+		if !reached {
+			unreached = append(unreached, n)
+		}
+	}
+	sort.Strings(unreached)
+	if len(unreached) > 0 {
+		t.Errorf("raw_floor_find's prefixes %v reach none of %s, so the checker leaves those rows untyped",
+			prefixes, strings.Join(unreached, ", "))
+	}
+}
+
 // rawFloorTableNames is the `name: "..."` rows of the table function whose header
 // matches `header`, up to its closing brace.
 func rawFloorTableNames(t *testing.T, src, header string) map[string]bool {
