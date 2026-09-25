@@ -12,11 +12,17 @@ rows pinned that fallback with `atLeast: 0`, and under
 does: `tup`, then each element after a `_`, with an array element suffixed
 `_arr`. `Opt[(i32, i32)]` is `Opt__tup_i32_i32`. As for a function-type argument, the key is only the
 clone's name. The substitution reads the argument's real spelling from
-`iargs`. The inferred path, a bare `Sm((3, 4))`, takes the same name, and
-`keyed_by_mangle` makes both of its recoveries (a binding's construction and
-an inline match scrutinee) read the payload's spelling back for a tuple as
-they did for a function type. Without that the clone's payload type was the
-mangled token, `tup_i32_i32`.
+`iargs`. The inferred path, a bare `Sm((3, 4))`, takes the same name.
+
+An inferred key needs its spelling read back for `iargs` too. Both recoveries
+(a binding's construction and an inline match scrutinee) re-derived it from
+the first argument. That is the wrong argument when the type parameter sits
+in a later field: `Sm((i32, i32), T)` built as `Sm((1, 2), 3)` keyed its clone
+`i32` but substituted `(i32, i32)` into both fields, and answered 0 where
+native answers 3. A function type in the first field was already wrong that
+way. `me_variant_bound` now reads the spelling off the same unification the
+key comes from (`me_variant_binds`), so the key and its spelling always
+describe the field that binds the parameter.
 
 The named elements are nominals, arrays of them, and nested tuples of them.
 A tuple holding a generic enum (`Opt[(Opt[i32], i32)]`) still has no name,
@@ -30,6 +36,10 @@ be ambiguous.
 - `TestSelfHostGenericEnumTupleKey` runs the parser's passes and checks the
   enum names left: annotated, inferred, nested with an array, beside a simple
   key, and the refused tuple of a generic enum.
+- `TestSelfHostSemanticProduction` rows for the parameter bound from a later
+  field, after a tuple (through a binding, and matched inline) and after a
+  function, and a tuple key matched inline only, which is the one case where
+  the scrutinee's recovery records the instance.
 - `TestSelfHostSemanticProduction` row `generic-enum-at-an-inferred-tuple-key`:
   the inferred spelling, bound and matched inline, 2 of 2 with no leak. It
   produced 0 of 2 with the key named but its spelling not read back, which a
