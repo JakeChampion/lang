@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -32,6 +33,15 @@ func TestArm64UdpSend(t *testing.T) {
 	for _, backend := range []string{"flat", "ssa"} {
 		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, start) })
 	}
+}
+
+// Darwin needs its own sockaddr_in head: XNU refuses a datagram connect whose
+// family byte is Linux's. Only the flat backend targets Darwin.
+func TestArm64DarwinUdpSend(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("execution check only runs on Apple Silicon")
+	}
+	runNativeUdpSend(t, "arm64-darwin", "flat", func(bin string) *exec.Cmd { return exec.Command(bin) })
 }
 
 func runNativeUdpSend(t *testing.T, target, backend string, start func(bin string) *exec.Cmd) {
