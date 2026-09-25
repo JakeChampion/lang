@@ -145,9 +145,10 @@ pub struct EmitState {
     // module's text, 0 when none: the register path reads an arm back to
     // take its operands in registers.
     capture: usize,
-    // The typed lowering of a runtime helper's source, one body per function it
-    // defines, or none to keep the AST lowering. The CLI supplies it
-    // (semlower.runtime_bodies); a backend never links that pipeline itself.
+    // The typed lowering of a runtime helper's source: one body per function it
+    // defines, then the drop helpers those bodies carry, or none to keep the
+    // AST lowering. The CLI supplies it (semlower.runtime_bodies); a backend
+    // never links that pipeline itself.
     rt_lower: (string) => irlower.LowerResult[],
     // The symbols this file already defines as named bodies (the drop helpers
     // a substitution or a runtime helper's lowering carries), so a second
@@ -1343,8 +1344,8 @@ function rt_src_poll_kqueue(t: string): string {
         + "var kq: i32 = __syscall3(" + sysno(t, "kqueue") + ", 0, 0, 0) as i32; if (kq < 0) { return 0 - 1; } "
         + "var buf: usize = __raw_alloc(count * 64); var events: usize = __raw_addr(buf, count * 32); "
         + "var i: i32 = n - 1; var c: i32 = 0; while (i >= 0) { if (fds[i] >= 0) { "
-        + "__raw_store_ptr(buf, c * 4, fds[i]); __raw_store_ptr(buf, c * 4 + 1, 4325375); "
-        + "__raw_store_ptr(buf, c * 4 + 2, 0); __raw_store_ptr(buf, c * 4 + 3, i); c = c + 1; } i = i - 1; } "
+        + "__raw_store_ptr(buf, c * 4, fds[i] as usize); __raw_store_ptr(buf, c * 4 + 1, 4325375); "
+        + "__raw_store_ptr(buf, c * 4 + 2, 0); __raw_store_ptr(buf, c * 4 + 3, i as usize); c = c + 1; } i = i - 1; } "
         + "var ts: usize = __raw_scratch(16); __raw_store_ptr(ts, 0, 0); __raw_store_ptr(ts, 1, 0); "
         + "var receipts: i32 = __syscall6(" + sysno(t, "kevent") + ", kq as i64, buf as i64, count as i64, events as i64, count as i64, ts as i64) as i32; "
         + "var valid: i32 = 0; var r: i32 = 0; var wait_ms: i32 = timeout_ms; while (r < receipts) { "
@@ -1354,7 +1355,7 @@ function rt_src_poll_kqueue(t: string): string {
         + "got = __syscall6(" + sysno(t, "kevent") + ", kq as i64, 0, 0, events as i64, count as i64, tmo as i64) as i32; } "
         + "__syscall3(" + sysno(t, "close") + ", kq as i64, 0, 0); var hit: i32 = 0 - 1; var j: i32 = 0; "
         + "while (j < got) { if ((__raw_load8(events, j * 32 + 11) & 64) == 0) { "
-        + "var idx: usize = __raw_load_ptr(events, j * 4 + 3); if (hit < 0 || idx < hit) { hit = idx; } } j = j + 1; } "
+        + "var idx: i32 = __raw_load_ptr(events, j * 4 + 3) as i32; if (hit < 0 || idx < hit) { hit = idx; } } j = j + 1; } "
         + "var buf_own: string = __raw_string(buf, count * 64); return hit; }";
 }
 
