@@ -4324,13 +4324,13 @@ function intrinsic_contracts(): ssasem.Contract[] {
 }
 
 // The raw floor, typed by the checker's one table. Every operand is a value
-// except `__raw_data`'s string, which is lent: the data word it answers is
-// read, not kept.
+// except `__raw_data`'s string and `__raw_arr_ptr`'s array, which are lent:
+// the address they answer is read, not kept.
 function raw_floor_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = [];
     for sig in checker.raw_floor_sigs() {
         var mode: i32 = ssaunits.value_mode();
-        if (sig.name == "__raw_data") { mode = ssaunits.borrow_mode(); }
+        if (sig.name == "__raw_data" || sig.name == "__raw_arr_ptr") { mode = ssaunits.borrow_mode(); }
         var modes: i32[] = [];
         for _ in sig.params { modes = modes.append(mode); }
         out = out.append(ssasem.Contract { name: sig.name, params: sig.params, modes: modes, result: sig.result });

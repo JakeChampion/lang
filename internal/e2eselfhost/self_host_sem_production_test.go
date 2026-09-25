@@ -4171,6 +4171,23 @@ function main(): i32 {
     return n % 256;
 }
 `},
+	// a[start:end] copies slots through __fern_arr_slice, which reaches the
+	// source array's address through __raw_arr_ptr.
+	{name: "arr-slice-takes-the-typed-path", atLeast: 1, noLeak: true, nativeOnly: true,
+		reports: []string{"runtime __fern_arr_slice: produced"}, src: `
+struct P { x: i32, name: string }
+function main(): i32 {
+    var a: i32[] = [1, 2, 3, 4, 5];
+    var b: [i32] = a[1:4];
+    var s: string[] = ["aa", "bbb", "c", "dddd"];
+    var t: [string] = s[2:4];
+    var ps: P[] = [P { x: 1, name: "one" }, P { x: 2, name: "two" }, P { x: 3, name: "three" }];
+    var qs: [P] = ps[0:2];
+    var n: i32 = b.len() * 100 + b[0] * 10 + b[2];
+    n = n + t[1].len() * 1000 + qs[1].name.len() * 10000;
+    return n % 256;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `

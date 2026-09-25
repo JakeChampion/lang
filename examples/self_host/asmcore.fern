@@ -3354,7 +3354,7 @@ pub function (s: EmitState) mark_i32_lcm(): EmitState {
 // Advancing the pointers rather than indexing from the base is what keeps
 // each offset small.
 pub function rt_src_arr_slice(t: string): string {
-    return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0); } var m: i32 = end - start; var p: i32 = __raw_arr_box(m); var dst: i32 = __raw_addr(p, 8); var src: i32 = __raw_addr(a, 8); var skip: i32 = start; while (skip > 0) { var cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } var left: i32 = m; while (left > 0) { var cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
+    return "function __fern_arr_slice(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0) as i32; } var m: i32 = end - start; var p: usize = __raw_arr_box(m); var dst: usize = __raw_addr(p, 8); var src: usize = __raw_addr(__raw_arr_ptr(a), 8); var skip: i32 = start; while (skip > 0) { var cs: i32 = skip; if (cs > 134217728) { cs = 134217728; } src = __raw_addr(src, cs * 8); skip = skip - cs; } var left: i32 = m; while (left > 0) { var cc: i32 = left; if (cc > 134217728) { cc = 134217728; } __memcpy(dst, src, cc * 8); dst = __raw_addr(dst, cc * 8); src = __raw_addr(src, cc * 8); left = left - cc; } return __raw_array(p); }";
 }
 
 // rt_src_i32_pow is the Fern source for __fern_i32_pow(base, exp) = base^exp,
@@ -4839,6 +4839,8 @@ function builtin_i32_names(): string[] {
         // pointer as i32, __raw_array retypes it as the array value
         // it already is — the array sibling of __raw_string.
         "__raw_arr_box",
+        // An array's address, the value __raw_array retypes back.
+        "__raw_arr_ptr",
         // Syscall sub-floor (#2649): the raw-memory floor's I/O
         // sibling. Returns the syscall result as i32.
         "__syscall3",

@@ -643,6 +643,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_load_ptr", params: [p, n], result: p },
     RawFloorSig { name: "__raw_string", params: [p, n], result: t_string() },
     RawFloorSig { name: "__raw_array", params: [p], result: typeinfo.TypeArray { elem: n, view: false } },
+    RawFloorSig { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: n, view: false }], result: p },
     RawFloorSig { name: "__raw_data", params: [t_string()], result: p },
     RawFloorSig { name: "__raw_addr", params: [p, n], result: p },
     RawFloorSig { name: "__raw_arr_box", params: [n], result: p },
