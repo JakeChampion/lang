@@ -1513,7 +1513,7 @@ function container_op(k: i32): boolean {
     return kind_in([ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
         ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
         ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
-        ssasem.str_bytes(), ssasem.arr_sum(), ssasem.arr_product(), ssasem.arr_join(), ssasem.arr_slice()], k)
+        ssasem.str_bytes(), ssasem.arr_join(), ssasem.arr_slice()], k)
         || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
 }
 
@@ -1836,8 +1836,6 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.arr_slice()) { return arr_slice(r, elem_type(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
-    if (ins.kind_tag == ssasem.arr_sum()) { return emit(r, ir.op_call_direct("__fern_arr_i32_sum", 1)); }
-    if (ins.kind_tag == ssasem.arr_product()) { return emit(r, ir.op_call_direct("__fern_arr_i32_product", 1)); }
     if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) { return emit(r, ir.op_str_index_nc()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
@@ -2935,7 +2933,6 @@ function string_method_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
     if (ins.str == "string.to_ascii_upper") { return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) }; }
     if (ins.str == "string.to_ascii_lower") { return Lowered { found: true, r: emit(r, ir.op_str_to_lower()) }; }
     if (ins.str == "string.trim") { return Lowered { found: true, r: emit(r, ir.op_str_trim()) }; }
-    if (ins.str == "string.reverse") { return Lowered { found: true, r: emit(r, ir.op_str_reverse()) }; }
     if (ins.str == "string.lines") { return Lowered { found: true, r: emit(r, ir.op_str_lines()) }; }
     if (ins.str == "string.split") { return Lowered { found: true, r: emit(r, ir.op_str_split()) }; }
     if (ins.str == "string.repeat") { return Lowered { found: true, r: emit(r, ir.op_str_repeat()) }; }

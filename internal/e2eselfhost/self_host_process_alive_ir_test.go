@@ -43,7 +43,8 @@ const processAliveSelfHostSource = `function main(): i32 {
         Err(e) => { return 10; }
     }
     var fields: string[] = st.split(" ");
-    var me: i32 = str_to_i32(fields[0]);
+    var me: i32 = 0;
+    for b in fields[0] { me = me * 10 + (b as i32) - 48; }
     if (me <= 0) { return 11; }
     if (!process_alive(me)) { return 1; }
 

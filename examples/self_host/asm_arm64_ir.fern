@@ -783,13 +783,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_trim();
         s = s.write("    bl __fn___fern_str_trim\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n"); return s;
     }
-    if (o.kind_tag == 110) {  // str_reverse
-        // operand stack [s box] — the arg IS param[0] (+16). Call the
-        // Fern-compiled __fn___fern_str_reverse via the stack ABI (shared body,
-        // need-gated on str_reverse). -> fresh reversed string box in x0.
-        s = s.mark_str_reverse();
-        s = s.write("    bl __fn___fern_str_reverse\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n"); return s;
-    }
     if (o.kind_tag == 111) {  // str_replace
         // operand stack [haystack, old, new] (new top). Call the Fern-compiled
         // __fn___fern_str_replace via the stack ABI: param[0]=haystack on top
@@ -2427,7 +2420,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // real pollables, readiness uses poll(2)) in x0.
         s = s.write("    ldr x0, [sp], #16\n    bl __fern_wasm_poll\n    str x0, [sp, #-16]!\n");
         s = s.need("wasm_poll");
-    } else if (o.kind_tag == 193) {  // tcp_connect
+    } else if (o.kind_tag == 110) {  // tcp_connect
         // [host_be, port] -> __fern_tcp_connect(x0=host_be, x1=port) -> fd.
         s = s.need("heap");
         // port is on top but param[0] is host_be, so swap before the call.
@@ -3252,44 +3245,13 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     // missing, exactly as it was for u32 above.
     if (name == "__fern_i64_to_string") { s = s.mark_i64_to_string(); }
     if (name == "__fern_u64_to_string") { s = s.mark_u64_to_string(); }
-    // str_to_i32(s)'s decimal-parse helper — gated on this need (the
-    // stack-ABI __fn___fern_str_to_i32 wrapper in asm_arm64.emit_runtime).
-    if (name == "__fern_str_to_i32") { s = s.mark_str_to_i32(); }
     // chr(n)'s 1-char-box helper — gated on this need (the self-contained
     // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
     if (name == "__fern_chr") { s = s.mark_chr(); }
-    // The i32 builtin helpers irlower lowers for EVERY backend (#3457):
-    // xs.sum() / .product() / .index_of() / .contains(), n.pow(k),
-    // n.gcd(m) / n.lcm(m), and
-    // xs.min() / .max(). Their bodies are need-gated in
-    // asm_arm64.emit_runtime, and the arm64 IR path marked none of them —
-    // so `bl __fn___fern_arr_i32_sum` was emitted against nothing and the
-    // link failed with an undefined reference (the same gap u32_to_string
-    // had above; the x86 IR path marks its equivalents in asm_ir).
-    if (name == "__fern_arr_i32_sum") { s = s.mark_arr_i32_sum(); }
-    if (name == "__fern_arr_i32_product") { s = s.mark_arr_i32_product(); }
-    if (name == "__fern_i32_pow") { s = s.mark_i32_pow(); }
-    // n.gcd(m) / n.lcm(m). The BODIES were already emitted below (gated
-    // on has_need), fed by all_runtime_need_roots in the per-module entry
-    // — but nothing marked the need from a call site, because irlower had
-    // no lowering for these two until now and so no call site existed.
-    // close_needs carries i32_lcm → i32_gcd, so marking lcm alone would
-    // still emit gcd's body; both are marked for symmetry with the x86
-    // pair in asm_ir.
     // __fern_map_find's body is in the maps bundle; a call to it from
     // __fern_map_delete's Fern body must pull that bundle in, since call_direct
     // does not imply a need.
     if (name == "__fern_map_find") { s = s.need("maps"); }
-    if (name == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
-    if (name == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
-    if (name == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
-    if (name == "__fern_arr_i32_index_of_opt") { s = s.mark_arr_i32_index_of_opt(); }
-    // min/max return a freshly allocated Option box, so unlike the fold
-    // helpers they need the heap runtime as well as their own bodies.
-    if (name == "__fern_arr_i32_min_opt" || name == "__fern_arr_i32_max_opt") {
-        s = s.mark_heap();
-        s = s.need("arr_i32_min_max_opt");
-    }
     // arr.join(sep) (#5328): mark_arr_str_join sets the arr_str_join + heap
     // needs; the bodies come from asm_arm64.emit_runtime
     // (which asm_arm64_ir reuses verbatim — the arr_str_join block already
@@ -4889,14 +4851,6 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("u64_to_string")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s.struct_decls, s);
-    }
-    // __fern_str_to_i32 is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_str_to_i32, lowered through asm_arm64's normal function
-    // emitter. The single __fn___fern_str_to_i32 body serves BOTH the arm64 AST
-    // and IR call sites (they share this emit_runtime), replacing the old
-    // register-ABI body + its stack-arg IR wrapper.
-    if (s.has_need("str_to_i32")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_i32(), s.struct_decls, s);
     }
     // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
     // emitted (need-gated on chr) in the migrated-helpers section below via the
@@ -7851,9 +7805,6 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // (getrandom 278 / getentropy 500) and fills the buffer in <= 256-byte
     // chunks, which is what getentropy's per-call limit needed the fork for.
 
-    // __fern_i32_gcd / __fern_i32_lcm are now Fern runtime functions (#2649):
-    // see asmcore.rt_src_i32_gcd / _lcm, emitted (need-gated) in the migrated-
-    // helpers section below. Pure scalar, so no longer in this heap block.
     return s;
 }
 
@@ -8517,32 +8468,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("arr_str_join")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s.struct_decls, s);
     }
-    // __fern_arr_i32_min / _max are now Fern runtime functions (#2649): see
-    // asmcore.rt_src_arr_i32_min / _max. Each takes a non-empty borrowed array
-    // (the call site handles the empty→None case) and returns the extremum;
-    // called via the stack convention.
-    if (s.has_need("arr_i32_min_max")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min(), s.struct_decls, s);
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_max(), s.struct_decls, s);
-    }
-    // __fern_i32_pow is the first runtime helper written in Fern instead of a
-    // hand-written asm string (#2649): emit_runtime_fern_fn compiles its source
-    // (shared in asmcore) through the normal function emitter, so it links as
-    // __fn___fern_i32_pow and is called via the ordinary stack convention (see
-    // the `pow` call site). Negative exp returns 1 (UB-ish, matching the
-    // language's no-runtime-check stance — i32 pow with negative exp is UB).
-    if (s.has_need("i32_pow")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_pow(), s.struct_decls, s);
-    }
-    // __fern_i32_gcd / __fern_i32_lcm — Fern runtime functions (#2649), pure
-    // scalar (Tier 0). lcm's body calls `.gcd()`, so emit gcd first; close_needs
-    // pulls in i32_gcd whenever i32_lcm is needed (runtime_need_deps edge).
-    if (s.has_need("i32_gcd")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_gcd(), s.struct_decls, s);
-    }
-    if (s.has_need("i32_lcm")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_lcm(), s.struct_decls, s);
-    }
     // __fern_str_trim — Fern runtime function (#2649), Tier-1: returns the
     // zero-copy sub-slice s[start:end] after skipping leading/trailing
     // whitespace. The slice box allocates (heap dep via mark_str_trim).
@@ -8558,11 +8483,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // i32[] by appending each byte (arr_push). Shared by arm64 AST + IR.
     if (s.has_need("str_bytes")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s.struct_decls, s);
-    }
-    // __fern_str_reverse — Fern runtime function (#2649) via the raw-memory
-    // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
-    if (s.has_need("str_reverse")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_reverse(), s.struct_decls, s);
     }
     // __fern_str_replace — Fern runtime function (#2649) via the raw-memory
     // intrinsics; single shared body for arm64 AST + IR. heap-only dep.
@@ -8901,37 +8821,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // asmcore.rt_src_str_lines, emitted (need-gated) in the migrated-helpers
     // section below. The single shared body serves both arm64 AST + IR; its deps
     // are declared by mark_str_lines / runtime_need_deps.
-    // __fern_arr_i32_product / _sum are now Fern runtime functions (#2649),
-    // compiled through emit_function (see asmcore.rt_src_arr_i32_*). They link
-    // as __fn___fern_arr_i32_product / __fn___fern_arr_i32_sum and are called
-    // via the ordinary stack convention; the array param is borrowed.
-    if (s.has_need("arr_i32_product")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_product(), s.struct_decls, s);
-    }
-    if (s.has_need("arr_i32_sum")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), s.struct_decls, s);
-    }
-    // __fern_arr_i32_index_of is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_arr_i32_index_of. Linear scan returning the first index
-    // where arr[i] == target, or -1; called via the stack convention.
-    if (s.has_need("arr_i32_index_of")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s.struct_decls, s);
-    }
-    // __fern_arr_i32_index_of_opt backs xs.index_of(x) (#4387): the raw scan
-    // above returns the -1 sentinel and still backs .contains(x); this one
-    // carries the Option box in its Fern body, so the IR call site is a plain
-    // call. It allocates, so the need also pulls in the heap runtime.
-    if (s.has_need("arr_i32_index_of_opt")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of_opt(), s.struct_decls, s);
-    }
-    // __fern_arr_i32_min_opt / _max_opt back xs.min() / .max() on the IR path
-    // (#3457): unlike the raw-extremum __fern_arr_i32_min / _max above (whose
-    // empty-array guard and Option box the AST call site open-codes), these carry
-    // both in their Fern bodies, so the IR call site is a plain call. Emitted as
-    // one module; they allocate, so the need also pulls in the heap runtime.
-    if (s.has_need("arr_i32_min_max_opt")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), s.struct_decls, s);
-    }
     return s;
 }
 

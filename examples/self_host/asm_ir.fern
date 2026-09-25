@@ -50,13 +50,6 @@ import "./ssa_lift";
 // slice (s[start:end]) skipping leading/trailing ASCII whitespace. Heap-dependent
 // (the slice box allocates), gated on the str_trim need.
 
-// __fern_str_reverse was hand-written here through #2649; it is now a Fern
-// runtime function (asmcore.rt_src_str_reverse) lowered through the IR pipeline
-// via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — a fresh box
-// with `s`'s bytes reversed via the raw-memory intrinsics. Heap-dependent, gated
-// on the str_reverse need. The op_str_reverse handler now calls the stack-arg
-// __fn___fern_str_reverse symbol.
-
 // __fern_str_replace was hand-written here through #2649; it is now a Fern
 // runtime function (asmcore.rt_src_str_replace) lowered through the IR pipeline
 // via emit_ir_runtime_fern_fn in emit_module_ir_unit's entry block — two-pass
@@ -1971,7 +1964,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 // runtime in through one of them.
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
-        "heap", "i32_to_string", "u32_to_string", "str_to_i32", "chr",
+        "heap", "i32_to_string", "u32_to_string", "chr",
         "read_int", "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
@@ -4441,11 +4434,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // hand-written body here. See the emit_ir_runtime_fern_fn call in
     // emit_module_ir_unit's entry block.
 
-    // __fern_str_to_i32 is now a Fern runtime function (#2649): emitted entry-
-    // only via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
-    // __fn___fern_str_to_i32), not a hand-written stack-arg wrapper here. See
-    // the emit_ir_runtime_fern_fn call in emit_module_ir_unit's entry block.
-
     // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
     // lowered through the IR pipeline via emit_ir_runtime_fern_fn in the entry
     // block (using the raw-memory intrinsics). No longer hand-rolled here.
@@ -5546,13 +5534,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // after the call), so call directly, pop the arg, push the result.
         s = s.write("    call __fn___fern_str_trim\n    addq $8, %rsp\n    pushq %rax\n");
         s = s.mark_str_trim(); return s;
-    }
-    if (o.kind_tag == 110) {  // str_reverse
-        // operand stack [s box] — the arg IS param[0] (+16). Call the
-        // Fern-compiled __fn___fern_str_reverse via the stack ABI -> fresh
-        // reversed string box in %rax.
-        s = s.write("    call __fn___fern_str_reverse\n    addq $8, %rsp\n    pushq %rax\n");
-        s = s.mark_str_reverse(); return s;
     }
     if (o.kind_tag == 111) {  // str_replace
         // operand stack [haystack, old, new] (new on top). Call the Fern-compiled
@@ -7406,7 +7387,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // pollables; readiness uses poll(2)). Push the -1 result.
         s = s.write("    popq %rdi\n    call __fern_wasm_poll\n    pushq %rax\n");
         s = s.need("wasm_poll");
-    } else if (o.kind_tag == 193) {  // tcp_connect
+    } else if (o.kind_tag == 110) {  // tcp_connect
         // [host_be, port]; __fern_tcp_connect(%rdi=host_be, %rsi=port) -> fd
         // (or -errno) in %rax.
         // [host_be, port] with port on top; the stack ABI wants param[0]
@@ -8065,38 +8046,10 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
     // box, so each needs the heap runtime plus its own body.
     if (name == "__fern_i64_to_string") { s = s.need("heap"); s = s.need("i64_to_string"); }
     if (name == "__fern_u64_to_string") { s = s.need("heap"); s = s.need("u64_to_string"); }
-    // str_to_i32 is allocation-free (parses in registers), so it needs
-    // only its own body — not the heap runtime.
-    if (name == "__fern_str_to_i32") { s = s.need("str_to_i32"); }
-    // i32[] sum / product + i32.pow (#3457): allocation-free Fern helpers,
-    // so each needs only its own body emitted — NOT the heap runtime. A
-    // call_direct does not imply a need, so without these the call site is
-    // emitted against a body the runtime never writes and the program calls
-    // an undefined symbol.
-    if (name == "__fern_arr_i32_sum") { s = s.need("arr_i32_sum"); }
-    if (name == "__fern_arr_i32_product") { s = s.need("arr_i32_product"); }
-    if (name == "__fern_i32_pow") { s = s.need("i32_pow"); }
-    // i32_lcm's body calls gcd; runtime_need_deps carries the
-    // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
     // __fern_map_find's body is emitted with the maps bundle; a call to it from
     // __fern_map_delete's Fern body must pull that bundle in, since call_direct
     // does not imply a need.
     if (name == "__fern_map_find") { s = s.need("maps"); }
-    if (name == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
-    if (name == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
-    if (name == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
-    // xs.index_of(x) (#4387) — the Option-returning scan ALLOCATES its box, so
-    // like the min/max pair below it pulls in the heap runtime.
-    if (name == "__fern_arr_i32_index_of_opt") {
-        s = s.need("heap");
-        s = s.need("arr_i32_index_of_opt");
-    }
-    // xs.min() / xs.max() (#3457) — unlike the fold helpers these ALLOCATE
-    // (the Option box they return), so they pull in the heap runtime too.
-    if (name == "__fern_arr_i32_min_opt" || name == "__fern_arr_i32_max_opt") {
-        s = s.need("heap");
-        s = s.need("arr_i32_min_max_opt");
-    }
     // chr allocates its 1-char box, so pull in the heap runtime too.
     if (name == "__fern_chr") { s = s.need("heap"); s = s.need("chr"); }
     // arr.join(sep) needs its own body + the heap runtime it fills its
@@ -8944,7 +8897,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
     // s.split("\n")) land in string_lits AFTER the main .rodata pool was emitted
     // (this runs in the entry block, past the pool), so flush any NEW ones here in
     // their own .rodata block then return to .text. A literal-free helper (the
-    // str_eq / str_cmp / str_to_i32 / str_trim bodies) adds none, so
+    // str_eq / str_cmp / str_trim bodies) adds none, so
     // this is a no-op for them. Mirrors the AST emit_runtime_fern_fn flush.
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
     var lit0: i32 = s.string_lits.len();
@@ -9441,15 +9394,7 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState, all_structs: irlower.
 
 // The shared `__fern_*` runtime the entry module emits.
 function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab): asmcore.EmitState {
-    // __fern_str_to_i32 (#2649): the first runtime helper hosted on the IR path
-    // as a Fern function — lowered through the IR pipeline rather than emitted
-    // as hand-written asm. Emitted in .text (we're in .rodata after the literal
-    // pools) and gated on its need; emit_runtime_globls already .globl'd it.
-    if (s.has_need("str_to_i32")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_i32(), all_structs, s);
-    }
-    // __fern_str_cmp (#2649): string-ordering helper, also hosted on the IR path
+    // __fern_str_cmp (#2649): string-ordering helper, hosted on the IR path
     // as a Fern function. Self-contained (two borrowed strings, byte compare, no
     // alloc / no other helper call), so emit_ir_runtime_fern_fn's singleton
     // side-tables are complete. Same .text + need-gated, entry-only emission.
@@ -9558,13 +9503,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), all_structs, s);
     }
-    // String reverse — now a Fern runtime function (#2649), lowered through the
-    // IR pipeline: a fresh box with s's bytes reversed via the raw-memory
-    // intrinsics. Heap-dependent (present above).
-    if (s.has_need("str_reverse")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_reverse(), all_structs, s);
-    }
     // String replace — now a Fern runtime function (#2649), lowered through the
     // IR pipeline: two-pass count + build via the raw-memory intrinsics.
     // Heap-dependent (present above).
@@ -9663,54 +9601,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("u64_to_string")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), all_structs, s);
-    }
-    // arr_i32_sum / arr_i32_product — back xs.sum() / xs.product() (#3457).
-    // Allocation-free (they fold into a register), so they are emitted
-    // independently of the heap runtime, like random_i32 below.
-    if (s.has_need("arr_i32_sum")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_sum(), all_structs, s);
-    }
-    if (s.has_need("arr_i32_product")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_product(), all_structs, s);
-    }
-    // i32_pow backs n.pow(k) (#3457) — allocation-free, same as the fold helpers.
-    if (s.has_need("i32_pow")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_pow(), all_structs, s);
-    }
-    // i32_gcd / i32_lcm back n.gcd(m) / n.lcm(m) — also allocation-free. gcd
-    // FIRST: lcm's body calls it, and close_needs pulls i32_gcd in whenever
-    // i32_lcm is needed (the runtime_need_deps edge). Mirrors the arm64 pair in
-    // asm_arm64_ir.emit_ir_runtime, which shipped before this one and is why the
-    // arm64 unit path emitted an lcm body whose `.gcd()` had no lowering (#5940).
-    if (s.has_need("i32_gcd")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_gcd(), all_structs, s);
-    }
-    if (s.has_need("i32_lcm")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_lcm(), all_structs, s);
-    }
-    // arr_i32_index_of backs xs.index_of(x) / xs.contains(x) (#3457) —
-    // allocation-free, like the other fold helpers.
-    if (s.has_need("arr_i32_index_of")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), all_structs, s);
-    }
-    // arr_i32_index_of_opt backs xs.index_of(x) (#4387) — heap-dependent
-    // (present above), since it returns a freshly allocated Option[i32] box.
-    if (s.has_need("arr_i32_index_of_opt")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of_opt(), all_structs, s);
-    }
-    // arr_i32_min_max_opt backs xs.min() / xs.max() (#3457). Emitted as ONE
-    // module so both bodies share a lowering pass, and heap-dependent (present
-    // above) — each returns a freshly allocated Option[i32] box.
-    if (s.has_need("arr_i32_min_max_opt")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_min_max_opt(), all_structs, s);
     }
     // random_i32 allocates nothing, so its helper is emitted independently of
     // the heap runtime (a random_i32-only program is heap-free).

@@ -1005,13 +1005,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
 		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
-		// String reverse (op_str_reverse) → fresh reversed string. wasm's AST path
-		// has no reverse, so these use the IR-only gate (dedicated copying
-		// str_reverse_helper).
-		{"reverse-len", `function main(): i32 { return "hello".reverse().len(); }`, 5},
-		{"reverse-first", `function main(): i32 { var r = "abc".reverse(); return r[0]; }`, 99},
-		{"reverse-last", `function main(): i32 { var r = "abc".reverse(); return r[2]; }`, 97},
-		{"reverse-twice", `function main(): i32 { if ("hello".reverse().reverse() == "hello") { return 7; } return 0; }`, 7},
 		// String replace (op_str_replace) -> fresh string. wasm AST has no replace,
 		// so IR-only (dedicated str_replace_helper).
 		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
@@ -1143,56 +1136,6 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// sum(t)`) and a struct-payload `V(p) => g(p)` use the i32 result temp.
 		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
-		// The i32 builtin helpers — xs.sum() / .product() / .index_of() /
-		// .contains(), n.pow(k), xs.min() / .max() (#3457). These are IR-ONLY
-		// because the wasm AST path does not implement them at all: it emits
-		// `i32.const 0` for xs.sum(), so an AST==IR differential would be
-		// satisfied only by the IR path being wrong the same way. Asserting the
-		// value directly is the whole point — the WAT bodies
-		// (wasm_ir.arr_i32_helpers) are new, and these are what says they compute
-		// the same answers the register backends do.
-		//
-		// The two-argument cases are deliberately ASYMMETRIC. irlower pushes the
-		// argument first and the receiver second, so on wasm the params arrive
-		// REVERSED relative to the register signature — index_of(target, xs) and
-		// pow(exp, base). index_of(9) on [7,8,9] and 2.pow(5) both fail loudly if
-		// that is wrong; index_of(x) on a symmetric array or 3.pow(3) would not.
-		{"arr-sum", `function main(): i32 { var xs: i32[] = [1, 2, 3, 4, 5]; return xs.sum(); }`, 15},
-		{"arr-sum-empty", `function main(): i32 { var xs: i32[] = []; return xs.sum(); }`, 0},
-		{"arr-product", `function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }`, 30},
-		{"arr-product-empty", `function main(): i32 { var xs: i32[] = []; return xs.product(); }`, 1},
-		// index_of returns Option[i32] (#4387), so the found cases match on Some
-		// and not-found is the None arm rather than a sentinel an exit code
-		// cannot carry. The asymmetric receiver above still does the work: a
-		// reversed argument order makes index_of(9) on [7,8,9] miss.
-		{"arr-index-of", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(9)) { Some(i) => { return i; }, None => { return 99; } } }`, 2},
-		{"arr-index-of-first", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(7)) { Some(i) => { return i; }, None => { return 99; } } }`, 0},
-		{"arr-index-of-missing", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(4)) { Some(i) => { return i; }, None => { return 99; } } }`, 99},
-		{"arr-contains-true", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }`, 1},
-		{"arr-contains-false", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }`, 0},
-		{"i32-pow", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`, 32},
-		{"i32-pow-zero-exp", `function main(): i32 { var n: i32 = 7; return n.pow(0); }`, 1},
-		// gcd / lcm are the only helper pair where one body CALLS the other, so
-		// the lcm cases also pin that $__fern_i32_lcm's inner `call $__fern_i32_gcd`
-		// passes its operands in the same (other, n) order the WAT declares. Both
-		// operations are symmetric, so that is checked by the negative and zero
-		// cases (which are not symmetric in sign) rather than by the values.
-		{"i32-gcd", `function main(): i32 { var n: i32 = 48; return n.gcd(18); }`, 6},
-		{"i32-gcd-negative", `function main(): i32 { var n: i32 = 0 - 48; return n.gcd(18); }`, 6},
-		{"i32-gcd-zero-arg", `function main(): i32 { var n: i32 = 7; return n.gcd(0); }`, 7},
-		{"i32-gcd-both-zero", `function main(): i32 { var n: i32 = 0; return n.gcd(0); }`, 0},
-		{"i32-lcm", `function main(): i32 { var n: i32 = 4; return n.lcm(6); }`, 12},
-		{"i32-lcm-negative", `function main(): i32 { var n: i32 = 0 - 4; return n.lcm(6); }`, 12},
-		{"i32-lcm-zero-arg", `function main(): i32 { var n: i32 = 9; return n.lcm(0); }`, 0},
-		// min/max carry the empty-array guard and build the i32-payload Option box
-		// ([tag@0][payload@4], tag 1 = None) inside the helper, so the empty cases
-		// exercise a branch the non-empty ones never reach.
-		{"arr-min", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }`, 2},
-		{"arr-max", `function main(): i32 { var xs: i32[] = [5, 2, 8]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`, 8},
-		{"arr-min-empty", `function main(): i32 { var xs: i32[] = []; match (xs.min()) { Some(m) => { return m; }, None => { return 99; } } }`, 99},
-		{"arr-max-empty", `function main(): i32 { var xs: i32[] = []; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`, 99},
-		{"arr-max-single", `function main(): i32 { var xs: i32[] = [7]; match (xs.max()) { Some(m) => { return m; }, None => { return 99; } } }`, 7},
-		{"arr-min-negatives", `function main(): i32 { var xs: i32[] = [3, 0 - 5, 1]; match (xs.min()) { Some(m) => { return m + 10; }, None => { return 99; } } }`, 5},
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {

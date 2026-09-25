@@ -1082,9 +1082,6 @@ pub function op_str_repeat(): Op { return op0("str_repeat"); }
 // `str_trim` pops [s] → a fresh string box with leading/trailing ASCII
 // whitespace (space / tab / '\n' / '\r') removed. Leak-only.
 pub function op_str_trim(): Op { return op0("str_trim"); }
-// `str_reverse` pops [s] → a fresh string box with `s`'s bytes in reverse
-// order. Leak-only.
-pub function op_str_reverse(): Op { return op0("str_reverse"); }
 // `str_replace` pops [haystack, old, new] → a fresh string box with every
 // (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
 // empty `old`, or no match, returns `haystack` unchanged. Leak-only.
@@ -2051,7 +2048,7 @@ pub function op_return(): Op { return op0("return"); }
 // as a half-registered op. Retiring one therefore moves the last entry into its
 // slot rather than leaving a gap; the moved op's membership in every id-keyed
 // classifier below has to move with it, or it lands in the wrong emitter.
-pub function kind_count(): i32 { return 193; }
+pub function kind_count(): i32 { return 192; }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
 // an unknown tag). The inverse of kind_name.
@@ -2067,8 +2064,9 @@ pub function kind_count(): i32 { return 193; }
 //
 // tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231), and
 // tcp_send / tcp_recv / tcp_close are 114..116, the slots the string search
-// predicates freed (#9848). The 1..kind_count() sweep requires the id space to
-// stay dense, and moving the last entry into the hole beats renumbering every
+// predicates freed (#9848), and tcp_connect is 110, the slot str_reverse
+// freed. The 1..kind_count() sweep requires the id space to stay dense, and
+// moving the last entry into the hole beats renumbering every
 // id above it.
 //
 // Extension tags beyond kind_count() (struct_copy=198 … buf_free=297): not
@@ -2526,7 +2524,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b'o' && name == "opt_payload") { return 123; }
     if (c == b'r') { return kind_id_len11_r(name); }
     if (c == b's') { return kind_id_len11_s(name); }
-    if (c == b't' && name == "tcp_connect") { return 193; }
+    if (c == b't' && name == "tcp_connect") { return 110; }
     if (c == b't' && name == "termios_get") { return 312; }
     if (c == b't' && name == "termios_set") { return 313; }
     if (c == b'u' && name == "uname_field") { return 250; }
@@ -2546,7 +2544,6 @@ function kind_id_len11_r(name: string): i32 {
 function kind_id_len11_s(name: string): i32 {
     if (name == "store_local") { return 19; }
     if (name == "signal_send") { return 285; }
-    if (name == "str_reverse") { return 110; }
     if (name == "str_replace") { return 111; }
     if (name == "strbuf_take") { return 119; }
     if (name == "struct_make") { return 138; }
@@ -2795,7 +2792,7 @@ function kind_name_2(id: i32): string {
     if (id == 107) { return "str_to_lower"; }
     if (id == 108) { return "str_repeat"; }
     if (id == 109) { return "str_trim"; }
-    if (id == 110) { return "str_reverse"; }
+    if (id == 110) { return "tcp_connect"; }
     if (id == 111) { return "str_replace"; }
     if (id == 112) { return "tcp_pollable"; }
     if (id == 113) { return "str_lines"; }
@@ -2887,7 +2884,6 @@ function kind_name_4(id: i32): string {
     if (id == 190) { return "wasm_pollable_drop"; }
     if (id == 191) { return "wasm_block"; }
     if (id == 192) { return "wasm_poll"; }
-    if (id == 193) { return "tcp_connect"; }
     if (id == 198) { return "struct_copy"; }
     if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
@@ -3099,7 +3095,7 @@ function pops1_mem(t: i32): boolean {
         || t == 90 || t == 91                                            // arr_len, arr_rc
         || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
         || t == 253                                                      // sum_bytes
-        || t == 106 || t == 107 || t == 109 || t == 110                  // str_to_upper/lower, str_trim, str_reverse
+        || t == 106 || t == 107 || t == 109                              // str_to_upper/lower, str_trim
         || t == 113                                                      // str_lines
         || t == 118                                                      // strbuf_append
         || t == 120 || t == 122 || t == 123                              // opt_make, opt_tag, opt_payload
@@ -3173,7 +3169,7 @@ function pops2_io(t: i32): boolean {
         || t == 284                                                      // set_process_group (pid, pgid)
         || t == 311                                                      // fd_dup_onto (fd, newfd)
         || t == 178 || t == 187                                          // read_chunk, poll
-        || t == 193 || t == 114 || t == 115                              // tcp_connect, tcp_send, tcp_recv
+        || t == 110 || t == 114 || t == 115                              // tcp_connect, tcp_send, tcp_recv
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }
@@ -5035,7 +5031,7 @@ pub function op_allocates(tag: i32): boolean {
     // scalar id ops (238 / 239 / 246 / 247) do not — they return a register.
     if (tag == 248 || tag == 249) { return true; }
     if (tag == 106 || tag == 107) { return true; }
-    if (tag == 108 || tag == 109 || tag == 110) { return true; }
+    if (tag == 108 || tag == 109) { return true; }
     if (tag == 111 || tag == 113) { return true; }
     // dyn_box allocates the 16-byte primitive `dyn` cell; dyn_downcast allocates
     // the Some/None Option box (docs/DYN-TRAITS.md §4.2.3, §9).
@@ -5076,7 +5072,7 @@ pub function is_str_op_kind(tag: i32): boolean {
     return tag == 97 || tag == 101 || tag == 102
         || tag == 104 || tag == 105 || tag == 106
         || tag == 107 || tag == 108 || tag == 109
-        || tag == 110 || tag == 111 || tag == 113 || tag == 98
+        || tag == 111 || tag == 113 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
         || tag == 234 || tag == 235 || tag == 245 || tag == 253
         || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329;

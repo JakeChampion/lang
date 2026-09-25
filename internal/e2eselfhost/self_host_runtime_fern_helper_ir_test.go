@@ -9,20 +9,13 @@ import (
 
 // Issue #2649 — IR-path runtime helpers written in Fern.
 //
-// __fern_str_to_i32 is the first runtime helper hosted on the self-hosted IR
-// path as a Fern function (asmcore.rt_src_str_to_i32, lowered through the IR
-// pipeline by asm_ir.emit_ir_runtime_fern_fn) rather than the hand-written
-// stack-arg wrapper that used to live in emit_ir_runtime. It links as the
-// ordinary user-function symbol __fn___fern_str_to_i32, which the IR call site
-// (op_call_direct("__fern_str_to_i32") → ir_helper_symbol) already targets.
-//
-// TestSelfHostAsmIRPath/str2i32-* already prove the IR-compiled helper computes
-// correctly (incl. the roundtrip case, which feeds a freshly-allocated string
-// in — exercising the borrowed-param path with no use-after-free). This test
-// locks in the *migration*: the IR driver's emitted asm must define the
-// Fern-compiled __fn___fern_str_to_i32 and must NOT contain the old hand-asm
-// wrapper's local labels (.Lirs2i_*), so a silent revert to the wrapper fails.
-func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
+// The IR driver compiles each migrated helper from its Fern source
+// (asmcore.rt_src_*, lowered by asm_ir.emit_ir_runtime_fern_fn), so it links as
+// the ordinary user-function symbol __fn___fern_<name>. The behavioural suites
+// prove the helpers compute correctly; this test locks in the *migration*: the
+// emitted asm must define the Fern-compiled symbol and must NOT contain the old
+// hand-asm body's local labels, so a silent revert fails.
+func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
@@ -34,12 +27,6 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 		sym  string   // Fern-compiled symbol the IR asm must define + call
 		gone []string // hand-asm labels of the old IR body/wrapper that must be gone
 	}{
-		{
-			"str_to_i32",
-			`function main(): i32 { return str_to_i32("42"); }`,
-			"__fn___fern_str_to_i32",
-			[]string{".Lirs2i_"},
-		},
 		{
 			"str_cmp",
 			`function main(): i32 { if ("abc" < "abd") { return 1; } return 0; }`,
@@ -130,15 +117,6 @@ func TestSelfHostRuntimeHelperStrToI32IsFernIR(t *testing.T) {
 			`function main(): i32 { return "ab".repeat(3).len(); }`,
 			"__fn___fern_str_repeat",
 			[]string{"\n__fern_str_repeat:", ".Lir_rep_outer"},
-		},
-		{
-			// str_reverse — migrated on the IR path too (#2649). The old hand-written
-			// IR body (__fern_str_reverse: / .Lir_str_rev_loop) must be gone; the
-			// op_str_reverse handler now calls __fn___fern_str_reverse via the stack ABI.
-			"str_reverse",
-			`function main(): i32 { return "abc".reverse()[0] as i32; }`,
-			"__fn___fern_str_reverse",
-			[]string{"\n__fern_str_reverse:", ".Lir_str_rev_loop"},
 		},
 		{
 			// str_replace — migrated on the IR path too (#2649). The old hand-written

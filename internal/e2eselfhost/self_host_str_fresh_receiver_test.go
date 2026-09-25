@@ -54,21 +54,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// reverse allocates its own buffer, same as the case transforms.
-	{"str-fresh-receiver-reverse-released-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function round(pre: string): i32 { var u: string = w(pre).reverse(); return u.len(); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
-    if (a != b) { return 97; }
-    if (b2 - b1 >= 32768) { return 98; }
-    return 0;
-}`, 0},
 	// NEGATIVE: `.trim()` returns a zero-copy VIEW over the receiver's buffer, so
 	// releasing the receiver leaves the result pointing at freed bytes. This is the
 	// case that makes str_borrowing_method essential here rather than merely

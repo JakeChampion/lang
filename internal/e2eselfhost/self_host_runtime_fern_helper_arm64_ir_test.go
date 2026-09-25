@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// Issue #2649 — the arm64 sibling of TestSelfHostRuntimeHelperStrToI32IsFernIR.
+// Issue #2649 — the arm64 sibling of TestSelfHostRuntimeHelpersAreFernIR.
 //
 // The syscall leaves that have reached arm64 as Fern runtime functions:
 // random_bytes over the __syscall3 sub-floor, the fs leaves (read_file /

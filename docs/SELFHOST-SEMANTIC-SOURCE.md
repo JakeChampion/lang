@@ -2167,9 +2167,9 @@ What is left, in order:
    is checked alone and fails on the callee. `__fern_map_find` and
    `__fern_map_delete_rel` call through a bare code address (`eqfn(k,
    key)`), which has no typed spelling yet. `__fern_str_eq` takes either a
-   string or a raw pointer today, and needs one signature. `print_int`,
-   `read_int`, `str_to_i32` and string `.reverse()` are left for #10244,
-   which retires them: native rejects all four.
+   string or a raw pointer today, and needs one signature. `print_int`
+   and `read_int` are left for #10244, which retires them: native rejects
+   both.
 2. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column.
 3. The AST lowering is deleted, along with the differential legs that compare

@@ -98,23 +98,13 @@ pub function provided_names(): string[] {
         "__fern_snapshot_dec",
         // FBIP reuse degrade
         "__fern_alloc_reuse",
-        // stringifiers and the decimal parse
+        // stringifiers
         "__fern_i32_to_string",
         "__fern_u32_to_string",
         "__fern_i64_to_string",
         "__fern_u64_to_string",
-        "__fern_str_to_i32",
         "__fern_chr",
-        // scalar-array and integer helpers
-        "__fern_arr_i32_sum",
-        "__fern_arr_i32_product",
-        "__fern_arr_i32_index_of",
-        "__fern_arr_i32_min_opt",
-        "__fern_arr_i32_max_opt",
-        "__fern_arr_str_join",
-        "__fern_i32_pow",
-        "__fern_i32_gcd",
-        "__fern_i32_lcm"
+        "__fern_arr_str_join"
     ];
 }
 

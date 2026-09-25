@@ -11,16 +11,16 @@ import (
 // already holds the parallel keys[]/values[] arrays at offset 0/8, so
 // these return them directly. The result is an array of the key/value
 // type (array_i32 for i32 keys/values, array_string for strings), so
-// array methods (.sum()/.len()) chain off it. Exit codes cross-checked
-// vs the Go backend.
+// it iterates and `.len()` chains off it. Exit codes cross-checked vs
+// the Go backend.
 var mapKeysValuesCases = []struct {
 	name string
 	src  string
 	exit int
 }{
-	{"keys-sum-literal", "function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; return m.keys().sum(); }", 42},
-	{"keys-sum-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); return m.keys().sum(); }", 42},
-	{"values-sum", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); return m.values().sum(); }", 30},
+	{"keys-sum-literal", "function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"keys-sum-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"values-sum", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); var t: i32 = 0; for x in m.values() { t = t + x; } return t; }", 30},
 	{"keys-len-string", "function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
 }
 

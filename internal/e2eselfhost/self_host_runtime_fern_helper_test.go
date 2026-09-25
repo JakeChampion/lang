@@ -34,68 +34,8 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 		gone []string // hand-asm markers that must NOT appear
 	}{
 		{
-			"i32_pow",
-			"function main(): i32 { var n: i32 = 2; return n.pow(10); }",
-			"__fn___fern_i32_pow",
-			[]string{"\n__fern_i32_pow:", ".Lpow_loop"},
-		},
-		{
-			"i32_gcd",
-			"function main(): i32 { var n: i32 = 12; return n.gcd(18); }",
-			"__fn___fern_i32_gcd",
-			[]string{"\n__fern_i32_gcd:", ".Lgcd_loop"},
-		},
-		{
-			// i32_lcm — pure-scalar helper that calls another (gcd) via
-			// `.gcd()`. Both Fern bodies must be present and the hand-asm gone.
-			"i32_lcm",
-			"function main(): i32 { var n: i32 = 4; return n.lcm(6); }",
-			"__fn___fern_i32_lcm",
-			[]string{"\n__fern_i32_lcm:", ".Llcm_zero"},
-		},
-		{
-			"arr_i32_sum",
-			"function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.sum(); }",
-			"__fn___fern_arr_i32_sum",
-			[]string{"\n__fern_arr_i32_sum:", ".Lai32_sum_loop"},
-		},
-		{
-			"arr_i32_product",
-			"function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.product(); }",
-			"__fn___fern_arr_i32_product",
-			[]string{"\n__fern_arr_i32_product:", ".Lai32_prod_loop"},
-		},
-		{
-			// The RAW sentinel scan, which `xs.contains(x)` reads as `>= 0`.
-			// `xs.index_of(x)` no longer reaches it — that returns Option[i32]
-			// and calls the boxing helper below (#4387) — so `contains` is the
-			// only expression that still pulls this symbol in.
-			"arr_i32_index_of",
-			"function main(): i32 { var xs: i32[] = [5, 6, 7]; if (xs.contains(6)) { return 1; } return 0; }",
-			"__fn___fern_arr_i32_index_of",
-			[]string{"\n__fern_arr_i32_index_of:", ".Lai32_idx_loop"},
-		},
-		{
-			// The Option-boxing scan behind `xs.index_of(x)`, the min/max shape:
-			// the box is built inside the Fern helper, not open-coded at the
-			// call site. Its own migration needs its own case — the raw scan
-			// above is a different symbol and a different program reaches it.
-			"arr_i32_index_of_opt",
-			"function main(): i32 { var xs: i32[] = [5, 6, 7]; match (xs.index_of(6)) { Some(v) => { return v; }, None => { return 0; } } }",
-			"__fn___fern_arr_i32_index_of_opt",
-			[]string{"\n__fern_arr_i32_index_of_opt:", ".Lai32_idx_loop"},
-		},
-		{
 			// AST path; the x86-64 IR path is covered by
-			// TestSelfHostRuntimeHelperStrToI32IsFernIR.
-			"str_to_i32",
-			`function main(): i32 { return str_to_i32("42"); }`,
-			"__fn___fern_str_to_i32",
-			[]string{"\n__fern_str_to_i32:", ".Ls2i_loop"},
-		},
-		{
-			// AST path; the x86-64 IR path is covered by
-			// TestSelfHostRuntimeHelperStrToI32IsFernIR.
+			// TestSelfHostRuntimeHelpersAreFernIR.
 			"str_cmp",
 			`function main(): i32 { if ("abc" < "abd") { return 1; } return 0; }`,
 			"__fn___fern_str_cmp",
@@ -193,16 +133,6 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_str_repeat:", ".Lrep_outer"},
 		},
 		{
-			// str_reverse (s.reverse()) — Tier-2 via the raw-memory intrinsics
-			// (#2649). The old register-ABI hand-asm (a bare __fern_str_reverse:
-			// label + .Lstr_rev_loop) is gone; the call site targets
-			// __fn___fern_str_reverse via the stack ABI.
-			"str_reverse",
-			`function main(): i32 { return "abc".reverse()[0] as i32; }`,
-			"__fn___fern_str_reverse",
-			[]string{"\n__fern_str_reverse:", ".Lstr_rev_loop"},
-		},
-		{
 			// str_replace (s.replace(old, new)) — the last per-byte string builder,
 			// Tier-2 via the raw-memory intrinsics (#2649). The old register-ABI
 			// hand-asm (a bare __fern_str_replace: label + .Lrepl_walk loop) is
@@ -239,23 +169,6 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			`function main(): i32 { var xs: string[] = ["a", "b"]; return xs.join(",").len(); }`,
 			"__fn___fern_arr_str_join",
 			[]string{"\n__fern_arr_str_join:", ".Lasj_loop"},
-		},
-		{
-			// min/max lower on the IR path now (#3457), which calls the
-			// Option-returning helper — the empty-array guard and the Option box
-			// live in the Fern body rather than being open-coded at the call site
-			// as the AST emitter does around the raw-extremum __fern_arr_i32_min.
-			// Same migration contract: Fern-compiled `__fn_` symbol, hand-asm gone.
-			"arr_i32_min",
-			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.min()) { Some(v) => { return v; }, None => { return 0; } } }",
-			"__fn___fern_arr_i32_min_opt",
-			[]string{"\n__fern_arr_i32_min:", ".Lai32_min_loop"},
-		},
-		{
-			"arr_i32_max",
-			"function main(): i32 { var xs: i32[] = [5, 2, 7]; match (xs.max()) { Some(v) => { return v; }, None => { return 0; } } }",
-			"__fn___fern_arr_i32_max_opt",
-			[]string{"\n__fern_arr_i32_max:", ".Lai32_max_loop"},
 		},
 	}
 

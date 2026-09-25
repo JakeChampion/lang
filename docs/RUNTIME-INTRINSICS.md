@@ -2,17 +2,19 @@
 
 This is the **implementation design** for the primitive floor sketched in
 `RUNTIME-IN-FERN.md` (§"The hard part: circularity and the primitive floor").
-The Tier-0/1 helpers — `i32_pow`, `i32_gcd`/`lcm`, the `arr_i32_*` reducers,
-`str_to_i32`, `str_cmp`, `str_eq`,
+The Tier-0/1 helpers — `str_cmp`, `str_eq`,
 `arr_str_join`, `str_trim`, `str_lines`, `str_bytes`
-— are now Fern runtime functions. (`str_chars` was one of them until #7231
+— are now Fern runtime functions. (`i32_pow`, `i32_gcd`/`lcm`, the
+`arr_i32_*` reducers, `str_to_i32` and `str_reverse` were too, until #10244
+removed them: every spelling that reached them was one the checkers reject,
+and with the stdlib import the program calls the stdlib's own method.) (`str_chars` was one of them until #7231
 retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 `arr_str_index_of` was too, until #7596 removed it: its only emitter was the
 `string[]` `index_of` / `contains` lowering intercept that #7451 deleted.)
 
 > **Status update (2026-07): the intrinsics below shipped and the Tier-2
 > migration is complete.** `chr`, `str_concat`, `i32_to_string`,
-> `str_to_upper`/`_lower`, `str_repeat`, `str_reverse`, `str_replace`,
+> `str_to_upper`/`_lower`, `str_repeat`, `str_replace`,
 > `string_from_bytes_unchecked` and `str_split` all lower as Fern functions via these
 > raw-memory intrinsics.
 >
@@ -389,13 +391,13 @@ function __fern_str_concat(a: string, b: string): string {
 ```
 
 `str_to_upper`/`_lower` (case-flip per byte), `str_repeat` (n copies),
-`str_reverse` (reversed copy), `str_replace` (scan + copy with substitution),
+`str_replace` (scan + copy with substitution),
 and `i32_to_string` (digit buffer) are all the same shape: size, alloc, fill,
 box. None needs anything beyond the table above.
 
 ## Lowering, per backend
 
-Recognition mirrors the existing bare-name runtime calls (e.g. `str_to_i32`):
+Recognition mirrors the existing bare-name runtime calls (e.g. `chr`):
 
 - **AST** (`asm.fern` / `asm_arm64.fern`): a new arm in `try_emit_builtin`
   matching the `__raw_*` names, emitting the single instruction inline (no
@@ -430,7 +432,7 @@ deleting the manual bookkeeping in favour of the real call graph + deadcode.
 2. **`str_concat`** — backs `+` on strings; high-traffic, exercises the
    two-source copy loop.
 3. **`i32_to_string`** — the digit-buffer build; backs `(n).to_string()`.
-4. **`str_to_upper` / `_lower`**, **`str_repeat`**, **`str_reverse`**,
+4. **`str_to_upper` / `_lower`**, **`str_repeat`**,
    **`str_replace`** — the remaining per-byte string builders, one slice each
    (or grouped by similarity), following the established four-backend +
    AST/IR-lock-in-test pattern.

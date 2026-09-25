@@ -1396,25 +1396,11 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
-// The two reductions are declared on `i32[]` alone and the join on `string[]`
-// alone, as the AST lowering gates them, so a receiver of any other shape falls
-// through to a declared method of that name.
-function is_i32_array(t: typeinfo.Type): boolean {
-    if let typeinfo.TypeArray(a) = t { return ssasem.is_i32(a.elem); }
-    return false;
-}
-
+// The join is declared on `string[]` alone, as the AST lowering gates it, so a
+// receiver of any other shape falls through to a declared method of that name.
 function is_string_array(t: typeinfo.Type): boolean {
     if let typeinfo.TypeArray(a) = t { return ssasem.is_string(a.elem); }
     return false;
-}
-
-// `xs.sum()` / `xs.product()` read the array and answer a fresh i32, so the
-// receiver is borrowed and nothing is handed over.
-function builtin_reduce(fa: ast.ExprFieldAccess, recv: Value, s: State): Value {
-    var kind: i32 = ssasem.arr_sum();
-    if (fa.field == "product") { kind = ssasem.arr_product(); }
-    return define(s, kind, [recv.id], 0, "", t_i32());
 }
 
 // `xs.join(sep)` reads the array and the separator and answers a fresh string.
@@ -1636,9 +1622,6 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: 
     }
     if (fa.field == "append" && c.args.len() == 1) { return builtin_append(c, recv, s); }
     if (fa.field == "with" && c.args.len() == 2) { return builtin_with(c, recv, s); }
-    if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0 && is_i32_array(s.values[recv.id])) {
-        return builtin_reduce(fa, recv, s);
-    }
     if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv.id])) {
         return builtin_join(c, recv, s);
     }
@@ -4278,19 +4261,19 @@ function builtin_contracts(): ssasem.Contract[] {
 }
 
 // The string methods the AST lowering emits an OP for rather than a call —
-// `is_str_builtin_method`'s eight. Each is keyed by its receiver the way a
+// `is_str_builtin_method`'s seven. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
 // owner method_call already derives. A module that DECLARES one of these wins:
 // contracts() keeps the declaration and drops the builtin, which is the same
 // precedence the AST path gives a user's own definition.
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
-// and the four that answer text hand back a fresh string of the caller's own,
+// and the three that answer text hand back a fresh string of the caller's own,
 // as `split` hands back a fresh array of fresh strings.
 function string_method_contracts(): ssasem.Contract[] {
     var lent: i32[] = [ssaunits.borrow_mode()];
     var two: i32[] = [ssaunits.borrow_mode(), ssaunits.borrow_mode()];
-    var fresh: string[] = ["to_ascii_upper", "to_ascii_lower", "trim", "reverse"];
+    var fresh: string[] = ["to_ascii_upper", "to_ascii_lower", "trim"];
     var out: ssasem.Contract[] = [];
     for n in fresh {
         out = out.append(ssasem.Contract { name: "string." + n, params: [t_string()], modes: lent, result: t_string() });

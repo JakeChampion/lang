@@ -231,14 +231,14 @@ function (n: i32) doubled(): i32 { return n * 2; }
 function via_arrm(a: i32[]): i32 { return a.second_or(0); }
 function via_smm(h: Holder[string]): i32 { return h.tagged(true); }
 function via_prim(k: i32): i32 { return k.doubled(); }
-// The twelve string methods the AST lowering emits an OP for rather than a
-// call. The receiver is lent to every one; the four that answer text and the
+// The eleven string methods the AST lowering emits an OP for rather than a
+// call. The receiver is lent to every one; the three that answer text and the
 // two that answer an array hand back a fresh box of the caller's own, and the
 // predicates answer a scalar the string goes on owning. contains has no op
 // of its own on any backend and is index_of at or past zero, as the AST path
 // spells it.
 function trimmed(s: string): string { return s.trim(); }
-function shouted(s: string): i32 { return s.to_ascii_upper().len() + s.to_ascii_lower().len() + s.reverse().len(); }
+function shouted(s: string): i32 { return s.to_ascii_upper().len() + s.to_ascii_lower().len(); }
 function split_up(s: string, sep: string): i32 { return s.split(sep).len() + s.lines().len(); }
 function scanned_text(s: string, p: string): i32 {
     return s.repeat(2).len() + s.replace(p, "x").len();

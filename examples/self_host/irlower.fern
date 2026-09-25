@@ -3644,7 +3644,7 @@ pub function opt_recv_base_type(e: ast.Expr, s: LowerState): string {
                         // helper-backed, so its return type comes from the registry
                         // rather than the module's own funcs.
                         var aok: boolean = false;
-                        t = builtin_arr_opt_ret_type(cfa.field, cfa.obj, s);
+                        t = arr_method_opt_ret_type(cfa.field, cfa.obj, s);
                         if (t != "") { aok = true; }
                         // Associated call `Type.method()` returning Option/Result
                         // — the object is a bare TYPE name (not a slot), so key
@@ -7759,23 +7759,6 @@ pub function expr_is_arr_src(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// arr_i32_recv reports whether `e` is a receiver the i32-element array helpers
-// (__fern_arr_i32_sum / _product / _index_of / _min_opt / _max_opt) accept: any
-// 4-byte-element array, either an owned array SOURCE or a borrowed array struct
-// FIELD read (`h.xs` where xs: i32[]/boolean[]/u32[]/u8[] — each stores its
-// element in a full 32-bit slot). The helpers take the array borrowed and return
-// a scalar, so the field read needs no rc traffic; expr_is_arr_src stays narrow
-// (it means a fresh/owned array and drives rc decisions).
-//
-// One predicate rather than the guard restated per builtin: the result-type
-// classifier (builtin_arr_opt_ret_type) has to agree with the lowering exactly,
-// or `match (h.xs.min())` reports no payload type while the call it describes is
-// emitted anyway.
-function arr_i32_recv(e: ast.Expr, s: LowerState): boolean {
-    if (expr_is_strarr(e, s) || expr_is_f64arr(e, s) || expr_is_i64arr(e, s)) { return false; }
-    return expr_is_arr_src(e, s) || scalar_arr_field_type(e, s) != "";
-}
-
 pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprString(_) => { return true; },
@@ -7903,7 +7886,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // `s.to_upper()` / `s.to_lower()` on a string receiver yield a
                     // fresh string (op_str_to_upper / _to_lower), so the result
                     // feeds `.len()` / concat as a string.
-                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "trim" || cfa.field == "reverse") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
+                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "trim") && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `s.repeat(n)` on a string receiver yields a fresh string.
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "replace" && c.args.len() == 2 && expr_is_str(cfa.obj, s)) { return true; }
@@ -8119,7 +8102,7 @@ pub function str_producer_ownership(e: ast.Expr, s: LowerState): i32 {
                         if (expr_is_str(cfa.obj, s)) { return 0; }
                         return 1;
                     }
-                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower" || cfa.field == "reverse")
+                    if ((cfa.field == "to_ascii_upper" || cfa.field == "to_ascii_lower")
                             && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return 0; }
                     if (cfa.field == "repeat" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return 0; }
                     return 1;
@@ -8378,8 +8361,7 @@ function is_fresh_str_temp(e: ast.Expr, s: LowerState): boolean {
 // returns the receiver unchanged when the needle is absent, so it stays out —
 // and `lines` / `split` return arrays, not strings.
 function str_fresh_alloc_method(field: string): boolean {
-    return field == "to_ascii_upper" || field == "to_ascii_lower"
-        || field == "reverse" || field == "repeat";
+    return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "repeat";
 }
 
 // tostring_recv_is_scalar: the receiver of a `.to_string()` is provably a
@@ -11190,7 +11172,7 @@ pub function str_free_call_field(name: string): string {
 // dispatching to lower_str_method.
 pub function is_str_builtin_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim"
-        || field == "reverse" || field == "repeat" || field == "replace"
+        || field == "repeat" || field == "replace"
         || field == "lines"
         || field == "split";
 }
@@ -11198,7 +11180,7 @@ pub function is_str_builtin_method(field: string): boolean {
 // str_method_argc gives the argument count of a string builtin method: the case
 // transforms are 0-arg; everything else is 1-arg.
 pub function str_method_argc(field: string): i32 {
-    if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "reverse" || field == "lines") { return 0; }
+    if (field == "to_ascii_upper" || field == "to_ascii_lower" || field == "trim" || field == "lines") { return 0; }
     if (field == "replace") { return 2; }
     return 1;
 }
@@ -11256,7 +11238,6 @@ pub function lower_str_method(field: string, recv: ast.Expr, args: ast.Expr[], s
     if (field == "to_ascii_upper") { return free_stashed_recv(p.emit(ir.op_str_to_upper()), rslots, rview); }
     if (field == "to_ascii_lower") { return free_stashed_recv(p.emit(ir.op_str_to_lower()), rslots, rview); }
     if (field == "trim") { return free_stashed_recv(p.emit(ir.op_str_trim()), rslots, rview); }
-    if (field == "reverse") { return free_stashed_recv(p.emit(ir.op_str_reverse()), rslots, rview); }
     if (field == "lines") { return p.emit(ir.op_str_lines()); }
     p = lower_expr(args[0], p);
     if (!p.ok) { return p; }
@@ -12693,16 +12674,6 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         var i2s: LowerState = lower_expr(c.args[0], s);
         if (!i2s.ok) { return i2s; }
         return i2s.emit(ir.op_call_direct("__fern_i32_to_string", 1));
-    }
-    // Built-in `str_to_i32(s)` — parse a string box into an i32
-    // (optional leading '-', decimal digits, stops at the first
-    // non-digit; empty → 0). Routes to the __fern_str_to_i32 runtime;
-    // the result is an i32 (no str-tracking). Allocation-free. The
-    // self-host source uses this form (parsing numeric arguments).
-    if (cid.name == "str_to_i32" && c.args.len() == 1) {
-        var s2i: LowerState = lower_expr(c.args[0], s);
-        if (!s2i.ok) { return s2i; }
-        return s2i.emit(ir.op_call_direct("__fern_str_to_i32", 1));
     }
     // Built-in `chr(n)` — an i32 byte value to a fresh 1-char
     // string box. Routes to the __fern_chr runtime (allocates).
@@ -15141,69 +15112,6 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         },
         _ => {}
     }
-    // xs.sum() / xs.product() on an i32[] — receiver-only builtins
-    // backed by Fern helpers (asmcore.fern's __fern_arr_i32_sum /
-    // _product). Receiver-only is the shape that already works through
-    // op_call_direct (cf. __fern_i32_to_string); the argument-taking
-    // builtins use dedicated ops instead. Also needs the helper in
-    // ircore.is_fern_helper (else calls_only_known bails the module to
-    // AST) and the symbol in emit_runtime_globls (else a library unit
-    // dangles at the per-module link).
-    //
-    // The receiver guard mirrors the `.len()` dispatch just below:
-    // an array source that is NOT string[] / f64[] / i64[]. Those
-    // exclusions are essential — the helper reads 8-byte i32 slots,
-    // so admitting an f64[] would sum float bit patterns as integers.
-    // xs.index_of(x) / xs.contains(x) on an i32[] — helper-backed like
-    // sum/product, but with an ARGUMENT, so the operand order rule from
-    // #5666 applies: the callee binds params in reverse push order, so
-    // the target is pushed first and the array (param[0]) second.
-    // asm.fern's own comment at this intercept says the same — "push
-    // args right-to-left (target then array) so the array is param[0]".
-    // `contains` reads the raw scan as `>= 0`; `index_of` returns Option[i32]
-    // and so calls the Option-boxing helper instead of the sentinel one — the
-    // min/max shape, with the box built inside the Fern helper rather than
-    // hand-emitted here. Same receiver guard as below.
-    if ((fa.field == "index_of" || fa.field == "contains") && c.args.len() == 1
-        && arr_i32_recv(fa.obj, s)) {
-        var pidx: LowerState = lower_expr(c.args[0], s);
-        if (!pidx.ok) { return pidx; }
-        pidx = lower_expr(fa.obj, pidx);
-        if (!pidx.ok) { return pidx; }
-        if (fa.field == "index_of") {
-            return pidx.emit(ir.op_call_direct("__fern_arr_i32_index_of_opt", 2));
-        }
-        pidx = pidx.emit(ir.op_call_direct("__fern_arr_i32_index_of", 2));
-        pidx = pidx.emit(ir.op_const_i32(0));
-        return pidx.emit(ir.op_bin("ge_s", 0, false));
-    }
-    if ((fa.field == "sum" || fa.field == "product") && c.args.len() == 0
-        && arr_i32_recv(fa.obj, s)) {
-        var parr: LowerState = lower_expr(fa.obj, s);
-        if (!parr.ok) { return parr; }
-        if (fa.field == "sum") { return parr.emit(ir.op_call_direct("__fern_arr_i32_sum", 1)); }
-        return parr.emit(ir.op_call_direct("__fern_arr_i32_product", 1));
-    }
-    // xs.min() / xs.max() on an i32[] — receiver-only like
-    // sum/product, but the first helper-backed builtin with a
-    // COMPOSITE return: Option[i32], Some(extremum) on a non-empty
-    // array and None on an empty one. The AST emitter open-coded the
-    // `len == 0` branch and both 16-byte boxes around a raw-extremum
-    // helper; here the guard and the box live INSIDE the Fern helper
-    // (asmcore.rt_src_arr_i32_min_max_opt), so the call site is an
-    // unconditional call and no Option construction is hand-emitted
-    // as IR ops. The composite return needs one thing the scalar
-    // helpers did not: the helper is not in the module's funcs, so
-    // opt_ret_fns_of cannot see its return type and `match (xs.min())`
-    // would bail — builtin_arr_opt_ret_type is what the scrutinee
-    // resolvers consult instead. Same receiver guard as sum/product.
-    if ((fa.field == "min" || fa.field == "max") && c.args.len() == 0
-        && arr_i32_recv(fa.obj, s)) {
-        var pmm: LowerState = lower_expr(fa.obj, s);
-        if (!pmm.ok) { return pmm; }
-        if (fa.field == "min") { return pmm.emit(ir.op_call_direct("__fern_arr_i32_min_opt", 1)); }
-        return pmm.emit(ir.op_call_direct("__fern_arr_i32_max_opt", 1));
-    }
     // xs.first() / xs.last() — O(1) element reads the AST emitter
     // open-coded as raw loads off the array header. Lowered as the
     // equivalent INDEX read, so the element width, the bounds check
@@ -15511,47 +15419,6 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             args: [fa.obj], line: c.line, col: c.col, type_argc: 0, ty: "",
         };
         return lower_expr(tas, s);
-    }
-    // n.pow(k) — helper-backed like xs.sum() (#5664), but with a
-    // scalar receiver and ONE argument, so it sits outside the zero-arg
-    // block below. Same five-part requirement: lowering + is_fern_helper
-    // + need mapping + emit_ir_runtime_fern_fn gate + globls export.
-    // (An earlier hypothesis that arg-taking builtins need a dedicated
-    // IR op was wrong — the missing piece was the need, not the op.)
-    if (fa.field == "pow" && c.args.len() == 1 && expr_recv_prim_type(fa.obj, s) == "i32") {
-        // Argument order: the callee binds params in REVERSE push
-        // order, so the exponent is pushed first and the receiver
-        // (base) second. Pushing receiver-then-arg gives pow(exp,
-        // base) — which the symmetric cases (3.pow(3)) hide, so the
-        // tests below use asymmetric ones.
-        var ppow: LowerState = lower_expr(c.args[0], s);
-        if (!ppow.ok) { return ppow; }
-        ppow = lower_expr(fa.obj, ppow);
-        if (!ppow.ok) { return ppow; }
-        return ppow.emit(ir.op_call_direct("__fern_i32_pow", 2));
-    }
-    // n.gcd(m) / n.lcm(m) — the same helper-backed shape as pow,
-    // and the same argument order (arg pushed first, receiver
-    // second). Both are symmetric in their operands, so an order
-    // slip would not show in a test; the pattern is copied from
-    // pow rather than re-derived.
-    //
-    // Until this existed, `.gcd()` / `.lcm()` bailed the whole
-    // module — but worse, the arm64 per-module
-    // UNIT path emits __fern_i32_lcm unconditionally (i32_lcm is in
-    // ircore.all_runtime_need_roots) and its body calls `.gcd()`,
-    // so the generic primitive-receiver dispatch below lowered it as
-    // a USER method to `i32.gcd` → an undefined `__fn_i32__gcd`.
-    // That dangling reference is what blocked the arm64 over-budget
-    // per-module rescue (#5940, #3457 slice 5).
-    if ((fa.field == "gcd" || fa.field == "lcm") && c.args.len() == 1
-            && expr_recv_prim_type(fa.obj, s) == "i32") {
-        var pgl: LowerState = lower_expr(c.args[0], s);
-        if (!pgl.ok) { return pgl; }
-        pgl = lower_expr(fa.obj, pgl);
-        if (!pgl.ok) { return pgl; }
-        if (fa.field == "gcd") { return pgl.emit(ir.op_call_direct("__fern_i32_gcd", 2)); }
-        return pgl.emit(ir.op_call_direct("__fern_i32_lcm", 2));
     }
     // n.min(m) / n.max(m) — branchless (emit_i32_minmax_slots),
     // so no runtime helper. Store receiver + arg in temps (each
@@ -18129,32 +17996,9 @@ function owned_payload_free_helper(ptype: string): string {
     return "__fern_rc_dec";
 }
 
-// builtin_arr_opt_ret_type returns the Option type of a built-in array method
-// whose result is an Option — `xs.min()` / `xs.max()` / `xs.index_of(x)` on an
-// i32 array, which lower to the Option-returning Fern helpers
-// __fern_arr_i32_min_opt / _max_opt (#3457) / _index_of_opt (#4387). Those helpers are RUNTIME functions, not module functions,
-// so opt_ret_fns_of never sees their signature and every scrutinee-type resolver
-// (`match (xs.min())`, `xs.min()?`, `var o = xs.min()`) would fail to recover
-// Option[i32] and bail the module. This is the composite-
-// return analogue of is_fern_helper: the registry for a helper's shape that the
-// module-derived side-tables cannot supply. It shares the lowering's receiver
-// predicate (arr_i32_recv) so the type reported here cannot drift from the call
-// that is actually emitted.
-function builtin_arr_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): string {
-    if ((field == "min" || field == "max" || field == "index_of") && arr_i32_recv(obj, s)) {
-        return "Option[i32]";
-    }
-    return arr_method_opt_ret_type(field, obj, s);
-}
-
-// arr_method_opt_ret_type recovers the Option/Result type of a USER array-method
-// call (`xs.gcd_all()` → std/array's `__method_Array_gcd_all(arr): Option[i32]`).
-// The call lowers through the find_arr_method dispatch, but the scrutinee-type
-// resolvers only knew the BUILTIN array methods above, so an INLINE
-// `match (xs.gcd_all())` had no payload type and bailed the module — while
-// binding it first (`var o: Option[i32] = xs.gcd_all(); match (o)`) lowered,
-// the by-now-familiar sign that the gap is a missing result-type recovery
-// rather than missing lowering.
+// arr_method_opt_ret_type recovers the Option/Result type of an array-method
+// call (`xs.gcd_all()` → std/array's `__method_Array_gcd_all(arr): Option[i32]`),
+// which the scrutinee-type resolvers need for an inline `match (xs.gcd_all())`.
 //
 // Keyed off the resolved helper NAME so it works for any array method the module
 // actually has, and array-receiver-gated so a same-named struct method keeps its
@@ -18252,7 +18096,7 @@ function try_opt_type(inner: ast.Expr, s: LowerState): string {
                     // A built-in array method returning Option (`xs.min()?`) —
                     // helper-backed, so its type comes from the registry rather
                     // than the module's own funcs.
-                    var bmt: string = builtin_arr_opt_ret_type(scfa.field, scfa.obj, s);
+                    var bmt: string = arr_method_opt_ret_type(scfa.field, scfa.obj, s);
                     if (bmt != "") { return bmt; }
                     // A built-in Reader/Writer resource method (read_line /
                     // read_chunk / write / close) — gated like lower_expr's
@@ -23978,7 +23822,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // A built-in array method returning Option (`var o = xs.min()`)
                     // — helper-backed, so its return type comes from the registry
                     // rather than the module's own funcs.
-                    opt_ty = builtin_arr_opt_ret_type(ifa.field, ifa.obj, se);
+                    opt_ty = arr_method_opt_ret_type(ifa.field, ifa.obj, se);
                     // A built-in Reader/Writer resource method (`var e = w.write(s)`)
                     // — also helper-backed, so the same registry answers, under
                     // lower_call_method's bare-fd receiver gate.
@@ -26017,7 +25861,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                                         // (`match (xs.min())`) — helper-backed, so its
                                         // return type comes from the registry, not the
                                         // module's funcs.
-                                        srt = builtin_arr_opt_ret_type(scfa.field, scfa.obj, ms);
+                                        srt = arr_method_opt_ret_type(scfa.field, scfa.obj, ms);
                                         // Associated call `Type.method()` returning
                                         // Option/Result — the object is a bare TYPE
                                         // name (not a slot), so key opt_ret_type by
@@ -30464,7 +30308,7 @@ function emit_struct_tuple_field_drops(se: LowerState, slot: i32, sty: string): 
 // both can return a VIEW of the receiver, which is a lasting alias.
 function str_borrowing_method(field: string): boolean {
     return field == "len" || field == "to_ascii_upper" || field == "to_ascii_lower"
-        || field == "reverse" || field == "repeat";
+        || field == "repeat";
 }
 
 // str_method_recv_borrows extends str_borrowing_method's carve-out from the

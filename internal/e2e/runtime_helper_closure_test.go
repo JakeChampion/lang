@@ -41,16 +41,14 @@ import (
 // new `.need("x")` root added there should be added here so its helper's
 // dependency closure is link-checked.
 var allRuntimeNeedRoots = []string{
-	"alloc_u8", "args", "arr_i32_index_of", "arr_i32_index_of_opt", "arr_i32_min_max",
-	"arr_i32_min_max_opt",
-	"arr_i32_product", "arr_i32_sum", "arr_push", "arr_push_owned", "arr_slice",
-	"arr_str_join", "chr", "eprint", "heap", "i32_pow",
+	"alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
+	"arr_str_join", "chr", "eprint", "heap",
 	"i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
 	"print_int", "putchar", "random_bytes", "random_i32", "read_file",
 	"read_file_bytes", "read_int", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
-	"str_read_line", "str_repeat", "str_replace", "str_reverse",
-	"str_split", "str_to_i32", "str_trim", "strbuf",
+	"str_read_line", "str_repeat", "str_replace",
+	"str_split", "str_trim", "strbuf",
 }
 
 // assertAsmLinks writes asm to <dir>/<name>.s and links it as a static,
