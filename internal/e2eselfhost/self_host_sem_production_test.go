@@ -722,6 +722,28 @@ function main(): i32 {
     return p.0 + p.1 + q - 18;
 }
 `},
+	// The inferred tuple key matched inline only, so the scrutinee's recovery
+	// is the one that records the instance.
+	{name: "generic-enum-tuple-key-matched-inline-only", atLeast: 1, noLeak: true, src: `
+enum Opt[T] { Sm(T), Nn }
+function main(): i32 { var q: i32 = 0; match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } } return q - 11; }
+`},
+	// The type parameter bound from a later field, with a tuple first: the key
+	// and its spelling must both come from the field that binds T, not from
+	// the first argument.
+	{name: "generic-enum-bound-from-a-later-field", atLeast: 1, noLeak: true, src: `
+enum Opt[T] { Sm((i32, i32), T), Nn }
+function main(): i32 { var o = Sm((1, 2), 3); var q: i32 = 0; match (o) { Sm(_, t) => { q = t; }, Nn => { q = 0; } } return q - 3; }
+`},
+	{name: "generic-enum-bound-from-a-later-field-matched-inline", atLeast: 1, noLeak: true, src: `
+enum Opt[T] { Sm((i32, i32), T), Nn }
+function main(): i32 { var q: i32 = 0; match (Sm((1, 2), 3)) { Sm(p, t) => { q = t + p.0; }, Nn => { q = 0; } } return q - 4; }
+`},
+	{name: "generic-enum-bound-from-a-later-field-after-a-function", atLeast: 3, noLeak: true, src: `
+enum Opt[T] { Sm((i32) => i32, T), Nn }
+function inc(x: i32): i32 { return x + 1; }
+function main(): i32 { var o = Sm(inc, 3); var q: i32 = 0; match (o) { Sm(f, t) => { q = f(t); }, Nn => { q = 0; } } return q - 4; }
+`},
 	// A tuple key holding an array and a nested tuple with a string: the clone
 	// is `Opt__tup_i32_arr_tup_i32_string`, and its payload's counted parts are
 	// released through the clone's drop.

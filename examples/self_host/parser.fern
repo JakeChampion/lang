@@ -12947,9 +12947,10 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
 }
 
 // keyed_by_mangle: a spelling whose key is a mangled token rather than the
-// spelling itself, so a clone's field types must read the spelling back.
+// spelling itself (a fn type or a tuple), so a clone's field types must read
+// the spelling back.
 function keyed_by_mangle(t: string): boolean {
-    return pk_is_fn_spelling(t) || (t.len() > 0 && t[0] == b'(');
+    return t.len() > 0 && t[0] == b'(';
 }
 
 // ge_tuple_mangle names a tuple type argument as native's mangleArg does:
@@ -13034,16 +13035,8 @@ function variant_struct_index(structs: StructDecl[], vname: string, owner: strin
 function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], expected: string, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string {
     var fromAnno: string = genum_key_from_anno(expected, ed.name, enums);
     if (fromAnno.len() > 0) { return fromAnno; }
-    var vidx: i32 = variant_struct_index(structs, vname, ed.name);
-    if (vidx < 0) { return ""; }
-    var fields: StructFieldDecl[] = structs[vidx].fields;
-    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
-    var fi: i32 = 0;
-    while (fi < fields.len() && fi < args.len()) {
-        var at: string = mono_infer(args[fi], env, funcs);
-        if (at.len() > 0) { binds = bind_unify(fields[fi].type_name, at, ed.type_params, binds); }
-        fi = fi + 1;
-    }
+    if (variant_struct_index(structs, vname, ed.name) < 0) { return ""; }
+    var binds: MEnv = me_variant_binds(ed, vname, args, env, structs, funcs);
     var key: string = "";
     var j: i32 = 0;
     while (j < ed.type_params.len()) {
@@ -13057,12 +13050,35 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
     // binding carrying the full spelling): sanitise to the same symbol-safe
     // token ge_targ_mangle produces for the annotated path, so the inferred
     // and annotated spellings of one instantiation share a clone (#5298
-    // follow-up). The caller recovers the raw spelling for iargs by re-running
-    // mono_infer on the payload arg.
+    // follow-up). The caller recovers the raw spelling for iargs from
+    // me_variant_bound.
     if (ed.type_params.len() == 1 && pk_is_fn_spelling(key)) { return fn_key_sanitize(key); }
     if (ed.type_params.len() == 1 && key[0] == b'(') { return ge_tuple_mangle(key); }
     if (!is_simple_key(key)) { return ""; }
     return key;
+}
+
+// The enum's type parameters bound by unifying each payload arg's inferred
+// type against the variant's declared field type.
+function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): MEnv {
+    var binds: MEnv = MEnv { mnames: [], mtypes: [] };
+    var vidx: i32 = variant_struct_index(structs, vname, ed.name);
+    if (vidx < 0) { return binds; }
+    var fields: StructFieldDecl[] = structs[vidx].fields;
+    var fi: i32 = 0;
+    while (fi < fields.len() && fi < args.len()) {
+        var at: string = mono_infer(args[fi], env, funcs);
+        if (at.len() > 0) { binds = bind_unify(fields[fi].type_name, at, ed.type_params, binds); }
+        fi = fi + 1;
+    }
+    return binds;
+}
+
+// The spelling a single-param enum's inferred construction binds its type
+// parameter to, from whichever field names it; "" for any other enum.
+function me_variant_bound(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): string {
+    if (ed.type_params.len() != 1) { return ""; }
+    return me_variant_binds(ed, vname, args, env, structs, funcs).elook(ed.type_params[0]);
 }
 
 // me_variant_field_expectations: the expected type of each payload arg of a
@@ -13166,9 +13182,9 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
                     // full spelling; else the key IS the arg spelling (a
                     // nominal key).
                     carg = genum_single_arg(expected);
-                    if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
-                        var raw0: string = mono_infer(c.args[0], env, funcs);
-                        if (keyed_by_mangle(raw0)) { carg = raw0; }
+                    if (carg.len() == 0) {
+                        var bound: string = me_variant_bound(enums[owner], vname, c.args, env, structs, funcs);
+                        if (keyed_by_mangle(bound)) { carg = bound; }
                     }
                     if (carg.len() == 0) { carg = key; }
                     fexps = me_variant_field_expectations(enums[owner], vname, expected, key, carg, structs);
@@ -13442,10 +13458,8 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
                         var vgk: string = me_infer_variant_key(enums[vgo], cid.name, c.args, "", env, enums, structs, funcs);
                         if (vgk.len() > 0) {
                             var vga: string = vgk;
-                            if (enums[vgo].type_params.len() == 1 && c.args.len() > 0) {
-                                var vgr: string = mono_infer(c.args[0], env, funcs);
-                                if (keyed_by_mangle(vgr)) { vga = vgr; }
-                            }
+                            var vgr: string = me_variant_bound(enums[vgo], cid.name, c.args, env, structs, funcs);
+                            if (keyed_by_mangle(vgr)) { vga = vgr; }
                             return enums[vgo].name + "[" + vga + "]";
                         }
                     }
