@@ -56,12 +56,19 @@ function main(): i32 {
 // contents too, which is its own change.
 func buildPlaygroundDriver(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "playground_run.fern")
 	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
 	}
+	return buildPlaygroundDriverWith(t, stdlib)
+}
+
+// buildPlaygroundDriverWith is buildPlaygroundDriver carrying `stdlib` as its
+// embedded bundle.
+func buildPlaygroundDriverWith(t *testing.T, stdlib string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "playground_run.fern")
 	bin := filepath.Join(dir, "playground_run")
 	// No stdlib root argument: the native CLI serves `std/…` from go:embed, so
 	// the driver's own `import "std/io"` resolves without one. The -embed
@@ -374,5 +381,29 @@ func assertWatRuns(t *testing.T, wat string, want int) {
 	out, _ := cmd.CombinedOutput()
 	if got := cmd.ProcessState.ExitCode(); got != want {
 		t.Errorf("compiled program exited %d, want %d\n%s", got, want, out)
+	}
+}
+
+// A diagnostic raised in an embedded stdlib module names it, as the CLI's does
+// (#9523): the bundle here holds one module with a type error.
+func TestSelfHostPlaygroundDiagnosticNamesItsFile(t *testing.T) {
+	_, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("playground driver runs natively; skipping under an exec runner")
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "std"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "std", "bad.fern"), []byte("pub function bad(): i32 {\n    return \"x\";\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildPlaygroundDriverWith(t, root)
+	_, stderr, code := runPlayground(t, bin, t.TempDir(), "import \"std/bad\";\nfunction main(): i32 { return bad.bad(); }\n", "-check")
+	if code == 0 {
+		t.Fatalf("-check accepted a program whose import does not type-check:\n%s", stderr)
+	}
+	if want := "stdlib://std/bad.fern:2:5: error[E002]"; !strings.Contains(stderr, want) {
+		t.Errorf("-check did not name the module: want %q in\n%s", want, stderr)
 	}
 }

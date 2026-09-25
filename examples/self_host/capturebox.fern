@@ -53,7 +53,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
             for el in t.elements { ne = ne.append(box_rewrite_expr(el, boxed, btypes, bsites, bound)); }
             return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        ast.ExprIndex(x) => { return ast.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes, bsites, bound), index: box_rewrite_expr(x.index, boxed, btypes, bsites, bound), unchecked: x.unchecked, ty: x.ty }; },
+        ast.ExprIndex(x) => { return ast.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes, bsites, bound), index: box_rewrite_expr(x.index, boxed, btypes, bsites, bound), unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col }; },
         ast.ExprSlice(sl) => { return ast.ExprSlice { ...sl, array: box_rewrite_expr(sl.array, boxed, btypes, bsites, bound), start: box_rewrite_expr(sl.start, boxed, btypes, bsites, bound), end: box_rewrite_expr(sl.end, boxed, btypes, bsites, bound) }; },
         ast.ExprStructLit(sl) => {
             var nv: ast.Expr[] = [];

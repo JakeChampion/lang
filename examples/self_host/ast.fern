@@ -129,7 +129,7 @@ pub struct ExprTuple { elements: Expr[], line: i32, col: i32 }
 // asm_ir_run harness and the native compiler never run annotate) or when the
 // checker could not resolve it, in which case irlower's structural walk
 // answers unchanged.
-pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string }
+pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string, line: i32, col: i32 }
 
 // Postfix slicing `a[start:end]`. Returns a subview of the same
 // kind as `a` (subarray for TypeArray, substring for
@@ -153,7 +153,7 @@ pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string 
 // `open_start` is the mirror for `a[:hi]` / `a[:]`: `start` holds a real
 // literal 0, so every consumer but the printer can ignore the flag, and
 // the printer needs it to write back the bound the source omitted.
-pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean, open_start: boolean }
+pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean, open_start: boolean, line: i32, col: i32 }
 
 // Struct literal `Name { field: value, field: value }`. The
 // type_name is the struct's declared name; field_names and
@@ -253,8 +253,8 @@ pub function expr_line(e: Expr): i32 {
         ExprCall(c) => { return c.line; },
         ExprArray(al) => { return al.line; },
         ExprTuple(tl) => { return tl.line; },
-        ExprIndex(ix) => { return 0; },
-        ExprSlice(sl) => { return 0; },
+        ExprIndex(ix) => { return ix.line; },
+        ExprSlice(sl) => { return sl.line; },
         ExprStructLit(st) => { return st.line; },
         ExprFieldAccess(fa) => { return fa.line; },
         ExprLambda(lm) => { return lm.line; },
@@ -304,8 +304,8 @@ pub function expr_col(e: Expr): i32 {
         ExprCall(c) => { return c.col; },
         ExprArray(al) => { return al.col; },
         ExprTuple(tl) => { return tl.col; },
-        ExprIndex(ix) => { return 0; },
-        ExprSlice(sl) => { return 0; },
+        ExprIndex(ix) => { return ix.col; },
+        ExprSlice(sl) => { return sl.col; },
         ExprStructLit(st) => { return st.col; },
         ExprFieldAccess(fa) => { return fa.col; },
         ExprLambda(lm) => { return lm.col; },

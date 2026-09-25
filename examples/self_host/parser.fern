@@ -454,25 +454,25 @@ function e_array(elements: ast.Expr[]): ast.Expr { return ast.ExprArray { elemen
 function e_array_at(elements: ast.Expr[], line: i32, col: i32): ast.Expr { return ast.ExprArray { elements: elements, elem_ty: "", line: line, col: col }; }
 function e_tuple(elements: ast.Expr[]): ast.Expr { return ast.ExprTuple { elements: elements, line: 0, col: 0 }; }
 function e_tuple_at(elements: ast.Expr[], line: i32, col: i32): ast.Expr { return ast.ExprTuple { elements: elements, line: line, col: col }; }
-function e_index(array: ast.Expr, index: ast.Expr): ast.Expr { return ast.ExprIndex { array: array, index: index, unchecked: false, ty: "" }; }
-function e_slice(array: ast.Expr, start: ast.Expr, end: ast.Expr): ast.Expr {
-    return ast.ExprSlice { array: array, start: start, end: end, ty: "", open_end: false, open_start: false };
+function e_index(array: ast.Expr, index: ast.Expr, line: i32, col: i32): ast.Expr { return ast.ExprIndex { array: array, index: index, unchecked: false, ty: "", line: line, col: col }; }
+function e_slice(array: ast.Expr, start: ast.Expr, end: ast.Expr, line: i32, col: i32): ast.Expr {
+    return ast.ExprSlice { array: array, start: start, end: end, ty: "", open_end: false, open_start: false, line: line, col: col };
 }
 // e_slice_open builds `array[start:]` — no upper bound written, so `end`
 // is an unevaluated placeholder and every consumer reads the receiver's
 // length instead.
-function e_slice_open(array: ast.Expr, start: ast.Expr): ast.Expr {
-    return ast.ExprSlice { array: array, start: start, end: e_number("0", "", false), ty: "", open_end: true, open_start: false };
+function e_slice_open(array: ast.Expr, start: ast.Expr, line: i32, col: i32): ast.Expr {
+    return ast.ExprSlice { array: array, start: start, end: e_number("0", "", false), ty: "", open_end: true, open_start: false, line: line, col: col };
 }
 // e_slice_from_start builds `array[:end]`. The omitted low bound is a real
 // literal 0, so only the printer needs `open_start` — to write back the
 // bound the source left out instead of the zero standing in for it.
-function e_slice_from_start(array: ast.Expr, end: ast.Expr): ast.Expr {
-    return ast.ExprSlice { array: array, start: e_number("0", "", false), end: end, ty: "", open_end: false, open_start: true };
+function e_slice_from_start(array: ast.Expr, end: ast.Expr, line: i32, col: i32): ast.Expr {
+    return ast.ExprSlice { array: array, start: e_number("0", "", false), end: end, ty: "", open_end: false, open_start: true, line: line, col: col };
 }
 // e_slice_all builds `array[:]` — neither bound written.
-function e_slice_all(array: ast.Expr): ast.Expr {
-    return ast.ExprSlice { array: array, start: e_number("0", "", false), end: e_number("0", "", false), ty: "", open_end: true, open_start: true };
+function e_slice_all(array: ast.Expr, line: i32, col: i32): ast.Expr {
+    return ast.ExprSlice { array: array, start: e_number("0", "", false), end: e_number("0", "", false), ty: "", open_end: true, open_start: true, line: line, col: col };
 }
 function e_struct_lit(type_name: string, field_names: string[], field_values: ast.Expr[], line: i32, col: i32): ast.Expr {
     return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col };
@@ -2135,6 +2135,9 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
             pending_type_argc = 0;
             pending_type_args = "";
         } else if (pk == "[") {
+            // Native positions an index or slice at its `[`.
+            var bline: i32 = p.peek_line();
+            var bcol: i32 = p.peek_col();
             p = p.advance();
             // Leading-colon slice `a[:hi]` (low implicitly 0), mirroring the
             // Go parseCall's `[:b]` form. The `:` isn't a value expression, so
@@ -2145,7 +2148,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 p = p.advance(); // consume `:`
                 if (p.peek_punct() == "]") {
                     p = p.advance();
-                    base = e_slice_all(base);
+                    base = e_slice_all(base, bline, bcol);
                     continue;
                 }
                 var (shi_expr, shi_p) = parse_expr(p);
@@ -2154,7 +2157,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                     return (e_unknown_at("missing ] in slice", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
-                base = e_slice_from_start(base, shi_expr);
+                base = e_slice_from_start(base, shi_expr, bline, bcol);
                 continue;
             }
             // Generic instantiation `f[i32](…)` / `Box[T] { … }`: the
@@ -2243,7 +2246,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 // than the `ExprUnknown` placeholder they each mistranslate.
                 if (p.peek_punct() == "]") {
                     p = p.advance();
-                    base = e_slice_open(base, idx_expr);
+                    base = e_slice_open(base, idx_expr, bline, bcol);
                     continue;
                 }
                 var (end_expr, end_p) = parse_expr(p);
@@ -2252,13 +2255,13 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                     return (e_unknown_at("missing ] in slice", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
-                base = e_slice(base, idx_expr, end_expr);
+                base = e_slice(base, idx_expr, end_expr, bline, bcol);
             } else {
                 if (p.peek_punct() != "]") {
                     return (e_unknown_at("missing ] in index", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
-                base = e_index(base, idx_expr);
+                base = e_index(base, idx_expr, bline, bcol);
             }
         } else if (pk == "." || pk == "::") {
             // Field access `obj.field`. Field is either an
@@ -6489,7 +6492,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 var irhs: ast.Expr = rhs;
                 if (is_compound) {
                     var iop: str = slice_unchecked(assign_op, 0, assign_op.len() - 1);
-                    irhs = e_binary(iop, e_index(ix.array, ix.index), rhs);
+                    irhs = e_binary(iop, e_index(ix.array, ix.index, ix.line, ix.col), rhs);
                 }
                 var sargs: ast.Expr[] = [];
                 sargs = sargs.append(ix.array);
@@ -10437,7 +10440,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
             // valid across cloning because annotation runs on the ERASED form,
             // so a bare type parameter stamps "" and only concrete tags survive
             // to be copied — the same reason subst_expr already carries it.
-            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty }, rins: idx.rins };
+            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty, line: ix.line, col: ix.col }, rins: idx.rins };
         },
         ast.ExprSlice(sl) => {
             var ar: RExpr = mono_expr(sl.array, env, funcs, ins);
@@ -11013,7 +11016,7 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
         },
         ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: subst_expr(b.left, tparams, cts), right: subst_expr(b.right, tparams, cts), line: b.line, col: b.col, ty: b.ty }; },
         ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: subst_expr(u.operand, tparams, cts), line: u.line, col: u.col, ty: u.ty }; },
-        ast.ExprIndex(ix) => { return ast.ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked, ty: ix.ty }; },
+        ast.ExprIndex(ix) => { return ast.ExprIndex { array: subst_expr(ix.array, tparams, cts), index: subst_expr(ix.index, tparams, cts), unchecked: ix.unchecked, ty: ix.ty, line: ix.line, col: ix.col }; },
         ast.ExprSlice(sl2) => { return ast.ExprSlice { ...sl2, array: subst_expr(sl2.array, tparams, cts), start: subst_expr(sl2.start, tparams, cts), end: subst_expr(sl2.end, tparams, cts) }; },
         ast.ExprArray(ar) => {
             var ne: ast.Expr[] = [];
@@ -11118,7 +11121,7 @@ function retarget_self_lit_expr(e: ast.Expr, base: string, mang: string): ast.Ex
         },
         ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col, ty: b.ty }; },
         ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col, ty: u.ty }; },
-        ast.ExprIndex(ix) => { return ast.ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked, ty: ix.ty }; },
+        ast.ExprIndex(ix) => { return ast.ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked, ty: ix.ty, line: ix.line, col: ix.col }; },
         ast.ExprSlice(sl2) => { return ast.ExprSlice { ...sl2, array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) }; },
         ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
         _ => { return e; }
@@ -12260,7 +12263,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
             // valid across cloning because annotation runs on the ERASED form,
             // so a bare type parameter stamps "" and only concrete tags survive
             // to be copied — the same reason subst_expr already carries it.
-            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty }, rins: idx.rins };
+            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: idx.rexpr, unchecked: false, ty: ix.ty, line: ix.line, col: ix.col }, rins: idx.rins };
         },
         ast.ExprSlice(sl) => {
             var ar: RExpr = ms_expr(sl.array, env, gstructs, funcs, ins);
@@ -13168,7 +13171,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
             var ar: RExpr = me_expr(ix.array, "", env, enums, structs, funcs, ins);
             var ir: RExpr = me_expr(ix.index, "", env, enums, structs, funcs, ar.rins);
             // Carries `ty` for the same reason as mono_expr's ExprIndex arm.
-            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false, ty: ix.ty }, rins: ir.rins };
+            return RExpr { rexpr: ast.ExprIndex { array: ar.rexpr, index: ir.rexpr, unchecked: false, ty: ix.ty, line: ix.line, col: ix.col }, rins: ir.rins };
         },
         ast.ExprSlice(sl) => {
             var ar: RExpr = me_expr(sl.array, "", env, enums, structs, funcs, ins);
@@ -14230,7 +14233,7 @@ function dl_expr_with_kids(e: ast.Expr, kids: ast.Expr[]): ast.Expr {
         },
         ast.ExprArray(a) => { return ast.ExprArray { ...a, elements: kids }; },
         ast.ExprTuple(t) => { return ast.ExprTuple { elements: kids, line: t.line, col: t.col }; },
-        ast.ExprIndex(x) => { return ast.ExprIndex { array: kids[0], index: kids[1], unchecked: x.unchecked, ty: x.ty }; },
+        ast.ExprIndex(x) => { return ast.ExprIndex { array: kids[0], index: kids[1], unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col }; },
         ast.ExprSlice(sl) => { return ast.ExprSlice { ...sl, array: kids[0], start: kids[1], end: kids[2] }; },
         ast.ExprStructLit(s) => {
             var vals: ast.Expr[] = [];
@@ -16045,7 +16048,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
             while (k < t.elements.len()) { tels = tels.append(rvf_expr(t.elements[k], structs)); k = k + 1; }
             return ast.ExprTuple { elements: tels, line: t.line, col: t.col };
         },
-        ast.ExprIndex(x) => { return ast.ExprIndex { array: rvf_expr(x.array, structs), index: rvf_expr(x.index, structs), unchecked: x.unchecked, ty: x.ty }; },
+        ast.ExprIndex(x) => { return ast.ExprIndex { array: rvf_expr(x.array, structs), index: rvf_expr(x.index, structs), unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col }; },
         ast.ExprSlice(sl) => { return ast.ExprSlice { ...sl, array: rvf_expr(sl.array, structs), start: rvf_expr(sl.start, structs), end: rvf_expr(sl.end, structs) }; },
         ast.ExprStructLit(st) => {
             var vals: ast.Expr[] = [];
@@ -17498,7 +17501,7 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
                 },
                 _ => { }
             }
-            return ast.ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark, ty: ix.ty };
+            return ast.ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark, ty: ix.ty, line: ix.line, col: ix.col };
         },
         ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: elb_mark_expr(b.left, idx, arr), right: elb_mark_expr(b.right, idx, arr), line: b.line, col: b.col, ty: b.ty }; },
         ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: elb_mark_expr(u.operand, idx, arr), line: u.line, col: u.col, ty: u.ty }; },
@@ -18343,7 +18346,7 @@ function dv_hash_stmts(hv: string, ty: string, recv: ast.Expr, sfx: string): ast
         var iv: string = "__hsi" + sfx;
         var body: ast.Stmt[] = [s_assign(hv, e_binary("+",
             e_binary("*", e_ident(hv), e_number("31", "", false)),
-            e_unary("as_i32", e_index(recv, e_ident(iv)))))];
+            e_unary("as_i32", e_index(recv, e_ident(iv), 0, 0))))];
         body = body.append(s_assign(iv, e_binary("+", e_ident(iv), e_number("1", "", false))));
         var out: ast.Stmt[] = [s_assign(hv, mul)];
         out = out.append(s_var(iv, "i32", e_number("0", "", false)));
@@ -19781,7 +19784,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
             return ast.ExprTuple { elements: tels, line: t.line, col: t.col };
         },
         ast.ExprIndex(x) => {
-            return ast.ExprIndex { array: settle_expr(x.array, names, types, fns, structs), index: settle_expr(x.index, names, types, fns, structs), unchecked: x.unchecked, ty: x.ty };
+            return ast.ExprIndex { array: settle_expr(x.array, names, types, fns, structs), index: settle_expr(x.index, names, types, fns, structs), unchecked: x.unchecked, ty: x.ty, line: x.line, col: x.col };
         },
         ast.ExprSlice(sl) => {
             return ast.ExprSlice { ...sl, array: settle_expr(sl.array, names, types, fns, structs), start: settle_expr(sl.start, names, types, fns, structs), end: settle_expr(sl.end, names, types, fns, structs) };

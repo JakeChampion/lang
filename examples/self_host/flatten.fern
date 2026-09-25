@@ -600,7 +600,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 array: rewrite_expr(x.array, ctx),
                 index: rewrite_expr(x.index, ctx),
                 unchecked: x.unchecked,
-                ty: x.ty
+                ty: x.ty, line: x.line, col: x.col
             };
         },
         ast.ExprSlice(sl) => {

@@ -103,10 +103,11 @@ pub function read_error_reason(e: IoError): string {
 // entry package's.
 // `err` is set when a candidate was present but unreadable, and `err_path` names
 // it; it ends the search rather than letting a later candidate shadow the file
-// (#10142).
-pub struct Resolved { src: string, dir: string, ok: boolean, err: string, err_path: string }
+// (#10142). `shown` names the module for a diagnostic: the file it was read
+// from, or `stdlib://<path>` for an overlay hit.
+pub struct Resolved { src: string, dir: string, ok: boolean, err: string, err_path: string, shown: string }
 
-function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, err: "", err_path: "" }; }
+function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, err: "", err_path: "", shown: "" }; }
 
 // res_read reads `<dir><rel>.fern` and reports the ROOT its own imports
 // resolve against, which is `dir` — not the sub-directory the file happens to
@@ -117,7 +118,7 @@ function res_none(): Resolved { return Resolved { src: "", dir: "", ok: false, e
 // into another PACKAGE, which is what the manifest arms return.
 function res_read(dir: string, rel: string): Resolved {
     match (read_file(dir + rel + ".fern")) {
-        Ok(s) => { return Resolved { ...res_none(), src: s, dir: dir, ok: true }; },
+        Ok(s) => { return Resolved { ...res_none(), src: s, dir: dir, ok: true, shown: dir + rel + ".fern" }; },
         Err(e) => { return Resolved { ...res_none(), err: read_error_reason(e), err_path: dir + rel + ".fern" }; },
     }
     return res_none();
@@ -182,7 +183,7 @@ pub function no_overlay(): Overlay {
 // fallthrough-to-disk case byte-identical to what it was.
 pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
     var oi: i32 = util.index_of_str(ov.paths, rel_path(path));
-    if (oi >= 0) { return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true }; }
+    if (oi >= 0) { return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true, shown: "stdlib://" + rel_path(path) + ".fern" }; }
     if (ov.sealed) { return res_none(); }
     var direct: Resolved = res_read(dir, rel_path(path));
     if (direct.ok || direct.err.len() > 0) { return direct; }
@@ -405,7 +406,16 @@ function strip_fern_ext(s: string): string {
 // against the entry meant a dependency's own dependencies never loaded at
 // all — silently, since an unresolvable import is skipped (#6756).
 pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatten.LoadedModule[] {
+    let (loaded, files) = load_imports_with_files(ov, dir, entry);
+    return loaded;
+}
+
+// load_imports_with_files is load_imports plus each loaded module's display
+// path, in load order. Each module is tokenized from its own util.line_base,
+// so `files` is the table util.pos_str reads a diagnostic's file from.
+pub function load_imports_with_files(ov: Overlay, dir: string, entry: parser.Module): (flatten.LoadedModule[], string[]) {
     var loaded: flatten.LoadedModule[] = [];
+    var files: string[] = [];
     var seen: string[] = [];
     var queue: string[] = enqueue_imports([], seen, entry);
     var queue_dirs: string[] = fill_dirs([], dir, queue.len());
@@ -419,7 +429,8 @@ pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatt
         seen = seen.append(name);
         var r: Resolved = resolve_module(ov, from, path, name);
         if (r.ok) {
-            var m: parser.Module = parser.parse_module(lexer.tokenize(r.src));
+            var m: parser.Module = parser.parse_module(lexer.tokenize_from(r.src, util.line_base(files.len()) + 1));
+            files = files.append(r.shown);
             loaded = loaded.append(flatten.LoadedModule { name: name, ident: "", mod: m });
             var before: i32 = queue.len();
             queue = enqueue_imports(queue, seen, m);
@@ -427,7 +438,7 @@ pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatt
             queue_dirs = fill_dirs(queue_dirs, r.dir, queue.len() - before);
         }
     }
-    return loaded;
+    return (loaded, files);
 }
 
 // merge_builtins reads `<dir>builtins.fern` (the real built-in-type
