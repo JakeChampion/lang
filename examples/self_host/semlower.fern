@@ -726,31 +726,46 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
 // order, or none when any of them keeps the AST lowering. A source that does
 // not type-check is not asked: the helpers are written on the raw floor, and
 // one still spelling an address as an `i32` is refused by the checker before
-// anything here runs.
+// anything here runs. Under FERN_SEM_IR_STRICT a refusal exits 3.
 pub function runtime_bodies(src: string): irlower.LowerResult[] {
     if (!sem_ir_on()) { return []; }
     var parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     // The builtin enums' variants (IoError's NotFound, …), which a program's
     // module carries from module_with_builtins.
     var mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) };
-    if (checker.build_gate_diags(mod).len() > 0) { return []; }
+    var diags: util.Diag[] = checker.build_gate_diags(mod);
+    if (diags.len() > 0) { return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message); }
     var im: parser.Module = gated_module(checker.annotate_module(mod));
     var inf: Inference = produced_rows(im, irlower.struct_tab(im.structs));
-    if (inf.built.instances.len() > 0) { return []; }
+    if (inf.built.instances.len() > 0) { return runtime_refused(first_name(im), "instantiates a generic"); }
     var out: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        if (!inf.rows.keep[i]) { report("runtime " + im.funcs[i].name, "kept the AST lowering"); return []; }
+        if (!inf.rows.keep[i]) { return runtime_refused(im.funcs[i].name, "kept the AST lowering"); }
         out = out.append(inf.rows.body[i]);
         for h in ssarc.drop_helpers(inf.built.decls[i].func) { helpers = helpers.append(h); }
         i = i + 1;
     }
     // The drop helpers follow the bodies, deduplicated by symbol.
     var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
-    for h in all { if (!h.ok) { report("runtime " + h.name, h.why); return []; } }
+    for h in all { if (!h.ok) { return runtime_refused(h.name, h.why); } }
     for fd in im.funcs { report("runtime " + fd.name, "produced"); }
     return all;
+}
+
+function runtime_refused(name: string, why: string): irlower.LowerResult[] {
+    report("runtime " + name, why);
+    if (sem_strict_on()) {
+        eprint("FERN_SEM_IR_STRICT: the typed lowering refused runtime helper " + name + "\n");
+        exit(3);
+    }
+    return [];
+}
+
+function first_name(mod: parser.Module): string {
+    if (mod.funcs.len() == 0) { return "(empty source)"; }
+    return mod.funcs[0].name;
 }
 
 // The module an emit path gates and emits, so a caller can produce the

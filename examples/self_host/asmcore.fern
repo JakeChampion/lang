@@ -2623,9 +2623,9 @@ pub function rt_src_remove_dir_all(t: string): string {
 // realistic failures (EFAULT / EINVAL) cannot fire.
 function clock_read(t: string, clk: string): string {
     if (t == "arm64-darwin") {
-        return "var ts: i32 = __raw_scratch(16); __syscall3(" + sysno(t, "gettimeofday") + ", ts, 0, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i32(__raw_addr(ts, 8)) as i64;";
+        return "var ts: usize = __raw_scratch(16); __syscall3(" + sysno(t, "gettimeofday") + ", ts as i64, 0, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i32(__raw_addr(ts, 8)) as i64;";
     }
-    return "var ts: i32 = __raw_scratch(16); __syscall3(" + sysno(t, "clock_gettime") + ", " + clk + ", ts, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i64(__raw_addr(ts, 8));";
+    return "var ts: usize = __raw_scratch(16); __syscall3(" + sysno(t, "clock_gettime") + ", " + clk + ", ts as i64, 0); var sec: i64 = __load_i64(ts); var sub: i64 = __load_i64(__raw_addr(ts, 8));";
 }
 
 // subsec_ns / subsec_per_ms convert `sub` for the two arithmetic shapes below:
@@ -3068,7 +3068,7 @@ pub function rt_src_cpu_count(t: string): string {
 // getuid / getgid. Neither can fail, so there is no errno path; the three zero
 // arguments are what __syscall3 requires, and the kernel ignores them.
 pub function rt_src_getid(t: string, which: string): string {
-    return "function __fern_" + which + "(): i32 { return __syscall3(" + sysno(t, which) + ", 0, 0, 0); }";
+    return "function __fern_" + which + "(): i32 { return __syscall3(" + sysno(t, which) + ", 0, 0, 0) as i32; }";
 }
 
 // rt_src_getgroups backs `getgroups()` -> i64[]: the supplementary group set
