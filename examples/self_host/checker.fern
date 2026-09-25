@@ -2777,16 +2777,10 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
   if (us.type_params.len() == 0) { return t_union(union_name); }
   var args: typeinfo.Type[] = [];
   for tp in us.type_params { args = args.append(t_unknown("unbound " + tp)); }
-  var ss: StructSig = variant_payload_struct(s, name);
   var k: i32 = 0;
   while (k < c.args.len()) {
-    var want: string = "__ev";
-    if (k > 0) { want = "__ev" + util.i32_to_string(k); }
-    var fi: i32 = util.index_of_str(ss.field_names, want);
-    if (fi >= 0 && fi < ss.field_type_names.len()) {
-      var ti: i32 = util.index_of_str(us.type_params, ss.field_type_names[fi]);
-      if (ti >= 0 && is_unknown(args[ti])) { args = args.with(ti, check_expr(c.args[k], s)); }
-    }
+    var ti: i32 = payload_type_param(s, us, name, k);
+    if (ti >= 0 && is_unknown(args[ti])) { args = args.with(ti, check_expr(c.args[k], s)); }
     k = k + 1;
   }
   return typeinfo.TypeUnion { name: union_name, args: args };
@@ -3259,32 +3253,65 @@ function dyn_conforms(from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean
   return true;
 }
 
-// ctor_payload_diags: a builtin `Some` / `Ok` / `Err` coerced into an Option or
-// Result whose payload slot is dyn casts its payload to that slot, so a payload
+// ctor_payload_diags: a variant construction coerced into an enum whose
+// argument at a payload's slot is dyn casts that payload to it, so a payload
 // that does not implement the traits is refused as that cast is (E033), as
-// native's maybeWrapForUnion does. The enum types themselves compare by name.
+// native's maybeWrapForUnion does.
 function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var args: typeinfo.Type[] = [];
   var owner: string = "";
   if let typeinfo.TypeUnion(u) = to { args = u.args; owner = u.name; } else { return out; }
   if let ast.ExprCall(c) = e {
-    if let ast.ExprIdent(id) = c.callee {
-      var slot: i32 = 0 - 1;
-      if (owner == "Option" && id.name == "Some") { slot = 0; }
-      if (owner == "Result" && id.name == "Ok") { slot = 0; }
-      if (owner == "Result" && id.name == "Err") { slot = 1; }
-      if (slot < 0 || slot >= args.len() || c.args.len() != 1) { return out; }
-      var pt: typeinfo.Type = args[slot];
-      if let typeinfo.TypeDyn(_) = pt {
-        var at: typeinfo.Type = check_expr(c.args[0], s);
-        if (!is_unknown(at) && !dyn_conforms(at, pt, s)) {
-          out = out.append(dg_at("E033", "cannot cast " + type_label(at) + " to " + type_label(pt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", expr_line(c.args[0]), expr_col(c.args[0])));
+    var vname: string = ctor_variant_name(c);
+    var k: i32 = 0;
+    while (k < c.args.len()) {
+      var slot: i32 = ctor_payload_slot(s, owner, vname, k);
+      if (slot >= 0 && slot < args.len()) {
+        var pt: typeinfo.Type = args[slot];
+        if let typeinfo.TypeDyn(_) = pt {
+          var at: typeinfo.Type = check_expr(c.args[k], s);
+          if (!is_unknown(at) && !dyn_conforms(at, pt, s)) {
+            out = out.append(dg_at("E033", "cannot cast " + type_label(at) + " to " + type_label(pt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", expr_line(c.args[k]), expr_col(c.args[k])));
+          }
         }
       }
+      k = k + 1;
     }
   }
   return out;
+}
+
+// ctor_variant_name is the variant a constructor call names, bare (`Some(x)`)
+// or qualified (`Option.Some(x)`); "" for any other callee.
+function ctor_variant_name(c: ast.ExprCall): string {
+  if let ast.ExprIdent(id) = c.callee { return id.name; }
+  if let ast.ExprFieldAccess(fa) = c.callee { return fa.field; }
+  return "";
+}
+
+// ctor_payload_slot is which of `owner`'s type arguments payload `k` of variant
+// `vname` fills, or -1 when it fills none or the variant is not `owner`'s.
+function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 {
+  if (owner == "Option" || owner == "Result") {
+    if (k != 0) { return 0 - 1; }
+    if ((owner == "Option" && vname == "Some") || (owner == "Result" && vname == "Ok")) { return 0; }
+    if (owner == "Result" && vname == "Err") { return 1; }
+    return 0 - 1;
+  }
+  if (union_of_variant(vname, s.unions) != owner) { return 0 - 1; }
+  return payload_type_param(s, s.lookup_union(owner), vname, k);
+}
+
+// payload_type_param is the index in `us`'s type parameters of the one payload
+// `k` of variant `vname` is spelled as, or -1.
+function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 {
+  var ss: StructSig = variant_payload_struct(s, vname);
+  var want: string = "__ev";
+  if (k > 0) { want = "__ev" + util.i32_to_string(k); }
+  var fi: i32 = util.index_of_str(ss.field_names, want);
+  if (fi < 0 || fi >= ss.field_type_names.len()) { return 0 - 1; }
+  return util.index_of_str(us.type_params, ss.field_type_names[fi]);
 }
 
 // promotes_view: `from` holds a `str` view where `to` holds an owned `string`,
@@ -9723,9 +9750,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
 // judges that payload's conformance; every other argument must still agree.
 function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprCall(c) = e {
-    var vname: string = "";
-    if let ast.ExprIdent(id) = c.callee { vname = id.name; }
-    if let ast.ExprFieldAccess(fa) = c.callee { vname = fa.field; }
+    var vname: string = ctor_variant_name(c);
     if (union_of_variant(vname, s.unions).len() == 0 && mx_builtin_enum_of(vname).len() == 0) { return false; }
     var got: typeinfo.Type = check_expr(e, s);
     if (!same_nominal(got, want)) { return false; }
