@@ -214,6 +214,8 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			// declaration gate first, which is where its text and position show.
 			{"keyword-function", "function use(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
 			{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:14)"},
+			{"numeric-trait-name", "trait 123 { }\nfunction main(): i32 { return 0; }\n", "malformed trait declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"keyword-trait-name", "trait use { function conv(self: Self): i32; }\nfunction main(): i32 { return 0; }\n", "malformed trait declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
