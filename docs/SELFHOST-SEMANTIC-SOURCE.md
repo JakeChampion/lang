@@ -2107,8 +2107,8 @@ What the typed path produced whole, 2026-09-24:
 | e2eselfhost under strict, shards 0–1 of 12 | 438 of 440 tests |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
-(`rc-log/2026-09-24-i-…`). `TestSelfHostStrEqSymbolTypeChecks` still refuses,
-on `__fern_str_eq` rather than on the `__raw_data` beside it.
+(`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
+(`rc-log/2026-09-25-t-…`).
 
 ### The runtime helpers never reach the typed path
 

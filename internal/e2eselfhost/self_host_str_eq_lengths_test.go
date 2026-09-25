@@ -30,13 +30,13 @@ function main(): i32 {
     while (n <= 24) {
         var a: string = rep("a", n);
         if (a.len() != n) { return 200; }
-        if (!__fern_str_eq(a, rep("a", n))) { return 60 + n; }
-        if (__fern_str_eq(a, rep("a", n + 1))) { return 100 + n; }
+        if (a != rep("a", n)) { return 60 + n; }
+        if (a == rep("a", n + 1)) { return 100 + n; }
         var k: i32 = 0;
         while (k < n) {
             var b: string = rep("a", k) + "b" + rep("a", n - k - 1);
             if (b.len() != n) { return 201; }
-            if (__fern_str_eq(a, b)) { return 150 + k; }
+            if (a == b) { return 150 + k; }
             k = k + 1;
         }
         n = n + 1;
