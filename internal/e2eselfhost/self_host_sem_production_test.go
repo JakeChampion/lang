@@ -670,11 +670,10 @@ function main(): i32 {
     }
     return t % 7;
 }`},
-	// A generic enum with a method that is only ever used at a composite key.
-	// A tuple key has no clone name, so the enum is left out of the pass with
-	// its method beside it. Nothing produces; the row pins that the module
-	// still compiles and answers on every leg.
-	{name: "generic-enum-method-at-a-composite-key", atLeast: 0, src: `
+	// A generic enum with a method, used only at a tuple key. The tuple's
+	// clone name is native's (`Opt__tup_i32_i32`), so the enum and its method
+	// are cloned like any other instantiation.
+	{name: "generic-enum-method-at-a-composite-key", atLeast: 2, noLeak: true, src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -689,13 +688,9 @@ function main(): i32 {
     var q: (i32, i32) = n.get_or((1, 1));
     return p.0 + p.1 + q.0 + q.1;
 }`},
-	// The same enum used at a simple key AND a composite key in one module. A
-	// clone beside the generic original is unsound on the AST lowering, which
-	// dispatches an enum's methods by name (`a.get_or(9)` answered 0 with both
-	// in the module), so one unkeyable use keeps the whole enum out of the pass.
-	// Before, the pass dropped the generic `Opt` for the `Opt[i32]` use and the
-	// `Opt[(i32, i32)]` annotation dangled, with or without a method.
-	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 0, src: `
+	// The same enum used at a simple key AND a tuple key in one module: two
+	// clones, each with its own method.
+	{name: "generic-enum-at-a-simple-and-a-composite-key", atLeast: 3, noLeak: true, src: `
 enum Opt[T] { Sm(T), Nn }
 
 function (o: Opt[T]) get_or(d: T): T {
@@ -709,10 +704,32 @@ function main(): i32 {
     var p: (i32, i32) = b.get_or((5, 5));
     return a.get_or(9) * 10 + n.get_or(4) + p.0 + p.1;
 }`},
-	// The method-less form of the mix, which dangled on main: the pass dropped
-	// the generic `Opt` for the `Opt[i32]` use and `Sm((1, 2))` then named a
-	// variant no declaration held (E001 from the checker).
-	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 0, src: `
+	// A tuple key holding an array and a nested tuple with a string: the clone
+	// is `Opt__tup_i32_arr_tup_i32_string`, and its payload's counted parts are
+	// released through the clone's drop.
+	{name: "generic-enum-at-a-nested-tuple-key", atLeast: 2, noLeak: true, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    match (o) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var o: Opt[(i32[], (i32, string))] = Sm(([i, 2], (3, "four")));
+        var n: Opt[(i32[], (i32, string))] = Nn;
+        var p: (i32[], (i32, string)) = o.get_or(([0], (0, "")));
+        var q: (i32[], (i32, string)) = n.get_or(([7], (1, "x")));
+        total = total + p.0.len() + p.0[1] + p.1.0 + p.1.1.len() + q.0[0] + q.1.1.len();
+        i = i + 1;
+    }
+    return total % 256;
+}`},
+	// The method-less form of the mix. `Sm((1, 2))` must resolve to the tuple
+	// clone's variant, not to the `Opt[i32]` one.
+	{name: "generic-enum-at-a-simple-and-a-composite-key-without-methods", atLeast: 1, noLeak: true, src: `
 enum Opt[T] { Sm(T), Nn }
 
 function main(): i32 {
