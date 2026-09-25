@@ -421,9 +421,12 @@ Unsupported constructs refuse the whole function with a reason.
   holds a view is anchored to the one parameter those views read
   (`semsource.anchor_module`, `ssasem.Anchor`), and its caller anchors the
   call's result to that argument, which is what keeps a temporary receiver
-  alive past the call. A result reading a local, or either of two
-  parameters, is refused ("view result escapes its source"). The parameter
-  stays lent: a returned view reads it without taking its unit. A view as an
+  alive past the call. A plain `str` result with no one source, such as a
+  view of either of two parameters, returns a copy of each view instead
+  (`copy_returned_views`): a counted string retagged, which anchors nothing.
+  Any other result holding views with no one source is refused ("view result
+  escapes its source"). The parameter stays lent: a returned view reads it
+  without taking its unit. A view as an
   array element — an array literal's, `.append`'s or `.with`'s — makes the
   array a value gathering views (`ssasem.gathers_views`), anchored the same
   way: to its one source inside the body, and as a result to the one

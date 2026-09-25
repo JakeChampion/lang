@@ -7666,6 +7666,14 @@ function arr_samekind_call(field: string, recv: ast.Expr, argc: i32, s: LowerSta
         || expr_is_f64arr(recv, s) || expr_is_i64arr(recv, s);
 }
 
+// arr_field_read: `e` reads an array struct field of an element kind the field
+// classifiers recognise.
+function arr_field_read(e: ast.Expr, s: LowerState): boolean {
+    return scalar_arr_field_type(e, s) != "" || strarr_field_read_type(e, s) != ""
+        || struct_arr_field_read_type(e, s) != "" || enum_arr_field_read_type(e, s) != ""
+        || nested_arr_field_read_type(e, s) != "";
+}
+
 pub function expr_is_arr_src(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprArray(_) => { return true; },
@@ -7713,8 +7721,10 @@ pub function expr_is_arr_src(e: ast.Expr, s: LowerState): boolean {
                     // CHAINED `xs.append(a).append(b)` resolve its outer receiver as
                     // i32 and refuse the module, while the same chain on an f64[]
                     // lowered (#7754).
+                    // On an array FIELD read the call clones the field, so its
+                    // result is an array source too: `b.xs.append(x).append(y)`.
                     if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
-                        && expr_is_arr_src(cfa.obj, s)) { return true; }
+                        && (expr_is_arr_src(cfa.obj, s) || arr_field_read(cfa.obj, s))) { return true; }
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
@@ -15161,12 +15171,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // elements are row POINTERS in the 4-byte slots arr_slice / arr_push
     // already copy, and the field is leak-only (no drop arm classifies it), so
     // the rows the clone shares with the source outlive both (#7208).
-    if (fa.field == "append" && c.args.len() == 1
-        && (scalar_arr_field_type(fa.obj, s) != ""
-            || strarr_field_read_type(fa.obj, s) != ""
-            || struct_arr_field_read_type(fa.obj, s) != ""
-            || enum_arr_field_read_type(fa.obj, s) != ""
-            || nested_arr_field_read_type(fa.obj, s) != "")) {
+    if (fa.field == "append" && c.args.len() == 1 && arr_field_read(fa.obj, s)) {
         var faik: string = field_append_inplace_key(c, fa.obj, s);
         if (faik.len() > 0) {
             return lower_field_append_inplace(fa.obj, c.args[0], faik, s);
