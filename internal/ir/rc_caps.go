@@ -206,21 +206,19 @@ func typeIsStringArrayFreeIn(info *checker.Info, t ast.Type, seen map[string]boo
 // __drop_tuple_ / the array / string helpers) on EVERY backend — the
 // precondition for a callee to own a value it did not build, which both an
 // owned-by-default parameter and a consumed-threaded one release at exit. It
-// allows scalars, strings, closures (released through __drop_closure_value),
-// and arrays / structs / enums / tuples of wired types; it rejects Map (its
-// deep drop is incomplete), slices, and unknown / generic / runtime-handle
-// types whose drop is not statically wired.
+// allows scalars, strings, and arrays / structs / enums / tuples of wired
+// types, and a closure as a struct field or tuple element (memberDeepDropWired);
+// it rejects Map (its deep drop is incomplete), slices, and unknown / generic /
+// runtime-handle types whose drop is not statically wired.
 func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType, ast.StringType:
-		return true
-	case *ast.FuncType:
 		return true
 	case ast.ArrayType:
 		return typeDeepDropWired(ty.Elem, info, seen)
 	case ast.TupleType:
 		for _, e := range ty.Elems {
-			if !typeDeepDropWired(e, info, seen) {
+			if !memberDeepDropWired(e, info, seen) {
 				return false
 			}
 		}
@@ -238,7 +236,7 @@ func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) boo
 			return false // runtime handle (Reader / Writer / MapIter) / unknown
 		}
 		for _, f := range sd.Fields {
-			if !typeDeepDropWired(f.Type, info, seen) {
+			if !memberDeepDropWired(f.Type, info, seen) {
 				return false
 			}
 		}
@@ -260,6 +258,18 @@ func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) boo
 		return true
 	}
 	return false
+}
+
+// memberDeepDropWired is typeDeepDropWired for a struct field or tuple
+// element. A closure is wired there: __drop_struct_ / __drop_tuple_ release it
+// through __drop_closure_value. As an array element or enum payload it is not:
+// an array's overwrite and `.with` legs release the buffer alone, and an enum's
+// variant drop skips a closure payload.
+func memberDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		return true
+	}
+	return typeDeepDropWired(t, info, seen)
 }
 
 // isOwnedByDefaultType reports whether a parameter of type `t` is owned by the

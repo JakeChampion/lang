@@ -1423,6 +1423,20 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 					b.emit(Op{Kind: OpDrop})
 					continue
 				}
+				// A closure element releases through __drop_closure_value, as
+				// the generated __drop_tuple_ does; the flat dec below would
+				// strand the pair and its environment.
+				if _, isFunc := et.(*ast.FuncType); isFunc {
+					b.emit(Op{Kind: OpLoadLocal, I32: slot})
+					if offs[i] != 0 {
+						b.emit(Op{Kind: OpConstI32, I32: offs[i]})
+						b.emit(Op{Kind: OpAdd})
+					}
+					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+					b.emit(Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+					continue
+				}
 				dynDrop, isDyn := dynSlotDrop(et, b.ptrW, b.dynRcSupported)
 				if !arrElemIsRcTracked(et) && !isDyn {
 					continue
