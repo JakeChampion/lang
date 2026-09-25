@@ -144,8 +144,10 @@ would want to maintain.
 
 ### A `fip` call graph must be `fip` all the way down
 
-`fip` may only call `fip` (E053), and `fbip` may only call `fip` or `fbip`. In
-practice this is fine: read-only helpers take their arrays borrowed and carry
+`fip` may only call `fip` (E053), and `fbip` may only call `fip` or `fbip`. Both
+may also call the builtins that allocate nothing (`fipNonAllocBuiltins`: the
+byte-scan kernels, the bit counts, `__ptr_width`, the heap counters and
+`monotonic_ns`). In practice this is fine: read-only helpers take their arrays borrowed and carry
 the annotation, and the capacity constants are `fip` functions. It is worth
 knowing before starting, because it means a data plane cannot borrow one
 formatting helper from a library that is not annotated.

@@ -190,6 +190,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e053-with-chain-on-own", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", nil},
 		{"e053-with-chain-reads-receiver", "fip function f(own b: i32[]): i32[] { return b.with(0, 1).with(1, b[0]); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
 		{"e053-with-chain-on-borrowed", "fip function f(b: i32[]): i32[] { return b.with(0, 1).with(1, 2); }\nfunction main(): i32 { return f([1, 2])[0]; }\n", []string{"E053"}},
+		// A builtin that allocates nothing is a legal fip / fbip callee
+		// (#9607); an allocating one stays E053. A free function named like a
+		// builtin redeclares it (E006), and takes no admission from the name.
+		{"e053-fip-calls-nonalloc-builtins", "fip function f(s: string, x: u32, y: u64): i32 { return __memchr(s, 44, 0) + __count_byte(s, 44) + __crc32_cksum(0, s) + __popcount32(x) + __clz64(y) + __ptr_width() + (monotonic_ns() as i32) + (__heap_alloc_count() as i32); }\nfunction main(): i32 { return f(\"a,b\", 3 as u32, 3 as u64); }\n", nil},
+		{"e053-fbip-calls-nonalloc-builtin", "fbip function f(x: u32): i32 { return __ctz32(x); }\nfunction main(): i32 { return f(8 as u32); }\n", nil},
+		{"e053-fip-calls-allocating-builtin", "fip function f(xs: f64[]): f64[] { return __scale_f64(xs, 2.0); }\nfunction main(): i32 { return f([1.0]).len(); }\n", []string{"E053"}},
+		{"e006-builtin-redeclared", "function print(s: string): void { }\nfunction main(): i32 { print(\"x\"); return 0; }\n", []string{"E006"}},
+		{"e006-builtin-redeclared-fip-callee", "function monotonic_ns(): i64 { var a: i32[] = [1]; return a.len() as i64; }\nfip function f(): i32 { return monotonic_ns() as i32; }\nfunction main(): i32 { return f(); }\n", []string{"E006", "E053"}},
 		// Shadowed-callee scoping (#9532). A binding shadows an own-func's name
 		// inside ITS OWN scope: a block-local from its declaration to the end of
 		// its block, a match binder for its arm. The self-host answered from a

@@ -10811,6 +10811,20 @@ func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
 // proven heap-neutral.
 var fipNonAllocMethods = map[string]bool{"len": true}
 
+// fipNonAllocBuiltins is its sibling for builtin functions: each lowers to
+// instructions or a runtime scan that allocates nothing and returns a scalar
+// (the byte-scan kernels, the bit counts, a constant, the heap counters, the
+// clock). verifyFipAllocs (E068) stays the backstop for what they emit.
+var fipNonAllocBuiltins = map[string]bool{
+	"__memchr": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__sum_bytes": true, "__scan_set": true, "__bsd_sum": true, "__count_runs": true,
+	"__crc32_cksum": true,
+	"__clz32":       true, "__ctz32": true, "__popcount32": true,
+	"__clz64": true, "__ctz64": true, "__popcount64": true,
+	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
+	"monotonic_ns": true,
+}
+
 // checkFipFunctions verifies every `fip function` performs no heap allocation —
 // a Koka-style fully-in-place CHECKED guarantee, as a SOUND, conservative
 // subset (E053). It is verify-don't-enable: the in-place lowering (reuse, COW's
@@ -10820,7 +10834,8 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 // Allowed: scalars, arithmetic / comparison / logical ops, field & index READS,
 // control flow, (re)binding locals, in-place index/field WRITES to an `own`
 // array parameter (the COW unique-in-place branch — no copy), calls to other
-// `fip` functions and the whitelisted non-allocating builtins (`len`).
+// `fip` functions and the whitelisted non-allocating builtins
+// (fipNonAllocMethods, fipNonAllocBuiltins).
 // Rejected: array / tuple / struct / payload-carrying-enum literals, string
 // concatenation / interpolation, writes to a non-`own` heap value (a copy), and
 // any call the checker can't prove allocation-free.
@@ -10848,7 +10863,9 @@ var fipNonAllocMethods = map[string]bool{"len": true}
 func (c *checker) checkFipFunctions(prog *ast.Program) {
 	fip := map[string]bool{}
 	fbip := map[string]bool{}
+	declared := map[string]bool{}
 	for _, fn := range prog.Funcs {
+		declared[fn.Name] = true
 		if fn.Fip {
 			fip[fn.Name] = true
 		}
@@ -10915,6 +10932,9 @@ func (c *checker) checkFipFunctions(prog *ast.Program) {
 					return true
 				}
 				if id, ok := x.Callee.(*ast.Ident); ok {
+					if fipNonAllocBuiltins[id.Name] && !declared[id.Name] {
+						return true
+					}
 					// `fip` is the stronger claim: it may only lean on other
 					// `fip` callees. `fbip` may also call `fbip` (the callee's
 					// own construction sites are E068-verified in turn).

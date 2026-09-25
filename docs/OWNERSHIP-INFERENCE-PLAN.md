@@ -466,7 +466,8 @@ analysis, which is independent, pure, and de-risks the design.
   checks it. Allowed: scalars/ops, field+index reads, control flow,
   rebinding locals, **in-place index writes to an `own` array param** (the
   COW unique branch — no copy), and calls to other `fip` functions +
-  whitelisted non-allocating builtins (`len`). Rejected: array/tuple/struct
+  whitelisted non-allocating builtins (the `len` method and the builtin
+  functions in `fipNonAllocBuiltins`). Rejected: array/tuple/struct
   /payload-enum literals, string concat/interpolation, writes through a
   non-`own` heap value, and any call not proven allocation-free. Dogfooded:
   `std/sort`'s `sort_i32_inplace_asc/_desc` are now `fip` (they sort the
