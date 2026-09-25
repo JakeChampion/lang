@@ -619,10 +619,11 @@ shape against every record and enum implementing the whole trait set,
 calling that concrete's drop (`ssasem.Func.dyns`). A scalar or a string
 is boxed (`ssasem.dyn_box`, lowered to `op_dyn_box`) into a cell laid out
 as a one-field record, the value stored at its own width. The release
-frees a boxed string. One shape is still refused: owning a dyn value of a
-type that a generic declaration implements, because the release cannot
-enumerate that declaration's instances. See `docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`
-and `docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md`.
+frees a boxed string. A generic declaration's instances are the clones
+monomorphisation made of it, each a concrete of its own. See
+`docs/rc-log/2026-09-23-dyn-trait-dispatch-on-the-typed-path.md`,
+`docs/rc-log/2026-09-23-g-a-dyn-value-is-counted.md` and
+`docs/rc-log/2026-09-25-w-a-generic-implementations-dyn-instances.md`.
 
 **A `dyn Trait[]` array literal in ARGUMENT position — wired (#6906).**
 `render(["a", "b"])`, where `render`'s parameter is `dyn Show[]`, is the

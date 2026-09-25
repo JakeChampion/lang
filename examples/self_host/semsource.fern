@@ -3783,11 +3783,18 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
         if (n == "string") { out = out.append(t_string()); }
         else if (record_schema(n, s).name.len() > 0) { out = out.append(typeinfo.TypeStruct { name: n, args: [] }); }
         else if (union_layout(s, n) == semrecords.layout_variant()) { out = out.append(typeinfo.TypeUnion { name: n, args: [] }); }
-        else if (imp.all_type_params.len() > 0) {
+        else if (erased_generic(n, s)) {
             for c in generic_clones(n, s) { out = out.append(c); }
         }
     }
     return out;
+}
+
+// A base that names no declaration once monomorphisation has run: a generic
+// struct, or an enum it could key, replaced by its clones. Option and Result
+// have a builtin layout, and a union that keeps its variants is declared.
+function erased_generic(n: string, s: State): boolean {
+    return checker.struct_sig(s.scope, n).name.len() == 0 && union_layout(s, n) == 0 && union_variants(s, n).len() == 0;
 }
 
 // The clones monomorphisation made of generic `base`: records and enums named

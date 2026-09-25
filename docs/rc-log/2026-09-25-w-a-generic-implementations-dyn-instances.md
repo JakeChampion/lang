@@ -16,10 +16,13 @@ lists a generic implementor's clones, records and enums named `W__…`, as
 concretes of their own, so the drop releases each through its own helper.
 
 The open marking goes, and so do `generic_implementor`, `open_dyn_error`
-and `reaches_open_dyn`. A generic implementation the passes leave generic,
-an enum they cannot key, never reaches that check: the schema of its erased
-declaration refuses every function whose drop table reaches it ("unresolved
-variant field type").
+and `reaches_open_dyn`. The enumeration is complete: monomorphisation makes
+an instance per use and erases the generic declaration, so a generic
+implementor with no clone is one no value was ever built from, and there is
+nothing to box or release. The arm asks whether the base names no
+declaration any more (`erased_generic`), not whether the impl block has type
+parameters, which is a different question. Option and Result keep their
+builtin layout and never reach the prefix scan.
 
 The first cut listed struct clones only. A dyn value over `Opt__i32` then
 released its box without its string payload: 40 allocations, 30 frees. The
