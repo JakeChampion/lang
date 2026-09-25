@@ -96,6 +96,34 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	}
 }
 
+// TestSelfHostDeclNamesGateNativeX86_64 is the same refusal on the x86-64
+// driver, which emits through asm_ir and so reaches the gate through
+// asmcore.check_module rather than a driver's own call.
+func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	for _, tc := range []struct{ name, src, cause string }{
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", "has no type"},
+		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", "has no type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, stderr, code := runDeclGate(t, runner, driverBin, []byte(tc.src+"\n"))
+			if code == 0 || len(out) != 0 {
+				t.Fatalf("driver exited %d with %d bytes, want a refusal before codegen", code, len(out))
+			}
+			if !strings.Contains(stderr+string(out), tc.cause) {
+				t.Errorf("refusal did not name the cause:\n%s", stderr)
+			}
+		})
+	}
+	out, stderr, code := runDeclGate(t, runner, driverBin, []byte("function main(): i32 { return 42; }\n"))
+	if code != 0 || len(out) == 0 {
+		t.Fatalf("driver exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
+	}
+}
+
 func writeTemp(t *testing.T, dir, name string, src []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, name)

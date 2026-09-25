@@ -6075,6 +6075,10 @@ pub function check_func(fd: parser.FuncDecl, s: EmitState): util.Diag[] {
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
     var errs: util.Diag[] = parse_unknown_errors_module(mod);
     if (errs.len() > 0) { return errs; }
+    // The declaration gate, here because both native emitters run this
+    // prologue: a driver that skips its own call still refuses the module.
+    errs = check_decl_names(mod);
+    if (errs.len() > 0) { return errs; }
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
         errs = util.append_diags(errs, check_func(mod.funcs[fi], s));
