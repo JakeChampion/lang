@@ -8951,12 +8951,14 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s:
     var agg0: i32 = s.const_aggs.len();
     var sh0: i32 = s.shape_lits.len();
     var bodies: irlower.LowerResult[] = s.rt_lower(src);
-    if (bodies.len() != fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
+    if (bodies.len() < fns.len()) { bodies = runtime_ast_bodies(fns, all_structs, s); }
     var i: i32 = 0;
     while (i < fns.len()) {
         s = emit_function_via_ir_pre(bodies[i], fns[i], s, vsigs);
         i = i + 1;
     }
+    // Past the declarations: the drop helpers the typed lowering defines.
+    s = emit_named_bodies(bodies, fns.len(), s, vsigs);
     if (s.shape_lits.len() > sh0) {
         s = asmcore.emit_shape_lits_from(s, sh0);
         s = s.write("    .text\n");
@@ -9050,7 +9052,9 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
 function emit_named_bodies(cache: irlower.LowerResult[], from: i32, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
     var xi: i32 = from;
     while (xi < cache.len()) {
-        s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs);
+        if (!s.has_named(cache[xi].name)) {
+            s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vsigs).with_named(cache[xi].name);
+        }
         xi = xi + 1;
     }
     return s;

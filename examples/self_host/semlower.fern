@@ -729,22 +729,28 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
 // anything here runs.
 pub function runtime_bodies(src: string): irlower.LowerResult[] {
     if (!sem_ir_on()) { return []; }
-    var mod: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    var parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+    // The builtin enums' variants (IoError's NotFound, …), which a program's
+    // module carries from module_with_builtins.
+    var mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) };
     if (checker.build_gate_diags(mod).len() > 0) { return []; }
     var im: parser.Module = gated_module(checker.annotate_module(mod));
     var inf: Inference = produced_rows(im, irlower.struct_tab(im.structs));
     if (inf.built.instances.len() > 0) { return []; }
     var out: irlower.LowerResult[] = [];
+    var helpers: irlower.LowerResult[] = [];
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var what: string = "runtime " + im.funcs[i].name;
-        if (!inf.rows.keep[i]) { report(what, "kept the AST lowering"); return []; }
-        if (ssarc.drop_helpers(inf.built.decls[i].func).len() > 0) { report(what, "defines a drop helper"); return []; }
+        if (!inf.rows.keep[i]) { report("runtime " + im.funcs[i].name, "kept the AST lowering"); return []; }
         out = out.append(inf.rows.body[i]);
+        for h in ssarc.drop_helpers(inf.built.decls[i].func) { helpers = helpers.append(h); }
         i = i + 1;
     }
+    // The drop helpers follow the bodies, deduplicated by symbol.
+    var all: irlower.LowerResult[] = ssarc.merge_helpers(out, helpers);
+    for h in all { if (!h.ok) { report("runtime " + h.name, h.why); return []; } }
     for fd in im.funcs { report("runtime " + fd.name, "produced"); }
-    return out;
+    return all;
 }
 
 // The module an emit path gates and emits, so a caller can produce the

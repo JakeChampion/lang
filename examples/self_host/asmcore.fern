@@ -148,8 +148,15 @@ pub struct EmitState {
     // The typed lowering of a runtime helper's source, one body per function it
     // defines, or none to keep the AST lowering. The CLI supplies it
     // (semlower.runtime_bodies); a backend never links that pipeline itself.
-    rt_lower: (string) => irlower.LowerResult[]
+    rt_lower: (string) => irlower.LowerResult[],
+    // The symbols this file already defines as named bodies (the drop helpers
+    // a substitution or a runtime helper's lowering carries), so a second
+    // source bringing the same one does not define it twice.
+    named: string[]
 }
+
+pub function (s: EmitState) has_named(name: string): boolean { return util.has_str(s.named, name); }
+pub function (s: EmitState) with_named(name: string): EmitState { return EmitState { ...s, named: s.named.append(name) }; }
 
 // no_rt_lower keeps every runtime helper on the AST lowering.
 pub function no_rt_lower(src: string): irlower.LowerResult[] { return []; }
@@ -246,7 +253,8 @@ pub function new_state(): EmitState {
         reg_entries: irlower.sig_reg_of([]),
         leaves: [],
         capture: 0 as usize,
-        rt_lower: no_rt_lower
+        rt_lower: no_rt_lower,
+        named: []
     };
 }
 
@@ -2028,7 +2036,7 @@ pub function strerror_unknown_prefix(t: string): string {
 function strerror_unknown_src(t: string): string {
     var pfx: string = strerror_unknown_prefix(t);
     var plen: string = util.i32_to_string(pfx.len());
-    var src: string = "var ndig: i32 = 1; var tt: i32 = e; while (tt >= 10) { ndig = ndig + 1; tt = tt / 10; } var total: i32 = " + plen + " + ndig; var buf: i32 = __raw_alloc(total);";
+    var src: string = "var ndig: i32 = 1; var tt: i32 = e; while (tt >= 10) { ndig = ndig + 1; tt = tt / 10; } var total: i32 = " + plen + " + ndig; var buf: usize = __raw_alloc(total);";
     var k: i32 = 0;
     while (k < pfx.len()) {
         src = src + " __raw_store8(buf, " + util.i32_to_string(k) + ", " + util.i32_to_string(pfx[k] as i32) + ");";
@@ -2055,7 +2063,7 @@ function strerror_unknown_src(t: string): string {
 // `path` string, so the copy is outside the RC analysis entirely; `n == 0`
 // answers the empty literal rather than reaching __raw_alloc(0).
 function path_copy_src(): string {
-    return "function __fern_path_copy(pz: i32, n: i32): string { if (n == 0) { return \"\"; } var b: i32 = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(b, i, __raw_load8(pz, i)); i = i + 1; } return __raw_string(b, n); }";
+    return "function __fern_path_copy(pz: usize, n: i32): string { if (n == 0) { return \"\"; } var b: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(b, i, __raw_load8(pz, i)); i = i + 1; } return __raw_string(b, n); }";
 }
 
 // wasi:sockets/network@0.2.0 error-code to Preview 1 errno. In particular,
