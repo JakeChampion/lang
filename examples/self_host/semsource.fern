@@ -1482,8 +1482,8 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 
 // A column snapshot answers a FRESH array whose ownership follows the column.
 // The runtime copies a string column or a column of boxes with a per-element
-// retain, so the array owns its elements; an i32 column holds no references,
-// so there is nothing to own past the buffer. Every other element type is
+// retain, so the array owns its elements; a column of i32s or of i64s holds no
+// references, so there is nothing to own past the buffer. Every other element type is
 // handed back as a raw alias of the map's own elements — the frame would
 // release what the map still holds, so it is refused here rather than
 // described as owned.
