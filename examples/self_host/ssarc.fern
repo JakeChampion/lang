@@ -2804,6 +2804,7 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
     if (ins.str == "tcp_recv") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv()) }; }
     if (ins.str == "tcp_pollable") { return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) }; }
     if (ins.str == "tcp_close") { return Lowered { found: true, r: emit(r, ir.op_tcp_close()) }; }
+    if (ins.str == "udp_send") { return Lowered { found: true, r: emit(r, ir.op_udp_send()) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
     if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }
@@ -2815,6 +2816,8 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
     if (ins.str == "proc_exec_as") { return Lowered { found: true, r: emit(r, ir.op_proc_exec_as()) }; }
     if (ins.str == "wasm_timer_pollable") { return Lowered { found: true, r: emit(r, ir.op_wasm_timer_pollable()) }; }
     if (ins.str == "wasm_pollable_drop") { return Lowered { found: true, r: emit(r, ir.op_wasm_pollable_drop()) }; }
+    if (ins.str == "wasm_block") { return Lowered { found: true, r: emit(r, ir.op_wasm_block()) }; }
+    if (ins.str == "wasm_poll") { return Lowered { found: true, r: emit(r, ir.op_wasm_poll()) }; }
     return builder_builtin_site(r, ins);
 }
 
