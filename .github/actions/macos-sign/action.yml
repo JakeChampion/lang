@@ -1,0 +1,101 @@
+name: Sign and notarize macOS binaries
+description: >
+  Sign each binary with the Developer ID certificate under the hardened
+  runtime, then submit them to Apple's notary service and fail unless it
+  accepts them. Gatekeeper refuses to run a downloaded executable that is only
+  ad-hoc signed, which is all the compiler's Mach-O output carries. A bare
+  executable cannot have its ticket stapled, so Gatekeeper fetches it online
+  on first launch.
+
+  Requires the repository secrets MACOS_CERTIFICATE_P12 (base64 of the
+  Developer ID Application .p12), MACOS_CERTIFICATE_PASSWORD, and an App Store
+  Connect API key for notarization: MACOS_NOTARY_KEY (base64 of the .p8),
+  MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER_ID.
+
+inputs:
+  binaries:
+    description: Whitespace-separated paths of the executables to sign.
+    required: true
+  certificate-p12:
+    required: true
+  certificate-password:
+    required: true
+  notary-key:
+    required: true
+  notary-key-id:
+    required: true
+  notary-issuer-id:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: sign and notarize
+      shell: bash
+      env:
+        BINARIES: ${{ inputs.binaries }}
+        CERT_P12: ${{ inputs.certificate-p12 }}
+        CERT_PASSWORD: ${{ inputs.certificate-password }}
+        NOTARY_KEY: ${{ inputs.notary-key }}
+        NOTARY_KEY_ID: ${{ inputs.notary-key-id }}
+        NOTARY_ISSUER_ID: ${{ inputs.notary-issuer-id }}
+      run: |
+        set -euo pipefail
+        for v in CERT_P12 CERT_PASSWORD NOTARY_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+          if [ -z "${!v}" ]; then
+            echo "::error::macos-sign: $v is empty; set the MACOS_* signing secrets (see .github/actions/macos-sign/action.yml)"
+            exit 1
+          fi
+        done
+
+        work="$RUNNER_TEMP/macos-sign"
+        mkdir -p "$work"
+        keychain="$work/signing.keychain-db"
+        keychain_password="$(openssl rand -hex 16)"
+        trap 'security delete-keychain "$keychain" || true; rm -rf "$work"' EXIT
+
+        echo "$CERT_P12" | base64 --decode > "$work/cert.p12"
+        echo "$NOTARY_KEY" | base64 --decode > "$work/notary.p8"
+
+        security create-keychain -p "$keychain_password" "$keychain"
+        security set-keychain-settings -lut 3600 "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        security import "$work/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+        security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+        identity="$(security find-identity -p codesigning "$keychain" \
+          | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+        if [ -z "$identity" ]; then
+          echo "::error::macos-sign: no Developer ID Application identity in MACOS_CERTIFICATE_P12"
+          exit 1
+        fi
+
+        for bin in $BINARIES; do
+          codesign --force --options runtime --timestamp --keychain "$keychain" \
+            --sign "$identity" "$bin"
+          codesign --verify --strict --verbose=2 "$bin"
+        done
+
+        # notarytool takes an archive, not a bare executable.
+        # The two coreutils builds share a basename, so each gets its own directory.
+        i=0
+        for bin in $BINARIES; do
+          i=$((i + 1))
+          mkdir -p "$work/submit/$i"
+          cp "$bin" "$work/submit/$i/"
+        done
+        (cd "$work/submit" && zip -qr ../submit.zip .)
+        # `submit --wait` exits 0 on an Invalid verdict too, so read the status.
+        xcrun notarytool submit "$work/submit.zip" \
+          --key "$work/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" \
+          --wait --timeout 30m --output-format json > "$work/result.json"
+        cat "$work/result.json"
+        status="$(plutil -extract status raw -o - "$work/result.json")"
+        if [ "$status" != "Accepted" ]; then
+          id="$(plutil -extract id raw -o - "$work/result.json")"
+          xcrun notarytool log "$id" \
+            --key "$work/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" || true
+          echo "::error::macos-sign: notarization returned $status"
+          exit 1
+        fi
