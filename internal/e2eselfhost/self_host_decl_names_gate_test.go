@@ -63,9 +63,11 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// reports its untyped parameter through a sentinel instead.
 		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "has no type"},
 		// The same arm refuses a local declaration parse_func_decl returns
-		// nameless: a keyword name, or a destructured parameter with no type.
+		// nameless: a keyword name, or any destructured parameter
+		// parse_pattern_param rejects (a missing type, a singleton tuple).
 		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
 		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
+		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
