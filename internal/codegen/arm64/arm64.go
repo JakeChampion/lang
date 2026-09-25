@@ -6731,7 +6731,11 @@ func (g *generator) emitUdpSendRuntime() {
 	g.emit("cbz w14, .Ludp_bad")
 	g.emit("strb w12, [x29, #87]")
 	if g.darwin {
-		// BSD sockaddr_in: a length byte, then a one-byte family.
+		// BSD sockaddr_in: a length byte, then a one-byte family. XNU
+		// rewrites the length from namelen; the family byte is the one that
+		// matters, since a datagram connect gets no AF_UNSPEC fix-up and
+		// in_pcbladdr answers EAFNOSUPPORT. The TCP helpers above survive the
+		// Linux shape only because XNU's TCP paths tolerate family 0.
 		g.emit("mov w0, #16")
 		g.emit("strb w0, [x29, #80]")
 		g.emit("mov w0, #2")
