@@ -6591,7 +6591,7 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
 }
 
 // check_decl_names rejects a module holding a NAMELESS function, trait
-// requirement, struct or enum, or a parameter written with no type.
+// requirement, struct, enum or type alias, or a parameter written with no type.
 //
 // The self-host parser is deliberately permissive — `Par` carries no error
 // channel, so a token it cannot use is skipped and the drivers' gates catch the
@@ -6647,6 +6647,11 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
             errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("enum"), line: en.line, col: en.col });
         }
     }
+    for al in mod.aliases {
+        if (al.name.len() == 0) {
+            errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("type alias"), line: al.line, col: al.col });
+        }
+    }
     return errs;
 }
 
@@ -6675,7 +6680,7 @@ pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
     return true;
 }
 
-// malformed_type_decl_message is the nameless struct or enum text. The parser
+// malformed_type_decl_message is the nameless struct, enum or alias text. The parser
 // returns an empty name for any token that is not an identifier, so it names no
 // cause as the cause, as parser.malformed_fn_decl_message does.
 function malformed_type_decl_message(kw: string): string {

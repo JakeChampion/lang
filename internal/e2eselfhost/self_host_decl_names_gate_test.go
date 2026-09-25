@@ -209,14 +209,18 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"untyped", untyped, "has no type"},
 			{"sentinel-and-untyped", both, "has no type"},
 			{"sentinel", sentinel, "parser-side unknown"},
+			// A nameless declaration derails the parse, so a stdin driver
+			// reports the parser's sentinels first; the loaders run the
+			// declaration gate first, which is where its text and position show.
+			{"keyword-function", "function use(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
+			{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }\n", "its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:14)"},
+			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"keyword-alias", "type match = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
+			{"numeric-alias-name", "type 123 = i32;\nfunction main(): i32 { return 0; }\n", "malformed type alias declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name) (1:1)"},
 			// The one sentinel with a native code names it on every driver,
 			// whether or not a checker runs before the gate.
-			// A nameless struct or enum derails the parse, so a stdin driver
-			// reports the parser's sentinels first; the loaders run the
-			// declaration gate first, which is where its text shows.
-			{"keyword-struct", "struct match { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read"},
-			{"numeric-struct-name", "struct 123 { x: i32 }\nfunction main(): i32 { return 0; }\n", "malformed struct declaration: its name could not be read"},
-			{"keyword-enum", "enum match { A, B }\nfunction main(): i32 { return 0; }\n", "malformed enum declaration: its name could not be read"},
 			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    var x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
