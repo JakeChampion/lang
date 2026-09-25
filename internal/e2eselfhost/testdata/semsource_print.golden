@@ -1771,7 +1771,20 @@ func view_result {
 
 refused view result escapes its source
 refused view result escapes its source
-refused view element escapes its source
+modes 2 result i32
+v0:string v1:str[] v2:i32 v3:i32 v4:str v5:str[] v6:i32
+func view_element {
+  b0:
+    v0 = param 0
+    v1 = array_new
+    v2 = const_int 0
+    v3 = const_int 1
+    v4 = slice v0 v2 v3
+    v5 = append v1 v4
+    v6 = length v5
+    ret v6
+}
+
 modes 3 1 1 result i32[]
 v0:i32[] v1:i32 v2:i32 v3:i32[]
 func replace_at {
@@ -1783,7 +1796,7 @@ func replace_at {
     ret v3
 }
 
-refused view element escapes its source
+refused produced graph fails semantic verification: a value holds views of two sources
 modes 1 result i64
 v0:i64 v1:i64 v2:i64 v3:i64 v4:i64 v5:i64 v6:i64 v7:i64 v8:i64 v9:boolean v10:i64 v11:i64
 func wide_literal_tree {
