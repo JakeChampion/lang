@@ -1508,6 +1508,57 @@ function boxes(): i32 {
 }
 function main(): i32 { return boxes() % 100; }
 `},
+	// An i64 value column: insert, overwrite, get, get_or, values, iteration,
+	// without, and an insert into a shared map, whose copy pairs the two column
+	// snapshots by index. wasm keeps each value in a cell of its own. The AST
+	// lowering refuses the program.
+	{name: "a-map-of-i64-values-takes-the-typed-path", atLeast: 2, noLeak: true, want: "0|", src: `
+import "core/map";
+function total(m: Map[i32, i64]): i64 {
+    var t: i64 = 0;
+    for (k, v) in m { t = t + v + (k as i64); }
+    return t;
+}
+function main(): i32 {
+    var m: Map[i32, i64] = map_new(2);
+    var i: i32 = 0;
+    while (i < 12) { m = m.insert(i, (i as i64) * 1000000000); i = i + 1; }
+    m = m.insert(3, 7000000000);
+    var shared: Map[i32, i64] = m;
+    m = m.insert(20, 5);
+    var vs: i64[] = m.values();
+    var s: i64 = 0;
+    for v in vs { s = s + v; }
+    var g: i64 = m.get_or(3, 0);
+    var miss: i64 = m.get_or(99, 42);
+    var hit: i64 = 0;
+    match (m.get(11)) { Some(v) => { hit = v; }, None => { hit = 0 - 1; } }
+    var wo: (Map[i32, i64], boolean) = m.without(5);
+    m = wo.0;
+    var r: i64 = s / 1000000000 + g / 1000000000 + miss + hit / 1000000000 + total(m) / 1000000000 + (shared.len() as i64) + (m.len() as i64);
+    return (r as i32) - 219;
+}
+`},
+	// On wasm the i64 value snapshot came back in probe order while the keys
+	// came back in insertion order, so iteration and keys()/values() paired a
+	// key with another key's value (#10280).
+	{name: "an-i64-map-pairs-each-key-with-its-value", atLeast: 1, noLeak: true, src: `
+import "core/map";
+function main(): i32 {
+    var m: Map[i32, i64] = map_new(2);
+    var i: i32 = 0;
+    while (i < 40) { m = m.insert((i * 7919) % 101, (((i * 7919) % 101) as i64) * 3); i = i + 1; }
+    var wo: (Map[i32, i64], boolean) = m.without(14);
+    m = wo.0;
+    var bad: i32 = 0;
+    for (k, v) in m { if (v != (k as i64) * 3) { bad = bad + 1; } }
+    var ks: i32[] = m.keys();
+    var vs: i64[] = m.values();
+    var j: i32 = 0;
+    while (j < ks.len()) { if (vs[j] != (ks[j] as i64) * 3) { bad = bad + 100; } j = j + 1; }
+    return bad;
+}
+`},
 	// `without` over a counted column releases the removed entry's key and
 	// value (#9970): a string key, a string value, and a keyed column over a
 	// column of boxes, each read back after the delete and re-inserted once.

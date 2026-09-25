@@ -395,7 +395,14 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
 pub function is_supported_map(t: typeinfo.Type): boolean {
     if (!is_map(t)) { return false; }
     if (!is_string(map_key(t)) && !narrow_map_value(map_key(t)) && !keyed_map_key(map_key(t))) { return false; }
-    return narrow_map_value(map_value(t)) || counted_map_value(map_value(t));
+    return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || counted_map_value(map_value(t));
+}
+
+// An i64 or u64 value column. The register runtimes hold every cell at eight
+// bytes; wasm boxes each value into a cell of its own (the `_w64` helpers).
+// An f64 column has no wasm helpers, so it is not admitted.
+pub function wide_map_value(v: typeinfo.Type): boolean {
+    return is_integer(v) && is_wide(v);
 }
 
 // A key column of boxes: a record or a union the runtime hashes and compares
@@ -424,7 +431,7 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 // i32-shaped cell — holds no references. Every other element — a wide scalar,
 // a function value, a map — would come back aliasing the map's own.
 pub function retained_column(elem: typeinfo.Type): boolean {
-    return is_string(elem) || narrow_column(elem) || keyed_map_key(elem) || counted_map_value(elem);
+    return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
 
 function narrow_column(t: typeinfo.Type): boolean {
