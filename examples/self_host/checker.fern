@@ -5039,8 +5039,8 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
     },
     ast.ExprArray(a) => {
       if (a.elements.len() == 0) {
-        // A literal the compiler built names its element type (embed's
-        // `__fern_assets()` over an empty bundle); a written one cannot.
+        // Parser settlement (the destination's element type) and embed
+        // expansion both stamp a literal's element type, which is authoritative.
         if (a.elem_ty.len() > 0) { return t_array(s.resolve_type(a.elem_ty)); }
         return t_array(t_unknown("empty array literal"));
       }

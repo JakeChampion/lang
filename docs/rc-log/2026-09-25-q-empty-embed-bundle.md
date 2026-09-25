@@ -10,9 +10,10 @@ names its element type. The checker typed every empty literal
 the module fell back to the AST lowering.
 
 The checker now types an empty literal that carries `elem_ty` as an array of
-that type (`Scope.resolve_type`). Only the embed pass stamps a literal the
-checker sees; irlower's stamps are made after checking.
+that type (`Scope.resolve_type`). Two passes stamp one before checking: the
+embed expansion, and the parser's settlement, which stamps a written literal
+with its destination's element type (`settle_to_type`).
 
-`TestSelfHostEmbedMatchesNative` builds its self-host leg under
-`FERN_SEM_IR_STRICT=1`, so every bundle shape has to take the typed path.
+`TestSelfHostEmbedMatchesNative` builds its self-host leg with the typed path on
+and under `FERN_SEM_IR_STRICT=1`, so every bundle shape has to take the typed path.
 Without the checker change it fails on `assets-empty-bundle` alone.
