@@ -103,6 +103,18 @@ function main(): i32 {
     if (!h.xs.contains(8)) { return 17; }
     return 42;
 }`},
+	// A one-letter struct name is a type, not a type variable: the monomorphiser
+	// read `P` as one, left `p.ss`'s type unknown, and never folded the
+	// string[] method call on it (#10256).
+	{"one-letter-struct-field-method", `import "std/array";
+struct P { ss: string[] }
+function main(): i32 {
+    var p: P = P { ss: ["a", "b", "c"] };
+    var ps: P[] = [p];
+    match (p.ss.index_of("c")) { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
+    if (!ps[0].ss.contains("b")) { return 3; }
+    return 42;
+}`},
 	// The persistent collections (#6794) through the self-host loader: generic
 	// enums / structs with receiver methods whose bodies call bounded free
 	// generics on the struct's own type vars (`__om_insert(m.root, k, v)` under

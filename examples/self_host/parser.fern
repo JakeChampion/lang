@@ -9980,7 +9980,7 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): s
     if (rvt.len() == 0) { return ""; }
     var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
     if (mrt.len() == 0) { mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field); }
-    if (looks_type_var(mrt)) { return ""; }
+    if (mono_type_var(mrt, funcs)) { return ""; }
     return mrt;
 }
 
@@ -10127,7 +10127,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                     // bare type variable is never a usable concrete type, so
                     // report "unknown" (the other, concrete-literal arg still
                     // binds the call at `i32`).
-                    if (looks_type_var(crt) || crt.len() == 0) { return stamped_scalar(c.ty); }
+                    if (mono_type_var(crt, funcs) || crt.len() == 0) { return stamped_scalar(c.ty); }
                     return crt;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -10227,14 +10227,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // a usable concrete type. Reporting it would key a clone named after the
         // variable (`assert_eq__T`), whose body then calls `T.eq`: an unknown
         // symbol, so the eligibility gate rejects the caller and the module
-        // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
+        // fails to compile. Same reasoning as the `mono_type_var(crt)` guard on
         // an inferred call return above.
         ast.ExprIndex(ix) => {
             var at: string = mono_infer(ix.array, env, funcs);
             var n: i32 = at.len();
             if (n > 2 && slice_unchecked(at, n - 2, n) == "[]") {
                 var el: string = slice_unchecked(at, 0, n - 2) + "";
-                if (looks_type_var(el)) { return ""; }
+                if (mono_type_var(el, funcs)) { return ""; }
                 return el;
             }
             return "";
@@ -10245,9 +10245,9 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // is unknown, for the same reason as the index arm's element guard.
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
-            if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
+            if (ot.len() == 0 || mono_ty_mentions_var(ot, funcs)) { return ""; }
             var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
-            if (mono_ty_mentions_var(ft)) { return ""; }
+            if (mono_ty_mentions_var(ft, funcs)) { return ""; }
             return ft;
         },
         _ => { return ""; }
@@ -10566,10 +10566,10 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
 
 // mono_ty_mentions_var reports whether a type spelling contains a bare
 // single-uppercase type-var leaf ("T", "Option[T]", "T[]", "(T, i32)") — the
-// composite sibling of looks_type_var. A payload carrying one is not a usable
+// composite sibling of mono_type_var. A payload carrying one is not a usable
 // concrete type: binding it would key a clone named after the variable
 // (`assert_eq__T`) whose trait calls can't resolve, bailing the module.
-function mono_ty_mentions_var(t: string): boolean {
+function mono_ty_mentions_var(t: string, fns: MFns): boolean {
     var i: i32 = 0;
     var n: i32 = t.len();
     while (i < n) {
@@ -10589,10 +10589,22 @@ function mono_ty_mentions_var(t: string): boolean {
                 next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95;
                 if (q == 91 && !(i + 2 < n && t[i + 2] == b']')) { next_id = true; }
             }
-            if (!prev_id && !next_id) { return true; }
+            if (!prev_id && !next_id && !names_declared_type(slice_unchecked(t, i, i + 1) + "", fns)) { return true; }
         }
         i = i + 1;
     }
+    return false;
+}
+
+// mono_type_var reports whether `s` is a bare type variable: one uppercase
+// letter that no struct or enum of the module is named (`struct H` is a type).
+function mono_type_var(s: string, fns: MFns): boolean {
+    return looks_type_var(s) && !names_declared_type(s, fns);
+}
+
+function names_declared_type(name: string, fns: MFns): boolean {
+    for sd in fns.structs { if (sd.name == name) { return true; } }
+    for ed in fns.enums { if (ed.name == name) { return true; } }
     return false;
 }
 
@@ -10601,8 +10613,8 @@ function mono_ty_mentions_var(t: string): boolean {
 // Some/Ok, E for Err. "" (unknown) for any other scrutinee or variant, and for
 // a payload that still mentions a type variable. A qualified pattern
 // (`Result.Ok`) is stripped to its bare variant name first.
-function mono_variant_payload_ty(sty: string, vname: string): string {
-    if (mono_ty_mentions_var(sty)) { return ""; }
+function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string {
+    if (mono_ty_mentions_var(sty, fns)) { return ""; }
     var bare: string = pat_variant_bare(vname);
     var n: i32 = sty.len();
     if (n >= 8 && slice_unchecked(sty, 0, 7) == "Option[" && sty[n - 1] == b']') {
@@ -10653,7 +10665,7 @@ function type_args_of(ty: string): string[] {
 // enum that owns `vname`.
 function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[] {
     var none: string[] = [];
-    if (sty.len() == 0 || mono_ty_mentions_var(sty)) { return none; }
+    if (sty.len() == 0 || mono_ty_mentions_var(sty, fns)) { return none; }
     var base: string = strip_struct_base(sty);
     var ei: i32 = 0 - 1;
     var i: i32 = 0;
@@ -10785,7 +10797,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
             var ity: string = mono_infer(fr.iter, env, funcs);
             if (type_ends_arr(ity)) {
                 ety = slice_unchecked(ity, 0, ity.len() - 2) + "";
-                if (mono_ty_mentions_var(ety)) { ety = ""; }
+                if (mono_ty_mentions_var(ety, funcs)) { ety = ""; }
             }
             var benv: MEnv = env.ebind(fr.var_name, ety);
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
@@ -10808,7 +10820,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
                     ast.PatVariant(pv) => {
                         var ftys: string[] = mono_variant_field_tys(sty, pv.type_name, funcs);
                         if (pv.binding.len() > 0 && pv.binding != "_") {
-                            var bty: string = mono_variant_payload_ty(sty, pv.type_name);
+                            var bty: string = mono_variant_payload_ty(sty, pv.type_name, funcs);
                             if (bty.len() == 0 && ftys.len() > 0) { bty = ftys[0]; }
                             aenv = aenv.ebind(pv.binding, bty);
                         }
@@ -10823,7 +10835,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
                         }
                         if (pv.at_binding.len() > 0) {
                             var aty: string = sty;
-                            if (mono_ty_mentions_var(aty)) { aty = ""; }
+                            if (mono_ty_mentions_var(aty, funcs)) { aty = ""; }
                             aenv = aenv.ebind(pv.at_binding, aty);
                         }
                     },
