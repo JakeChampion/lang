@@ -1805,7 +1805,7 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
         for a in d.args { out = view_sources(f, defs, anchors, names, a, out); }
         return out;
     }
-    if (d.kind_tag == tuple_new() || d.kind_tag == record_new() || d.kind_tag == variant_new() || d.kind_tag == array_new()) {
+    if (d.kind_tag != 8 && gathers_views(d.kind_tag)) {
         for a in d.args { if (a >= 0 && semtypes.holds_view(f.values[a])) { out = view_sources(f, defs, anchors, names, a, out); } }
         return out;
     }
@@ -1998,9 +1998,11 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
     return true;
 }
 
-// A phi or a construction: a value made of its operands, whose views it holds.
+// A phi, a construction, or an array rebuilt around a new element: a value
+// made of its operands, whose views it holds.
 function gathers_views(kind: i32): boolean {
-    return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new();
+    return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
+        || kind == append() || kind == with();
 }
 
 // A value that gathers views is anchored to the bytes they read, which its own

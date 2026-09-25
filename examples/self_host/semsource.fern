@@ -605,13 +605,6 @@ function destination_type(e: ast.Expr, s: State, expected: typeinfo.Type): typei
     return checked(e, s);
 }
 
-// A string literal's box is `.rodata` under the immortal rc: as a view it has
-// no source to outlive, so a `str[]` can hold it.
-function static_text(e: ast.Expr): boolean {
-    if let ast.ExprString(st) = e { return true; }
-    return false;
-}
-
 function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type): Value {
     var ty: typeinfo.Type = destination_type(e, s, expected);
     if (!semtypes.concrete(ty, false)) { return refused(s, "unresolved array literal type"); }
@@ -621,7 +614,6 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         var v: Value = expr(e, s, elem);
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
-        if (ssasem.is_view(s.values[v.id]) && !static_text(e)) { return refused(s, "view element escapes its source"); }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
         ids = ids.append(v.id);
     }
@@ -1361,10 +1353,8 @@ function builtin_length(recv: Value, s: State): Value {
 
 // `.append` hands the receiver's own unit to the runtime and takes back one:
 // the same box when the push fits, a fresh one when it grew. The element is a
-// value the new array holds — so it cannot be a view, whose bytes belong to a
-// source the array may outlive. The checker's borrowed-argument carve-out lets
-// one through today (docs/STR-VIEW-CONTRACT.md, the escaping positions #8635
-// closes); this boundary refuses it, as it does an array literal's.
+// value the new array holds; a view element anchors the array to its source
+// (ssasem.gathers_views), as a view in an array literal does.
 function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     var elem: typeinfo.Type = element_type(t);
@@ -1372,14 +1362,13 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     var v: Value = expr(c.args[0], s, elem);
     s = v.s;
     if (!s.ok) { return v; }
-    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
     return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
 
 // `.with` hands the receiver's own unit over the way `.append` does and takes
-// back the array holding the value at the index; the value is held by that
-// array, so a view is refused as an append's is.
+// back the array holding the value at the index, which anchors it as an
+// append's element does.
 function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     var t: typeinfo.Type = s.values[recv.id];
     var elem: typeinfo.Type = element_type(t);
@@ -1391,7 +1380,6 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     var v: Value = expr(c.args[1], s, elem);
     s = v.s;
     if (!s.ok) { return v; }
-    if (ssasem.is_view(s.values[v.id])) { return refused(s, "view element escapes its source"); }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
     return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }

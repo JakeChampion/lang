@@ -26,9 +26,8 @@ function empty(why: string): irlower.LowerResult {
 // integer and the f64 each get a slot of their own, which is a VALUE here, a
 // declared field and an array element, but never a tuple element
 // (narrow_slot). A string view is a value here, and an element only of a
-// `str[]`: a container's drop frees its elements with the owned string's
-// helper, which is not a view's, and a `str[]` the typed path builds holds
-// only immortal literals, on which that helper does nothing.
+// `str[]`, whose drop releases each element through the view's own release
+// (release_name).
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
     for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
     return true;
