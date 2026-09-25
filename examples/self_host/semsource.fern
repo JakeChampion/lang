@@ -2511,7 +2511,32 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     s = init.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[init.id])); }
-    return State { ...bind(s, v.name, init.id), scope: after };
+    init = unaliased_view(init);
+    return State { ...bind(init.s, v.name, init.id), scope: after };
+}
+
+// A view bound under a second name is a fresh view of the same bytes, so the
+// two names share no box. Otherwise a loop that rebinds one name merges the
+// view the other still holds into its phi, and supplying that phi would
+// retain a view (#9802). A literal and a retagged string are counted, and
+// retaining them is sound.
+function unaliased_view(v: Value): Value {
+    var s: State = v.s;
+    if (!ssasem.is_view(s.values[v.id]) || util.index_of_i32(s.vals, v.id) < 0) { return v; }
+    var kind: i32 = defining_kind(s, v.id);
+    if (kind == 5 || kind == ssasem.str_as()) { return v; }
+    var zero: Value = define(s, 1, [], 0, "", t_i32());
+    var n: Value = define(zero.s, ssasem.length(), [v.id], 0, "", t_i32());
+    return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
+}
+
+// The kind of the instruction defining `id` so far, or 0 for a parameter.
+function defining_kind(s: State, id: i32): i32 {
+    for b in s.blocks {
+        for ins in b.insts { if (ins.result == id) { return ins.kind_tag; } }
+    }
+    for ins in s.cur.insts { if (ins.result == id) { return ins.kind_tag; } }
+    return 0;
 }
 
 // The local a value-position match routes its arms through is declared with a
@@ -2551,7 +2576,8 @@ function assign(a: ast.StmtAssign, s: State): State {
     s = value.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[value.id], s.values[old])) { return fail(s, "replacement type does not match its binding"); }
-    return replace(s, a.target, value.id);
+    value = unaliased_view(value);
+    return replace(value.s, a.target, value.id);
 }
 
 // A bare `return;` carries the parser's `punct:;` sentinel in place of a
