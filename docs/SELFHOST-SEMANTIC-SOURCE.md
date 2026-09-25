@@ -2145,7 +2145,9 @@ What is left, in order:
    bundle: `io_error`, `sync`, `umask`, `priority`, the path-taking,
    credential and signal leaves, `stat` / `lstat` / `statfs`, the file
    readers and writers, the directory walkers, and the `Reader` / `Writer`
-   handle operations.
+   handle operations; the environment, host, stdin, process, signal,
+   terminal, timer, poll and socket leaves. 119 of the 128 helper sources
+   check on their own; the rest are listed below.
 
    The AST lowering still lowers every helper when the typed path is off, so
    it takes the retyped spellings as well: a 64-bit syscall operand lowers at

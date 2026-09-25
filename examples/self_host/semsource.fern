@@ -4162,6 +4162,7 @@ function os_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "proc_fork", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "isatty", params: [t_i32()], modes: [v], result: t_bool() },
         ssasem.Contract { name: "process_alive", params: [t_i32()], modes: [v], result: t_bool() },
+        ssasem.Contract { name: "rlimit_nofile", params: [], modes: [], result: t_i64() },
         ssasem.Contract { name: "uname_field", params: [t_i32()], modes: [v], result: t_string() },
         ssasem.Contract { name: "umask", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "proc_waitpid", params: [t_i32()], modes: [v], result: t_i32() },
