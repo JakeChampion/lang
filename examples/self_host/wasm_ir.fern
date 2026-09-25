@@ -290,7 +290,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_emits_op_cached(cache, "flog")) { out = out.append("flog"); }
     if (module_emits_op_cached(cache, "fpow")) { out = out.append("fpow"); }
     if (module_emits_op_cached(cache, "fsin")) { out = out.append("fsin"); }
-    if (module_emits_op_cached(cache, "map_iter")) { out = out.append("map_iter"); }
+    if (module_uses_map_iter(cache)) { out = out.append("map_iter"); }
     if (module_emits_op_cached(cache, "monotonic_ns")) { out = out.append("monotonic_ns"); }
     if (module_emits_op_cached(cache, "now_ns")) { out = out.append("now_ns"); }
     if (module_emits_op_cached(cache, "now_unix_ms")) { out = out.append("now_unix_ms"); }
@@ -1435,6 +1435,14 @@ pub function module_emits_op_cached(cache: irlower.LowerResult[], kind: string):
     var ktag: i32 = ir.kind_id(kind);
     function is_kind(o: ir.Op): boolean { return o.kind_tag == ktag; }
     return any_op(cache, is_kind);
+}
+
+// module_uses_map_iter reports whether a function makes, reads, advances or
+// releases a cursor. A module can hold a cursor it did not make, a consumed
+// `MapIter` parameter, so the op that makes one is not enough to gate on.
+pub function module_uses_map_iter(cache: irlower.LowerResult[]): boolean {
+    function is_cursor_op(o: ir.Op): boolean { return o.kind_tag >= 133 && o.kind_tag <= 137; }
+    return any_op(cache, is_cursor_op) || module_calls_direct(cache, "__fern_mapiter_free");
 }
 
 // module_uses_map_w64 reports whether any function emits an 8-byte-VALUED map op
