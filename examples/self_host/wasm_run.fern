@@ -35,6 +35,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     var mod: parser.Module = rundriver.parse_stdin("wasm_run");
+    if (asmcore.refuse_parse_unknowns([mod])) { return 1; }
     // Call-arity gate (#4360): an arg-count mismatch used to pass through the
     // wasm emitter and miscompile where the Go compiler rejects with E004.
     // Checked on a default-filled COPY so omitted defaulted args don't read

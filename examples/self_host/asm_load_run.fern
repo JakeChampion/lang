@@ -264,8 +264,7 @@ function main(): i32 {
     var parsed: parser.Module[] = [entry_mod];
     for lm in loaded { parsed = parsed.append(lm.mod); }
     if (asmcore.refuse_decl_names(parsed)) { return 1; }
-    // The per-module, -decide and -ir-probe modes return before the checker.
-    if ((pm_mode.len() > 0 || do_decide || probe) && asmcore.refuse_parse_unknowns(parsed)) { return 1; }
+    if (asmcore.refuse_parse_unknowns(parsed)) { return 1; }
 
     // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
     // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
@@ -422,9 +421,6 @@ function main(): i32 {
         eprint(util.format_diags(gated));
         return 1;
     }
-    // The checker reports the sentinels it maps to a code (E061); the rest are
-    // refused here, since the over-budget per-module emit has no prologue.
-    if (asmcore.refuse_parse_unknowns(parsed)) { return 1; }
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred
     // result type so the IR lowering READS the type instead of re-deriving it

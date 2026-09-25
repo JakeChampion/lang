@@ -48,10 +48,10 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	}{
 		// `use` is the one that actually cost us. The others are keywords a
 		// reasonable person might reach for as an identifier.
-		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "has no name"},
-		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "has no name"},
-		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "has no name"},
-		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "has no name"},
+		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "malformed function declaration"},
+		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "malformed function declaration"},
+		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "malformed function declaration"},
+		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "malformed function declaration"},
 
 		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
 		// receiver method — the gate must not fire on any of them.
@@ -66,6 +66,8 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "has no type"},
+		// A parser sentinel: wasm_run has no checked prologue to report it.
+		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
 		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
 		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
@@ -169,6 +171,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	}{
 		{"asm_load_run", buildSelfHostBin(t, gcc, irDir, "asm_load_run.fern", "load"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}, {"-decide"}}},
 		{"asm_modload_run", buildSelfHostBin(t, gcc, writeSelfHostModloadProject(t), "asm_modload_run.fern", "modload"), [][]string{nil, {"-per-module-count"}, {"-ir-probe"}}},
+		{"wasm_modload_run", buildWasmModloadDriver(t, gcc), [][]string{{"-per-module-emit", "0"}, {"-per-module-count"}}},
 	}
 	// Past the 512-function IR budget the default path emits per module, which
 	// skips the emitters' prologue; a sentinel must still be refused there.
@@ -181,7 +184,7 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	for _, ld := range loaders {
 		t.Run(ld.name+"/over-budget-sentinel", func(t *testing.T) {
 			mainPath := writeTemp(t, stage, "over_budget.fern", []byte(overBudget.String()))
-			cmd := exec.Command(ld.bin, mainPath)
+			cmd := exec.Command(ld.bin, append([]string{mainPath}, ld.modes[0]...)...)
 			combined, _ := cmd.CombinedOutput()
 			if cmd.ProcessState.ExitCode() == 0 {
 				t.Fatalf("driver emitted %d bytes for an over-budget module holding a sentinel", len(combined))
@@ -194,6 +197,9 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			{"untyped", untyped, "has no type"},
 			{"sentinel-and-untyped", both, "has no type"},
 			{"sentinel", sentinel, "parser-side unknown"},
+			// The one sentinel with a native code names it on every driver,
+			// whether or not a checker runs before the gate.
+			{"valueless-block", "function side(): i32 { return 1; }\nfunction main(): i32 {\n    var x: i32 = { side(); };\n    return x;\n}\n", "E061"},
 		} {
 			mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
 			for _, args := range ld.modes {
@@ -210,6 +216,13 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			}
 		}
 	}
+}
+
+func buildWasmModloadDriver(t *testing.T, gcc string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_modload_run.fern")
+	return buildSelfHostBin(t, gcc, dir, "wasm_modload_run.fern", "wasm_modload_run")
 }
 
 func writeTemp(t *testing.T, dir, name string, src []byte) string {
