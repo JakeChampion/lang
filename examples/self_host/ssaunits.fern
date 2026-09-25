@@ -448,45 +448,6 @@ function retagged_string(f: ssasem.Func, defs: ssa.SInst[], v: i32): boolean {
     return d.kind_tag == ssasem.str_as() && d.args.len() == 1 && !ssasem.is_view(f.values[d.args[0]]);
 }
 
-// A unit whose release would reach a dyn value of an open type
-// (`ssasem.Func.open_dyns`) is refused rather than released without the
-// children of a generic implementation.
-function open_dyn_error(f: ssasem.Func, owned: boolean[]): string {
-    if (f.open_dyns.len() == 0) { return ""; }
-    var v: i32 = 0;
-    while (v < f.graph.nvals) {
-        if (owned[v] && reaches_open_dyn(f, f.values[v], [])) { return "a dyn value over a generic implementation is lent, never owned"; }
-        v = v + 1;
-    }
-    return "";
-}
-
-function reaches_open_dyn(f: ssasem.Func, t: typeinfo.Type, seen: string[]): boolean {
-    if (ssasem.is_dyn(t)) {
-        for o in f.open_dyns { if (semtypes.equal(o, t)) { return true; } }
-        return false;
-    }
-    var key: string = ssasem.type_key(t);
-    for k in seen { if (k == key) { return false; } }
-    seen = seen.append(key);
-    var parts: typeinfo.Type[] = [];
-    if let typeinfo.TypeArray(a) = t { parts = parts.append(a.elem); }
-    if let typeinfo.TypeTuple(tup) = t { parts = tup.elements; }
-    if let typeinfo.TypeMap(m) = t { parts = [m.key, m.value]; }
-    if (semtypes.is_cell(t)) { parts = parts.append(semtypes.cell_elem(t)); }
-    if let typeinfo.TypeUnion(u) = t { parts = u.args; }
-    var ri: i32 = semrecords.find(f.records, t);
-    if (ri >= 0) { for field in f.records[ri].fields { parts = parts.append(field.ty); } }
-    var ei: i32 = semrecords.find_enum(f.enums, t);
-    if (ei >= 0) {
-        for variant in f.enums[ei].variants {
-            for field in variant.fields { parts = parts.append(field.ty); }
-        }
-    }
-    for p in parts { if (reaches_open_dyn(f, p, seen)) { return true; } }
-    return false;
-}
-
 function live_out_row(flow: ssalive.Flow, bi: i32, n: i32): boolean[] {
     var out: boolean[] = bits(n);
     for v in ssalive.live_out_ids(flow, bi) { out = out.with(v, true); }
@@ -1298,8 +1259,6 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var defs: ssa.SInst[] = definitions(f);
     var units: Units = units_of(f, owned, analysis, defs);
     owned = units.owned;
-    why = open_dyn_error(f, owned);
-    if (why != "") { return bad(why); }
     var takes: i32[] = units.takes;
     analysis = units_analysis(f, analysis, units);
     if (!analysis.ok) { return bad(analysis.why); }

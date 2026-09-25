@@ -3240,7 +3240,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], open_dyns: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -3512,7 +3512,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], open_dyns: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -3714,12 +3714,11 @@ function env_rows(named: typeinfo.Type[], contracts: ssasem.Contract[]): ssasem.
 // helper happens to reach the type: a frame that constructs the closure and
 // one that only drops the record holding it emit the same helper (#9804).
 // A dyn type reached closes the same way, over the concretes it can hold.
-struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], open_dyns: typeinfo.Type[], table: Schemas }
+struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas }
 
 function env_rows_closed(named: typeinfo.Type[], s: State): Closed {
     var rows: ssasem.EnvRow[] = [];
     var drows: ssasem.EnvRow[] = [];
-    var open: typeinfo.Type[] = [];
     var table: Schemas = schemas(named, s);
     while (table.ok) {
         var reach: typeinfo.Type[] = [];
@@ -3736,7 +3735,6 @@ function env_rows_closed(named: typeinfo.Type[], s: State): Closed {
             grown = true;
         }
         for t in dreach {
-            if (generic_implementor(t, s) && !has_type(open, t)) { open = open.append(t); }
             for c in dyn_concretes(t, s) {
                 if (has_env_row(drows, t, c)) { continue; }
                 drows = drows.append(ssasem.EnvRow { fn_ty: t, env_ty: c });
@@ -3747,7 +3745,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State): Closed {
         if (!grown) { break; }
         table = schemas(named, s);
     }
-    return Closed { rows: rows, dyns: drows, open_dyns: open, table: table };
+    return Closed { rows: rows, dyns: drows, table: table };
 }
 
 // The dyn types a type carries, itself included, through the containers a
@@ -3769,8 +3767,8 @@ function dyn_types_in(t: typeinfo.Type, out: typeinfo.Type[]): typeinfo.Type[] {
 
 // The records, enums and strings a dyn value of type `t` can be holding: every
 // one the module implements each trait of the set for. A scalar's box has no
-// children; a generic declaration's instances are not enumerated, so its type
-// is open (`generic_implementor`).
+// children. A generic declaration's instances are the clones monomorphisation
+// made of it (`W__string`), which replace it.
 function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
     var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
@@ -3784,16 +3782,27 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
         if (n == "string") { out = out.append(t_string()); }
         else if (record_schema(n, s).name.len() > 0) { out = out.append(typeinfo.TypeStruct { name: n, args: [] }); }
         else if (union_layout(s, n) == semrecords.layout_variant()) { out = out.append(typeinfo.TypeUnion { name: n, args: [] }); }
+        else if (imp.all_type_params.len() > 0) {
+            for c in generic_clones(n, s) { out = out.append(c); }
+        }
     }
     return out;
 }
 
-function generic_implementor(t: typeinfo.Type, s: State): boolean {
-    var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(t));
-    for imp in s.impls {
-        if (imp.all_type_params.len() > 0 && implements_all(s, util.base_type_name(imp.impl_type), traits)) { return true; }
+// The clones monomorphisation made of generic `base`: records and enums named
+// `base__…`.
+function generic_clones(base: string, s: State): typeinfo.Type[] {
+    var out: typeinfo.Type[] = [];
+    var prefix: string = base + "__";
+    for sig in s.scope.structs.structs {
+        var t: typeinfo.Type = typeinfo.TypeStruct { name: sig.name, args: [] };
+        if (util.str_has_prefix(sig.name, prefix) && record_schema(sig.name, s).name.len() > 0 && !has_type(out, t)) { out = out.append(t); }
     }
-    return false;
+    for u in s.scope.unions.unions {
+        var t: typeinfo.Type = typeinfo.TypeUnion { name: u.name, args: [] };
+        if (util.str_has_prefix(u.name, prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) { out = out.append(t); }
+    }
+    return out;
 }
 
 function implements_all(s: State, n: string, traits: string[]): boolean {
@@ -3867,7 +3876,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     var table: Schemas = closed.table;
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, open_dyns: closed.open_dyns };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns };
     // Before the verifier, so the rewritten graph is the one it checks, and
     // before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);

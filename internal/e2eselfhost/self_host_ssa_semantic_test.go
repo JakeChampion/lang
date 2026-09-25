@@ -168,7 +168,7 @@ func semanticSource(indices []int) (string, string) {
 		fmt.Fprintf(&source, "function semantic_case_%d(): i32 {\n%s\n%s\n", i, semanticFixture, tc.change)
 		source.WriteString(`
 var before = ssa.print_func(graph);
-var checked = ssasem.analyze(ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: graph, values: types, params: params, result: result, records: records, enums: enums, calls: calls });
+var checked = ssasem.analyze(ssasem.Func { envs: [], anchors: [], dyns: [], graph: graph, values: types, params: params, result: result, records: records, enums: enums, calls: calls });
 if (checked.ok != (checked.why == "") || checked.flow.ok != checked.ok) { return 2; }
 if (before != ssa.print_func(graph)) { return 3; }
 if (!checked.ok && (checked.dependencies.len() != 0 || checked.flow.live_in.len() != 0 || checked.flow.live_out.len() != 0)) { return 4; }

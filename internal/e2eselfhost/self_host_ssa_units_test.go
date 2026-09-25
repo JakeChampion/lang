@@ -194,7 +194,7 @@ func unitSource(indices []int) (string, string) {
 		tc := unitCases()[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nvar modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
-var f = ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: graph, values: types, params: params, result: result, records: records, enums: enums, calls: calls };
+var f = ssasem.Func { envs: [], anchors: [], dyns: [], graph: graph, values: types, params: params, result: result, records: records, enums: enums, calls: calls };
 var p = ssaunits.plan(f, modes);
 if (!p.ok) { print(p.why); return 1; }
 `)
@@ -211,7 +211,7 @@ for opaque in opaque_types {
     var g = ssa.SFunc { name: "opaque", nparams: 1, nvals: 1, entry: 7, takes_env: false, blocks: [
         ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }
     ] };
-    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], open_dyns: [], graph: g, values: [opaque], params: [opaque], result: opaque, records: [], enums: [], calls: [] }, [3]);
+    bad = ssaunits.plan(ssasem.Func { envs: [], anchors: [], dyns: [], graph: g, values: [opaque], params: [opaque], result: opaque, records: [], enums: [], calls: [] }, [3]);
     if (bad.ok || bad.steps.len() != 0 || bad.why != "unsupported counted-unit type") { return 34; }
 }
 `)
