@@ -13,7 +13,7 @@ import (
 // data buffer (on the asm backends). Unreclaimed that leaks one box + buffer
 // per iteration, where the native backend frees it. The self-host
 // classifies `var s: string = <fresh producer>` (concat / .to_ascii_upper()/.to_ascii_lower()/
-// .reverse()/.repeat(n) / chr / string_from_bytes_unchecked / str_to_* / __raw_string) that
+// .repeat(n) / chr / string_from_bytes_unchecked / str_to_* / __raw_string) that
 // never escapes (body_unsafe_for) and is never reassigned as reclaimable, then
 // frees it via __fern_str_free (box + data buffer) at the loop-rebind and at scope
 // exit. A literal / bare-ident / .trim() / .replace() binding is NOT fresh (may
