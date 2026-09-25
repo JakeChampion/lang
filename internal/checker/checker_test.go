@@ -436,6 +436,32 @@ func TestArrayLitElementReadsElementDestination(t *testing.T) {
 	}
 }
 
+// TestGenericStructLitInfersThroughArrayField: an array-literal field binds
+// the parameter its element type fixes, as any other field value does, and an
+// empty one binds nothing and settles at what the other fields fix (#10269).
+func TestGenericStructLitInfersThroughArrayField(t *testing.T) {
+	decls := `struct W[T] { items: T[] } struct P[T] { a: T[], b: T } `
+	for _, body := range []string{
+		`var y: i64 = 3; var w = W { items: [y, 1] }; var t: i64 = w.items[0];`,
+		`var w = W { items: [1, 2] }; var t: i32 = w.items[0];`,
+		`var w = W { items: [1.5] }; var t: f64 = w.items[0];`,
+		`var p = P { a: [], b: 5 }; var t: i32 = p.b;`,
+		`var p = P { a: [], b: "x" }; var n: i32 = p.a.len();`,
+		`var w: W[i64] = W { items: [] };`,
+	} {
+		if err := checkSource(t, decls+`function main(): i32 { `+body+` return 0; }`); err != nil {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+	err := checkSource(t, decls+`function main(): i32 { var w = W { items: [] }; return 0; }`)
+	if err == nil || !strings.Contains(err.Error(), "could not infer type parameter T for struct W") {
+		t.Errorf("an empty array alone binds nothing; want E040, got: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "E043") {
+		t.Errorf("the empty field is not itself a mismatch: %v", err)
+	}
+}
+
 // TestGenericStructLitNestedInstantiation locks the fix for a regression
 // the destination-seeding above (#3763) introduced: a nested struct literal
 // whose field type reuses the SAME generic name re-seeded its type-args from

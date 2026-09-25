@@ -18448,6 +18448,14 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
+		// Empty array literals at a field still spelled with an unbound
+		// parameter: they bind nothing, so they settle once the other
+		// fields have.
+		type deferredEmpty struct {
+			value    ast.Expr
+			expected ast.Type
+		}
+		var deferred []deferredEmpty
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -18492,8 +18500,17 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			if vt == nil {
 				continue
 			}
-			c.settleNumeric(f.Value, fieldExpected)
-			vt = c.postSettleType(f.Value, vt)
+			// A field type still naming an unbound parameter is no width to
+			// settle at: unifyType below binds the parameter from the value.
+			if containsParamType(fieldExpected) {
+				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
+					deferred = append(deferred, deferredEmpty{f.Value, expected})
+					continue
+				}
+			} else {
+				c.settleNumeric(f.Value, fieldExpected)
+				vt = c.postSettleType(f.Value, vt)
+			}
 			// Implicit union-wrap: a bare variant struct literal in a
 			// field position widens to its union type, matching the
 			// `var x: Union = Variant{...}`, return, and call-argument
@@ -18582,6 +18599,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete {
+				for _, d := range deferred {
+					c.settleNumeric(d.value, substituteType(d.expected, sub))
+				}
 				// Stamp on the StructLit so the monomorpher
 				// can rewrite TypeName without re-running
 				// inference.

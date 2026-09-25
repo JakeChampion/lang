@@ -4708,14 +4708,17 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
 
 // struct_lit_args are a generic struct literal's type arguments: each is bound
 // by the first written field that fixes it, as native binds them, and the rest
-// stay unknown.
+// stay unknown. An empty array literal fixes nothing.
 function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): typeinfo.Type[] {
   var bn: string[] = [];
   var bt: typeinfo.Type[] = [];
   var i: i32 = 0;
   while (i < sl.field_names.len()) {
     var fi: i32 = field_index(ssig, sl.field_names[i]);
-    if (fi >= 0 && fi < ssig.field_type_names.len()) {
+    var binds: boolean = fi >= 0 && fi < ssig.field_type_names.len();
+    // An empty array literal binds nothing; it takes whatever the others fix.
+    if let ast.ExprArray(ea) = sl.field_values[i] { if (ea.elements.len() == 0) { binds = false; } }
+    if (binds) {
       let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.structs.names, s.unions.names, bn, bt);
       bn = bn2;
       bt = bt2;
@@ -4728,6 +4731,36 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     if (bi >= 0) { args = args.append(bt[bi]); } else { args = args.append(t_unknown("unbound " + tp)); }
   }
   return args;
+}
+
+// lit_uninferable_param names a type parameter of a destination-less literal
+// that nothing can bind: unbound in `args`, and every field spelled with it
+// holds an empty array literal. "" when there is none.
+function lit_uninferable_param(sl: ast.ExprStructLit, ssig: StructSig, args: typeinfo.Type[]): string {
+  // A struct update's base fixes every argument the overrides leave open.
+  if (sl.has_base) { return ""; }
+  var i: i32 = 0;
+  while (i < ssig.type_params.len() && i < args.len()) {
+    if (is_unknown(args[i])) {
+      var tp: string = ssig.type_params[i];
+      var named: boolean = false;
+      var all_empty: boolean = true;
+      var k: i32 = 0;
+      while (k < sl.field_names.len()) {
+        var fi: i32 = field_index(ssig, sl.field_names[k]);
+        if (fi >= 0 && fi < ssig.field_type_names.len() && type_ref_names_any(parser.parse_type_ref(ssig.field_type_names[fi]), [tp])) {
+          named = true;
+          var empty: boolean = false;
+          if let ast.ExprArray(arr) = sl.field_values[k] { empty = arr.elements.len() == 0; }
+          if (!empty) { all_empty = false; }
+        }
+        k = k + 1;
+      }
+      if (named && all_empty) { return tp; }
+    }
+    i = i + 1;
+  }
+  return "";
 }
 
 // lit_field_clash is the index of the first written field whose value its
@@ -5205,6 +5238,9 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       }
       if (ssig.type_params.len() == 0) { return t_struct(sl.type_name); }
       var largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
+      if (lit_uninferable_param(sl, ssig, largs).len() > 0) {
+        return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
+      }
       if (lit_field_clash(sl, ssig, largs, s) >= 0) {
         return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
       }
@@ -11652,7 +11688,13 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
 function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   var fsig: StructSig = s.lookup_struct(sl.type_name);
   var args: typeinfo.Type[] = dest_args;
-  if (args.len() == 0 && fsig.type_params.len() > 0) { args = struct_lit_args(sl, fsig, s); }
+  if (args.len() == 0 && fsig.type_params.len() > 0) {
+    args = struct_lit_args(sl, fsig, s);
+    var utp: string = lit_uninferable_param(sl, fsig, args);
+    if (utp.len() > 0) {
+      out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. var x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
+    }
+  }
   var vi: i32 = 0;
   while (vi < sl.field_values.len()) {
     var fdest: typeinfo.Type = t_unknown("no declared field");
