@@ -10711,8 +10711,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       out = call_diags(c.callee, s);
     }
   }
+  // A callee that resolves to nothing is its own error, and native checks no
+  // argument of it: the call has no parameters for them to meet.
   var dests: typeinfo.Type[] = s.call_param_types(c);
   var di: i32 = 0;
+  if (!s.callee_resolves(c)) { di = c.args.len(); }
   while (di < c.args.len()) {
     var dest: typeinfo.Type = t_unknown("no declared parameter");
     if (di < dests.len()) { dest = dests[di]; }
@@ -10905,12 +10908,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // declared on i64 / u32 / u64 resolves too, not just i32.
           // A declared method, and string / array / map receivers
           // (whose builtin methods route elsewhere), stay clean.
-          if (s.lookup_method(mfa.field, int_label(it)).name.len() == 0) {
+          if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col));
           }
         },
         typeinfo.TypeFloat(f) => {
-          if (s.lookup_method(mfa.field, float_label(f)).name.len() == 0) {
+          if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col));
           }
         },
@@ -10923,7 +10926,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // neither builtin nor user-defined, it's a call to a
           // non-existent method — same shape as the numeric-
           // scalar case above.
-          if (mfa.field != "len" && mfa.field != "as_bytes" && s.lookup_method(mfa.field, "string").name.len() == 0) {
+          if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col));
           }
           // E004 (#7311): the two string builtins take no arguments. A wrong
@@ -10974,7 +10977,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // resolves with it). The namespace is keyed on the
           // method name, so there is no per-element match to
           // make here either.
-          if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len" && !s.has_array_method(mfa.field)) {
+          if (s.method_missing(recv, mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
           }
           // E004 (array builtin arity): the three unconditional array
@@ -11004,7 +11007,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // is not in it exists nowhere. That covers the retired `set` /
           // `delete` / `clear`, which native registers and then removes, and
           // whose advice names the value-returning replacement.
-          if (!util.has_str(s.methods_in_namespace("Map"), mfa.field)) {
+          if (s.method_missing(recv, mfa.field)) {
             // Labelled "Map", not the parameterised spelling: native models a
             // Map as a struct of that name, so that is what its message says.
             out = out.append(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col));
@@ -11888,6 +11891,30 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, settles: boolean, s: 
   return call_diags(e, s);
 }
 
+// method_missing: a method call on a scalar, string, array or map receiver
+// names no method that receiver has, the E043 each receiver's arm reports.
+// Any other receiver answers false.
+function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean {
+  match (recv) {
+    typeinfo.TypeI32(it) => { return s.lookup_method(field, int_label(it)).name.len() == 0; },
+    typeinfo.TypeFloat(f) => { return s.lookup_method(field, float_label(f)).name.len() == 0; },
+    typeinfo.TypeString(_) => { return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0; },
+    typeinfo.TypeArray(_) => { return field != "append" && field != "with" && field != "len" && !s.has_array_method(field); },
+    typeinfo.TypeMap(_) => { return !util.has_str(s.methods_in_namespace("Map"), field); },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// callee_resolves: a call's callee names something to call. An undefined
+// free function and a missing method on a receiver that has a method surface
+// do not.
+function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
+  if let ast.ExprIdent(cid) = c.callee { return is_resolvable_callee(cid.name, s); }
+  if let ast.ExprFieldAccess(mfa) = c.callee { return !s.method_missing(check_expr(mfa.obj, s), mfa.field); }
+  return true;
+}
+
 // The declared parameter types of a call where the callee resolves: a free
 // function, a struct's method, a function value, or a builtin method that
 // stores its argument into a map or an array. Empty otherwise.
@@ -11906,7 +11933,7 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         if (mfa.field == "insert") { return [mt.key, mt.value]; }
       }
       if let typeinfo.TypeArray(at) = rt {
-        if (mfa.field == "append" || mfa.field == "push") { return [at.elem]; }
+        if (mfa.field == "append") { return [at.elem]; }
         if (mfa.field == "with") { return [t_i32(), at.elem]; }
       }
     },
