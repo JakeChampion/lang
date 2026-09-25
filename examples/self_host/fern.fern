@@ -1268,7 +1268,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
             }
             var mdir: string = rm.dir;
             var m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
-            files = files.append(display_path(mpath, root));
+            files = files.append(display_path(rm.shown, root));
             // Identity is the FILE, not its basename: two modules can share a
             // basename (`std/sort` and `coreutils/sort`) and the bundler has
             // to tell them apart to give each its own prefix (#9762).
