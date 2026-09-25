@@ -1286,7 +1286,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[] }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -2447,7 +2447,7 @@ function (s: Scope) array_recv_method(field: string): MethodSig {
     i = s.methods.next[i];
   }
   var empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "" };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -2770,6 +2770,29 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   return t_unknown("no payload " + want);
 }
 
+// variant_ctor_type is the type of a variant construction. A generic enum's
+// carries the arguments its payload fixes (`Full(9)` is Box[i32, unknown]),
+// and leaves the rest unknown for the destination to settle.
+function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.ExprCall): typeinfo.Type {
+  var us: UnionSig = s.lookup_union(union_name);
+  if (us.type_params.len() == 0) { return t_union(union_name); }
+  var args: typeinfo.Type[] = [];
+  for tp in us.type_params { args = args.append(t_unknown("unbound " + tp)); }
+  var ss: StructSig = variant_payload_struct(s, name);
+  var k: i32 = 0;
+  while (k < c.args.len()) {
+    var want: string = "__ev";
+    if (k > 0) { want = "__ev" + util.i32_to_string(k); }
+    var fi: i32 = util.index_of_str(ss.field_names, want);
+    if (fi >= 0 && fi < ss.field_type_names.len()) {
+      var ti: i32 = util.index_of_str(us.type_params, ss.field_type_names[fi]);
+      if (ti >= 0 && is_unknown(args[ti])) { args = args.with(ti, check_expr(c.args[k], s)); }
+    }
+    k = k + 1;
+  }
+  return typeinfo.TypeUnion { name: union_name, args: args };
+}
+
 // bind_variant_payloads brings EVERY payload binding of a matched variant into
 // the arm scope `arm`: the first (pv.binding) typed as `__ev`, then each of
 // pv.extra_bindings typed as `__ev1`, `__ev2`, … . `look` is the scope carrying
@@ -2862,7 +2885,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     i = s.methods.next[i];
   }
   var empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "" };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [] };
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -3321,6 +3344,9 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   // direction, except the owned-into-view lend at an argument
   // (view_arg_borrow).
   if ((is_arr_view(from) && is_owned_array(to)) || (is_owned_array(from) && is_arr_view(to))) {
+    return false;
+  }
+  if (nominal_args_clash(from, to, unions)) {
     return false;
   }
   if (type_eq(from, to)) {
@@ -4267,6 +4293,8 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       }
       mi = mi + 1;
     }
+    var wret: typeinfo.Type = written_method_ret(c, msig, nominal_args(recv_ty), s);
+    if (!is_unknown(wret)) { return wret; }
     // Generic-receiver method return substitution (#4346 piece 2): a method
     // whose declared return type names one of the receiver struct's type
     // parameters (`function (b: Box[T]) get(): T`, or a nested `T[]`)
@@ -4343,7 +4371,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     ctor_user = union_of_variant(name, s.unions);
   }
   if (ctor_user.len() > 0) {
-    return t_union(ctor_user);
+    return variant_ctor_type(s, ctor_user, name, c);
   }
   var ctor_enum: string = "";
   if (!ctor_shadowed) {
@@ -5441,10 +5469,138 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.type_param_count, type_params: fd.type_params, param_bound: pbnd, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.all_type_params.len(), type_params: fd.type_params, param_bound: pbnd, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
+}
+
+// MethodBinding is what a method call's type variables are bound to: the
+// receiver's variables to its arguments, and those the call wrote (`written`)
+// to the written types. `full` is every type parameter, receiver's first.
+struct MethodBinding { names: string[], types: typeinfo.Type[], written: string[], full: string[] }
+
+// method_binding binds a method call's type variables as native does (#9976):
+// a written list names the whole parameter list, or when shorter the method's
+// own parameters, the last ones.
+function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): MethodBinding {
+  var recv_vars: string[] = [];
+  for ra in parser.parse_type_ref(msig.receiver_type).args { recv_vars = recv_vars.append(ra.base); }
+  var full: string[] = recv_vars;
+  for tp in msig.all_type_params {
+    if (!util.has_str(full, tp)) { full = full.append(tp); }
+  }
+  var names: string[] = [];
+  var types: typeinfo.Type[] = [];
+  var written: string[] = [];
+  var offset: i32 = full.len() - c.type_args.len();
+  var wi: i32 = 0;
+  while (offset >= 0 && wi < c.type_args.len()) {
+    if (c.type_args[wi].len() > 0) {
+      names = names.append(full[offset + wi]);
+      types = types.append(type_from_name_with_names_and_unions(c.type_args[wi], s.structs.names, s.unions.names));
+      written = written.append(full[offset + wi]);
+    }
+    wi = wi + 1;
+  }
+  var ri: i32 = 0;
+  while (ri < recv_vars.len() && ri < recv_args.len()) {
+    if (!util.has_str(names, recv_vars[ri])) {
+      names = names.append(recv_vars[ri]);
+      types = types.append(recv_args[ri]);
+    }
+    ri = ri + 1;
+  }
+  return MethodBinding { names: names, types: types, written: written, full: full };
+}
+
+// method_type_arg_diags holds a method call's written type arguments to the
+// method's parameters: E040 for a list longer than the parameters, E038 for an
+// argument the written types contradict. Only a parameter whose spelling names
+// a written-bound variable is checked here; the rest stay with the ordinary
+// argument check.
+function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (c.type_args.len() == 0) { return out; }
+  var mb: MethodBinding = method_binding(c, msig, recv_args, s);
+  if (c.type_args.len() > mb.full.len()) {
+    return [dg_at("E040", method + " expects " + util.i32_to_string(mb.full.len()) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col)];
+  }
+  var ai: i32 = 0;
+  while (ai < c.args.len() && ai < msig.param_type_names.len()) {
+    var pref: parser.TypeRef = parser.parse_type_ref(msig.param_type_names[ai]);
+    if (type_ref_names_any(pref, mb.written)) {
+      var want: typeinfo.Type = type_from_ref_subst(pref, mb.names, mb.types, s.structs.names, s.unions.names);
+      var got: typeinfo.Type = check_expr(c.args[ai], s);
+      if (!is_unknown(got) && !coercible(got, want, s)) {
+        out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(got), expr_line(c.args[ai]), expr_col(c.args[ai])));
+      }
+    }
+    ai = ai + 1;
+  }
+  return out;
+}
+
+// written_method_ret is a method call's result with its written type arguments
+// substituted, or unknown when the call wrote none or its result names none.
+function written_method_ret(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): typeinfo.Type {
+  if (c.type_args.len() == 0 || msig.ret_type_name.len() == 0) { return t_unknown("no written type arguments"); }
+  var mb: MethodBinding = method_binding(c, msig, recv_args, s);
+  if (c.type_args.len() > mb.full.len()) { return t_unknown("too many type arguments"); }
+  var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
+  if (!type_ref_names_any(rref, mb.written)) { return t_unknown("result names no written type argument"); }
+  return type_from_ref_subst(rref, mb.names, mb.types, s.structs.names, s.unions.names);
+}
+
+// same_nominal reports whether two types are both the struct, or both the
+// enum, of one name.
+function same_nominal(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(au) = a {
+    if let typeinfo.TypeUnion(bu) = b { return au.name == bu.name; }
+  }
+  if let typeinfo.TypeStruct(ast_) = a {
+    if let typeinfo.TypeStruct(bs) = b { return ast_.name == bs.name; }
+  }
+  return false;
+}
+
+// nominal_args are a struct or enum type's arguments, or none for any other.
+function nominal_args(t: typeinfo.Type): typeinfo.Type[] {
+  if let typeinfo.TypeStruct(st) = t { return st.args; }
+  if let typeinfo.TypeUnion(u) = t { return u.args; }
+  return [];
+}
+
+function is_dyn_slot(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeDyn(_) = t { return true; }
+  return false;
+}
+
+// nominal_args_clash reports whether two instances of one generic struct or
+// enum disagree on an argument. An argument unknown on either side is no
+// constraint, as a tuple element is not (type_eq compares the name alone), and
+// neither is a `dyn` slot, whose conformance dyn_conforms and
+// ctor_payload_diags judge.
+function nominal_args_clash(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSig[]): boolean {
+  if (!same_nominal(from, to)) { return false; }
+  var fa: typeinfo.Type[] = nominal_args(from);
+  var ta: typeinfo.Type[] = nominal_args(to);
+  if (fa.len() != ta.len()) { return false; }
+  var i: i32 = 0;
+  while (i < fa.len()) {
+    if (!is_unknown(fa[i]) && !is_unknown(ta[i]) && !is_dyn_slot(ta[i]) && !nested_assignable(fa[i], ta[i], unions)) { return true; }
+    i = i + 1;
+  }
+  return false;
+}
+
+// type_ref_names_any reports whether a type spelling names any of `vars`.
+function type_ref_names_any(r: parser.TypeRef, vars: string[]): boolean {
+  if (util.has_str(vars, r.base)) { return true; }
+  for a in r.args {
+    if (type_ref_names_any(a, vars)) { return true; }
+  }
+  return false;
 }
 
 // collect_method_sigs builds the method-sig table from the
@@ -5456,11 +5612,13 @@ function collect_method_sigs(funcs: parser.FuncDecl[], struct_names: string[], u
   for fd in funcs {
     if (fd.receiver_name.len() > 0) {
       var pts: typeinfo.Type[] = [];
+      var ptn: string[] = [];
       for param in fd.params {
         // Same sidecar resolution as collect_func_sigs (#5986).
         pts = pts.append(param_decl_type(param, fd.type_params, struct_names, union_names));
+        ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type });
+      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
     }
   }
   return out;
@@ -5824,7 +5982,23 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
   if (r.base == "Map" && r.args.len() == 2) {
     return t_map(type_from_ref_subst(r.args[0], tparams, targs, struct_names, union_names), type_from_ref_subst(r.args[1], tparams, targs, struct_names, union_names));
   }
-  return type_from_ref_names(r, struct_names, union_names);
+  var whole: typeinfo.Type = type_from_ref_names(r, struct_names, union_names);
+  if (r.is_tuple || r.args.len() == 0) { return whole; }
+  var sargs: typeinfo.Type[] = [];
+  for arg in r.args {
+    sargs = sargs.append(type_from_ref_subst(arg, tparams, targs, struct_names, union_names));
+  }
+  return with_nominal_args(whole, sargs);
+}
+
+// with_nominal_args is a generic struct or enum type with `args` in place of
+// its own: `Box[U, E]` with U bound is Box[<U's type>, …], not the unknowns
+// the plain resolver reads. Any other type is returned unchanged.
+function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Type {
+  if (nominal_args(t).len() != args.len()) { return t; }
+  if let typeinfo.TypeStruct(st) = t { return typeinfo.TypeStruct { name: st.name, args: args }; }
+  if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { name: u.name, args: args }; }
+  return t;
 }
 
 // type_from_name_erasing_tparams resolves a type spelling written INSIDE a
@@ -6170,7 +6344,7 @@ function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // and already skip opaque-generic param types when flagging E038 / E003 —
   // so genuine errors are unaffected; only the uncoded over-reject signal is
   // suppressed for generic bodies. Non-generic bodies keep the strict check.
-  var generic: boolean = func_scope_tparams(fd).len() > 0 || fd.type_param_count > 0;
+  var generic: boolean = func_scope_tparams(fd).len() > 0 || fd.all_type_params.len() > 0;
   // A generic-RECEIVER method (`function (o: Option[T]) unwrap_or(f: T): T`)
   // binds its type parameters through the receiver spelling, which
   // func_scope_tparams reads. A receiver spelling it does not read is still
@@ -10084,7 +10258,7 @@ function display_rewrite(c: ast.ExprCall, nargs: ast.Expr[], s: Scope): ast.Expr
   var ln: i32 = expr_line(c.args[0]);
   var cl: i32 = expr_col(c.args[0]);
   var callee: ast.Expr = ast.ExprFieldAccess { obj: nargs[0], field: "to_string", line: ln, col: cl, ty: "" };
-  return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_argc: 0, ty: "string" }];
+  return [ast.ExprCall { callee: callee, args: [], line: ln, col: cl, type_args: [], ty: "string" }];
 }
 
 // display_arg_diags is the Display spine's refusal: E038, in native's words,
@@ -10317,8 +10491,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         // type args were written (`f[i32](x)`); a bare call
         // relies on inference, and type args on a non-generic
         // function are ignored (matching the Go checker).
-        if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_argc > 0 && c.type_argc != sig.type_param_count) {
-          out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.type_param_count) + " type argument(s), got " + util.i32_to_string(c.type_argc), c.line, c.col));
+        if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.type_param_count) {
+          out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.type_param_count) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col));
         }
         if (sig.name.len() > 0) {
           if (c.args.len() != sig.param_types.len()) {
@@ -10554,6 +10728,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
                 out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
                 mi = mi + 1;
               }
+              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, sn.args, s));
             }
           } else {
             // A call `obj.m(...)` on a known struct with no
@@ -10595,6 +10770,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               }
             }
           }
+          }
+        },
+        typeinfo.TypeUnion(un) => {
+          var umsig: MethodSig = s.lookup_method(mfa.field, un.name);
+          if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
           }
         },
         _ => {
@@ -12545,7 +12726,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     var ename: string = export.func_name;
     for xfd in mod.funcs {
       if (xfd.name == ename) {
-        if (xfd.type_param_count > 0) {
+        if (xfd.all_type_params.len() > 0) {
           out = out.append(dg_at("E054", "@export function \"" + xfd.name + "\" cannot be generic (a world export has a single concrete ABI)", xfd.line, xfd.col));
         }
         if (xfd.receiver_name.len() > 0) {
@@ -14683,7 +14864,7 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
 function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: string[], void_fns: string[]): util.Diag[] {
   var suspects: string[] = [];
   var labels: string[] = [];
-  var is_generic: boolean = efn.type_params.len() > 0 || efn.type_param_count > 0;
+  var is_generic: boolean = efn.type_params.len() > 0 || efn.all_type_params.len() > 0;
   if (is_generic) {
     for param in efn.params {
       if (e064_unknown_bare(param.type_name, struct_names, union_names)) {
@@ -15674,10 +15855,10 @@ function e021_sig_matches(req: parser.FuncDecl, impl_fn: parser.FuncDecl, impl_t
   if (trait_generic) {
     return true;
   }
-  if (req.type_params.len() > 0 || req.type_param_count > 0) {
+  if (req.type_params.len() > 0 || req.all_type_params.len() > 0) {
     return true;
   }
-  if (impl_fn.type_params.len() > 0 || impl_fn.type_param_count > 0) {
+  if (impl_fn.type_params.len() > 0 || impl_fn.all_type_params.len() > 0) {
     return true;
   }
   if (req.params.len() == 0) {
@@ -16122,7 +16303,7 @@ function e021_object_unsafe_method(mod: parser.Module, trait_name: string): stri
         if (type_mentions_self(f.ret_type)) {
           return f.name;
         }
-        if (f.type_params.len() > 0 || f.type_param_count > 0) {
+        if (f.type_params.len() > 0 || f.all_type_params.len() > 0) {
           return f.name;
         }
       }
@@ -16901,10 +17082,10 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   }
   for efn in mod.funcs {
     // Skip generic functions: unbounded generics (`id[T]`) record their
-    // parameters in type_param_count rather than type_params, so both must
-    // be zero. Methods are skipped too — their receiver may bind type
+    // parameters in all_type_params rather than type_params, so both must
+    // be empty. Methods are skipped too — their receiver may bind type
     // parameters that aren't in scope for this resolver.
-    if (efn.type_params.len() == 0 && efn.type_param_count == 0 && efn.receiver_name.len() == 0) {
+    if (efn.type_params.len() == 0 && efn.all_type_params.len() == 0 && efn.receiver_name.len() == 0) {
       for param in efn.params {
         var pu: string = e064_unknown_name(param.type_name, struct_names, union_names, e064_extra);
         if (pu.len() > 0) {
@@ -18236,7 +18417,7 @@ function annotate_expr(e: ast.Expr, s: Scope): ast.Expr {
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       var tag: string = type_to_irtag(check_expr(e, s));
-      return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: tag };
+      return ast.ExprCall { callee: annotate_expr(c.callee, s), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: tag };
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { obj: annotate_expr(fa.obj, s), field: fa.field, line: fa.line, col: fa.col, ty: type_to_irtag(check_expr(e, s)) };

@@ -57,17 +57,16 @@ pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32
 // return no walk over the operand can reach. "" when unannotated.
 pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string }
 
-// type_argc is the number of explicit call-site type arguments (`f[i32](x)`
-// has 1). The arguments themselves are erased — only the count is kept, so the
-// checker can flag a generic-call type-argument arity mismatch (E040). 0 means
-// no `[...]` was written.
+// type_args are the explicit call-site type arguments as written (`f[i32](x)`
+// has ["i32"]); empty means no `[...]` was written. An argument the type
+// grammar could not read is kept as "", so the count stays what was written.
 // `ty` is the resolved result-type tag (typed-IR migration, #5531): the annotate
 // pass (annotate.fern) stamps it post-constfold with the checker's inferred type
 // in irlower's tag vocabulary ("f64" for a float value, etc.), and lowering READS
 // it instead of re-deriving the call's type structurally. "" = unannotated (the
 // asm_ir_run harness and native cmd/fern don't run annotate), in which case
 // lowering falls back to its structural walk — so the field is byte-identity-safe.
-pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_argc: i32, ty: string }
+pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_args: string[], ty: string }
 
 // Array literal `[e1, e2, e3]`. Empty literal `[]` is allowed —
 // the checker rejects an empty literal in inference contexts

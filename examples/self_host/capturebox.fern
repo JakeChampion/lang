@@ -13,7 +13,7 @@ pub function cell_name(name: string): string { return "$cell$" + name; }
 
 function cell_read(name: string, line: i32, col: i32): ast.Expr {
     var cell: ast.Expr = ast.ExprIdent { name: cell_name(name), line: line, col: col, ty: "" };
-    return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_argc: 0, ty: "" };
+    return ast.ExprCall { callee: ast.ExprFieldAccess { obj: cell, field: "get", line: line, col: col, ty: "" }, args: [], line: line, col: col, type_args: [], ty: "" };
 }
 
 function cell_type(elem: typeinfo.Type): typeinfo.Type {
@@ -40,7 +40,7 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
         ast.ExprCall(c) => {
             var nargs: ast.Expr[] = [];
             for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes, bsites, bound)); }
-            return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes, bsites, bound), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes, bsites, bound), args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
         },
         ast.ExprArray(a) => {
             var ne: ast.Expr[] = [];
@@ -123,7 +123,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
             if (bxi >= 0 && site_key(v.name, v.line, v.col) != bsites[bxi]) { bxi = 0 - 1; }
             if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) { bxi = 0 - 1; }
             if (bxi >= 0) {
-                var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: v.line, col: v.col, ty: "" }, args: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], line: v.line, col: v.col, type_argc: 0, ty: "" };
+                var cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: v.line, col: v.col, ty: "" }, args: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], line: v.line, col: v.col, type_args: [], ty: "" };
                 return ast.StmtVar { name: cell_name(v.name), type_name: "Cell[" + btypes[bxi] + "]", init: cell, line: v.line, col: v.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
             }
             return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
@@ -132,7 +132,7 @@ function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsite
             if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
                 // x = v  ->  $cell$x.set(v)
                 var recv: ast.Expr = ast.ExprIdent { name: cell_name(a.target), line: a.target_line, col: a.target_col, ty: "" };
-                var scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_argc: 0, ty: "" };
+                var scall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "set", line: a.line, col: a.col, ty: "" }, args: [box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_args: [], ty: "" };
                 return ast.StmtExpr { value: scall, line: a.line };
             }
             return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
