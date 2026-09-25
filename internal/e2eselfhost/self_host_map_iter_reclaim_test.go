@@ -3,6 +3,7 @@ package e2eselfhost
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,8 @@ func mapIterReclaimCases() []mapIterReclaimCase {
 		{"bound_cursor", "var it = m.iter(); while (it.has_next()) { total = total + it.value(); it.advance(); }", 24},
 		{"fresh_argument", "total = total + drain(m.iter());", 24},
 		{"aliased_argument", "var it = m.iter(); var alias = it; total = total + drain(alias);", 24},
+		{"tuple_held", "var pair: (MapIter[string, i32], i32) = (m.iter(), 5); var (c, k) = pair; if (c.has_next()) { total = total + c.value() + k; }", 48},
+		{"reassigned", "var it = m.iter(); it = m.iter(); if (it.has_next()) { total = total + it.value(); }", 8},
 	}
 }
 
@@ -90,4 +93,35 @@ func assertMapIterRun(t *testing.T, stderr string, exit, want int) {
 		t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
 	}
 	assertBalancedCensus(t, stderr)
+}
+
+// A module that iterates a cursor it did not make: the sibling's `drain` reads
+// and advances one its caller made, which the caller releases.
+func TestSelfHostMapIterAcrossModules(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	lib := "import \"core/map\";\npub function drain(it: MapIter[string, i32]): i32 {\n" +
+		"    var t: i32 = 0;\n    while (it.has_next()) { t = t + it.value(); it.advance(); }\n    return t;\n}\n"
+	main := "import \"core/map\";\nimport \"./lib\";\nfunction main(): i32 {\n" +
+		"    var m: Map[string, i32] = map_new(4);\n    m = m.insert(\"a\", 1);\n    m = m.insert(\"bb\", 2);\n" +
+		"    var total: i32 = 0;\n    var i: i32 = 0;\n    while (i < 8) { total = total + lib.drain(m.iter()); i = i + 1; }\n" +
+		"    return total;\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "lib.fern"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("x86-64", func(t *testing.T) {
+		stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"), nil)
+		assertMapIterRun(t, stderr, exit, 24)
+	})
+	t.Run("wasm", func(t *testing.T) {
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Skip("wasmtime not on PATH")
+		}
+		stderr, exit := runWasmCensus(t, cli.emit(t, src, "wasm32-wasi", "FERN_LEAKCHECK=1", "FERN_SEM_IR=1"))
+		assertMapIterRun(t, stderr, exit, 24)
+	})
 }
