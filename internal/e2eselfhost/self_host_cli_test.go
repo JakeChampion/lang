@@ -110,6 +110,24 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 	// a program that still runs cannot pass by accident. The same file
 	// reached by two spellings (`./lib/b` from the entry, `./b` from lib/)
 	// loads once, so the entry imports it as well.
+	// With no stdlib root argument, a std/ import cannot be loaded. It used
+	// to be skipped silently, so `-check` passed a program importing a module
+	// that does not exist and failed a real one on each use (#10254).
+	t.Run("stdlib-import-without-root", func(t *testing.T) {
+		path := filepath.Join(dir, "unrooted_prog.fern")
+		src := "import \"std/nosuchmod\";\nfunction main(): i32 { return 0; }\n"
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", path).CombinedOutput()
+		if want := `import "std/nosuchmod" needs the stdlib root`; !strings.Contains(string(combined), want) {
+			t.Errorf("-check without a root: want %q, got:\n%s", want, combined)
+		}
+		if _, code := runDriver(t, "-check", path); code == 0 {
+			t.Errorf("-check without a root exited 0")
+		}
+	})
+
 	t.Run("nested-relative-import", func(t *testing.T) {
 		proj := t.TempDir()
 		files := map[string]string{

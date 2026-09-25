@@ -26,6 +26,10 @@ func TestSelfHostCheckerFallbackHint(t *testing.T) {
 		driver = buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 	}
 	native := buildLangBinForInterp(t)
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
 	const dynPrelude = `trait Greet { function hi(self: Self): i32; }
 struct Dog {}
 impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
@@ -80,7 +84,7 @@ function main(): i32 { var sh: Shape = Circle { r: 1 }; sh = Square { s: 2 }; re
 				t.Fatalf("native checker rejected the corpus: %v\n%s", err, out)
 			}
 			cmd := runX86_64Bin(runner, driver)
-			cmd.Args = append(cmd.Args, "-check", path)
+			cmd.Args = append(cmd.Args, "-check", path, stdlibRoot)
 			out, err := cmd.CombinedOutput()
 			wantCode := 0
 			if tc.fallback != 0 {
