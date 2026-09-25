@@ -74,6 +74,17 @@ jobs:
           mkdir -p dist
           go build -trimpath -ldflags="-s -w" -o dist/fern ./cmd/fern
 
+      - name: Sign and notarize (macOS)
+        if: matrix.goos == 'darwin'
+        uses: ./.github/actions/macos-sign
+        with:
+          binaries: dist/fern
+          certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+
       - name: Package archive
         run: |
           cd dist
@@ -136,6 +147,18 @@ jobs:
             -o dist/native/fern-coreutils coreutils/multicall/fern-coreutils.fern
           ./bin/fern-selfhost -O -target "${{ matrix.target }}" \
             -o dist/selfhost/fern-coreutils coreutils/multicall/fern-coreutils.fern internal/stdlib
+
+      # Signed before the smoke test, so the test runs what is published.
+      - name: Sign and notarize (macOS)
+        if: matrix.goos == 'darwin'
+        uses: ./.github/actions/macos-sign
+        with:
+          binaries: dist/native/fern-coreutils dist/selfhost/fern-coreutils
+          certificate-p12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          notary-key: ${{ secrets.MACOS_NOTARY_KEY }}
+          notary-key-id: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          notary-issuer-id: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
 
       # Publishing a binary nobody ran is worse than publishing nothing, so
       # each one answers for itself and then runs a utility through a symlink
@@ -256,6 +279,9 @@ jobs:
 
             Each archive ships a single self-contained `fern`
             binary; the prelude and WASI WIT files are embedded.
+            The macOS binaries are signed with a Developer ID and
+            notarized by Apple, so Gatekeeper runs them without a
+            prompt.
             SHA-256 sums live alongside each archive
             (`*.tar.gz.sha256`).
           files: |
