@@ -4126,6 +4126,51 @@ function main(): i32 {
     return n % 256;
 }
 `},
+	// The environment, host and stdin leaves.
+	{name: "sys-helpers-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true, stdin: "ab\ncdef\n",
+		reports: []string{
+			"runtime __fern_env: produced", "runtime __fern_environ: produced",
+			"runtime __fern_getcwd: produced", "runtime __fern_hostname: produced",
+			"runtime __fern_uname_field: produced", "runtime __fern_rlimit_nofile: produced",
+			"runtime __fern_read_line: produced",
+		}, src: `
+function main(): i32 {
+    var n: i32 = 0;
+    match (env("FERN_SEM_PROBE")) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
+    if (environ().len() > 0) { n = n + 1; }
+    if (getcwd().len() > 0) { n = n + 1; }
+    if (hostname().len() > 0) { n = n + 1; }
+    if (uname_field(0).len() > 0) { n = n + 1; }
+    if (rlimit_nofile() > 0) { n = n + 1; }
+    match (read_line()) { Some(l) => { n = n + l.len() * 1000; }, None => {} }
+    match (read_line()) { Some(l) => { n = n + l.len() * 10000; }, None => {} }
+    return n % 256;
+}
+`},
+	// The process leaves. subprocess bundles its drain and exec helpers, and
+	// its typed body adds a runtime need, so the runtime is emitted twice.
+	{name: "proc-leaves-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true,
+		reports: []string{
+			"runtime __fern_subprocess: produced", "runtime __fern_sp_drain: produced",
+			"runtime __fern_sp_exec_at: produced", "runtime __fern_proc_fork: produced",
+			"runtime __fern_proc_waitpid: produced", "runtime __fern_signal_mask: produced",
+			"runtime __fern_timer_fd: produced",
+		}, src: `
+function main(): i32 {
+    var n: i32 = 0;
+    var r: ProcessResult = subprocess("/bin/echo", ["hi", "there"], "");
+    n = n + r.stdout.len() + r.exit_code * 100;
+    var pid: i32 = proc_fork();
+    if (pid == 0) { exit(7); }
+    var st: i32 = proc_waitpid(pid);
+    n = n + st * 1000;
+    var old: i64 = signal_mask(0, 0 as i64);
+    if (old >= (0 as i64)) { n = n + 1; }
+    var tfd: i32 = timer_fd(5);
+    if (tfd >= 0) { n = n + 1; }
+    return n % 256;
+}
+`},
 	// An address widened to i64 keeps every bit: the store and the load
 	// round-trip it, on the AST leg as well as the typed one.
 	{name: "usize-widens-to-i64-whole", atLeast: 1, nativeOnly: true, noLeak: true, src: `
