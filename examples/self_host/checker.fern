@@ -629,6 +629,10 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
 // syscall takes and answers machine words, signed so a negative errno reads
 // as one. `__raw_string` and `__raw_array` hand a block to a fresh string or
 // `i32[]` the caller owns, and `__raw_data` reads a string's data word.
+// `__raw_call1` / `__raw_call2` call the code address in their last operand
+// with the words before it, and answer the low half of its result. The
+// `__fern_*` rows are the runtime helpers the map helpers call on raw words,
+// where a key or value is a box address or a scalar in a pointer-sized slot.
 pub struct RawFloorSig { name: string, params: typeinfo.Type[], result: typeinfo.Type }
 
 pub function raw_floor_sigs(): RawFloorSig[] {
@@ -650,6 +654,14 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__raw_scratch", params: [n], result: p },
     RawFloorSig { name: "__raw_environ", params: [], result: p },
     RawFloorSig { name: "__raw_splice_pipe", params: [], result: p },
+    RawFloorSig { name: "__raw_call1", params: [p, p], result: n },
+    RawFloorSig { name: "__raw_call2", params: [p, p, p], result: n },
+    RawFloorSig { name: "__fern_str_eq", params: [p, p], result: t_bool() },
+    RawFloorSig { name: "__fern_str_free", params: [p], result: t_void() },
+    RawFloorSig { name: "__fern_str_arr_free", params: [p], result: t_void() },
+    RawFloorSig { name: "__fern_rc_dec", params: [p], result: t_void() },
+    RawFloorSig { name: "__fern_map_find", params: [p, p, n, p], result: n },
+    RawFloorSig { name: "__fern_map_delete", params: [p, p, n, p], result: p },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
     RawFloorSig { name: "__syscall5", params: [n, w, w, w, w, w], result: w },

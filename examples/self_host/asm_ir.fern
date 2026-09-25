@@ -9449,7 +9449,8 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // and most map programs never delete. (The hand-asm rode the whole maps
     // bundle, so this also stops emitting it for programs that never call
     // `.without`.) Its declared dep on `maps` carries str_eq for the string arm.
-    if (s.has_need("map_delete")) {
+    // map_delete_rel's source carries it when that is needed too.
+    if (s.has_need("map_delete") && !s.has_need("map_delete_rel")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), all_structs, s);
     }

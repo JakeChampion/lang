@@ -4795,7 +4795,8 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("map_delete_rel")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete_rel(), s.struct_decls, s);
     }
-    if (s.has_need("map_delete")) {
+    // map_delete_rel's source carries it when that is needed too.
+    if (s.has_need("map_delete") && !s.has_need("map_delete_rel")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_delete(), s.struct_decls, s);
     }
     // __fern_str_cmp is now a Fern runtime function (#2649): see

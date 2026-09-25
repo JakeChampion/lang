@@ -392,13 +392,10 @@ pub function rt_src_str_concat(): string {
 // per-call test rather than three entry points; the wasm backend's
 // $__fern_map_find has had that shape all along.
 //
-// Every parameter is i32 because all four are raw: `keys` and `key` are box
-// pointers, and `eqfn` is a bare code address the op site supplies for a
-// struct/enum key (0 otherwise). It must NOT be spelled `fn` — that marks it a
-// closure local, which dispatches env-first through box[0] with arity+1 and
-// would read the callee's first instruction word as a call target. Declared
-// i32 it takes the plain-indirect path instead, which is the stack-ABI call the
-// hand-asm wrote by hand.
+// All four are raw words: `keys` and `key` are box pointers (or a scalar key),
+// and `eqfn` is a bare code address the op site supplies for a struct/enum key
+// (0 otherwise), called through __raw_call2. It is not a Fern function value:
+// that is a closure, which dispatches env-first through box[0].
 //
 // `keys` is the keys ARRAY, not the map box: map_set needs the index against a
 // buffer it is about to append to, and map_delete walks both columns, so the
@@ -410,19 +407,14 @@ pub function rt_src_str_concat(): string {
 // keykind alongside the address, and comparing those box pointers with `==`
 // would miss a freshly built key that compares equal by value (#6081).
 pub function rt_src_map_find(): string {
-    return "function __fern_map_find(keys: i32, key: i32, keykind: i32, eqfn: i32): i32 { var n: i32 = __raw_load_ptr(keys, 0); var i: i32 = 0; var found: i32 = 0 - 1; while (i < n) { var k: i32 = __raw_load_ptr(keys, i + 1); var hit: i32 = 0; if (eqfn != 0) { if (eqfn(k, key)) { hit = 1; } } else { if (keykind != 0) { if (k == key) { hit = 1; } } else { if (__fern_str_eq(k, key)) { hit = 1; } } } if (hit == 1) { found = i; i = n; } else { i = i + 1; } } return found; }";
+    return "function __fern_map_find(keys: usize, key: usize, keykind: i32, eqfn: usize): i32 { var n: i32 = __raw_load_ptr(keys, 0) as i32; var i: i32 = 0; var found: i32 = 0 - 1; while (i < n) { var k: usize = __raw_load_ptr(keys, i + 1); var hit: i32 = 0; if (eqfn != (0 as usize)) { if (__raw_call2(k, key, eqfn) != 0) { hit = 1; } } else { if (keykind != 0) { if (k == key) { hit = 1; } } else { if (__fern_str_eq(k, key)) { hit = 1; } } } if (hit == 1) { found = i; i = n; } else { i = i + 1; } } return found; }";
 }
 
 // rt_src_map_delete (#2649): `m.without(k)` — the map with the key removed,
 // paired with whether it was there.
 //
-// Every parameter is i32 because all four are raw: mapbox and key are box
-// pointers, and `eqfn` is a bare code address the op site supplies for a
-// struct/enum key (0 otherwise). It must NOT be spelled `fn` — that marks it a
-// closure local, which dispatches env-first through box[0] with arity+1 and
-// would read the callee's first instruction word as a call target. Declared
-// i32 it takes the plain-indirect path instead, which is the stack-ABI call
-// the hand-asm wrote by hand.
+// The parameters are __fern_map_find's raw words, with the map box in place
+// of the keys array.
 //
 // Layouts: the map box is [keys, values]; an array box holds its length at
 // word 0 and element i at word i+1. The RESULT is a two-element TUPLE, whose
@@ -441,7 +433,7 @@ pub function rt_src_map_find(): string {
 // key was absent), where only __fern_map_delete_rel reads them: the entry is
 // overwritten by the swap, so this is the one place it is still in hand.
 pub function rt_src_map_delete(): string {
-    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; var gone_k: i32 = 0; var gone_v: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); gone_k = __raw_load_ptr(ks, found + 1); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); gone_v = __raw_load_ptr(vs, found + 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(4); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); __raw_store_ptr(r, 2, gone_k); __raw_store_ptr(r, 3, gone_v); return r; }";
+    return "function __fern_map_delete(mapbox: usize, key: usize, keykind: i32, eqfn: usize): usize { var keys: usize = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: usize = 0 as usize; var gone_k: usize = 0 as usize; var gone_v: usize = 0 as usize; if (found >= 0) { var ks: usize = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0) as i32; gone_k = __raw_load_ptr(ks, found + 1); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, (m - 1) as usize); var vs: usize = __raw_load_ptr(mapbox, 1); gone_v = __raw_load_ptr(vs, found + 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, (m - 1) as usize); existed = 1 as usize; } var r: usize = __raw_arr_box(4); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); __raw_store_ptr(r, 2, gone_k); __raw_store_ptr(r, 3, gone_v); return r; }";
 }
 
 // rt_src_map_delete_rel (#9970): __fern_map_delete, then the release of what
@@ -450,11 +442,13 @@ pub function rt_src_map_delete(): string {
 // __fern_str_free and a keyed column's box (keykind 2) the release `krel`
 // addresses, or the shallow dec when the op site passed none. `vkind` is
 // op_map_set's: 1 a string, 2 a string array, 3 a box released through
-// `vrel`. `krel` and `vrel` are bare code addresses, declared i32 for the
-// reason `eqfn` is. The tuple comes back with words 2 and 3 still set; the
-// caller reads the map and the flag alone.
+// `vrel`. `krel` and `vrel` are bare code addresses, called through
+// __raw_call1 as `eqfn` is through __raw_call2. The tuple comes back with
+// words 2 and 3 still set; the caller reads the map and the flag alone. The
+// source carries __fern_map_delete too, so the call has its callee in the same
+// module; a program that needs both emits this source alone.
 pub function rt_src_map_delete_rel(): string {
-    return "function __fern_map_delete_rel(mapbox: i32, key: i32, keykind: i32, eqfn: i32, kfree: i32, vkind: i32, krel: i32, vrel: i32): i32 { var r: i32 = __fern_map_delete(mapbox, key, keykind, eqfn); if (__raw_load_ptr(r, 1) == 1) { var k: i32 = __raw_load_ptr(r, 2); var v: i32 = __raw_load_ptr(r, 3); if (kfree == 1) { if (keykind == 0) { __fern_str_free(k); } else if (keykind == 2) { if (krel != 0) { krel(k); } else { __fern_arr_dec(k); } } } if (vkind == 1) { __fern_str_free(v); } else if (vkind == 2) { __fern_str_arr_free(v); } else if (vkind == 3) { vrel(v); } } return r; }";
+    return rt_src_map_delete() + " function __fern_map_delete_rel(mapbox: usize, key: usize, keykind: i32, eqfn: usize, kfree: i32, vkind: i32, krel: usize, vrel: usize): usize { var r: usize = __fern_map_delete(mapbox, key, keykind, eqfn); if (__raw_load_ptr(r, 1) == (1 as usize)) { var k: usize = __raw_load_ptr(r, 2); var v: usize = __raw_load_ptr(r, 3); if (kfree == 1) { if (keykind == 0) { __fern_str_free(k); } else if (keykind == 2) { if (krel != (0 as usize)) { __raw_call1(k, krel); } else { __fern_rc_dec(k); } } } if (vkind == 1) { __fern_str_free(v); } else if (vkind == 2) { __fern_str_arr_free(v); } else if (vkind == 3) { __raw_call1(v, vrel); } } return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
@@ -4653,6 +4647,9 @@ function builtin_i32_names(): string[] {
         "__raw_arr_box",
         // An array's address, the value __raw_array retypes back.
         "__raw_arr_ptr",
+        // A call through a code address, the address last.
+        "__raw_call1",
+        "__raw_call2",
         // Syscall sub-floor (#2649): the raw-memory floor's I/O
         // sibling. Returns the syscall result as i32.
         "__syscall3",
