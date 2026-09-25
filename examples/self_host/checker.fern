@@ -4694,6 +4694,18 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
   return none;
 }
 
+// struct_lit_type is a struct literal's type: a generic struct carries the
+// arguments its fields fix (`Box { v: 1 }` is Box[i32]), and the rest unknown.
+function struct_lit_type(name: string, tparams: string[], bn: string[], bt: typeinfo.Type[]): typeinfo.Type {
+  if (tparams.len() == 0) { return t_struct(name); }
+  var args: typeinfo.Type[] = [];
+  for tp in tparams {
+    var bi: i32 = util.index_of_str(bn, tp);
+    if (bi >= 0) { args = args.append(bt[bi]); } else { args = args.append(t_unknown("unbound " + tp)); }
+  }
+  return typeinfo.TypeStruct { name: name, args: args };
+}
+
 // projected_ret resolves a generic's return spelled through a projection on a
 // type parameter (`H::Item`): the call's bindings make the base concrete, and
 // the impl of that base says what the projection names.
@@ -5124,6 +5136,8 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
         swritten = swritten.append(false);
         sdi = sdi + 1;
       }
+      var sbn: string[] = [];
+      var sbt: typeinfo.Type[] = [];
       var sli: i32 = 0;
       while (sli < sl.field_names.len()) {
         var sfi: i32 = field_index(ssig, sl.field_names[sli]);
@@ -5149,9 +5163,14 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
             && !coercible(ft, ssig.field_types[sfi], s)) {
           return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
         }
+        if (sfi < ssig.field_type_names.len()) {
+          let (sbn2, sbt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[sfi]), ft, ssig.type_params, s.structs.names, s.unions.names, sbn, sbt);
+          sbn = sbn2;
+          sbt = sbt2;
+        }
         sli = sli + 1;
       }
-      return t_struct(sl.type_name);
+      return struct_lit_type(sl.type_name, ssig.type_params, sbn, sbt);
     },
     ast.ExprFieldAccess(fa) => {
       // A qualified UNIT variant `Color.Red` in VALUE position is not a field
@@ -9941,6 +9960,9 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     typeinfo.TypeUnion(_) => {
       return ctor_boxes_into(e, want, s);
     },
+    typeinfo.TypeStruct(ws) => {
+      return struct_lit_settles(e, ws, s);
+    },
     _ => {
       return false;
     }
@@ -9971,6 +9993,18 @@ function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       i = i + 1;
     }
     return boxed;
+  }
+  return false;
+}
+
+// struct_lit_settles: a generic struct literal is read at its destination's
+// arguments, so `Box { v: 1 }` is a Box[i64] where one is wanted. Its fields
+// are judged under those arguments by dest_call_diags, as E043.
+function struct_lit_settles(e: ast.Expr, want: typeinfo.TypeStruct, s: Scope): boolean {
+  if (want.args.len() == 0) { return false; }
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base || sl.type_name != want.name) { return false; }
+    return s.lookup_struct(sl.type_name).type_params.len() == want.args.len();
   }
   return false;
 }
@@ -10372,7 +10406,7 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
     ast.ExprIndex(ix) => { out = call_diags_index(ix, s, out); },
     ast.ExprSlice(s2) => { out = call_diags_slice(s2, s, out); },
     ast.ExprFieldAccess(fa) => { out = call_diags_field_access(fa, s, out); },
-    ast.ExprStructLit(sl) => { out = call_diags_struct_lit(sl, s, out); },
+    ast.ExprStructLit(sl) => { out = call_diags_struct_lit(sl, [], s, out); },
     ast.ExprLambda(lm) => { out = call_diags_lambda(lm, s, out); },
     ast.ExprIdent(id) => { out = call_diags_ident(id, s, out); },
     _ => {}
@@ -11571,13 +11605,15 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
   return [];
 }
 
-function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]): util.Diag[] {
+// `args` are the literal's type arguments where its destination names them,
+// else empty: a generic field is judged at its type under them.
+function call_diags_struct_lit(sl: ast.ExprStructLit, args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   var fsig: StructSig = s.lookup_struct(sl.type_name);
   var vi: i32 = 0;
   while (vi < sl.field_values.len()) {
     var fdest: typeinfo.Type = t_unknown("no declared field");
     if (fsig.name.len() > 0 && vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
-      fdest = fsig.field_types[field_index(fsig, sl.field_names[vi])];
+      fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
     }
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
     vi = vi + 1;
@@ -11610,7 +11646,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
     while (fi < sl.field_names.len()) {
       var fidx: i32 = field_index(ssig, sl.field_names[fi]);
       if (fidx >= 0) {
-        var ft: typeinfo.Type = ssig.field_types[fidx];
+        var ft: typeinfo.Type = lit_field_type(ssig, fidx, args, s);
         var vt: typeinfo.Type = check_expr(sl.field_values[fi], s);
         out = util.append_diags(out, int_dest_range_diags(sl.field_values[fi], ft));
         out = util.append_diags(out, ctor_payload_diags(sl.field_values[fi], ft, s));
@@ -11787,12 +11823,24 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
   return out;
 }
 
+// lit_field_type is field `fi`'s declared type, substituted with a generic
+// struct's arguments when there are as many as it has parameters.
+function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scope): typeinfo.Type {
+  if (args.len() == 0 || args.len() != ssig.type_params.len() || fi >= ssig.field_type_names.len()) { return ssig.field_types[fi]; }
+  return type_from_ref_subst(parser.parse_type_ref(ssig.field_type_names[fi]), ssig.type_params, args, s.structs.names, s.unions.names);
+}
+
 // The call walk of an expression bound to a destination of type `dest`. An
 // array literal whose destination names a composite element type has each
 // element checked against that type by `array_elem_check`, so the literal's
 // own first-element-anchored E034 stands down: `[1, "a"]` is a valid
 // `dyn Show[]` (#10097).
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
+  if let ast.ExprStructLit(sl) = e {
+    if let typeinfo.TypeStruct(ds) = dest {
+      if (ds.name == sl.type_name) { return call_diags_struct_lit(sl, ds.args, s, []); }
+    }
+  }
   var elem: typeinfo.Type = array_elem_type_of(dest);
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {

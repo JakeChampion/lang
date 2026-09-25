@@ -17423,6 +17423,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						// that binds U nowhere — E040 on a program the
 						// language accepts (#9896).
 						c.expectedType = pt
+					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
+						// A generic struct parameter is the destination a
+						// struct literal argument is read at, as a var's is.
+						c.expectedType = pt
 					}
 				}
 				at = c.checkExpr(n.Args[i], s)
