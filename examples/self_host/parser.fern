@@ -12943,6 +12943,7 @@ function fn_spelling_ret(t: string): string {
 function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     if (arg.len() == 0) { return ""; }
     if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
+    if (arg[0] == b'(') { return ge_tuple_mangle(arg); }
     var lb: i32 = first_bracket(arg);
     if (lb < 0) {
         if (util.contains(arg, " ")) { return ""; }
@@ -12952,6 +12953,35 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     var gi: GEInst = ge_inst_of(arg, enums);
     if (gi.ok) { return gi.mang; }
     return "";
+}
+
+// ge_tuple_mangle names a tuple type argument as native's mangleArg does:
+// `tup`, then each element after a `_`, an array element suffixed `_arr`.
+// Only nominal elements, arrays and tuples of them are named. A generic enum
+// inside the tuple would stay unrewritten in the clone's substituted field
+// types, so such a tuple has no name and its enum stays out of the pass.
+function ge_tuple_mangle(arg: string): string {
+    if (arg.len() < 2 || arg[0] != b'(' || arg[arg.len() - 1] != b')') { return ""; }
+    var parts: string[] = split_top_commas(slice_unchecked(arg, 1, arg.len() - 1));
+    if (parts.len() < 2) { return ""; }
+    var out: string = "tup";
+    for p in parts {
+        var m: string = ge_tuple_elem_mangle(p);
+        if (m.len() == 0) { return ""; }
+        out = out + "_" + m;
+    }
+    return out;
+}
+
+function ge_tuple_elem_mangle(e: string): string {
+    if (type_ends_arr(e)) {
+        var m: string = ge_tuple_elem_mangle(slice_unchecked(e, 0, e.len() - 2) + "");
+        if (m.len() == 0) { return ""; }
+        return m + "_arr";
+    }
+    if (e.len() > 0 && e[0] == b'(') { return ge_tuple_mangle(e); }
+    if (e.len() == 0 || first_bracket(e) >= 0 || util.contains(e, " ")) { return ""; }
+    return e;
 }
 
 // me_rewrite_ty rewrites a generic-enum type spelling to its mangled clone
@@ -13033,6 +13063,7 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
     // follow-up). The caller recovers the raw spelling for iargs by re-running
     // mono_infer on the payload arg.
     if (ed.type_params.len() == 1 && pk_is_fn_spelling(key)) { return fn_key_sanitize(key); }
+    if (ed.type_params.len() == 1 && key[0] == b'(') { return ge_tuple_mangle(key); }
     if (!is_simple_key(key)) { return ""; }
     return key;
 }
@@ -13736,7 +13767,7 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
     return ty;
 }
 
-// The generic enums with a use the pass cannot key: a spelling `Opt[(i32,
+// The generic enums with a use the pass cannot key: a spelling `Opt[(Opt[i32],
 // i32)]` whose argument has no clone name. Such an enum is left out of the
 // pass entirely, declaration, variants and methods erased as before, because
 // a clone beside the generic original is unsound on the AST lowering, which
