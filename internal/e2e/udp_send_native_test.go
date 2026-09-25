@@ -17,26 +17,24 @@ import (
 // The datagram is asserted as well as the exit code: a byte count is a number a
 // wrong helper could produce, a delivered payload is not. The host contract is
 // the self-host's: a dotted-quad IPv4 literal, and -3 without opening a socket
-// for anything else.
+// for anything else. (wasm answers -28 for a bad host.)
 func TestX86_64UdpSend(t *testing.T) {
 	_, runner := x86_64Tooling(t)
+	start := func(bin string) *exec.Cmd { return runX86_64Bin(runner, bin) }
 	for _, backend := range []string{"flat", "ssa"} {
-		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "x86-64-linux", backend, runner) })
+		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "x86-64-linux", backend, start) })
 	}
 }
 
 func TestArm64UdpSend(t *testing.T) {
 	_, qemu := arm64Tooling(t)
-	var runner []string
-	if qemu != "" {
-		runner = []string{qemu}
-	}
+	start := func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) }
 	for _, backend := range []string{"flat", "ssa"} {
-		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, runner) })
+		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, start) })
 	}
 }
 
-func runNativeUdpSend(t *testing.T, target, backend string, runner []string) {
+func runNativeUdpSend(t *testing.T, target, backend string, start func(bin string) *exec.Cmd) {
 	fern := buildLangBinForInterp(t)
 	stdlib, err := filepath.Abs("../stdlib")
 	if err != nil {
@@ -63,8 +61,7 @@ func runNativeUdpSend(t *testing.T, target, backend string, runner []string) {
 		return bin
 	}
 	run := func(bin string) int {
-		args := append(append([]string{}, runner...), bin)
-		cmd := exec.Command(args[0], args[1:]...)
+		cmd := start(bin)
 		if err := cmd.Run(); err != nil {
 			if _, exited := err.(*exec.ExitError); !exited {
 				t.Fatalf("run %s: %v", bin, err)
@@ -95,7 +92,7 @@ func runNativeUdpSend(t *testing.T, target, backend string, runner []string) {
 	}
 	src += "    return 0;\n}\n"
 	if code := run(build("udphosts", src)); code != 0 {
-		t.Errorf("udp_send(%q) did not answer -3", rejected[code-1])
+		t.Errorf("a rejected host did not answer -3: exit %d", code)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	if n, _, rerr := conn.ReadFromUDP(buf); rerr == nil {
