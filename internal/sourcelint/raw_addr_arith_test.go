@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// A raw pointer's surface type in the runtime-helper sources is `i32`, so a
-// `p + off` written there is an i32 add: arm64 sign-extends the sum back to 32
+// A runtime helper not yet retyped against the raw floor holds a pointer as
+// an `i32`, so a `p + off` written there is an i32 add: arm64 sign-extends the sum back to 32
 // bits (`sxtw x0, w0`) and any address above 4 GiB arrives truncated. Every
 // Linux target puts the image low enough that the narrowing is a no-op, so the
 // only place it shows is arm64-darwin, where `__PAGEZERO` forces the base to

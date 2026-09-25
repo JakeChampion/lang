@@ -30,10 +30,10 @@ import (
 // the same function binds with `__raw_alloc`.
 var rawStringCallRe = regexp.MustCompile(`__raw_string\(`)
 
-// rawAllocBindRe matches the binding form the helpers use: `var p: i32 =
-// __raw_alloc(...)`. The type is always i32 — a raw pointer's surface type in
-// these bodies (see TestAsmcoreAddressesAvoidI32Arithmetic).
-var rawAllocBindRe = regexp.MustCompile(`var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*i32\s*=\s*__raw_alloc\(`)
+// rawAllocBindRe matches the binding form the helpers use: `var p: usize =
+// __raw_alloc(...)`, or `i32` in a helper not yet retyped against the raw
+// floor's types.
+var rawAllocBindRe = regexp.MustCompile(`var\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:usize|i32)\s*=\s*__raw_alloc\(`)
 
 // genFnRe matches the start of one asmcore.fern generator function.
 var genFnRe = regexp.MustCompile(`(?m)^(?:pub )?function\s+[A-Za-z_][A-Za-z0-9_]*\s*\(`)

@@ -49,3 +49,13 @@ wired.
   byte-identical to main's output.
 - The natively built compiler on `checker.fern`: 16.8 s, 942 MB, the same as
   main's.
+
+## The bootstrap pin
+
+The stage0 pinned at `stage0-20260923-3334e03` bails on `fern.fern` once
+`EmitState` holds a function-typed field: strict mode names
+`parser.retag_type_arg_indexes` (`call to unknown symbol i32.append`), a
+function this change does not touch. Adding only the `rt_lower` field to
+main's source reproduces it, and the current self-host compiler compiles
+the same source in strict mode, so the bug is the old binary's. This change
+pins `stage0-20260925-f81d8d7`, published from its own branch.
