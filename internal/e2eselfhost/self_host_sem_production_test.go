@@ -3604,8 +3604,8 @@ function main(): i32 {
     return s - 200;
 }
 `},
-	// Explicit type arguments at a call. The parser erases them from the
-	// argument list and keeps only their count (`type_argc`, which E040 checks
+	// Explicit type arguments at a call. The parser keeps them apart from the
+	// argument list (`type_args`, which the checker binds and E040 counts
 	// against the declaration), and the instantiation is inferred from the
 	// arguments and the destination exactly as it is without them; the three
 	// call paths refused any count above zero as a `call arity`, which is what

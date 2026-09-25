@@ -256,7 +256,7 @@ function call(c: ast.ExprCall, scope: Scope, r: Region): Imported {
             if let ast.ExprIdent(id) = f.obj { if (resolve(scope, id.name) < 0) { name = id.name + "." + f.field; } }
     }
     var vi: i32 = variant_index(r, name, "");
-    if (c.type_argc != 0) { return bad(r); }
+    if (c.type_args.len() != 0) { return bad(r); }
     var ci: i32 = 0;
     while (ci < r.callees.len()) {
         if (r.callees[ci].name == name) {

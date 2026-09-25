@@ -580,7 +580,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 args = args.append(rewrite_expr(c.args[i], ctx));
                 i = i + 1;
             }
-            return ast.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            return ast.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
         },
         ast.ExprBinary(b) => {
             return ast.ExprBinary {

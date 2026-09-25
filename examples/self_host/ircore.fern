@@ -973,7 +973,7 @@ function scale_map_call(e: ast.Expr): ast.Expr {
             if let ast.ExprLambda(lm) = c.args[1] {
                 var got: ScaleFactor = scale_lambda_factor(lm);
                 if (!got.ok) { return e; }
-                return ast.ExprCall { ...c, type_argc: 0,
+                return ast.ExprCall { ...c, type_args: [],
                     callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "" },
                     args: [c.args[0], got.k] };
             }
