@@ -10170,6 +10170,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                             return amrt;
                         }
                     }
+                    var mmrt: string = mapm_ret_of(cfa, c.args, env, funcs);
+                    if (mmrt.len() > 0) { return mmrt; }
                     // Generic-struct method with its own type params — folded to
                     // `__smm_<Base>_m` by register_struct_method_generics. Infer
                     // its result by instantiating the fold from the receiver +
@@ -10562,6 +10564,30 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
         }
     }
     return mono_expr(e, env, funcs, ins);
+}
+
+// mapm_ret_of infers a map method call's result type: the builtin snapshots
+// `keys()` / `values()`, or a `__mapm_<verb>[K, V]` fold instantiated from the
+// receiver and arguments the way mono_expr folds the call. "" when the
+// receiver is not a map or the verb is neither, so a chained
+// `m.keys().sum()` finds `.sum()`'s array receiver.
+function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {
+    var gi: i32 = bg_find(funcs, "__mapm_" + cfa.field);
+    var snapshot: boolean = args.len() == 0 && (cfa.field == "keys" || cfa.field == "values");
+    if (gi < 0 && !snapshot) { return ""; }
+    var rt: string = mono_infer(cfa.obj, env, funcs);
+    if (rt.len() < 4 || slice_unchecked(rt, 0, 4) != "Map[") { return ""; }
+    if (gi < 0) {
+        var kv: string[] = type_args_of(rt);
+        if (kv.len() != 2) { return ""; }
+        if (cfa.field == "keys") { return kv[0] + "[]"; }
+        return kv[1] + "[]";
+    }
+    var all: ast.Expr[] = [cfa.obj];
+    for a in args { all = all.append(a); }
+    var key: string = infer_inst(funcs.decls[gi], all, env, funcs);
+    if (key.len() == 0) { return ""; }
+    return subst_ty(funcs.decls[gi].ret_type, funcs.decls[gi].type_params, split_inst_key(key));
 }
 
 // mono_ty_mentions_var reports whether a type spelling contains a bare

@@ -115,6 +115,17 @@ function main(): i32 {
     if (!ps[0].ss.contains("b")) { return 3; }
     return 42;
 }`},
+	// A map's keys() / values() snapshot is an array, so an array method
+	// chained onto it folds like one on a local (the snapshot's type was
+	// unknown to the monomorphiser).
+	{"map-snapshot-array-methods", `import "core/map";
+import "std/array";
+function main(): i32 {
+    var m: Map[string, i32] = Map { "a": 10, "b": 20, "c": 12 };
+    if (!m.keys().contains("b")) { return 1; }
+    match (m.values().max()) { Some(v) => { if (v != 20) { return 2; } }, None => { return 3; } }
+    return m.values().sum();
+}`},
 	// The persistent collections (#6794) through the self-host loader: generic
 	// enums / structs with receiver methods whose bodies call bounded free
 	// generics on the struct's own type vars (`__om_insert(m.root, k, v)` under
