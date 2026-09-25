@@ -6620,7 +6620,7 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name.len() == 0) {
             errs = errs.append(util.Diag { code: "P001",
-                message: "function declaration has no name (a keyword such as `use` / `type` / `match` cannot be used as one)",
+                message: "function declaration has no name: either a keyword was written as its name, or a destructured parameter could not be read",
                 line: mod.funcs[i].line, col: 0 });
         }
         errs = untyped_param_errs(mod.funcs[i], errs);
