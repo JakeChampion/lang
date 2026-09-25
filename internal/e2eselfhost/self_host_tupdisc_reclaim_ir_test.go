@@ -34,7 +34,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { (i, [i, i + 1]); mk(i); i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -66,7 +66,7 @@ function main(): i32 {
     while (w < 50) { mkmix(w, w % 2); mkstr(w); mki64(w); w = w + 1; }
     var again: i32 = xs[0] + xs[1];
     if (again != 15) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// BOUND calls are untouched by the TUPRET registry (it fires only on a
@@ -80,7 +80,7 @@ function main(): i32 {
     mk(9);
     var v: i32 = t.0[0] + t.0[1] + t.1;
     if (v != 10) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 10},
 }

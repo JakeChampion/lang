@@ -50,7 +50,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -78,7 +78,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { var w: i32 = work(j % 8); if (w < 0) { return 97; } acc = (acc + w) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
 }`, 0, true},
@@ -100,7 +100,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -123,7 +123,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + work(j % 8)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -147,7 +147,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 400) { var v: i32 = work(i % 2); if (v < 0) { return 97; } acc = (acc + v) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},

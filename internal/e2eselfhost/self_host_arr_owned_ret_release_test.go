@@ -54,7 +54,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -72,7 +72,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -90,7 +90,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -109,7 +109,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -129,7 +129,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -153,7 +153,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -178,7 +178,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -199,7 +199,7 @@ function churn(n: i32): i32 {
 }
 function main(): i32 {
     var w: i32 = churn(400);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != 1150) { return 97; }
     return 0;
 }`, 0},
@@ -219,7 +219,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w: i32 = churn(200);
     var x: i32 = churn(200);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return 0;
 }`, 0},
@@ -250,7 +250,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -267,7 +267,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -287,7 +287,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -308,7 +308,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -344,7 +344,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 10) % 251) { return 96; }
     return ((b2 - b1) / 200) as i32;
@@ -373,7 +373,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -390,7 +390,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -409,7 +409,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -427,7 +427,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -501,7 +501,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -523,7 +523,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -542,7 +542,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -563,7 +563,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w1: i32 = churn(200);
     var x: i32 = churn(200);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 2) % 251) { return 96; }
     return 0;
@@ -585,7 +585,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -612,7 +612,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w1: i32 = churn(200);
     var x: i32 = churn(200);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w1 != x) { return 97; }
     if (w1 != (200 * 9) % 251) { return 96; }
     return 0;

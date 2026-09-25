@@ -31,18 +31,18 @@ func TestSelfHostLiteralArgReclaimWasmIR(t *testing.T) {
 	}{
 		// The fresh PRODUCER CALL in argument position. No heap-flatness
 		// assertion on this leg — the WAT driver's own allocations sit between
-		// any two probes — so __rc_underflow() plus the value is the witness
+		// any two probes — so __rc_underflow_count() plus the value is the witness
 		// that the release is balanced rather than over-eager.
 		// The ARRAY sibling. No flatness assertion on this leg — the WAT
 		// driver's own allocations sit between any two probes — so
-		// __rc_underflow() plus the values are the witness.
+		// __rc_underflow_count() plus the values are the witness.
 		{"producer-call-arr-arg-borrowable-wasm", `function mk(n: i32): i32[] { var out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { if (size(mk(i)) != 3) { bad = 1; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -52,7 +52,7 @@ function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { var r: i32[] = pick(mk(i)); if (r.len() != 3 || r[2] != i + 2) { bad = 1; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -62,7 +62,7 @@ function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { if (size(mks(i)) < 41) { bad = 1; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -74,7 +74,7 @@ function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { var r: string = pick(mks(i)); if (r.len() < 41) { bad = 1; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -87,7 +87,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 1500) { acc = acc + readit("ab"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 3400) { return 97; }
     return 0;
@@ -101,7 +101,7 @@ function main(): i32 {
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -119,7 +119,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 1500) { acc = acc + recv.readit("ab"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (recv.len() != 2) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 6800) { return 97; }
@@ -135,7 +135,7 @@ function main(): i32 {
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -154,7 +154,7 @@ function main(): i32 {
         if (b.tag.len() != 5) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -177,7 +177,7 @@ function main(): i32 {
         if (a.name[0] != 102) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -195,7 +195,7 @@ function main(): i32 {
         if (c.k != i + 116) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},

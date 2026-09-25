@@ -48,7 +48,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -71,7 +71,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -94,7 +94,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000, s);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     if (s.len() != 4) { return 96; }
     return (b2 - b1) / 1000;
@@ -118,7 +118,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
 }`, 72},
@@ -142,7 +142,7 @@ function main(): i32 {
 }
 function main(): i32 {
     var r: (i32, i32[]) = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return (r.0 + r.1[0] + r.1[1]) % 97;
 }`, 89},
 	// UNPROVABLE-CONCAT negative: `a + b` of two live strings is fresh in fact,
@@ -164,7 +164,7 @@ function main(): i32 {
     var b: string = "-and-a-wide-right-side-too";
     var w: i32 = churn(1000, a, b);
     var x: i32 = churn(1000, a, b);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     if (a.len() != 41 || b.len() != 26) { return 96; }
     return w;

@@ -40,7 +40,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc - 350;
 }`
 

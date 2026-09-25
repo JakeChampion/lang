@@ -47,7 +47,7 @@ func TestSelfHostMapF64ValueWasmIR(t *testing.T) {
 		{"foreach-sum", `function main(): i32 { var m: Map[i32, f64] = Map { 1: 1.5, 2: 2.5, 3: 4.0 }; var s: f64 = 0.0; for (k, v) in m { s = s + v; } return s as i32; }`, 8},
 		// OVERWRITE reclaim: key 1 set twice; only the live value read; no cell
 		// over-release (99). 7.0 * 2.0 == 14.0 → 14.
-		{"overwrite-reclaim", `function main(): i32 { var m: Map[i32, f64] = map_new(8); m = m.insert(1, 2.5); m = m.insert(1, 7.0); if (__rc_underflow() != 0) { return 99; } return (m.get_or(1, 0.0) * 2.0) as i32; }`, 14},
+		{"overwrite-reclaim", `function main(): i32 { var m: Map[i32, f64] = map_new(8); m = m.insert(1, 2.5); m = m.insert(1, 7.0); if (__rc_underflow_count() != 0) { return 99; } return (m.get_or(1, 0.0) * 2.0) as i32; }`, 14},
 	}
 
 	for _, tc := range cases {

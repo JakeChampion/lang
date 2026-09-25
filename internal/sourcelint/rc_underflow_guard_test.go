@@ -50,11 +50,10 @@ func TestSelfHostDriversRunTheRcUnderflowGuard(t *testing.T) {
 		}
 	}
 
-	// The helper itself must call the NATIVE spelling. The self-host lowering
-	// also accepts the older `__rc_underflow` alias, but these drivers are
-	// compiled by the native backend, whose checker registers only
-	// `__rc_underflow_count` — the wrong spelling would not compile, and a
-	// guard that reads nothing would compile and always pass.
+	// The helper itself must read the counter. These drivers are compiled by
+	// the native backend, whose checker registers `__rc_underflow_count`, so a
+	// wrong spelling would not compile — but a guard that reads nothing would
+	// compile and always pass.
 	utilSrc, err := os.ReadFile(filepath.Join(root, "examples", "self_host", "util.fern"))
 	if err != nil {
 		t.Fatalf("read util.fern: %v", err)

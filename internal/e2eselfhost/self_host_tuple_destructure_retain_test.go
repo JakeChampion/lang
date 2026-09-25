@@ -16,7 +16,7 @@ import (
 //
 // THE CENSUS CANNOT SEE THIS. Every failing row below balanced at
 // `allocs == frees`, `live_bytes 0`, and returned an answer that differs from
-// the oracles' only through the `__rc_underflow()` guard. So each row gates on
+// the oracles' only through the `__rc_underflow_count()` guard. So each row gates on
 // the EXIT CODE (the guard returns 99) rather than on bytes, per #7432's gate
 // note, and re-runs under FERN_SANITIZE=1 where the parent reports
 // `use-after-free (touched a quarantined block)` and exits 124.
@@ -42,7 +42,7 @@ func tupleDestructureRetainCases() []tupleAliasParamCase {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -56,7 +56,7 @@ function main(): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -67,7 +67,7 @@ function main(): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -83,7 +83,7 @@ function main(): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -100,7 +100,7 @@ function round(i: i32): i32 { var r: i32[] = get(i); return r.len(); }
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 6, balance: true,
@@ -115,7 +115,7 @@ function round(i: i32): i32 { var p: (i32, i32[]) = (i, [i, i + 1]); var (a, b) 
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 8, balance: true,
@@ -133,7 +133,7 @@ function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); va
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -148,7 +148,7 @@ function main(): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -163,7 +163,7 @@ function main(): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 9, balance: true,
@@ -179,7 +179,7 @@ function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); va
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 8, balance: true,
@@ -200,7 +200,7 @@ function round(i: i32): i32 { var r: string[] = get(i); return r.len(); }
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 6, balance: false, wantFrees: 200,
@@ -220,7 +220,7 @@ func TestSelfHostTupleDestructureRetainX86_64(t *testing.T) {
 			progBin := buildBin(t, gcc, dir, "tupdestr_"+tc.name, asm)
 			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Fatalf("%s exited %d, want %d — 99 means __rc_underflow() fired, which is this issue's defect: "+
+				t.Fatalf("%s exited %d, want %d — 99 means __rc_underflow_count() fired, which is this issue's defect: "+
 					"the destructured element was released once more than it was retained. The census below is "+
 					"balanced either way, so the exit code is the whole signal.\n%s",
 					tc.name, exit, tc.want, leakSummaryLine(stderr))

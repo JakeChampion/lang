@@ -48,11 +48,11 @@ var fnptrArrayFieldCases = []struct {
 	{"direct-arg", "function twice(x: i32): i32 { return x * 2; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { var r = Reg { hs: [twice] }; return r.hs[0](21); }", 42},
 	// RC soundness / drop: build a Reg per iteration and let it go out of scope N
 	// times, exercising __struct_drop_Reg on a function-array field. Probe for
-	// over-release (__rc_underflow) and unbounded heap growth (__heap_bump_bytes):
+	// over-release (__rc_underflow_count) and unbounded heap growth (__heap_bump_bytes):
 	// struct-drop walks the field as a box array and frees the buffer once (a
 	// `$wrap` box of a named function is a static block, so its dec is a no-op),
 	// and the whole-array alias's read-inc is balanced by its exit sweep.
-	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { var r = Reg { hs: [f0, f1] }; var f = r.hs[0]; var acc: i32 = f(); var xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
+	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { var r = Reg { hs: [f0, f1] }; var f = r.hs[0]; var acc: i32 = f(); var xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { var i: i32 = 0; var s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},
 }
 
 // TestSelfHostFnptrArrayFieldIRX86_64 — the x86-64 leg, through the production

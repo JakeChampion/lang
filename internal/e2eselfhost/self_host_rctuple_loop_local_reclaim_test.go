@@ -39,18 +39,18 @@ const rcTupleLoopLocalDetectorSrc = `function main(): i32 {
     var i: i32 = 0; var acc: i32 = 0;
     while (i < 200) { var t: (i32, i32[]) = (i, [i, i + 1, i + 2]); acc = acc + t.0 + t.1[0] + t.1[1] + t.1[2]; i = i + 1; }
     if (acc != 80200) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // A tuple whose array element is a bare IDENT (`(i, xs)`, xs live across the loop)
 // must NOT be freed by the deep reclaim — that would double-release xs. sum t.0 =
-// 0..99 = 4950; t.1[0] = 7 each iter -> 700. acc = 5650; __rc_underflow == 0.
+// 0..99 = 4950; t.1[0] = 7 each iter -> 700. acc = 5650; __rc_underflow_count == 0.
 const rcTupleAliasSafetySrc = `function main(): i32 {
     var xs: i32[] = [7, 8, 9];
     var i: i32 = 0; var acc: i32 = 0;
     while (i < 100) { var t: (i32, i32[]) = (i, xs); acc = acc + t.0 + t.1[0]; i = i + 1; }
     if (acc != 5650) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 func TestSelfHostRcTupleLoopLocalReclaimIRX86_64(t *testing.T) {
@@ -95,13 +95,13 @@ func TestSelfHostRcTupleLoopLocalReclaimIRX86_64(t *testing.T) {
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "rctuple-detector", rcTupleLoopLocalDetectorSrc); code != 0 {
-			t.Errorf("rc-tuple loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow)", code)
+			t.Errorf("rc-tuple loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow_count)", code)
 		}
 	})
 
 	t.Run("alias-safety", func(t *testing.T) {
 		if code := run(t, "rctuple-alias", rcTupleAliasSafetySrc); code != 0 {
-			t.Errorf("rc-tuple deep reclaim freed an ALIASED array element (exit %d, 99=value mismatch, >0=__rc_underflow — xs double-released)", code)
+			t.Errorf("rc-tuple deep reclaim freed an ALIASED array element (exit %d, 99=value mismatch, >0=__rc_underflow_count — xs double-released)", code)
 		}
 	})
 }

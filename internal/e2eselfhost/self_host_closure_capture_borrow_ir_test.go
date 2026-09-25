@@ -61,7 +61,7 @@ function go(k: i32): i32 {
 function main(): i32 {
     var q: i32 = go(3);
     if (q != 7) { return 90 + q; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`, "escaping-capture-borrow-detector-zero", 0)
 
 	// ALIAS shape (the #4557 fix routes it onto the hoisted path): both
@@ -78,7 +78,7 @@ function main(): i32 {
 function main(): i32 {
     var q: i32 = go(3);
     if (q != 7) { return 90 + q; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`, "alias-capture-borrow-detector-zero", 0)
 
 	// CHURN: 6000 iterations across two heap-bump measurements — detector
@@ -101,7 +101,7 @@ function main(): i32 {
     i = 0;
     while (i < 3000) { acc = (acc + go(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 97; }
     return 0;
 }`, "alias-capture-churn-flat-detector-zero", 0)
@@ -124,7 +124,7 @@ function go(k: i32): i32 {
 function main(): i32 {
     var q: i32 = go(3);
     if (q != 7) { return 90 + q; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-ir", "-target", "arm64-linux")
 	if len(asm) == 0 {

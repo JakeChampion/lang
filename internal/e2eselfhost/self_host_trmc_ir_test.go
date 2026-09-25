@@ -69,7 +69,7 @@ function inc_all(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = inc_all(build(50)); if (sum(ys) != 1275) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var ys: List = inc_all(build(50)); if (sum(ys) != 1275) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-value", 0)
 
 	// O(1) STACK: 300k elements — pre-port this SIGSEGVs (verified: exit 139 on
@@ -83,7 +83,7 @@ function inc_all(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = inc_all(build(300000)); if (sum(ys) != 600000) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var ys: List = inc_all(build(300000)); if (sum(ys) != 600000) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-deep-stack", 0)
 
 	// STRING-HEAD payloads take the same rewrite (width-0 pointer fields).
@@ -95,7 +95,7 @@ function tag_all(xs: SList): SList {
     }
 }
 function len_all(l: SList): i32 { var acc: i32 = 0; var cur: SList = l; var go: boolean = true; while (go) { match (cur) { SCons(h, t) => { acc = acc + h.len(); cur = t; }, SNil => { go = false; } } } return acc; }
-function main(): i32 { var xs: SList = SCons("ab", SCons("cde", SNil)); var ys: SList = tag_all(xs); if (len_all(ys) != 7) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var xs: SList = SCons("ab", SCons("cde", SNil)); var ys: SList = tag_all(xs); if (len_all(ys) != 7) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-string-head", 0)
 
 	// TREE-SHAPED (two self-calls) keeps the plain recursion — detection bails,
@@ -113,7 +113,7 @@ function main(): i32 { var t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); var 
 	// MIXED-VARIANT recursive arms (#5334): each arm rebuilds its OWN ctor, so
 	// `score` (which signs Cons and Neg oppositely) separates a correct rewrite
 	// from one that stamped every node with the first arm's variant — the latter
-	// scores 60, not 6. `__rc_underflow()` covers the consuming traversal, which
+	// scores 60, not 6. `__rc_underflow_count()` covers the consuming traversal, which
 	// now runs once per recursive arm.
 	run(t, mixedCtorProg(3, 6), "trmc-mixed-ctor-value", 0)
 
@@ -140,7 +140,7 @@ function step(xs: List): List {
     }
 }
 function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Wrap(t) => { acc = acc + 100; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(step(xs)) != 105) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(step(xs)) != 105) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-mixed-hole-pos-not-rewritten", 0)
 	if n := countSelfCalls(asm, "step"); n < 2 {
 		t.Errorf("trmc-mixed-hole-pos-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire when the hole position differs between arms)", n)
@@ -161,7 +161,7 @@ function step(xs: List): List {
     }
 }
 function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(step(xs)) != 6) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var xs: List = Cons(1, Cons(0, Cons(3, Nil))); if (score(step(xs)) != 6) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-guarded-arm", 0)
 	if n := countSelfCalls(asm, "step"); n != 1 {
 		t.Errorf("trmc-guarded-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a guarded arm whose variant has an unguarded sibling", n)
@@ -180,7 +180,7 @@ function step(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { if (sum(step(build(50))) != 1275) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { if (sum(step(build(50))) != 1275) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-multi-statement-arm", 0)
 	if n := countSelfCalls(asm, "step"); n != 1 {
 		t.Errorf("trmc-multi-statement-arm: %d call sites to step in the asm, want 1 (main's) — TRMC must fire on a scalar-only multi-statement arm", n)
@@ -202,7 +202,7 @@ function take(xs: List, n: i32): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { if (sum(take(build(6), 3)) != 15) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { if (sum(take(build(6), 3)) != 15) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-setup-statements", 0)
 	if n := countSelfCalls(asm, "take"); n != 1 {
 		t.Errorf("trmc-setup-statements: %d call sites to take in the asm, want 1 (main's)", n)
@@ -219,7 +219,7 @@ function stop_at_zero(xs: List): List {
     }
 }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var xs: List = Cons(3, Cons(0, Cons(4, Nil))); if (sum(stop_at_zero(xs)) != 3) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var xs: List = Cons(3, Cons(0, Cons(4, Nil))); if (sum(stop_at_zero(xs)) != 3) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-wildcard-and-inner-guard", 0)
 	if n := countSelfCalls(asm, "stop_at_zero"); n != 1 {
 		t.Errorf("trmc-wildcard-and-inner-guard: %d call sites in the asm, want 1 (main's)", n)
@@ -238,7 +238,7 @@ function drop_neg(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; var s: i32 = 1; while (i < n) { acc = Cons(i * s, acc); s = 0 - s; i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { if (sum(drop_neg(build(6))) != 6) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { if (sum(drop_neg(build(6))) != 6) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-branch-tail-self-call", 0)
 	if n := countSelfCalls(asm, "drop_neg"); n != 1 {
 		t.Errorf("trmc-branch-tail-self-call: %d call sites in the asm, want 1 (main's)", n)
@@ -252,7 +252,7 @@ function drop_neg(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-branch-tail-deep", 0)
 
 	// The hole in the FIRST payload rather than the last: the link's field index
@@ -267,7 +267,7 @@ function to_rev(xs: List): Rev {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum_rev(r: Rev): i32 { var acc: i32 = 0; var cur: Rev = r; var go: boolean = true; while (go) { match (cur) { Node(nx, v) => { acc = acc + v; cur = nx; }, End => { go = false; } } } return acc; }
-function main(): i32 { if (sum_rev(to_rev(build(6))) != 21) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { if (sum_rev(to_rev(build(6))) != 21) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-hole-first-payload", 0)
 	if n := countSelfCalls(asm, "to_rev"); n != 1 {
 		t.Errorf("trmc-hole-first-payload: %d call sites in the asm, want 1 (main's)", n)
@@ -290,7 +290,7 @@ function step(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(10, Neg(10, acc)); i = i + 1; } return acc; }
 function score(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Neg(h, t) => { acc = acc - h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = step(build(%d)); if (score(ys) != %d) { return 1; } return __rc_underflow(); }`, n, want)
+function main(): i32 { var ys: List = step(build(%d)); if (score(ys) != %d) { return 1; } return __rc_underflow_count(); }`, n, want)
 }
 
 // mixedScrutArityProg walks a list whose `B` cells carry one payload and whose
@@ -309,7 +309,7 @@ function step(xs: L): L {
     }
 }
 function score(l: L): i32 { var acc: i32 = 0; var cur: L = l; var go: boolean = true; while (go) { match (cur) { A(h, t) => { acc = acc + h; cur = t; }, Z(h, t) => { acc = acc - h; cur = t; }, B(t) => { acc = acc + 1000; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs)) != 9) { return 1; } return __rc_underflow(); }`
+function main(): i32 { var xs: L = A(1, Z(5, B(A(3, Nil)))); if (score(step(xs)) != 9) { return 1; } return __rc_underflow_count(); }`
 }
 
 // countSelfCalls counts `call __fn_<name>` sites in emitted x86-64 asm. A TRMC'd
@@ -342,7 +342,7 @@ function inc_all(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(i, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = inc_all(build(50)); if (sum(ys) != 1275) { return 1; } return __rc_underflow(); }`, 0},
+function main(): i32 { var ys: List = inc_all(build(50)); if (sum(ys) != 1275) { return 1; } return __rc_underflow_count(); }`, 0},
 		{"trmc-deep-stack-wasm", `enum List { Cons(i32, List), Nil }
 function inc_all(xs: List): List {
     match (xs) {
@@ -352,7 +352,7 @@ function inc_all(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = inc_all(build(200000)); if (sum(ys) != 400000) { return 1; } return __rc_underflow(); }`, 0},
+function main(): i32 { var ys: List = inc_all(build(200000)); if (sum(ys) != 400000) { return 1; } return __rc_underflow_count(); }`, 0},
 		// Mixed-variant recursive arms (#5334), value and 200k-deep, on the wasm
 		// layout engine as well as the register one.
 		{"trmc-mixed-ctor-wasm", mixedCtorProg(3, 6), 0},
@@ -420,6 +420,6 @@ function inc_all(xs: List): List {
 }
 function build(n: i32): List { var acc: List = Nil; var i: i32 = 0; while (i < n) { acc = Cons(1, acc); i = i + 1; } return acc; }
 function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Nil => { go = false; } } } return acc; }
-function main(): i32 { var ys: List = inc_all(build(200000)); if (sum(ys) != 400000) { return 1; } return __rc_underflow(); }`,
+function main(): i32 { var ys: List = inc_all(build(200000)); if (sum(ys) != 400000) { return 1; } return __rc_underflow_count(); }`,
 		"trmc-deep-stack-arm64", 0)
 }

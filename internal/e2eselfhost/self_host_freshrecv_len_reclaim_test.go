@@ -34,7 +34,7 @@ import (
 // Both directions are pinned. The churn cases prove the fresh box and the view
 // box ARE freed (heap-bump flat); the identity and alias cases prove the shared
 // ones are NOT — the receiver survives being read afterwards, its BYTES are
-// re-read after thousands of view releases, and __rc_underflow() stays 0.
+// re-read after thousands of view releases, and __rc_underflow_count() stays 0.
 var freshRecvLenCases = []struct {
 	name     string
 	src      string
@@ -52,7 +52,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 5000) { var b2s: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + b2s.tails(4).len()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -73,7 +73,7 @@ function main(): i32 {
         if (b.len() != 21) { return 95; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Both paths in one body, alternating per iteration — the discriminator is
@@ -94,7 +94,7 @@ function main(): i32 {
         if (b3.len() != 21) { return 96; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -118,7 +118,7 @@ function main(): i32 {
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// All three admitted shapes in one callee, chosen per iteration by a
@@ -138,7 +138,7 @@ function main(): i32 {
         if (b3.len() != 21) { return 96; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -162,7 +162,7 @@ function main(): i32 {
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// A chain whose OUTER link allocates over a receiver that is itself a view:
@@ -184,7 +184,7 @@ function main(): i32 {
         if ((b[20] as i32) != 48 + (i % 8)) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The REFUSAL control. `pick` also returns a bare non-receiver param, which
@@ -207,7 +207,7 @@ function main(): i32 {
         if (b.len() != 21) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }
@@ -239,7 +239,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -264,7 +264,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -293,7 +293,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { var c: string = "long-enough-payload-" + (i % 8).to_string(); acc = (acc + c.tails(4).owned().len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 240000) { return 98; }
     if (acc < 0) { return 97; }
     return 0;

@@ -36,16 +36,16 @@ var selfHostAppendBorrowedCases = []struct {
 	// bound q straight to the buffer arr_push had appended into IN PLACE.
 	// One buffer, two names, each with a release obligation: `q = leaf(q)`
 	// reallocates, so bind's cow-guarded reassign-dec frees it, and main's
-	// frees it again. `a` is 5 long either way; __rc_underflow() is 0 only
+	// frees it again. `a` is 5 long either way; __rc_underflow_count() is 0 only
 	// when the accounting balances (1 before the fix, so 51 vs 50). In
 	// std/regex this freed an ISplit payload that `caps.with(slot, ti)` then
 	// recycled, and the Pike VM branched to prog[-1].
-	{"binding-aliases-param", "function leaf(p: i32[]): i32[] {\n    return p.append(3);\n}\nfunction bind(p: i32[]): i32[] {\n    var q: i32[] = p.append(99);\n    q = leaf(q);\n    return q;\n}\nfunction main(): i32 {\n    var a: i32[] = [];\n    a = a.append(1);\n    a = a.append(2);\n    a = a.append(3);\n    a = bind(a);\n    return a.len() * 10 + __rc_underflow();\n}", 50},
+	{"binding-aliases-param", "function leaf(p: i32[]): i32[] {\n    return p.append(3);\n}\nfunction bind(p: i32[]): i32[] {\n    var q: i32[] = p.append(99);\n    q = leaf(q);\n    return q;\n}\nfunction main(): i32 {\n    var a: i32[] = [];\n    a = a.append(1);\n    a = a.append(2);\n    a = a.append(3);\n    a = bind(a);\n    return a.len() * 10 + __rc_underflow_count();\n}", 50},
 	// The chained-tx corruption shape (reduced from the WIT codec): a
 	// self-appending may-grow callee chaining into further may-grow
 	// callees, looped over a reused empty out. p ends at 12 → 60, and
-	// __rc_underflow() must be 0 (the +1 accounting balances exactly).
-	{"chained-tx-underflow", "struct TxR2 { out: i32[], next: i32 }\nfunction inner(buf: i32[], p: i32, out: i32[]): TxR2 {\n    out = out.append(buf[p]);\n    return TxR2 { out: out, next: p + 1 };\n}\nfunction outer(buf: i32[], p: i32, out: i32[]): TxR2 {\n    out = out.append(buf[p]);\n    var ne: TxR2 = inner(buf, p + 1, out);\n    out = ne.out;\n    return inner(buf, ne.next, out);\n}\nfunction main(): i32 {\n    var buf: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];\n    var none: i32[] = [];\n    var p: i32 = 0;\n    var i: i32 = 0;\n    while (i < 4) {\n        var skip: TxR2 = outer(buf, p, none);\n        p = skip.next;\n        i = i + 1;\n    }\n    return p * 5 + (__rc_underflow() % 5);\n}", 60},
+	// __rc_underflow_count() must be 0 (the +1 accounting balances exactly).
+	{"chained-tx-underflow", "struct TxR2 { out: i32[], next: i32 }\nfunction inner(buf: i32[], p: i32, out: i32[]): TxR2 {\n    out = out.append(buf[p]);\n    return TxR2 { out: out, next: p + 1 };\n}\nfunction outer(buf: i32[], p: i32, out: i32[]): TxR2 {\n    out = out.append(buf[p]);\n    var ne: TxR2 = inner(buf, p + 1, out);\n    out = ne.out;\n    return inner(buf, ne.next, out);\n}\nfunction main(): i32 {\n    var buf: i32[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];\n    var none: i32[] = [];\n    var p: i32 = 0;\n    var i: i32 = 0;\n    while (i < 4) {\n        var skip: TxR2 = outer(buf, p, none);\n        p = skip.next;\n        i = i + 1;\n    }\n    return p * 5 + (__rc_underflow_count() % 5);\n}", 60},
 }
 
 // TestSelfHostAppendBorrowedParamX86_64 — the containment through the

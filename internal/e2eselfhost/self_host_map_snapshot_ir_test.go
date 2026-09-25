@@ -19,7 +19,7 @@ import (
 //   - `var ks = m.keys()` is an OWNED fresh copy: the exit sweep reclaims the
 //     copy, later m.insert mutations (including buffer-replacing grows) never
 //     show through it, and the map's own buffers are freed by map_free /
-//     the owned grow — no double free (__rc_underflow() == 0) and no leak.
+//     the owned grow — no double free (__rc_underflow_count() == 0) and no leak.
 //   - `for k in m.keys()` / `for (k, v) in m` scalar columns are snapshots
 //     released right after the loop, so a body that mutates the map iterates
 //     the entry-time snapshot (matching the wasm self-host backend) instead
@@ -80,7 +80,7 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
     if (m.len() != 5) { return 13; }
     if (m.get_or(1, 0) != 11) { return 14; }
     if (m.get_or(10, 0) != 100) { return 15; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "map-keys-snapshot-semantics", 0)
 
@@ -104,7 +104,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -131,7 +131,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -154,7 +154,7 @@ function main(): i32 {
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
     if (m.get_or(102, 0) != 20) { return 52; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "map-kv-iter-mutate-snapshot", 0)
 
@@ -176,7 +176,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 2200 * 21) { return 98; }
     return 0;
@@ -195,7 +195,7 @@ function main(): i32 {
         if (s != 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "map-keys-loop-break", 0)
@@ -217,7 +217,7 @@ function main(): i32 {
         if (m.len() != 3) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "map-mixed-keys-snapshot", 0)
@@ -227,7 +227,7 @@ function main(): i32 {
 	// (__fern_map_snapshot_col_str, per-element rc-inc) released deep after
 	// the loop (__fern_str_arr_free). Churn must be FLAT vs a no-iteration
 	// baseline (the snapshot copy + its element incs are fully reclaimed),
-	// and __rc_underflow()==0 proves the deep release never over-frees a
+	// and __rc_underflow_count()==0 proves the deep release never over-frees a
 	// map-owned key string (rc-aware __fern_str_free decs at rc>1). Keys seen
 	// (correctness).
 	run(t, `function build_iter(n: i32): i32 {
@@ -251,7 +251,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -280,7 +280,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_noiter(k); k = k + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
     return 0;

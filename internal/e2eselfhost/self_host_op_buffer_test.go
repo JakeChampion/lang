@@ -56,7 +56,7 @@ function main(): i32 {
         var code: i32 = check(n);
         if (code != 0) { return code; }
     }
-    if (__rc_underflow() != 0) { return 11; }
+    if (__rc_underflow_count() != 0) { return 11; }
     return 0;
 }`
 

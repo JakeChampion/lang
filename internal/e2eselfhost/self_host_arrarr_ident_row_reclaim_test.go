@@ -54,7 +54,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + nested(j % 3)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -78,7 +78,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + nested(j % 2)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -108,7 +108,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = (acc + consume(j % 2)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -137,7 +137,7 @@ function main(): i32 {
         acc = (acc + v) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},
@@ -167,7 +167,7 @@ function main(): i32 {
         acc = (acc + v) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},
@@ -196,7 +196,7 @@ function main(): i32 {
         acc = (acc + v) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},
@@ -225,7 +225,7 @@ function main(): i32 {
         acc = (acc + v) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0, true},

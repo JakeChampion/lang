@@ -47,11 +47,11 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 60300) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // An enum that ESCAPES (stored into an outer `keep`) must NOT be reclaimed at the
-// loop-rebind — `keep` still references the payload. __rc_underflow == 0 proves it.
+// loop-rebind — `keep` still references the payload. __rc_underflow_count == 0 proves it.
 const rcEnumEscapeSafetySrc = `enum Box { Full(i32[]), Empty }
 function main(): i32 {
     var keep: Box = Empty;
@@ -64,7 +64,7 @@ function main(): i32 {
     }
     match (keep) { Full(xs) => { acc = acc + xs[0]; }, Empty => {} }
     if (acc < 0) { return 5; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 func TestSelfHostRcEnumLoopLocalReclaimIRX86_64(t *testing.T) {
@@ -109,13 +109,13 @@ func TestSelfHostRcEnumLoopLocalReclaimIRX86_64(t *testing.T) {
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "rcenum-detector", rcEnumLoopLocalDetectorSrc); code != 0 {
-			t.Errorf("rc-enum loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow)", code)
+			t.Errorf("rc-enum loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow_count)", code)
 		}
 	})
 
 	t.Run("escape-safety", func(t *testing.T) {
 		if code := run(t, "rcenum-escape", rcEnumEscapeSafetySrc); code != 0 {
-			t.Errorf("rc-enum deep reclaim freed an ESCAPING enum (exit %d, >0=__rc_underflow — keep's payload double-released)", code)
+			t.Errorf("rc-enum deep reclaim freed an ESCAPING enum (exit %d, >0=__rc_underflow_count — keep's payload double-released)", code)
 		}
 	})
 }

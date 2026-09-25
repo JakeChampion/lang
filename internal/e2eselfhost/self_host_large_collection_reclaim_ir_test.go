@@ -29,7 +29,7 @@ import (
 // build re-serves its big buffers from the large freelist (flat); revert either
 // redirect and each build leaks ~1 MiB → the high-water climbs → exit 98. A
 // double-free would tick the over-release detector → 99. All probes are IR-path
-// builtins (__heap_bump_bytes / __rc_underflow) so the program stays on the IR
+// builtins (__heap_bump_bytes / __rc_underflow_count) so the program stays on the IR
 // path.
 func TestSelfHostLargeCollectionReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -65,7 +65,7 @@ function main(): i32 {
   var b1: i32 = (__heap_bump_bytes() as i32);
   var x: i32 = churn(3);
   var b2: i32 = (__heap_bump_bytes() as i32);
-  if (__rc_underflow() != 0) { return 99; }
+  if (__rc_underflow_count() != 0) { return 99; }
   if (b2 - b1 >= 1048576) { return 98; }
   if (w != x) { return 97; }
   return 0;

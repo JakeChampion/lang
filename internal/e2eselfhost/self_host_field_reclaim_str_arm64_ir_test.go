@@ -42,7 +42,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 1000) { s = S { xs: [1, 2], name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { s = step(s); k = k + 1; } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (s.n != 3) { return 97; }
     return 0;
@@ -55,7 +55,7 @@ function main(): i32 {
     var s: S = S { xs: [1, 2], name: "ab" + "cd", n: 0 };
     var i: i32 = 0;
     while (i < 1000) { s = bump(s); i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (s.name.len() != 4) { return 97; }
     if (s.n != 1000) { return 96; }
     return 0;
@@ -72,7 +72,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 1000) { b = B { name: "a" + "b", n: 0 }; var k: i32 = 0; while (k < 3) { b = step(b); k = k + 1; } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (b.n != 3) { return 97; }
     return 0;
@@ -93,7 +93,7 @@ function main(): i32 {
         if (s.name.len() != 4) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "field-reclaim-str-aliased-read-safe-arm64", 0)

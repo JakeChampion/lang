@@ -46,7 +46,7 @@ func appendIndexedElemSrc(decl, body, count, readback string) string {
 		"while (r < 1) { " + body + " r = r + 1; } " +
 		"var junk: string = \"\"; var j: i32 = 0; while (j < 64) { junk = junk + \"    \"; j = j + 1; } " +
 		"var k: i32 = 0; while (k < " + count + ") { " + readback + " k = k + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return t + junk.len() / 64 - 4; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return t + junk.len() / 64 - 4; }"
 }
 
 // balanced marks the rows whose destination array earns its element walk, so

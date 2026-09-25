@@ -56,7 +56,7 @@ var mapPayloadMatchCases = []struct {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 10, false},
@@ -79,7 +79,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 10, false},
@@ -104,7 +104,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 6, false},
@@ -131,7 +131,7 @@ function churn(n: i32): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 8, false},
@@ -157,7 +157,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 20, false},
@@ -194,7 +194,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 83;
 }`, 0, true},

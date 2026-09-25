@@ -62,7 +62,7 @@ type matchedOptstrCase struct {
 
 const matchedOptstrMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 const matchedOptstrW = "function w(a: string): string { return a + \"!\"; }\n"
 

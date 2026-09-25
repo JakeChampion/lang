@@ -29,7 +29,7 @@ import (
 //
 // Cases: selfHostAppendBorrowedCases, shared verbatim with the register leg
 // (self_host_append_borrowed_param_test) so neither backend can drift from the
-// other's containment — including the two whose oracle is __rc_underflow(),
+// other's containment — including the two whose oracle is __rc_underflow_count(),
 // which asserts the rc accounting balances exactly rather than merely that the
 // heap survived.
 func TestSelfHostAppendBorrowedParamWasmIR(t *testing.T) {

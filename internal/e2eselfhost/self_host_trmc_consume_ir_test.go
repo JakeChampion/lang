@@ -68,7 +68,7 @@ function main(): i32 {
     var ys: List = inc_all(build(2000));
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (sum(ys) != 4000) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((b2 - b1) / 1024 >= 140) { return 98; }
     return 0;
 }`, 0},
@@ -86,7 +86,7 @@ function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolea
 function main(): i32 {
     var ys: List = inc_all(build(50));
     if (sum(ys) != 1275) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// THE ONE THAT CATCHES A MISSING RETAIN. `keep` is still live across the
@@ -108,7 +108,7 @@ function main(): i32 {
     if (sum(ys) != 60) { return 96; }
     if (sum(keep) != 30) { return 95; }
     if (sum(ys) != 60) { return 94; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The same shape TWICE off one retained list: the second call must still see
@@ -129,7 +129,7 @@ function main(): i32 {
     if (sum(a) != 40) { return 96; }
     if (sum(b) != 40) { return 95; }
     if (sum(keep) != 20) { return 94; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// REFUSED: a string head cannot survive a shallow cell free, so the scan
@@ -148,7 +148,7 @@ function main(): i32 {
     var ys: SList = tag_all(xs);
     if (len_all(ys) != 7) { return 96; }
     if (len_all(xs) != 5) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// REFUSED: the retain lives at the DIRECT call site, so a function reached
@@ -170,7 +170,7 @@ function main(): i32 {
     var ys: List = apply(inc_all, keep);
     if (sum(ys) != 40) { return 96; }
     if (sum(keep) != 20) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The O(1)-stack case from the TRMC suite, now also consuming: 300k cells
@@ -187,7 +187,7 @@ function sum(l: List): i32 { var acc: i32 = 0; var cur: List = l; var go: boolea
 function main(): i32 {
     var ys: List = inc_all(build(300000));
     if (sum(ys) != 600000) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

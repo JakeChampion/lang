@@ -36,7 +36,7 @@ var tupleStrArrReclaimCases = []struct {
     var j: i32 = 0;
     while (j < 5000) { var t: (i32, string[]) = (j, [pre + "x", pre + "yy"]); acc = (acc + t.0 + t.1[0].len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -61,7 +61,7 @@ var tupleStrArrReclaimCases = []struct {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -72,7 +72,7 @@ var tupleStrArrReclaimCases = []struct {
     var pre: string = "ab";
     var t: (i32, string[]) = (7, [pre + "x", pre + "yy"]);
     var v: i32 = t.0 + t.1[0].len() + t.1[1].len() + t.1.len();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 16},
 	// ALIASED-ELEMENT negative: a bare string ident at an element position aliases
@@ -89,7 +89,7 @@ var tupleStrArrReclaimCases = []struct {
         acc = (acc + t.0 + s1.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -106,7 +106,7 @@ var tupleStrArrReclaimCases = []struct {
         i = i + 1;
     }
     var v: i32 = keep[0].len() + keep[1].len();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (v != 7) { return 97; }
     return 0;
 }`, 0},

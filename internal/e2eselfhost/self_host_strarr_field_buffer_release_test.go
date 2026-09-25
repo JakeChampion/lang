@@ -56,7 +56,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(2000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 2000;
 }`, 0},
@@ -84,7 +84,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(2000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 2000;
 }`, 0},
@@ -104,7 +104,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(2000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (w0 != x) { return 97; }
     return 0;
@@ -118,7 +118,7 @@ function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-
 function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
 function doc(title: string, lines: string[]): Doc { return Doc { title: title, lines: lines }; }
 function round(pre: string): i32 { var d: Doc = doc(w(pre), mk(pre)); var junk: string[] = mk(pre); if (junk.len() < 0) { return 0; } return d.lines.len() + d.lines[0].len() + d.lines[2].len() + d.title.len(); }
-function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 132) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 132) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A functional-update BASE copy hands the new box every array field
 	// pointer with no retain, so `b` and the `sg` built from it hold one
 	// `ys` buffer between them at rc 1. `sg` is dropped at inner's exit; the
@@ -152,7 +152,7 @@ function outer(b: Sigs): i32 {
 function main(): i32 {
     var s: Sigs = Sigs { a: reg_of(["r1"]), xs: ["x1", "x2"], ys: ["y1", "y2", "y3"] };
     var r: i32 = outer(s);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (r != 25) { return 97; }
     return 0;
 }`, 0},
@@ -200,7 +200,7 @@ function main(): i32 {
     if (churn(64) != 128) { return 97; }
     var k: i32 = 0;
     while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

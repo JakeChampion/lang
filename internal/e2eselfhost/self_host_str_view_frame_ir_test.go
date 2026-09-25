@@ -56,7 +56,7 @@ var strViewFrameCases = []struct {
     var j: i32 = 0;
     while (j < 5000) { var t2: str = slice_unchecked(s, 0, 1); acc = (acc + t2.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -75,7 +75,7 @@ var strViewFrameCases = []struct {
         acc = acc + (t[0] as i32);
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 97 + 98 + 99 + 100 + 101 + 102) { return 97; }
     return 0;
 }`, 0},
@@ -92,7 +92,7 @@ var strViewFrameCases = []struct {
         i = i + 1;
     }
     var b1: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (hits != 200) { return 97; }
     if (b1 < 0) { return 95; }
     return 0;
@@ -111,7 +111,7 @@ var strViewFrameCases = []struct {
         acc = (acc + u.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != (400) % 251) { return 97; }
     return 0;
 }`, 0},
@@ -142,7 +142,7 @@ function main(): i32 {
         if (v[3] != 108) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -161,7 +161,7 @@ function main(): i32 {
         prev = cur;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (prev[0] != 102) { return 96; }
     if (acc != 97 + 98 + 99 + 100 + 101) { return 97; }
     return 0;
@@ -187,7 +187,7 @@ function main(): i32 {
         if (xs[j][0] != s[j]) { return 95; }
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -218,7 +218,7 @@ function main(): i32 {
         acc = acc + (xs[j][0] as i32);
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -249,7 +249,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     // The concat still allocates its RESULT per iteration; only the five VIEW boxes
     // are gone, so the bound is the concat's share rather than zero.
     if (b2 - b1 >= 300000) { return 98; }
@@ -277,7 +277,7 @@ function main(): i32 {
     if ((slice_unchecked(s, 0, 2) + slice_unchecked(u, 1, 3)) != "abxy") { return 92; }
     if ((slice_unchecked(s, 0, 2) + slice_unchecked(s, 4, 6)) != "abef") { return 91; }
     if (slice_unchecked(slice_unchecked(s, 2, 6), 1, 3) != "de") { return 90; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ESCAPE negative — an anonymous slice in a position that is NOT a borrow (a call
@@ -308,7 +308,7 @@ function main(): i32 {
         if (xs[j][0] != s[j]) { return 95; }
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -335,7 +335,7 @@ function main(): i32 {
         if (v[3] != 108) { return 94; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},

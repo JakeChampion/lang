@@ -77,7 +77,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			// THE FREE-SAFETY GUARD. The alias's arm moves the payload OUT, so
 			// the source's deep release would free a buffer the frame still
 			// holds. Refused by the shared proof's !enum_body_binds_rc_payload
-			// half. #7687 measured this firing __rc_underflow when admitted —
+			// half. #7687 measured this firing __rc_underflow_count when admitted —
 			// with a balanced census either way — so the EXIT is the assertion
 			// that matters here, not the frees.
 			name: "payload_out_via_alias_refused",

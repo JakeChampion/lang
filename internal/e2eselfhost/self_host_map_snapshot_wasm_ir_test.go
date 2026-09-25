@@ -52,7 +52,7 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
     if (m.len() != 5) { return 13; }
     if (m.get_or(1, 0) != 11) { return 14; }
     if (m.get_or(10, 0) != 100) { return 15; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 		// MUTATION DURING `for (k, v) in m`: iterates the entry-time snapshot
@@ -67,7 +67,7 @@ func TestSelfHostMapKeysSnapshotWasmIR(t *testing.T) {
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
     if (m.get_or(102, 0) != 20) { return 52; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 		// `for (k, v) in m` churn, DIFFERENTIAL against the same build without
@@ -95,7 +95,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_plain(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -125,7 +125,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_small(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 8192) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -135,7 +135,7 @@ function main(): i32 {
 		// released deep after the loop ($__fern_arr_dec_ptr) — before slice 3
 		// the wasm snapshot leaked its buffer every loop AND the string boxes
 		// were double-counted. Churn must be FLAT vs a no-iteration baseline,
-		// and __rc_underflow()==0 proves the deep release never over-frees a
+		// and __rc_underflow_count()==0 proves the deep release never over-frees a
 		// map-owned key. The keys must still all be seen (correctness).
 		{"map-string-keys-iter-churn-flat-wasm", `function build_iter(n: i32): i32 {
     var m: Map[string, i32] = Map { "a" + "x": 1, "b" + "y": 2, "c" + "z": 3 };
@@ -158,7 +158,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -187,7 +187,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_noiter(k); k = k + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s1 - s0) > (s2 - s1) + 8192) { return 1; }
     if (acc < 0) { return 97; }
     return 0;

@@ -47,7 +47,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + take([i, i + 1])) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -90,7 +90,7 @@ function main(): i32 {
     if (f3 != 3) { return 96; }
     var s3: i32 = slen(["xy", "z"]);
     if (s3 != 4) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 94; }
     return 0;
@@ -103,7 +103,7 @@ function main(): i32 {
 function main(): i32 {
     var k: i32[] = keep([7, 8]);
     var acc: i32 = k[0] + k[1];
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc;
 }`, 15},
 	// CONSUMING-callee negative (the soundness fix): `xs = xs.append(9)` and the
@@ -125,7 +125,7 @@ function main(): i32 {
     var v: i32[] = [1, 2];
     var r2: i32 = mut2(v);
     if (r2 != 10) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// POINTER-ELEMENT producer arg at a COUNTED-RETAIN position (#6522): the
@@ -148,7 +148,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(2000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (w0 != x) { return 97; }
     return 0;
@@ -169,7 +169,7 @@ function round(pre: string, n: i32): i32 {
     if (k1.len() < 0 || k2.len() < 0 || k3.len() < 0) { return 0; }
     return h.deps.len() + h.n - n;
 }
-function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre, i) != (i % 5) + 1) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre, i) != (i % 5) + 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A READ-ONLY callee is counted-retain too (nothing in the use vocabulary
 	// refuses `p.len()`), and there the dec takes rc 1 -> 0 and frees the buffer
 	// outright — 56 B/round recovered. The element boxes stay leaked: the release
@@ -179,7 +179,7 @@ function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) 
 function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function count(p: string[]): i32 { return p.len() + p.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < n) { if (count(deps_of(pre)) != 6) { return 97; } i = i + 1; } return 0; }
-function main(): i32 { var a: i32 = churn(2000); if (a != 0) { return a; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var a: i32 = churn(2000); if (a != 0) { return a; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The tier now admits a STRUCT-RETURNING callee, so a SCALAR-array param
 	// reaches the release through a shape the concrete-scalar-result guard used
 	// to exclude: `esci` stores the argument in a local struct (a counted store)
@@ -191,7 +191,7 @@ struct SOut { b: i32[] }
 function nums_of(n: i32): i32[] { var out: i32[] = []; var i: i32 = 0; while (i < 4) { out = out.append(n + i); i = i + 1; } return out; }
 function esci(p: i32[]): SOut { var q: SIn = SIn { a: p }; return SOut { b: q.a }; }
 function round(n: i32): i32 { var o: SOut = esci(nums_of(n)); var k: i32[] = nums_of(n + 9); if (k.len() < 0) { return 0; } return o.b.len() + o.b[0] - n + o.b[3] - n; }
-function main(): i32 { var i: i32 = 0; while (i < 2000) { if (round(i) != 7) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var i: i32 = 0; while (i < 2000) { if (round(i) != 7) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostArrArgReclaimIRX86_64 drives the cases through the self-hosted

@@ -44,7 +44,7 @@ func TestSelfHostArrArrReclaimWasmIR(t *testing.T) {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -65,7 +65,7 @@ func TestSelfHostArrArrReclaimWasmIR(t *testing.T) {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -80,7 +80,7 @@ func TestSelfHostArrArrReclaimWasmIR(t *testing.T) {
         if (row[0].len() != 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},

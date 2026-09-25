@@ -40,7 +40,7 @@ function main(): i32 {
     if (seeds[0][0] != 7) { return 91; }
     if (seeds[1].len() != 5) { return 92; }
     if (seeds[1][4] != 5) { return 93; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// string[][] element: the retain is on the element's own array box,
@@ -59,7 +59,7 @@ function main(): i32 {
     var junk: i32[] = [9, 9, 9, 9, 9, 9, 9, 9];
     if (m[0].len() != 2) { return 90; }
     if (m[1].len() != 3) { return 91; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Negative balance check: a LOCAL container swept at exit must not
@@ -77,7 +77,7 @@ function main(): i32 {
         if (r[1] != 2) { return 91; }
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

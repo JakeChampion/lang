@@ -31,7 +31,7 @@ var arrArrDiscReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { [[i, i + 1], [i]]; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -46,7 +46,7 @@ var arrArrDiscReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { [[1.5, 2.5], [3.5]]; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -63,7 +63,7 @@ var arrArrDiscReclaimCases = []struct {
     while (w < 100) { [[w], [w, w + 1]]; w = w + 1; }
     var again: i32 = inner[0] + inner[1];
     if (again != 15) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// STRING-inner negative: string[][] is excluded from the scalar-inner path
@@ -74,7 +74,7 @@ var arrArrDiscReclaimCases = []struct {
     while (w < 100) { [["a" + "x"], ["b", "c"]]; w = w + 1; }
     var chk: i32 = 42;
     if (chk != 42) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

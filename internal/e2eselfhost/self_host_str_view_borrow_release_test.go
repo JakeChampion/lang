@@ -70,7 +70,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -121,7 +121,7 @@ var strViewBorrowReleaseCases = []struct {
     if (sub != "fgh-") { return 0 - 9; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrViewBorrowReleaseIRX86_64 is the x86-64 leg. Every case here

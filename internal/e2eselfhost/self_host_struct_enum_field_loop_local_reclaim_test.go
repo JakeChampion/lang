@@ -23,7 +23,7 @@ import (
 // old's enum box + payload is sole-owned (rc=1, no construction alias-inc). A NON-fresh
 // (aliased bare-ident) enum field is retained + alias-inc'd by its owner, so freeing its
 // payload would double-release — such a struct is rejected at the gate and takes the
-// leak-safe shallow path (the ALIAS-SAFETY case proves __rc_underflow stays 0). The exit
+// leak-safe shallow path (the ALIAS-SAFETY case proves __rc_underflow_count stays 0). The exit
 // sweep is deliberately NOT widened; only the per-iteration rebind reclaim is added, so
 // the once-off final-box payload leak stays bounded (the fixpoint is flat across N).
 //
@@ -51,7 +51,7 @@ function main(): i32 {
 
 // per iter reads xs[0..2] = i + (i+1) + (i+2) = 3i+3, plus t.n = i => 4i+3; sum over
 // 0..199 = 4*19900 + 3*200 = 80200. A wrong free of the live payload corrupts the sum
-// or trips __rc_underflow.
+// or trips __rc_underflow_count.
 const structEnumFieldLoopLocalDetectorSrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
@@ -63,13 +63,13 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 80200) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // A struct whose enum field is a bare IDENT (`e: shared`, shared a live enum local
 // across the loop) must NOT be deep-dropped — that would double-release shared's
 // payload. The gate (struct_lit_all_enum_fields_fresh) rejects the non-fresh field, so
-// the struct takes the leak-safe shallow path; __rc_underflow == 0 proves no over-
+// the struct takes the leak-safe shallow path; __rc_underflow_count == 0 proves no over-
 // release. acc = 100*7 (xs[0] per iter) + 7 (final match) = 707.
 const structEnumFieldAliasSafetySrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
@@ -83,7 +83,7 @@ function main(): i32 {
     }
     match (shared) { Poly(xs) => { acc = acc + xs[0]; }, Dot => {} }
     if (acc != 707) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // A struct whose enum field is a FRESH ctor but with a NON-fresh (aliased bare-ident)
@@ -92,7 +92,7 @@ function main(): i32 {
 // STRING payload (not just array payloads — the array-only check would wrongly admit
 // this and __fern_str_free the aliased string). So the struct takes the leak-safe
 // shallow path; s stays live (read after the loop). acc = 100*5 (v.len per iter) + 5
-// (s.len after) = 505; __rc_underflow == 0 proves no over-release of s.
+// (s.len after) = 505; __rc_underflow_count == 0 proves no over-release of s.
 const structEnumFieldStringPayloadAliasSrc = `enum Msg { Text(string), None }
 struct W { m: Msg, n: i32 }
 function main(): i32 {
@@ -105,7 +105,7 @@ function main(): i32 {
     }
     acc = acc + s.len();
     if (acc != 505) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 func TestSelfHostStructEnumFieldLoopLocalReclaimIRX86_64(t *testing.T) {
@@ -150,19 +150,19 @@ func TestSelfHostStructEnumFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "structenum-detector", structEnumFieldLoopLocalDetectorSrc); code != 0 {
-			t.Errorf("struct-enum-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow)", code)
+			t.Errorf("struct-enum-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow_count)", code)
 		}
 	})
 
 	t.Run("alias-safety", func(t *testing.T) {
 		if code := run(t, "structenum-alias", structEnumFieldAliasSafetySrc); code != 0 {
-			t.Errorf("struct-enum-field deep reclaim freed an ALIASED enum field (exit %d, 99=value mismatch, >0=__rc_underflow — shared payload double-released)", code)
+			t.Errorf("struct-enum-field deep reclaim freed an ALIASED enum field (exit %d, 99=value mismatch, >0=__rc_underflow_count — shared payload double-released)", code)
 		}
 	})
 
 	t.Run("string-payload-alias-safety", func(t *testing.T) {
 		if code := run(t, "structenum-strpay", structEnumFieldStringPayloadAliasSrc); code != 0 {
-			t.Errorf("struct-enum-field deep reclaim freed an ALIASED string payload (exit %d, 99=value mismatch, >0=__rc_underflow — the array-only freshness gate would have mis-freed s)", code)
+			t.Errorf("struct-enum-field deep reclaim freed an ALIASED string payload (exit %d, 99=value mismatch, >0=__rc_underflow_count — the array-only freshness gate would have mis-freed s)", code)
 		}
 	})
 }

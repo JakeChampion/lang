@@ -23,11 +23,8 @@ import (
 // stays flat across a second 5000-iteration churn — element leaks grow it by
 // ~150 B/iter; the only admitted slack is the churn frame's own literal box, a
 // known pre-existing gap measured at 24 B/call), a double-free by the
-// over-release detector (__rc_underflow() → 99), and admission/exclusion by an
-// asm-shape assertion on the __fn___fern_str_arr_free CALL site. All probes use
-// the IR-path builtins (__rc_underflow / __heap_bump_bytes) so the program
-// stays on the IR path — the AST-path spelling __rc_underflow would
-// silently bail the function to the legacy emitter.
+// over-release detector (__rc_underflow_count() → 99), and admission/exclusion by an
+// asm-shape assertion on the __fn___fern_str_arr_free CALL site.
 func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -119,7 +116,7 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 	// A double-free ticks the underflow detector → 99. acc value checked (97).
 	run(t, `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reclaim-flat", 0, "yes")
 
 	// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[] local
@@ -132,7 +129,7 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_byte
 	// the freelist and the bump high-water stays flat. Element leaks → 98; a
 	// double-free (reinit + exit sweep both freeing the final box) → 99.
 	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reinit-loop", 0, "yes")
 
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` is a lasting element alias
@@ -141,7 +138,7 @@ function main(): i32 { var w: i32 = churn(5000); var b1: i32 = (__heap_bump_byte
 	// lens 3+2 = 5 over 2000 calls, underflow 0 → exit 0.
 	run(t, `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-alias-excluded", 0, "no")
 
 	// RETURNED ELEMENT excludes: `return xs[0]` hands an element box to the
@@ -149,7 +146,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { re
 	// so the returned box stays valid). len 3 over 2000 calls, underflow 0.
 	run(t, `function first(pre: string): string { var xs: string[] = [pre + "z"]; return xs[0]; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (first(pre).len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-return-excluded", 0, "no")
 
 	// PRODUCER-CALL ELEMENT, BOUNDED HIGH-WATER: the stored elements are calls
@@ -162,7 +159,7 @@ function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { re
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { var xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-elem-producer-store-flat", 0, "yes")
 
 	// LOCAL BOUND FROM A PRODUCER, BOUNDED HIGH-WATER: `var xs = mk(pre)` where
@@ -177,7 +174,7 @@ function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_byt
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-local-from-producer-flat", 0, "yes")
 
 	// BORROWED CALL ARG stays admitted: `take` only reads its parameter, so it
@@ -189,7 +186,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function take(xs: string[]): i32 { return xs.len() + xs[0].len(); }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var k: i32 = take(xs); return k + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-borrowed-arg-flat", 0, "yes")
 
 	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
@@ -216,7 +213,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-stored-by-callee-counted", 0, "yes")
 
 	// The same store where the holder ESCAPES the frame that owns the array —
@@ -245,7 +242,7 @@ function main(): i32 {
     var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
     while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
 		"strarr-local-callee-holder-escapes", 8, "yes")
@@ -258,7 +255,7 @@ function main(): i32 {
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function fwd(pre: string): string[] { var xs: string[] = mk(pre); return xs; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: string[] = fwd(pre); if (r.len() + r[1].len() != 46) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(); var v2: i32 = churn(2000); var after = __heap_bump_bytes(); if (after != before) { return 98; } if (__rc_underflow() != 0) { return 99; } return v + v2; }`,
+function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(); var v2: i32 = churn(2000); var after = __heap_bump_bytes(); if (after != before) { return 98; } if (__rc_underflow_count() != 0) { return 99; } return v + v2; }`,
 		"strarr-local-forwarded-return-owned", 0, "forwarded")
 
 	// SELF-`.with` REBIND, BOUNDED HIGH-WATER (#6407): `a = a.with(i, v)` on an
@@ -273,7 +270,7 @@ function main(): i32 { var v: i32 = churn(2000); var before = __heap_bump_bytes(
 	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-with-rebind-flat", 0, "yes")
 
 	// `.with` VALUE IS A LIVE LOCAL: the store retains it, so the array and the
@@ -285,7 +282,7 @@ function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_byt
 function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function build(pre: string): i32 { var xs: string[] = mks(pre); var nm: string = pre + "-a-distinct-live-local-string-value"; xs = xs.with(1, nm); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return nm.len() + xs[1].len() + xs[0].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 97) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-with-live-local-value-safe", 0, "yes")
 
 	// `.with` SELF-STORE `a.with(i, a[i])`: the release is cow-guarded on the
@@ -295,7 +292,7 @@ function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow() != 0) { ret
 function churn(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function build(pre: string): i32 { var xs: string[] = mks(pre); xs = xs.with(3, xs[3]); var junk: string = churn(20); if (junk.len() < 0) { return 0; } return xs[3].len(); }
 function run2(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 23) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = run2(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-with-self-store-safe", 0, "yes")
 
 	// (A borrowed-element STORE case — `var xs: string[] = [nm]` — cannot be

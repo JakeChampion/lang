@@ -6404,7 +6404,7 @@ function main(): i32 {
 		// pinned on the ANSWER and the underflow counter rather than on
 		// a byte count. That distinction is the point: an over-releasing
 		// build reads BETTER on live_bytes, so only the value check and
-		// __rc_underflow catch it.
+		// __rc_underflow_count catch it.
 		//
 		// `keepf(o) -> o` is admitted today and is correct: the
 		// return-transfer inc puts the temp at rc 2, and the caller's

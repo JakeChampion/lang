@@ -60,7 +60,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
     return 0;
@@ -106,7 +106,7 @@ var strTrimFaultCases = []struct {
     if (base.len() != n + 3) { return 0 - 7; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// ESCAPE: the trim result is returned, so the credit is withheld and the
 	// caller's read has to find both the box and the bytes.
 	{"str-trim-escapes-return", strTrimPrelude + `function trimmed(pre: string): string { var base: string = w(pre); var t: string = base.trim(); return t; }
@@ -117,7 +117,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "abcdefgh   -")) { return 0 - 1; }
     return t.len() % 251;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `.trim()` whose result ALIASES a field the receiver still owns.
 	// Nothing may credit it — this is what proves trim_str_init's receiver-type
 	// test is required here, since the heap cases above move either way.
@@ -135,7 +135,7 @@ function main(): i32 {
         if (!has_prefix(keep.tag, "bbbb   -")) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 }

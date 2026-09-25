@@ -18,7 +18,7 @@ import (
 // one fewer free per such construction.
 //
 // Each case embeds a value check (returns 90/91/99 on mismatch) and then returns
-// __rc_underflow() — so want=0 means BOTH the reused value is correct AND no
+// __rc_underflow_count() — so want=0 means BOTH the reused value is correct AND no
 // over-release occurred. A mis-balanced old-payload release or a bad reshape would
 // double-free (detector > 0); a mis-freed donor payload poisoning the recycled buffer
 // would surface as a wrong value (especially the -probe case that allocs after reuse).
@@ -37,33 +37,33 @@ function main(): i32 { return f(); }`, 12},
 	// over-release detector. A mis-balanced old-payload release / bad reshape would
 	// double-free -> detector > 0.
 	{"fires-detector", `enum E { A(i32[]), B(i32[]) }
-function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 99; } return __rc_underflow(); }
+function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 99; } return __rc_underflow_count(); }
 function main(): i32 { return f(); }`, 0},
 	// CORRUPTION PROBE: a FRESH array allocated AFTER the reuse must read back intact
 	// — a mis-freed donor payload (or a double-free recycling the block early) would
 	// poison the recycled buffer. fresh = [11,22,33] -> 66; value still 12.
 	{"corruption-probe-detector", `enum E { A(i32[]), B(i32[]) }
-function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var fresh: i32[] = [11, 22, 33]; var fs: i32 = fresh[0] + fresh[1] + fresh[2]; var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 90; } if (fs != 66) { return 91; } return __rc_underflow(); }
+function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } var c: E = B([3, 4]); var fresh: i32[] = [11, 22, 33]; var fs: i32 = fresh[0] + fresh[1] + fresh[2]; var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 12) { return 90; } if (fs != 66) { return 91; } return __rc_underflow_count(); }
 function main(): i32 { return f(); }`, 0},
 	// DONOR LIVE -> NO REUSE: the donor `a` is used AFTER c's construction (its
 	// wildcard match sits after c), so a is NOT dead at c and the reuse must NOT fire.
 	// The value stays correct via the normal fresh-alloc path; detector 0. t=3 (A),
 	// v=8 (B) -> 11.
 	{"donor-live-no-reuse-detector", `enum E { A(i32[]), B(i32[]) }
-function f(): i32 { var a: E = A([1, 2]); var c: E = B([3, 4]); var t: i32 = 0; match (a) { A(_) => { t = 3; }, B(_) => { t = 4; } } var v: i32 = 0; match (c) { A(_) => { v = 7; }, B(_) => { v = 8; } } if (t + v != 11) { return 99; } return __rc_underflow(); }
+function f(): i32 { var a: E = A([1, 2]); var c: E = B([3, 4]); var t: i32 = 0; match (a) { A(_) => { t = 3; }, B(_) => { t = 4; } } var v: i32 = 0; match (c) { A(_) => { v = 7; }, B(_) => { v = 8; } } if (t + v != 11) { return 99; } return __rc_underflow_count(); }
 function main(): i32 { return f(); }`, 0},
 	// RAGGED ENUM -> NO REUSE: variants have differing field counts (A:1, B:2), so the
 	// box is NOT uniform-layout (enum_all_variants_same_field_count fails) and the
 	// reshape would be size-unsafe — reuse must NOT fire (falls back to fresh alloc).
 	// Value correct, detector 0. t=5 (A), v=3+6=9 -> 14.
 	{"ragged-no-reuse-detector", `enum E { A(i32[]), B(i32[], i32[]) }
-function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_, _) => { t = 6; } } var c: E = B([3, 4], [5, 6]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w, x) => { v = w[0] + x[1]; } } if (t + v != 14) { return 99; } return __rc_underflow(); }
+function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_, _) => { t = 6; } } var c: E = B([3, 4], [5, 6]); var v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w, x) => { v = w[0] + x[1]; } } if (t + v != 14) { return 99; } return __rc_underflow_count(); }
 function main(): i32 { return f(); }`, 0},
 }
 
 // TestSelfHostEnumCrossReuseIRX86_64 routes each case through the self-hosted x86-64
 // IR driver, pinned to the "ir" path, and runs it — asserting the embedded value
-// check plus __rc_underflow() == 0.
+// check plus __rc_underflow_count() == 0.
 func TestSelfHostEnumCrossReuseIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

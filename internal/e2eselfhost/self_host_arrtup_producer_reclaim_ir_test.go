@@ -38,7 +38,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var qs: (i32, i32[])[] = mk(j); acc = (acc + qs[0].0) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -54,7 +54,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var qs: Q[] = mkqs(j); acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -68,7 +68,7 @@ function main(): i32 {
     var ps: (i32, i32[])[] = mkps(5);
     var qs: Q[] = mkqs(3);
     var v: i32 = ps[0].0 + ps[0].1[0] + ps[1].1[1] + ps.len() + qs[0].xs[0] + qs[0].xs[1] + qs.len();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 28},
 	// NON-FRESH PRODUCER negative: `mkbad` puts a PARAM array at an element
@@ -85,7 +85,7 @@ function main(): i32 {
         acc = (acc + ps[0].0 + ps[0].1[0]) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (shared[0] + shared[1] != 3) { return 97; }
     if (acc < 0) { return 97; }
     return 0;
@@ -99,7 +99,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 50) { var r: (i32, i32[])[] = keepit(i); acc = (acc + r[0].0 + r[0].1[1]) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -115,7 +115,7 @@ function main(): i32 {
         acc = (acc + t.0 + t.1[1] + ps[0].1[0]) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},

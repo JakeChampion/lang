@@ -58,7 +58,7 @@ func TestSelfHostArrReturnTransferIRX86_64(t *testing.T) {
 	run(t, `function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { var t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-alias-balanced", 0)
 
 	// FRESH-RETURNING callee unchanged: the dead intermediate t (the #4357
@@ -67,7 +67,7 @@ function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (_
 	run(t, `function mk(k: i32): i32[] { return [k, k + 1, k + 2]; }
 function f(s: i32[]): i32 { var t: i32[] = mk(s[0]); var u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-fresh-flat", 0)
 
 	// MIXED per-path returns: one path returns the param (inc'd), the other a
@@ -75,7 +75,7 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_byte
 	run(t, `function pick(a: i32[], b: i32[], c: i32): i32[] { if (c > 0) { return a; } return [b[0], 9]; }
 function f(s: i32[]): i32 { var t: i32[] = pick(s, s, 1); var u: i32[] = pick(s, s, 0); return t[0] + u[1] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-mixed-paths", 0)
 
 	// A MATCH-ARM BINDING of an array payload returned bare: the binding
@@ -88,7 +88,7 @@ function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_byte
 function leaf(root: N): i32[] { var cur: N = root; var d: boolean = true; while (d) { match (cur) { B(kids) => { cur = kids[0]; }, L(xs) => { return xs; }, E => { d = false; } } } var none: i32[] = []; return none; }
 function f(root: N): i32 { var t: i32[] = leaf(root); return t[1]; }
 function churn(m: i32): i32 { var root: N = B([L([1, 2, 3])]); var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(root)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } if (w != x || w != (2 * 2000) % 251) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x || w != (2 * 2000) % 251) { return 97; } return 0; }`,
 		"arr-return-transfer-match-binding", 0)
 
 	// The SAME return, over a box THIS FRAME BUILT — and it must take no
@@ -106,7 +106,7 @@ function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (_
 function mkm(i: i32): M { return ML([i, i + 1, i + 2]); }
 function take(i: i32): i32[] { var v: M = mkm(i); match (v) { ML(xs) => { return xs; }, ME => { return [0]; } } }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { var t: i32[] = take(i); acc = (acc + t[1]) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-match-binding-fresh-box", 0)
 
 	// A `string[]` STRUCT FIELD returned by a method (#7232). The buffer-pointer
@@ -123,7 +123,7 @@ function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
 function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`,
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`,
 		"strarr-field-return-transfer", 0)
 }
 
@@ -146,17 +146,17 @@ func TestSelfHostArrReturnTransferWasmIR(t *testing.T) {
 		{"arr-return-transfer-alias-balanced-wasm", `function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { var t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`, 0},
 		{"arr-return-transfer-fresh-flat-wasm", `function mk(k: i32): i32[] { return [k, k + 1, k + 2]; }
 function f(s: i32[]): i32 { var t: i32[] = mk(s[0]); var u: i32 = t[0] + s[1]; return u; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"strarr-field-return-transfer-wasm", `struct Holder { xs: string[] }
 function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
 function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`, 0},
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,7 +198,7 @@ func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 	prog := `function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { var t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
+function main(): i32 { var w: i32 = churn(1000); var x: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`
 	// The `string[]` struct-field return (#7232) alongside the bare-param one:
 	// both are the same buffer-pointer Perceus dup, reached through different
 	// classifiers.
@@ -207,7 +207,7 @@ function (h: Holder) get(): string[] { return h.xs; }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function f(keep: Holder): i32 { var parts: string[] = keep.get(); return parts.len(); }
 function churn(keep: Holder, m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(keep)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`
+function main(): i32 { var keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] }; var v: i32 = churn(keep, 1000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(keep, 1000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (keep.xs[0] != "a-a-wide-payload-past-any-inline-threshold-0123456789") { return 97; } if (v != x) { return 97; } if (b2 - b1 >= 256) { return 98; } return 0; }`
 
 	for _, tc := range []struct{ name, src string }{
 		{"arr-return-transfer-alias-arm64", prog},

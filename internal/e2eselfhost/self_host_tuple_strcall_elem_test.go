@@ -35,7 +35,7 @@ function round(i: i32): i32 { var v: (i32, string) = (1, w("p")); return v.1.len
 function main(): i32 {
     var t: i32 = 0; var i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
 			want: 68, balance: true,
@@ -57,7 +57,7 @@ function main(): i32 {
     while (r < 200) { t = t + round(r); r = r + 1; }
     var ok: i32 = 0;
     if (keep == "keepmeeee!") { ok = 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return (t + ok) % 97;
 }`,
 			want: 17, balance: true,
@@ -79,7 +79,7 @@ function round(i: i32): i32 {
 function main(): i32 {
     var t: i32 = 0; var r: i32 = 0;
     while (r < 100) { t = t + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
 			want: 11, balance: true,
@@ -99,7 +99,7 @@ function round(i: i32): i32 { var q: string = w("q"); var v: (i32, string) = (1,
 function main(): i32 {
     var t: i32 = 0; var i: i32 = 0;
     while (i < 200) { t = t + round(i); i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
 			want: 53, balance: false, wantFrees: 0,

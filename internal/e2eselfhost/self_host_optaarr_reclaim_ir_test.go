@@ -32,7 +32,7 @@ var optAarrReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var xs2: Option[i32[]][] = [Some([i, i + 1]), None]; acc = (acc + xs2.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -56,7 +56,7 @@ var optAarrReclaimCases = []struct {
         i = i + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -68,7 +68,7 @@ var optAarrReclaimCases = []struct {
     var o = xs[0];
     var acc: i32 = 0;
     match (o) { Some(p) => { acc = p[0] + p[1]; }, None => {} }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc;
 }`, 15},
 	// PAYLOAD-ESCAPE negative: a Some-arm binding returned out of the match —
@@ -80,7 +80,7 @@ var optAarrReclaimCases = []struct {
 function main(): i32 {
     var xs: Option[i32[]][] = [Some([5, 6]), None];
     var p = pick(xs);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return p[0] + p[1];
 }`, 11},
 }

@@ -65,7 +65,7 @@ func appendParamElemSrc(inner string) string {
 		"function main(): i32 { var t: i32 = 0; var st: St = St { ops: [] }; var j: i32 = 0; " +
 		"while (j < 3) { " + inner + " j = j + 1; } " +
 		"var k: i32 = 0; while (k < st.ops.len()) { t = t * 10 + st.ops[k].a; k = k + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return t; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return t; }"
 }
 
 func appendParamElemCases() []struct{ name, inner string } {
@@ -96,7 +96,7 @@ func appendParamElemCases() []struct{ name, inner string } {
 // released exactly once.
 //
 // The answer carries the use-after-free (a recycled box shows as a wrong digit
-// sequence) and `__rc_underflow()` carries the over-release; `allocs == frees`
+// sequence) and `__rc_underflow_count()` carries the over-release; `allocs == frees`
 // at `live_bytes == 0` carries the leak. All three are needed here: this defect
 // had healthy counters throughout, so counts alone would have passed the broken
 // compiler.

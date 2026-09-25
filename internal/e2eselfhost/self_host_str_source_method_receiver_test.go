@@ -47,7 +47,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
@@ -65,7 +65,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
@@ -82,7 +82,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
@@ -103,7 +103,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: `return s[2:s.len()]` is a VIEW over the receiver's buffer. Worth
 	// noting that this distinction has a WITNESS here — it exits 97 when admitted —
 	// where the same view question was contract-only at the binding-credit and
@@ -121,7 +121,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "cdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 104) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 104) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: the receiver is moved into a struct field inside the callee and read
 	// back out. Nothing about the RESULT gives this away — it is a fresh-looking
 	// string — so the escape check is what catches it. Also exits 97 when admitted.
@@ -139,7 +139,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrSourceMethodReceiverIRX86_64 drives the cases through the

@@ -31,7 +31,7 @@ var optStrBlockReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -46,7 +46,7 @@ var optStrBlockReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var r2: Result[i32, string] = Err("e" + i.to_string()); match (r2) { Ok(v) => { acc = (acc + v) % 251; }, Err(m) => { acc = (acc + m.len()) % 251; } } i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -61,7 +61,7 @@ var optStrBlockReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var o2: Option[i32[]] = Some([i, i + 1]); match (o2) { Some(xs) => { acc = (acc + xs[0]) % 251; }, None => { } } i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -76,7 +76,7 @@ var optStrBlockReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { if (i >= 0) { var o2: Option[string] = Some("v" + i.to_string()); match (o2) { Some(s) => { acc = (acc + s.len()) % 251; }, None => { } } } i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -93,7 +93,7 @@ var optStrBlockReclaimCases = []struct {
         w = w + 1;
     }
     if (keep.len() < 2) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ALIAS negative: `var al = o` aliases the option box, and al is matched
@@ -109,7 +109,7 @@ var optStrBlockReclaimCases = []struct {
         match (al) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
         w = w + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// DOUBLE-MATCH negative: two matches consume o — n_match != 1, no
@@ -123,7 +123,7 @@ var optStrBlockReclaimCases = []struct {
         match (o) { Some(s2) => { acc = (acc + s2.len()) % 251; }, None => { } }
         w = w + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// RETURNING ARMS (#4353 p1): every arm returns, so the post-match drop
@@ -145,7 +145,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
@@ -166,7 +166,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
@@ -191,7 +191,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
@@ -212,7 +212,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},
@@ -230,7 +230,7 @@ function main(): i32 {
 function main(): i32 {
     var s = pick(7);
     if (s.len() < 2) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Nested-block candidate with a returning arm: the block-level pending
@@ -253,7 +253,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { acc = (acc + probe(i)) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},

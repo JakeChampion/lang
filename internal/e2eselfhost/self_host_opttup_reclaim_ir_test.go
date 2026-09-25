@@ -36,7 +36,7 @@ var optTupReclaimCases = []struct {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.0) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -51,7 +51,7 @@ var optTupReclaimCases = []struct {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -70,7 +70,7 @@ var optTupReclaimCases = []struct {
     }
     var acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// PAYLOAD-ESCAPE-CALL negative: `take(p.1)` passes the array field to a call
@@ -85,7 +85,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ESCAPE-VIA-FN negative: the option is passed to a function whose match
@@ -97,7 +97,7 @@ function main(): i32 {
 function main(): i32 {
     var o: Option[(i32, i32[])] = Some((5, [6, 7]));
     var a = pick(o);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
 	// STRING-element payload (#4353 item 2, probe p4): `Option[(i32, string)]`
@@ -113,7 +113,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, string)] = Some((j, "v" + j.to_string())); match (o2) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -127,7 +127,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(string, i32[])] = Some(("tag", [j, j + 1])); match (o2) { Some(p) => { acc = (acc + p.1[1]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -141,7 +141,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 100) { var o: Option[(i32, string)] = Some((i, s)); match (o) { Some(p) => { acc = (acc + p.1.len()) % 251; }, None => {} } i = i + 1; }
     if (s.len() != 5) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// STRING-EXTRACTION negative: `Some(p) => keep = p.1` pulls the owned
@@ -157,7 +157,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (keep.len() < 2) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

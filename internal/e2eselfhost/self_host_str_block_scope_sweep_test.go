@@ -43,7 +43,7 @@ const strBlockW = "function w(a: string): string { return a + \"!\"; }\n"
 
 const strBlockMain = "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
 	"while (r < 100) { x = x + round(r); r = r + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return x % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 
 type strBlockCase struct {
 	name string

@@ -9,7 +9,7 @@ import (
 // snapshot-copy via the arm64 __fern_map_snapshot_col, plus the owncols
 // (x4 bit 1) owned grow in asm_arm64.fern's __fern_map_set. Lighter churn under
 // qemu, same assertions: snapshot semantics, absolute grow-churn flatness,
-// keys-taken flatness (no double free: __rc_underflow() == 0), and the
+// keys-taken flatness (no double free: __rc_underflow_count() == 0), and the
 // post-loop release of the `for (k, v) in m` column snapshots.
 func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -50,7 +50,7 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
     if (m.len() != 5) { return 13; }
     if (m.get_or(1, 0) != 11) { return 14; }
     if (m.get_or(10, 0) != 100) { return 15; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "map-keys-snapshot-semantics-arm64", 0)
 
@@ -71,7 +71,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -95,7 +95,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 500) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -113,7 +113,7 @@ function main(): i32 {
     if (total != 66) { return 50; }
     if (m.len() != 6) { return 51; }
     if (m.get_or(102, 0) != 20) { return 52; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "map-kv-iter-mutate-snapshot-arm64", 0)
 }

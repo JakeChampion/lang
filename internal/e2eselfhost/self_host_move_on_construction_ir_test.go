@@ -142,7 +142,7 @@ function main(): i32 { return f(); }`,
 			// construction inc — the move verdict below is unchanged, which is
 			// the half this table is about. Both destructure rows read 0 here
 			// until that fix, and both OVER-RELEASED at that count: measured
-			// exit 99 (`__rc_underflow()`) on the parent against 30 / 57 on
+			// exit 99 (`__rc_underflow_count()`) on the parent against 30 / 57 on
 			// native, balanced either way, so the census could not see it. The
 			// count is a proxy for "every inc in f", so a legitimately-new one
 			// lands in it.

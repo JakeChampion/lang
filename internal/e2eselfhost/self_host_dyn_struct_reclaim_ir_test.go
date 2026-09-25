@@ -59,7 +59,7 @@ struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
 function go(k: i32): i32 { var d: dyn Show = Circle { r: k, tags: [7, 8] }; return d.show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-struct-reclaim-flat", 0)
 
 	// SCALAR-ONLY concrete: no deep-drop emitted (no reclaimable field), the
@@ -69,7 +69,7 @@ struct Dot { r: i32 }
 impl Show for Dot { function show(self: Self): i32 { return self.r + 1; } }
 function go(k: i32): i32 { var d: dyn Show = Dot { r: k }; return d.show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-scalar-struct-reclaim-flat", 0)
 
 	// ESCAPING dyn excluded: `return d` — body_unsafe_for rejects the
@@ -80,7 +80,7 @@ impl Show for Circle { function show(self: Self): i32 { return self.r + self.tag
 function mk(k: i32): dyn Show { var d: dyn Show = Circle { r: k, tags: [5, 6] }; return d; }
 function go(k: i32): i32 { var e = mk(k); return e.show(); }
 function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-escaping-excluded", 0)
 
 	// REASSIGNED dyn excluded: `d = C{..}` rebind — the concretes could
@@ -91,7 +91,7 @@ struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r; } }
 function go(k: i32): i32 { var d: dyn Show = Circle { r: k, tags: [1] }; d = Circle { r: k + 1, tags: [2] }; return d.show(); }
 function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 4) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-reassigned-excluded", 0)
 }
 
@@ -115,14 +115,14 @@ struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
 function go(k: i32): i32 { var d: dyn Show = Circle { r: k, tags: [7, 8] }; return d.show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-escaping-excluded-wasm", `trait Show { function show(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r + self.tags[0]; } }
 function mk(k: i32): dyn Show { var d: dyn Show = Circle { r: k, tags: [5, 6] }; return d; }
 function go(k: i32): i32 { var e = mk(k); return e.show(); }
 function churn(m: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0},
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -166,7 +166,7 @@ struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
 function go(k: i32): i32 { var d: dyn Show = Circle { r: k, tags: [7, 8] }; return d.show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`
 	asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
 	if len(asm) == 0 {
 		t.Fatalf("self-host arm64 compiler emitted 0 bytes")

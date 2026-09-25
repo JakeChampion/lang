@@ -15,7 +15,7 @@ import (
 // `idret`'s no-op fast path (`return s`) hands `x`'s own box back. The caller
 // then stashed the fresh argument temp and freed it unconditionally after the
 // call — freeing the very box the call had just returned as its result: a
-// double free (`__rc_underflow`) / use-after-free (`[[[[[]` for `[TOOL]`).
+// double free (`__rc_underflow_count`) / use-after-free (`[[[[[]` for `[TOOL]`).
 //
 // The fix keeps the position borrowable but guards the post-call release on the
 // result differing from the temp (str_handback_ret / free_stashed_str_args_
@@ -84,7 +84,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -103,7 +103,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { idret(base + "-x"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 7) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -130,7 +130,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -158,7 +158,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 97; }
     if (base.len() != 7) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }

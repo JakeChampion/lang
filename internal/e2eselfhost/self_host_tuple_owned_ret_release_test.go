@@ -24,7 +24,7 @@ import (
 // so the leak is per ROUND: the byte cases return
 // `(heap after churn 2 - heap after churn 1) / rounds`, the per-round growth
 // rate. 0 = clean; a small non-zero is the leaked bytes per round; 99 is an
-// over-release (__rc_underflow); 97 a corrupted value.
+// over-release (__rc_underflow_count); 97 a corrupted value.
 var tupleOwnedRetReleaseCases = []struct {
 	name string
 	src  string
@@ -47,7 +47,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -67,7 +67,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -89,7 +89,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -111,7 +111,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -134,7 +134,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -158,7 +158,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -187,7 +187,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},
@@ -219,7 +219,7 @@ function main(): i32 {
     var b1: i64 = __heap_bump_bytes();
     var x: i32 = churn(200);
     var b2: i64 = __heap_bump_bytes();
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return ((b2 - b1) / 200) as i32;
 }`, 0},

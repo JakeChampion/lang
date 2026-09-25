@@ -35,7 +35,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 
 	// run compiles and runs a probe, returning its leak census. `want` is the
 	// expected exit code: pass the interp oracle's for a plain probe, or -1 for
-	// one that calls `__rc_underflow()`, which the interpreter does not implement
+	// one that calls `__rc_underflow_count()`, which the interpreter does not implement
 	// (it has no rc runtime and exits 1 on every such program, so comparing
 	// against it reports a false failure). Those probes carry their own verdict
 	// instead — 99 is their underflow sentinel.
@@ -49,7 +49,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 				"reached a live string", name, exit, want)
 		}
 		if want < 0 && exit == 99 {
-			t.Fatalf("%s: __rc_underflow() fired — the payload drop OVER-released", name)
+			t.Fatalf("%s: __rc_underflow_count() fired — the payload drop OVER-released", name)
 		}
 		allocs, frees, live := parseLeakcheck(t, name, stderr)
 		if allocs == 0 {
@@ -64,7 +64,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 		return run(t, name, src, interpExit(t, interpBin, src))
 	}
 
-	// countsRC is `counts` for a probe whose own body calls __rc_underflow().
+	// countsRC is `counts` for a probe whose own body calls __rc_underflow_count().
 	countsRC := func(t *testing.T, name, src string) (int64, int64, int64) {
 		t.Helper()
 		return run(t, name, src, -1)
@@ -140,7 +140,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
         match (o) { Some(xs) => { acc = (acc + xs[0].len() + xs[1].len() + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 39) { return 98; }
     return 0;
 }`)
@@ -187,7 +187,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
         acc = (acc + xs[0].len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc % 7;
 }`)
 		if live == 0 {
@@ -209,7 +209,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
         acc = (acc + held.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc % 7;
 }`)
 		if live == 0 {

@@ -57,7 +57,7 @@ type arrarrProdCase struct {
 
 const arrarrProdMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 func arrarrProdCases() []arrarrProdCase {
 	return []arrarrProdCase{
@@ -95,7 +95,7 @@ function round(base: i32[][], i: i32): i32 {
     if (i % 2 == 1) { var v: i32[][] = base;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: i32[][] = [[7,8],[9,10]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { var b: i32[][] = [[7,8],[9,10]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{
@@ -111,7 +111,7 @@ function round(base: string[][], i: i32): i32 {
     if (i % 2 == 1) { var v: string[][] = base;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: string[][] = [[w("a")],[w("b")]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { var b: string[][] = [[w("a")],[w("b")]]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{

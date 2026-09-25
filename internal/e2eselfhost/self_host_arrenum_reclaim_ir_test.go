@@ -76,7 +76,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -92,7 +92,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: E[] = [E.B, E.B, E.B]; acc = (acc + ys.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -110,7 +110,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: E[] = [A(pre + "z"), B]; acc = (acc + ys.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -131,7 +131,7 @@ function main(): i32 {
         }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 53},
 	// ELEMENT-BIND negative: `var e = xs[1]` binds an element box out of the array.
@@ -146,7 +146,7 @@ function main(): i32 {
         match (e) { E.A(s) => { acc = (acc + s.len()) % 251; }, E.B => { acc = (acc + 3) % 251; }, }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 53},
 	// ESCAPE-VIA-RETURN negative: the array leaves the frame, so nothing may be freed.
@@ -156,7 +156,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 50) { var r: E[] = mk("ab"); acc = (acc + r.len()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return acc % 97;
 }`, 3},
 }

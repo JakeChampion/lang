@@ -45,7 +45,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 2000) { acc = (acc + go(shared)) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (shared.len() != 4) { return 98; }
     if (shared[0] != 97) { return 97; }
     return 0;
@@ -68,7 +68,7 @@ function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i
 function main(): i32 {
     var w: i32 = churn(2000);
     var x: i32 = churn(2000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return 0;
 }`, 0},

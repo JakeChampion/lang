@@ -85,7 +85,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -112,7 +112,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -141,7 +141,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -163,7 +163,7 @@ function main(): i32 {
         if (s0.n != 8) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "rcenum-scalar-struct-aliased-payload-safe", 0)
@@ -185,7 +185,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (keep.len() != 4) { return 88; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "rcenum-call-init-param-embed-safe", 0)
 
@@ -206,7 +206,7 @@ function main(): i32 {
     var f: i32 = 0;
     while (f < 2000) { s = s + readit(); f = f + 1; }
     if (s != 2000) { return 97; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`, "rcenum-struct-payload-detector-zero", 0)
 
 	// STRING-field payload, DIRECT init: the shape the clobbered return
@@ -223,6 +223,6 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 2000) { return 97; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`, "rcenum-str-field-direct-detector-zero", 0)
 }

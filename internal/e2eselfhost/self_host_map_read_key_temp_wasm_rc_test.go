@@ -45,7 +45,7 @@ func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 
 	const probe = `function main(): i32 { var acc: i32 = 0; var w: i32 = 0; while (w < 100) { acc = acc + build(w); w = w + 1; } ` +
 		`var s1: i32 = (__heap_bump_bytes() as i32); var j: i32 = 0; while (j < 1000) { acc = acc + build(j); j = j + 1; } ` +
-		`var s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`
+		`var s2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if ((s2 - s1) > 4096) { return 1; } return 0; }`
 	const box = `import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } `
 
 	cases := []struct {

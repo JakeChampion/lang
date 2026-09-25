@@ -35,7 +35,7 @@ func TestSelfHostRcParamMoveX86_64(t *testing.T) {
 function main(): i32 {
 	var a: i32 = f([1, 2]);
 	var b: i32 = f([3, 4]);
-	if (__rc_underflow() != 0) { return 99; }
+	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b;
 }`, 10, true},
 		// The consumed-tuple shape of TestSelfHostRcPlanDiff: a reassigned
@@ -50,7 +50,7 @@ function main(): i32 {
 	var t: (string, i32) = ("a", 2);
 	var a: i32 = tup(t, false);
 	var b: i32 = tup(t, true);
-	if (__rc_underflow() != 0) { return 99; }
+	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b + t.1;
 }`, 18, false},
 		// The same with a bare alias instead of a destructure.
@@ -63,7 +63,7 @@ function main(): i32 {
 	var t: (i32[], i32) = ([1], 2);
 	var a: i32 = g(t, false);
 	var b: i32 = g(t, true);
-	if (__rc_underflow() != 0) { return 99; }
+	if (__rc_underflow_count() != 0) { return 99; }
 	return a + b + t.0[0];
 }`, 14, false},
 	}
