@@ -5714,7 +5714,21 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
     if (kind == "value branch has no trailing expression" || kind == "stmt: value branch has no trailing expression") {
         return util.Diag { code: "E061", message: where + ": block-expression has no trailing value", line: line, col: col };
     }
+    // A declaration the parser discarded (a local function's) carries the
+    // declaration gate's own text, so it reads as check_decl_names' would.
+    var decl: string = decl_sentinel_text(kind);
+    if (decl.len() > 0) {
+        return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col };
+    }
     return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
+}
+
+// decl_sentinel_text is the message of a `decl:` sentinel, in either spelling
+// the scan produces, or "" for any other kind.
+function decl_sentinel_text(kind: string): string {
+    if (util.str_has_prefix(kind, "decl:")) { return slice_unchecked(kind, 5, kind.len()) + ""; }
+    if (util.str_has_prefix(kind, "stmt: decl:")) { return slice_unchecked(kind, 11, kind.len()) + ""; }
+    return "";
 }
 
 // UnkScan threads the pre-check's state through astwalk's fold: the

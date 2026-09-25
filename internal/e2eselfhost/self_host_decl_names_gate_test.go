@@ -54,14 +54,6 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "malformed function declaration"},
 		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "malformed function declaration"},
 
-		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
-		// receiver method — the gate must not fire on any of them.
-		//
-		// NOT covered here: `function (s: S) default()`. The self-host parser
-		// accepts `default` as a member name (peek_member_name allows it
-		// deliberately) and the native parser rejects it. That is a real
-		// divergence, but a different one — the name is present, not empty — so
-		// asserting agreement on it here would fail for an unrelated reason.
 		// A parameter with no type (#10260): the parser records it with an
 		// empty type, on a free function, a method and a trait requirement.
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
@@ -70,9 +62,21 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		// A local function's FuncDecl is desugared to a closure, so the parser
 		// reports its untyped parameter through a sentinel instead.
 		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "has no type"},
+		// The same arm refuses a local declaration parse_func_decl returns
+		// nameless: a keyword name, or a destructured parameter with no type.
+		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
+		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
+		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
+		// receiver method — the gate must not fire on any of them.
+		//
+		// NOT covered here: `function (s: S) default()`. The self-host parser
+		// accepts `default` as a member name (peek_member_name allows it
+		// deliberately) and the native parser rejects it. That is a real
+		// divergence, but a different one — the name is present, not empty — so
+		// asserting agreement on it here would fail for an unrelated reason.
 		{"ordinary-name", "function helper(): i32 { return 42; }\nfunction main(): i32 { return helper(); }", false, ""},
 		{"name-containing-keyword", "function usenow(): i32 { return 42; }\nfunction main(): i32 { return usenow(); }", false, ""},
 		{"receiver-method", "struct S { }\nfunction (s: S) twice(): i32 { return 42; }\nfunction main(): i32 { var s = S { }; return s.twice(); }", false, ""},
