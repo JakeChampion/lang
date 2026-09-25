@@ -909,6 +909,29 @@ function main(): i32 {
     while (k < 20) { total = total + walk(slice_unchecked(t, 0, 5), k % 3); k = k + 1; }
     return total % 256;
 }`},
+	// The mirror: the source is rebound, in a loop too, while the alias
+	// survives and is read afterwards. The alias's fresh view is anchored to
+	// the same bytes, so the source's rebinding releases nothing it reads.
+	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+function pick(t: string, k: i32): i32 {
+    var a: str = slice_unchecked(t, 0, 3);
+    var b: str = a;
+    a = slice_unchecked(t, 3, 6);
+    var n: i32 = 0;
+    while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
+    return b.len() * 10 + a.len() + (b[0] as i32) - 97;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 25) {
+        var t: string = "abcdefg" + "hij";
+        total = total + pick(t, i % 4);
+        i = i + 1;
+    }
+    return total % 256;
+}`},
 	// The same phi as the row above, with a LITERAL on the entry edge rather
 	// than a live view — the `var spec: str = ""; … spec = slice_unchecked(…)`
 	// that `std/format`'s two refused functions are both built on. Produced as

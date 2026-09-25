@@ -43,5 +43,8 @@ and wasm, against the AST lowering:
 
 - `view-loop-rebinds-a-live-view` produced the refusal before. It now
   produces 1 of 1 with no leak: 5 allocs, 5 frees.
+- `a-view-alias-outlives-its-rebound-source`, new: the mirror, where the
+  source is rebound (in a loop too) while the alias survives and is read
+  afterwards. 25 calls, 111 allocations and 111 frees.
 - `view-loop-rebinds-a-view-parameter`, new: the loop over a borrowed
   parameter, 20 calls, 2 of 2 produced, 59 allocs and 59 frees.

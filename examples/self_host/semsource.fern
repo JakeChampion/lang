@@ -2530,7 +2530,8 @@ function unaliased_view(v: Value): Value {
     return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
 }
 
-// The kind of the instruction defining `id` so far, or 0 for a parameter.
+// The kind of the instruction defining `id` so far (a parameter's is 6), or 0
+// when nothing defines it.
 function defining_kind(s: State, id: i32): i32 {
     for b in s.blocks {
         for ins in b.insts { if (ins.result == id) { return ins.kind_tag; } }
