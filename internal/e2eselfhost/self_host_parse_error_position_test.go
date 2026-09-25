@@ -232,7 +232,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// source with `expected "Ident", got "("`.
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: malformed function declaration (1:1)\n" +
+			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)\n" +
 				"error[P001]: at top level: parser-side unknown: punct:: (1:12)"},
 	}
 

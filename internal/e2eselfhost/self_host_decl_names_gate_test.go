@@ -49,25 +49,26 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 	}{
 		// `use` is the one that actually cost us. The others are keywords a
 		// reasonable person might reach for as an identifier.
-		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "malformed function declaration"},
-		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "malformed function declaration"},
-		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "malformed function declaration"},
-		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "malformed function declaration"},
+		{"keyword-use", "function use(): i32 { return 1; }\nfunction main(): i32 { return use(); }", true, "its name or signature could not be read"},
+		{"keyword-type", "function type(): i32 { return 1; }\nfunction main(): i32 { return type(); }", true, "its name or signature could not be read"},
+		{"keyword-match", "function match(): i32 { return 1; }\nfunction main(): i32 { return match(); }", true, "its name or signature could not be read"},
+		{"keyword-impl", "function impl(): i32 { return 1; }\nfunction main(): i32 { return impl(); }", true, "its name or signature could not be read"},
 
 		// A parameter with no type (#10260): the parser records it with an
 		// empty type, on a free function, a method and a trait requirement.
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }", true, "has no type"},
 		{"untyped-impl-self", "trait Conv { function conv(self: Self): i32; }\nstruct A { v: i32 }\nimpl Conv for A { function conv(self): i32 { return 1; } }\nfunction main(): i32 { return 0; }", true, "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }", true, "has no type"},
+		{"keyword-trait-requirement", "trait Conv { function use(): i32; }\nfunction main(): i32 { return 0; }", true, "its name or signature could not be read"},
 		// A local function's FuncDecl is desugared to a closure, so the parser
 		// reports its untyped parameter through a sentinel instead.
 		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }", true, "has no type"},
 		// The same arm refuses a local declaration parse_func_decl returns
 		// nameless: a keyword name, or any destructured parameter
 		// parse_pattern_param rejects (a missing type, a singleton tuple).
-		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
-		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
-		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "has no name"},
+		{"keyword-local-fn", "function outer(): i32 {\n    function use(): i32 { return 0; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
+		{"untyped-destructure-local-fn", "function outer(): i32 {\n    function g((a, b)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
+		{"singleton-destructure-local-fn", "function outer(): i32 {\n    function g((a): (i32)): i32 { return a; }\n    return 1;\n}\nfunction main(): i32 { return outer(); }", true, "its name or signature could not be read"},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
 		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
 
