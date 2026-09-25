@@ -12978,7 +12978,12 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
         var i: i32 = 0;
         while (i < c.args.len() && i < flags.len()) {
           if (flags[i] && !ow_is_owned_expr(c.args[i], ctx)) {
-            out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", c.line, c.col));
+            // The argument is the anchor, as native's is; a kind that carries no
+            // position of its own falls back to the call.
+            var aline: i32 = ast.expr_line(c.args[i]);
+            var acol: i32 = ast.expr_col(c.args[i]);
+            if (aline <= 0) { aline = c.line; acol = c.col; }
+            out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", aline, acol));
           }
           i = i + 1;
         }
@@ -13019,7 +13024,7 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.ExprIdent(id) => {
       var d: util.Diag[] = [];
       if (ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
-        d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+        d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
       }
       return OwnWalk { moved: moved, diags: d };
     },
@@ -13039,7 +13044,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var m: MovedEntry[] = moved;
       if (ow_is_owned(ctx, id.name)) {
         if (ow_moved_has(moved, id.name)) {
-          d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+          d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
         } else {
           m = ow_moved_add(moved, id.name, id.line);
         }
@@ -17261,7 +17266,7 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
     if (!check_func_body(func, fs)) {
       var site: UnknownSite = unknown_site(func.body, fs);
       if (site.found) {
-        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(site.line) + " (" + site.reason + "); run native `fern -check` for further diagnostics - see issue #4451", site.line, 1)];
+        return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer the type of the statement at line " + util.i32_to_string(util.pos_line(site.line)) + " (" + site.reason + "); run native `fern -check` for further diagnostics - see issue #4451", site.line, 1)];
       }
       return [dg_at("type", "\"" + func.name + "\": the self-host checker could not infer an expression's type (for example, a dyn method call or an unregistered builtin); run native `fern -check` for further diagnostics - see issue #4451", func.line, func.col)];
     }

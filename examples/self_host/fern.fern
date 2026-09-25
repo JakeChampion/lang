@@ -189,15 +189,15 @@ import "./semlower";
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
 // string whose bytes are written verbatim (incl. 0x00 / high bytes) by
 // write_file. Used by the wasm binary output forms.
-// eprint_diags prints diagnostics as `-check` and native do: `line:col: ` when
-// the position is known, and no `error[…]` segment for an uncoded one (the
-// const-grammar rule is one).
-function eprint_diags(ds: util.Diag[]): void {
+// eprint_diags prints diagnostics as `-check` and native do: the position
+// (util.pos_str) when it is known, and no `error[…]` segment for an uncoded
+// one (the const-grammar rule is one).
+function eprint_diags(ds: util.Diag[], files: string[]): void {
     for d in ds {
         var tag: string = "";
         if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
         if (d.line > 0) {
-            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + tag + d.message + "\n");
+            eprint(util.pos_str(files, d.line, d.col) + ": " + tag + d.message + "\n");
         } else {
             eprint(tag + d.message + "\n");
         }
@@ -1177,14 +1177,26 @@ function is_vendorable(name: string): boolean {
 
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
-// attribute to. `ok` is false when a module could not be read — the
-// diagnostic is already printed.
+// attribute to. `files` names each loaded module for a diagnostic, in load
+// order, which is the order of their line bases (util.pos_str). `ok` is false
+// when a module could not be read — the diagnostic is already printed.
 struct Bundle {
     entry: parser.Module,
     loaded: flatten.LoadedModule[],
     merged: parser.Module,
     pkgs: caps.Pkg[],
+    files: string[],
     ok: boolean,
+}
+
+// display_path names a module file as native's diagnostics do: a stdlib module
+// as `stdlib://<path>`, any other as the path it was read from.
+function display_path(mpath: string, root: string): string {
+    if (root.len() == 0 || !util.str_has_prefix(mpath, root)) { return mpath; }
+    var at: i32 = root.len();
+    if (at < mpath.len() && mpath[at] != b'/' && root[root.len() - 1] != b'/') { return mpath; }
+    while (at < mpath.len() && mpath[at] == b'/') { at = at + 1; }
+    return "stdlib://" + slice_unchecked(mpath, at, mpath.len());
 }
 
 // read_bundle_module reads one imported module for load_bundle: the resolved
@@ -1229,6 +1241,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
 
     var q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [] }, entry_mod, dir_slash, root, deps);
     var loaded: flatten.LoadedModule[] = [];
+    var files: string[] = [];
     var done_paths: string[] = [];
     var j: i32 = 0;
     while (j < q.paths.len()) {
@@ -1251,10 +1264,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 var bad: string = mpath;
                 if (rm.err_path.len() > 0) { bad = rm.err_path; }
                 eprint(read_failure("module", bad, rm.err));
-                return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, ok: false };
+                return Bundle { entry: entry_mod, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, ok: false };
             }
             var mdir: string = rm.dir;
-            var m: parser.Module = parser.parse_module(lexer.tokenize(rm.src));
+            var m: parser.Module = parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1));
+            files = files.append(display_path(mpath, root));
             // Identity is the FILE, not its basename: two modules can share a
             // basename (`std/sort` and `coreutils/sort`) and the bundler has
             // to tell them apart to give each its own prefix (#9762).
@@ -1275,7 +1289,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     // settle against until the bundle exists; parse_module resolved the
     // same-module ones already, and the pass is idempotent.
     merged = parser.resolve_variant_fields_module(merged);
-    return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, ok: true };
+    return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, files: files, ok: true };
 }
 
 // bundle_visibility_diags reports cross-module visibility errors (#6714): a
@@ -1289,7 +1303,7 @@ function bundle_visibility_diags(b: Bundle): boolean {
     var vi: i32 = 0;
     while (vi < vis_diags.len()) {
         var vd: util.Diag = vis_diags[vi];
-        eprint(util.i32_to_string(vd.line) + ":" + util.i32_to_string(vd.col) + ": " + vd.message + "\n");
+        eprint(util.pos_str(b.files, vd.line, vd.col) + ": " + vd.message + "\n");
         vi = vi + 1;
     }
     return vis_diags.len() > 0;
@@ -1301,14 +1315,14 @@ function bundle_visibility_diags(b: Bundle): boolean {
 // channel, so a keyword written where a declaration name belongs leaves an
 // EMPTY name and consumes nothing — asmcore.check_decl_names is where that is
 // caught, and it was reachable only from the two wasm drivers.
-function report_decl_name_errors(mod: parser.Module): boolean {
+function report_decl_name_errors(mod: parser.Module, files: string[]): boolean {
     var ds: util.Diag[] = asmcore.check_decl_names(mod);
     if (ds.len() == 0) { return false; }
     var i: i32 = 0;
     while (i < ds.len()) {
         var d: util.Diag = ds[i];
         if (d.line > 0) {
-            eprint(util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": error[" + d.code + "]: " + d.message + "\n");
+            eprint(util.pos_str(files, d.line, d.col) + ": error[" + d.code + "]: " + d.message + "\n");
         } else {
             eprint("error[" + d.code + "]: " + d.message + "\n");
         }
@@ -1328,10 +1342,10 @@ function report_decl_name_errors(mod: parser.Module): boolean {
 // It runs on the MERGED module, before tree-shaking, because a default on an
 // uncalled function is dead code: shaking drops the declaration, and with it
 // the only evidence the source did not parse.
-function report_parse_unknown_errors(mod: parser.Module): boolean {
+function report_parse_unknown_errors(mod: parser.Module, files: string[]): boolean {
     var ds: util.Diag[] = asmcore.parse_unknown_errors_module(mod);
     if (ds.len() == 0) { return false; }
-    eprint(util.format_diags(ds));
+    eprint(util.format_diags_in(ds, files));
     return true;
 }
 
@@ -1341,10 +1355,10 @@ function report_parse_unknown_errors(mod: parser.Module): boolean {
 // above: a malformed declaration parses on as top-level statements, so debris
 // must be named by the gate that understands it rather than reported here as
 // though the author had written a script.
-function report_top_level_stmt_errors(mod: parser.Module): boolean {
+function report_top_level_stmt_errors(mod: parser.Module, files: string[]): boolean {
     var ds: util.Diag[] = asmcore.check_top_level_stmts(mod);
     if (ds.len() == 0) { return false; }
-    eprint(util.format_diags(ds));
+    eprint(util.format_diags_in(ds, files));
     return true;
 }
 
@@ -1387,13 +1401,13 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // Native stops at its parse error and prints only that, so reporting this
     // alone is both the correct diagnostic and the code-set parity — anything
     // downstream of a declaration that did not parse is noise.
-    if (report_decl_name_errors(merged)) { return 1; }
-    if (report_parse_unknown_errors(merged)) { return 1; }
-    if (report_top_level_stmt_errors(merged)) { return 1; }
+    if (report_decl_name_errors(merged, b.files)) { return 1; }
+    if (report_parse_unknown_errors(merged, b.files)) { return 1; }
+    if (report_top_level_stmt_errors(merged, b.files)) { return 1; }
     var mt: checker.ModuleTypes = checker.check_module(merged);
     // Surface the coded diagnostics (the same E0XX codes the Go
     // checker emits — see docs/SELFHOST-CHECKER-PORT.md) on stderr.
-    eprint_diags(mt.diags);
+    eprint_diags(mt.diags, b.files);
     // The capability boundary, when a target was asked for. It runs
     // whatever the checker concluded: the scan is syntactic — a call to a
     // named builtin — so it holds where the partial checker collapses an
@@ -1419,7 +1433,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
         while (hi < hints.len()) {
             var h: util.Diag = hints[hi];
             if (h.line > 0) {
-                eprint(util.i32_to_string(h.line) + ":" + util.i32_to_string(h.col) + ": error[" + h.code + "]: " + h.message + "\n");
+                eprint(util.pos_str(b.files, h.line, h.col) + ": error[" + h.code + "]: " + h.message + "\n");
             } else {
                 eprint("error[" + h.code + "]: " + h.message + "\n");
             }
@@ -2243,9 +2257,9 @@ function run(): i32 {
     // same reason the checker gate below exists: without it a build is MORE
     // permissive than `-check`, and a keyword-named function reaches codegen
     // as a nameless declaration.
-    if (report_decl_name_errors(merged)) { return 1; }
-    if (report_parse_unknown_errors(merged)) { return 1; }
-    if (report_top_level_stmt_errors(merged)) { return 1; }
+    if (report_decl_name_errors(merged, b.files)) { return 1; }
+    if (report_parse_unknown_errors(merged, b.files)) { return 1; }
+    if (report_top_level_stmt_errors(merged, b.files)) { return 1; }
 
     // Build gate: reject what the checker rejects BEFORE codegen, so the
     // compiler is not MORE permissive than the native compiler / `-check`
@@ -2260,7 +2274,7 @@ function run(): i32 {
     // shape as `-check`.
     var gated: util.Diag[] = checker.build_gate_diags(merged);
     if (gated.len() > 0) {
-        eprint_diags(gated);
+        eprint_diags(gated, b.files);
         return 1;
     }
 
