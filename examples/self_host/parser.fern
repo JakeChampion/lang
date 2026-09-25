@@ -8794,9 +8794,10 @@ function (e: MEnv) elook(n: string): string {
 // Insts records generic instantiations as three parallel arrays: the base
 // name, the mangled `__`-key (used to build clone symbol names), and `iargs`
 // — the ORIGINAL single-type-arg spelling for a single-param enum. iargs
-// exists because a composite (fn) arg mangles LOSSILY (`(i32) => i32` →
-// sanitized `_i32_____i32`), so phase-2 field substitution can't recover the
-// real field type from the key alone; it reads iargs instead. For a nominal /
+// exists because a fn or tuple arg mangles LOSSILY (`(i32) => i32` →
+// sanitized `_i32_____i32`, `(i32, i32)` → `tup_i32_i32`), so phase-2 field
+// substitution can't recover the real field type from the key alone; it reads
+// iargs instead. For a nominal /
 // nested-enum key, iargs carries the original spelling too, but `me_rewrite_ty`
 // re-derives the identical mangled field type either way (`Opt[i32]` → `Opt__i32`
 // == the key), so those stay byte-identical. Non-enum callers use the default
@@ -8815,7 +8816,8 @@ function (a: Insts) iadd(n: string, t: string): Insts {
     return Insts { inames: a.inames.append(n), itypes: a.itypes.append(t), iargs: a.iargs.append(t) };
 }
 // iadd_arg records an instantiation together with the original single-arg
-// spelling `arg` (phase-2 field substitution reads it for a fn-keyed clone).
+// spelling `arg` (phase-2 field substitution reads it for a fn- or
+// tuple-keyed clone).
 // Enum-collection sites use this; the default `iadd` sets iargs = key.
 function (a: Insts) iadd_arg(n: string, t: string, arg: string): Insts {
     if (a.ihas(n, t)) { return a; }
