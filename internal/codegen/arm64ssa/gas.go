@@ -1465,6 +1465,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_local_port":              emitTcpLocalPortHelper,
 	"tcp_recv":                    emitTcpRecvHelper,
 	"tcp_send":                    emitTcpSendHelper,
+	"udp_send":                    emitUdpSendHelper,
 	"tcp_close":                   emitTcpCloseHelper,
 	"tcp_pollable":                emitTcpPollableHelper,
 	"poll":                        emitPollHelper,
@@ -3365,6 +3366,97 @@ func emitTcpSendHelper(w func(string, ...any)) {
 	w("\tmov x5, #0")
 	w("\tmov x8, #206") // sendto (x0=fd, x1=data already in place)
 	w("\tsvc #0")
+	w("\tret")
+}
+
+// emitUdpSendHelper writes udp_send(host, port, data) → i32: one datagram to a
+// dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host that is
+// not four decimal octets. On a datagram socket connect only records the peer,
+// so connect-then-write sends it. The octets are parsed straight into sin_addr.
+// x0=host, w1=port, x2=data; x19 = fd, x20 = port then the result, x21 = data.
+func emitUdpSendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("udp_send"))
+	w("\tstp x29, x30, [sp, #-64]!")
+	w("\tmov x29, sp")
+	w("\tstp x19, x20, [sp, #16]")
+	w("\tstr x21, [sp, #32]")
+	w("\tmov x20, x1")
+	w("\tmov x21, x2")
+	w("\tldur w10, [x0, #-4]") // host length
+	w("\tmov w11, #0")         // index into host
+	w("\tmov w12, #0")         // the octet so far
+	w("\tmov w13, #0")         // octets completed
+	w("\tmov w14, #0")         // digits in this octet
+	w(".Lssa_udps_scan:")
+	w("\tcmp w11, w10")
+	w("\tb.ge .Lssa_udps_end")
+	w("\tldrb w16, [x0, w11, uxtw]")
+	w("\tcmp w16, #46") // '.'
+	w("\tb.ne .Lssa_udps_digit")
+	w("\tcbz w14, .Lssa_udps_bad")
+	w("\tcmp w13, #3")
+	w("\tb.ge .Lssa_udps_bad")
+	w("\tadd x17, x29, #52")
+	w("\tstrb w12, [x17, w13, uxtw]")
+	w("\tadd w13, w13, #1")
+	w("\tmov w12, #0")
+	w("\tmov w14, #0")
+	w("\tadd w11, w11, #1")
+	w("\tb .Lssa_udps_scan")
+	w(".Lssa_udps_digit:")
+	w("\tsub w16, w16, #48")
+	w("\tcmp w16, #9")
+	w("\tb.hi .Lssa_udps_bad") // unsigned: below '0' wraps high too
+	w("\tmov w17, #10")
+	w("\tmadd w12, w12, w17, w16")
+	w("\tadd w14, w14, #1")
+	w("\tcmp w12, #255")
+	w("\tb.gt .Lssa_udps_bad")
+	w("\tadd w11, w11, #1")
+	w("\tb .Lssa_udps_scan")
+	w(".Lssa_udps_end:")
+	w("\tcmp w13, #3")
+	w("\tb.ne .Lssa_udps_bad")
+	w("\tcbz w14, .Lssa_udps_bad")
+	// sockaddr_in at x29+48 { family=AF_INET, port=htons(port), addr, zero }.
+	w("\tstrb w12, [x29, #55]")
+	w("\tmov w0, #2")
+	w("\tstrh w0, [x29, #48]")
+	w("\trev16 w0, w20")
+	w("\tstrh w0, [x29, #50]")
+	w("\tstr xzr, [x29, #56]")
+	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
+	w("\tmov x0, #2")
+	w("\tmov x1, #2")
+	w("\tmov x2, #0")
+	w("\tmov x8, #198") // socket
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_udps_ret")
+	w("\tmov x19, x0")
+	w("\tadd x1, x29, #48")
+	w("\tmov x2, #16")
+	w("\tmov x8, #203") // connect
+	w("\tsvc #0")
+	w("\ttbnz x0, #63, .Lssa_udps_close")
+	w("\tmov x0, x19")
+	w("\tmov x1, x21")
+	w("\tldur w2, [x21, #-4]")
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w(".Lssa_udps_close:")
+	w("\tmov x20, x0") // the result, kept across close
+	w("\tmov x0, x19")
+	w("\tmov x8, #57") // close
+	w("\tsvc #0")
+	w("\tmov x0, x20")
+	w("\tb .Lssa_udps_ret")
+	w(".Lssa_udps_bad:")
+	w("\tmov x0, #-3")
+	w(".Lssa_udps_ret:")
+	w("\tldr x21, [sp, #32]")
+	w("\tldp x19, x20, [sp, #16]")
+	w("\tldp x29, x30, [sp], #64")
 	w("\tret")
 }
 

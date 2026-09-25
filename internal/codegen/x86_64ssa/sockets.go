@@ -181,6 +181,100 @@ func emitTcpSendHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// emitUdpSendHelper writes udp_send(host, port, data) -> i32: one datagram to
+// a dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host that
+// is not four decimal octets. On a datagram socket connect only records the
+// peer, so connect-then-write sends it. The octets are parsed straight into
+// sin_addr. rbx = fd, r12 = data, r13 = port, then the result.
+func emitUdpSendHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("udp_send"))
+	w("\tpush rbx")
+	w("\tpush r12")
+	w("\tpush r13")
+	w("\tsub rsp, 16")
+	w("\tmov r12, rdx")
+	w("\tmov r13d, esi")
+	w("\tmov ecx, %s", memRef("rdi", -4)) // host length
+	w("\txor r8d, r8d")                   // index into host
+	w("\txor r9d, r9d")                   // the octet so far
+	w("\txor r10d, r10d")                 // octets completed
+	w("\txor r11d, r11d")                 // digits in this octet
+	w(".Lssa_udps_scan:")
+	w("\tcmp r8d, ecx")
+	w("\tjge .Lssa_udps_end")
+	w("\tmovzx eax, byte ptr [rdi + r8]")
+	w("\tcmp eax, 46") // '.'
+	w("\tjne .Lssa_udps_digit")
+	w("\ttest r11d, r11d")
+	w("\tjz .Lssa_udps_bad")
+	w("\tcmp r10d, 3")
+	w("\tjge .Lssa_udps_bad")
+	w("\tmov byte ptr [rsp + r10 + 4], r9b")
+	w("\tinc r10d")
+	w("\txor r9d, r9d")
+	w("\txor r11d, r11d")
+	w("\tinc r8d")
+	w("\tjmp .Lssa_udps_scan")
+	w(".Lssa_udps_digit:")
+	w("\tsub eax, 48")
+	w("\tcmp eax, 9")
+	w("\tja .Lssa_udps_bad") // unsigned: below '0' wraps high too
+	w("\timul r9d, r9d, 10")
+	w("\tadd r9d, eax")
+	w("\tinc r11d")
+	w("\tcmp r9d, 255")
+	w("\tjg .Lssa_udps_bad")
+	w("\tinc r8d")
+	w("\tjmp .Lssa_udps_scan")
+	w(".Lssa_udps_end:")
+	w("\tcmp r10d, 3")
+	w("\tjne .Lssa_udps_bad")
+	w("\ttest r11d, r11d")
+	w("\tjz .Lssa_udps_bad")
+	w("\tmov byte ptr [rsp + 7], r9b")
+	w("\tmov word ptr [rsp], 2") // AF_INET
+	w("\tmov eax, r13d")
+	w("\txchg al, ah") // htons(port)
+	w("\tmov word ptr [rsp + 2], ax")
+	w("\tmov qword ptr [rsp + 8], 0")
+	w("\tmov edi, 2")
+	w("\tmov esi, 2") // SOCK_DGRAM
+	w("\txor edx, edx")
+	w("\tmov eax, 41") // socket
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_udps_ret")
+	w("\tmov ebx, eax")
+	w("\tmov edi, ebx")
+	w("\tmov rsi, rsp")
+	w("\tmov edx, 16")
+	w("\tmov eax, 42") // connect
+	w("\tsyscall")
+	w("\ttest rax, rax")
+	w("\tjs .Lssa_udps_close")
+	w("\tmov edi, ebx")
+	w("\tmov rsi, r12")
+	w("\tmov edx, %s", memRef("r12", -4))
+	w("\tmov eax, 1") // write
+	w("\tsyscall")
+	w(".Lssa_udps_close:")
+	w("\tmov r13, rax") // the result, kept across close
+	w("\tmov edi, ebx")
+	w("\tmov eax, 3") // close
+	w("\tsyscall")
+	w("\tmov rax, r13")
+	w("\tjmp .Lssa_udps_ret")
+	w(".Lssa_udps_bad:")
+	w("\tmov eax, -3")
+	w(".Lssa_udps_ret:")
+	w("\tadd rsp, 16")
+	w("\tpop r13")
+	w("\tpop r12")
+	w("\tpop rbx")
+	w("\tret")
+}
+
 // emitTcpCloseHelper writes tcp_close(fd) -> i32: close(2), 0 or -errno. Leaf.
 func emitTcpCloseHelper(w func(string, ...any)) {
 	w("")
