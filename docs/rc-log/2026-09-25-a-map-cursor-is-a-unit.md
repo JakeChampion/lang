@@ -27,10 +27,16 @@ x86-64, `FERN_LEAKCHECK=1`:
 | `examples/tests/json_roundtrip_test` | 192 B live | 3811 / 3811, 0 B |
 | `conformance/cases/audit_std_json` | 16 B live | 153 / 153, 0 B, stdout matches |
 
-`TestSelfHostMapIterIsReclaimed` covers five shapes, each run for 8 rounds, on
+`TestSelfHostMapIterIsReclaimed` covers seven shapes, each run for 8 rounds, on
 x86-64, arm64 and wasm: `for`-in, `for`-in with `break`, a bound cursor, a fresh
-cursor passed as an argument, and an aliased one. All of them have a balanced
+cursor passed as an argument, an aliased one, one held in a tuple, and a
+reassigned one. `TestSelfHostMapIterAcrossModules` has a sibling module iterate
+a cursor its caller made, on x86-64 and wasm. All of them have a balanced
 census.
+
+On wasm the cursor runtime is gated on any cursor op or release, not only on
+the op that makes a cursor, so a unit that only reads or releases one still
+carries the bundle.
 
 ## Still open
 
