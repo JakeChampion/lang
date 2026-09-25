@@ -151,7 +151,9 @@ func utmpMixed() []utmpRec {
 		{typ: utBootTime, line: "~", id: "~~", user: "reboot", sec: utmpWhen - 10000},
 		{typ: utRunLvl, pid: 0x3553, line: "~", id: "~~", user: "runlevel", sec: utmpWhen - 9999},
 		{typ: utUserProcess, pid: 1001, line: "pts/0", id: "ts/0", user: "alice", host: "10.0.0.5", sec: utmpWhen},
-		{typ: utUserProcess, pid: 1002, line: "tty1", id: "tty1", user: "bob", sec: utmpWhen + 60},
+		// No host has /dev/ttyQ: who stats the line, and a real tty1's idle
+		// time can cross a minute between the two sides' runs.
+		{typ: utUserProcess, pid: 1002, line: "ttyQ", id: "ttyQ", user: "bob", sec: utmpWhen + 60},
 		{typ: utUserProcess, pid: 1003, line: "pts/1", id: "ts/1", user: "alice", host: "example.com", sec: utmpWhen + 120},
 		{typ: utLoginProcess, pid: 900, line: "tty2", id: "tty2", user: "LOGIN", sec: utmpWhen - 5000},
 		{typ: utDeadProcess, pid: 800, line: "pts/9", id: "ts/9", user: "carol", sec: utmpWhen - 4000, exit: [2]int16{3, 9}},
