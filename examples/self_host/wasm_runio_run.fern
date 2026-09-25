@@ -16,6 +16,7 @@ import "./lexer";
 import "./parser";
 import "./rundriver";
 import "./wasm_ir";
+import "./asmcore";
 
 function main(): i32 {
     // `-decide`: print the routing verdict ("ir" / "ast") instead of emitting —
@@ -31,6 +32,7 @@ function main(): i32 {
         ai = ai + 1;
     }
     var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+    if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) { return 1; }
     var mwb: parser.Module = parser.module_with_builtins(mod);
     if (decide) {
         // emit_module_run_io's own decision (component=true, io=true), reused

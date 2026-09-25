@@ -218,6 +218,63 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostDeclNamesGateWasmStdinX86_64 covers the wasm stdin drivers
+// TestSelfHostDeclNamesGate does not build, and the playground's emit and
+// -check modes. None needs wasmtime: each refusal comes before any module is
+// emitted.
+func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
+	drivers := []struct {
+		name string
+		bin  string
+		args []string
+	}{
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run"), nil},
+		{"wasm_ir_run-ir", "", []string{"-ir"}},
+		{"wasm_runio_run", buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run"), nil},
+		{"wasm_runio_run-decide", "", []string{"-decide"}},
+	}
+	drivers[1].bin, drivers[3].bin = drivers[0].bin, drivers[2].bin
+	cases := []struct{ name, src, cause string }{
+		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "has no type"},
+		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "has no type"},
+		{"sentinel", "function main(): i32 { return @; }\n", "parser-side unknown"},
+	}
+	for _, d := range drivers {
+		for _, tc := range cases {
+			t.Run(d.name+"/"+tc.name, func(t *testing.T) {
+				out, stderr, code := runDeclGate(t, runner, d.bin, []byte(tc.src), d.args...)
+				if code == 0 || len(out) != 0 {
+					t.Fatalf("driver exited %d with %d bytes, want a refusal", code, len(out))
+				}
+				if !strings.Contains(stderr, tc.cause) {
+					t.Errorf("refusal did not name the cause:\n%s", stderr)
+				}
+			})
+		}
+	}
+	if len(runner) != 0 {
+		t.Skip("playground driver runs natively; skipping under an exec runner")
+	}
+	pg := buildPlaygroundDriver(t)
+	for _, mode := range [][]string{nil, {"-check"}} {
+		for _, tc := range cases {
+			t.Run("playground_run"+strings.Join(mode, "")+"/"+tc.name, func(t *testing.T) {
+				out, stderr, code := runPlayground(t, pg, t.TempDir(), tc.src, mode...)
+				if code == 0 || len(out) != 0 {
+					t.Fatalf("playground exited %d with %d bytes, want a refusal", code, len(out))
+				}
+				if !strings.Contains(stderr, tc.cause) {
+					t.Errorf("refusal did not name the cause:\n%s", stderr)
+				}
+			})
+		}
+	}
+}
+
 func buildWasmModloadDriver(t *testing.T, gcc string) string {
 	t.Helper()
 	dir := t.TempDir()
