@@ -39,7 +39,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var qs: P[] = [P { xs: [j, j + 1] }]; acc = (acc + qs[0].xs[0]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -59,7 +59,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var qs: P[] = [P { n: j, xs: [j, j + 1] }]; acc = (acc + qs[0].xs[1]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -77,7 +77,7 @@ function main(): i32 {
     }
     var acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// PAYLOAD-ESCAPE-CALL negative: `take(ps[0].xs)` passes the array field to a call
@@ -93,7 +93,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ESCAPE-VIA-FN negative: the array-of-structs is returned — ownership moves out,
@@ -106,7 +106,7 @@ function mk(n: i32): P[] {
 function main(): i32 {
     var a = mk(5);
     var v: i32 = a[0].xs[0] + a[1].xs[1];
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 13},
 }

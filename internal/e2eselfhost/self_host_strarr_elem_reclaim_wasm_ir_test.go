@@ -39,26 +39,26 @@ func TestSelfHostStrArrElemReclaimWasmIR(t *testing.T) {
 		// detector → 99. lens 3+3+4 = 10 → bad stays 0 → exit 0.
 		{"strarr-elem-reclaim-churn-wasm", `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(20000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
+function main(): i32 { var v: i32 = churn(20000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 		// BOUNDED HIGH-WATER: after a 3000-iteration warmup, a second churn(3000)
 		// re-serves every allocation from the freelist — the bump high-water
 		// stays flat (< 256 B slack). Element leaks would grow it per iteration
 		// → 98; a double-free ticks the underflow detector → 99.
 		{"strarr-elem-reclaim-flat-wasm", `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
 		// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[]
 		// re-DECLARED each iteration is freed at the loop REBIND
 		// (emit_strarr_reclaim_store), not at a helper exit. After a 3000-iter
 		// warmup the second churn re-serves from the freelist → flat bump.
 		// Pre-fix the reinit store leaked all 3 element boxes per iteration → 98.
 		{"strarr-elem-reinit-loop-wasm", `function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0, "yes"},
 		// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` — xs keeps the shallow
 		// buffer-only dec; t stays valid, nothing double-frees. 3+2 = 5.
 		{"strarr-elem-alias-excluded-wasm", `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "no"},
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "no"},
 		// PRODUCER-CALL ELEMENT: the stored elements are calls to a proven
 		// fresh-string producer rather than inline concats. The credit's element
 		// proof is strarr_value_is_fresh, so the registry arm admits them; the
@@ -66,7 +66,7 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { re
 		{"strarr-elem-producer-store-wasm", `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { var xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
+function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 		// LOCAL BOUND FROM A PRODUCER: `var xs = mk(pre)` where `mk` is a
 		// "STRARR:" registry function — the frame owns every element the callee
 		// handed it, so the exit sweep may element-walk. `mk`'s own `out` escapes
@@ -76,7 +76,7 @@ function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { re
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); return xs.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
+function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 		// STORED BY THE CALLEE is ADMITTED, and this case used to pin the
 		// opposite. Its premise was that `keep`'s parameter is not borrowable,
 		// which is still true and is no longer the whole question:
@@ -98,7 +98,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 		// The same store where the holder ESCAPES the frame that owns the array
 		// — the shape the case above was written against, and the one that can
 		// actually fail. `build` returns the Box, so the retain is still live
@@ -112,7 +112,7 @@ function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): Box { var xs: string[] = mk(pre); var b: Box = keep(xs); return b; }
 function churnjunk(i: i32): i32 { var a: string[] = ["zzzz", "yyyy", "xxxx"]; return a[0].len() + a[2].len(); }
 function round(i: i32): i32 { var pre: string = "ab"; var b: Box = build(pre); var j: i32 = 0; var t: i32 = 0; while (j < 20) { t = t + churnjunk(j); j = j + 1; } var s: i32 = 0; var k: i32 = 0; while (k < b.rows.len()) { s = s + b.rows[k].len(); k = k + 1; } if (s != 129) { return 0 - 1; } return (t + s) % 101; }
-function main(): i32 { var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0; while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; } if (bad > 0) { return 100; } if (__rc_underflow() != 0) { return 99; } return t % 83; }`, 8, "yes"},
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0; while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; } if (bad > 0) { return 100; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`, 8, "yes"},
 		// SELF-`.with` REBIND (#6407): the in-place element store releases the
 		// superseded box and retains the stored value, which makes the rebind
 		// admissible to the credit. `v` is another ELEMENT, so without the
@@ -121,7 +121,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0; while (
 		{"strarr-with-rebind-wasm", `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 54) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { return 99; } return v; }`, 0, "yes"},
+function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -21,7 +21,7 @@ import (
 //   - OVER-RELEASE: the discarded temp must reclaim its OWN box without touching
 //     the live `xs` built from the same loop-variable operands — a wrong "owned"
 //     verdict that freed a shared buffer would corrupt the sum (999) or trip the
-//     __rc_underflow detector (> 0).
+//     __rc_underflow_count detector (> 0).
 
 func stmtTempArrBumpSrc(n string) string {
 	return `function main(): i32 {
@@ -34,7 +34,7 @@ func stmtTempArrBumpSrc(n string) string {
 
 // A discarded owned array temp reclaims its box while the live `xs` (built from
 // the same operands) is untouched: sum over i=0..199 of (i)+(i+1)+(i+2) =
-// 3*(199*200/2) + 3*200 = 60300. __rc_underflow() (the self-host detector) then
+// 3*(199*200/2) + 3*200 = 60300. __rc_underflow_count() (the self-host detector) then
 // reports 0 only if nothing was over-released.
 const stmtTempReclaimDetectorSrc = `function main(): i32 {
     var i: i32 = 0;
@@ -46,7 +46,7 @@ const stmtTempReclaimDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 60300) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The other stage-(a) discarded-temp shapes, each a fresh rc=1 sole-owner box
@@ -89,7 +89,7 @@ func stmtTempStrConcatBumpSrc(n string) string {
 // field buffers, then __fern_rc_dec frees the box. Because __struct_drop_<T>'s
 // inner arr_dec clobbers its box return register, the box is stashed in a scratch
 // local and re-loaded for the free (the exit sweep's slot-reload pattern) — a
-// naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow
+// naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow_count
 // detector below catches exactly that regression).
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
@@ -190,7 +190,7 @@ func stmtTempFreshStrArrBumpSrc(n string) string {
 
 // Detectors: the discarded temp reclaims its OWN box while a live value built
 // from the same operands stays intact — a wrong "owned" verdict that freed a
-// shared box would corrupt the sum (999) or trip __rc_underflow (> 0). Sums:
+// shared box would corrupt the sum (999) or trip __rc_underflow_count (> 0). Sums:
 // tuple/struct t=(i,i+2): 2i+2 over 0..199 = 40200; string s=a+b: 200 * 10.
 const stmtTempTupleDetectorSrc = `function main(): i32 {
     var i: i32 = 0; var acc: i32 = 0;
@@ -201,7 +201,7 @@ const stmtTempTupleDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 40200) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 const stmtTempStructDetectorSrc = `struct P { x: i32, y: i32 }
@@ -214,7 +214,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 40200) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 const stmtTempStrConcatDetectorSrc = `function main(): i32 {
@@ -227,14 +227,14 @@ const stmtTempStrConcatDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 2000) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The discarded rc-field struct `H { id, xs: [..] };` reclaims its box AND xs
 // buffer while the live `h = H { id: i, xs: [..] }` (same operands, its own box)
 // stays intact: acc += h.id + h.xs[0] + h.xs[1] + h.xs[2] = i + i + (i+1) + (i+2)
 // = 4i+3 over 0..199 = 4*19900 + 600 = 80200. The double-free bug this guards
-// (the box-return-register clobber) trips __rc_underflow (> 0), not the sum.
+// (the box-return-register clobber) trips __rc_underflow_count (> 0), not the sum.
 const stmtTempRcFieldStructDetectorSrc = `struct H { id: i32, xs: i32[] }
 function main(): i32 {
     var i: i32 = 0; var acc: i32 = 0;
@@ -245,7 +245,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 80200) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The discarded call `mk(i);` reclaims its fresh box while the live `p = mk(i+1)`
@@ -262,14 +262,14 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 40400) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The discarded rc-field-returning call `mk(i);` deep-drops its box AND xs while
 // the live `p = mk(i+1)` (its own fresh box + buffers) stays intact: p from
 // mk(i+1) has id=i+1, xs=[i+1,i+2,i+3]; acc += (i+1)+(i+1)+(i+2)+(i+3) = 4i+7
 // over 0..199 = 4*19900 + 1400 = 81000. The box-return-register clobber this
-// guards would double-free xs and trip __rc_underflow (> 0), not the sum.
+// guards would double-free xs and trip __rc_underflow_count (> 0), not the sum.
 // The len-receiver release frees only the fresh CONCAT temp: the operands
 // s1/s2 stay readable after (their own boxes untouched), the length value is
 // exact, and the detector stays zero.
@@ -283,13 +283,13 @@ const stmtTempLenReceiverDetectorSrc = `function main(): i32 {
     }
     if (acc != 1000) { return 999; }
     if (s1.len() != 3 || s2.len() != 2) { return 998; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The discarded array-returning call `mk(i);` frees only its OWN buffer while
 // the live `v = mk(i + 1)` stays intact: v = [i+1, i+2, i+3], acc += 3i + 6
 // over 0..199 = 3*19900 + 1200 = 60900. A wrong dec of the live buffer would
-// corrupt the sum (999) or trip __rc_underflow (> 0).
+// corrupt the sum (999) or trip __rc_underflow_count (> 0).
 const stmtTempFreshCallArrDetectorSrc = `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
     var i: i32 = 0; var acc: i32 = 0;
@@ -300,7 +300,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 60900) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 const stmtTempFreshCallRcFieldDetectorSrc = `struct H { id: i32, xs: i32[] }
@@ -314,13 +314,13 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 81000) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // The discarded fresh string[] `[p+"a", p+"b"];` deep-frees its buffer AND element
 // boxes while the live `xs = [p+"c", p+"d"]` (independent fresh boxes) stays
 // intact: xs[0]="xc", xs[1]="xd", each len 2, so acc += 4 over 0..199 = 800. A
-// wrong reclaim that decdouble-freed a live element box would trip __rc_underflow
+// wrong reclaim that decdouble-freed a live element box would trip __rc_underflow_count
 // (> 0); an over-eager release of the live xs would corrupt the sum (999).
 const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
     var p: string = "x";
@@ -332,7 +332,7 @@ const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 800) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // A discarded string[] literal whose elements are BORROWED (`[s, s];` — a bare
@@ -341,8 +341,8 @@ const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
 // would double-free. discardable_fresh_strarr_lit excludes borrowed elements
 // (expr_is_fresh_str is false for a bare ident), so this keeps leaking on the
 // plain drop — sound. The detector proves the exclusion holds: `s.len()`==5 over
-// 200 = 1000, and __rc_underflow stays 0 (no over-release). A regression that
-// admitted borrowed elements would trip __rc_underflow (> 0).
+// 200 = 1000, and __rc_underflow_count stays 0 (no over-release). A regression that
+// admitted borrowed elements would trip __rc_underflow_count (> 0).
 const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
     var s: string = "hello";
     var i: i32 = 0; var acc: i32 = 0;
@@ -352,7 +352,7 @@ const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {
         i = i + 1;
     }
     if (acc != 1000) { return 999; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 // TestSelfHostStmtTempReclaimIRX86_64 builds the self-host x86-64 IR driver once

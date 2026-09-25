@@ -58,7 +58,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit("ab"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 4400) { return 97; }
     return 0;
@@ -77,7 +77,7 @@ function main(): i32 {
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "literal-arg-retained-safe", 0)
@@ -96,7 +96,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit(base + "bc"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 1) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 6600) { return 97; }
@@ -116,7 +116,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + readit(src.to_ascii_upper()); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (src.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 8800) { return 97; }
@@ -135,7 +135,7 @@ function main(): i32 {
         if (readit(src) != 4) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (src.len() != 4) { return 88; }
     if (bad != 0) { return 87; }
     return 0;
@@ -153,7 +153,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + pick("x", live); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (live.len() != 4) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 11000) { return 97; }
@@ -177,7 +177,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + recv.readit("ab"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (recv.len() != 2) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc != 8800) { return 97; }
@@ -194,7 +194,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + (j % 4).tally("abc"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -213,7 +213,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + recv.readit(base + "bc"); j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (base.len() != 1) { return 88; }
     if (recv.len() != 2) { return 88; }
     if (b2 - b1 >= 4096) { return 98; }
@@ -233,7 +233,7 @@ function main(): i32 {
         if (got.len() != 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "method-literal-arg-retained-safe", 0)
@@ -258,7 +258,7 @@ function main(): i32 {
         if (b.tag.len() != 5) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "method-literal-arg-consumed-safe", 0)
@@ -279,7 +279,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { acc = (acc + size(mks(j))) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -300,7 +300,7 @@ function main(): i32 {
         if (slice_unchecked(r, 0, 1) != "a") { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arg-returned-safe", 0)
@@ -320,7 +320,7 @@ function main(): i32 {
         if (b.k != i) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arg-stored-safe", 0)
@@ -339,7 +339,7 @@ function main(): i32 {
         if (nm.len() < 41) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arg-bound-local-safe", 0)
@@ -360,7 +360,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { acc = (acc + size(mk(j))) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -379,7 +379,7 @@ function main(): i32 {
         if (r[2] != i + 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arr-arg-returned-safe", 0)
@@ -400,7 +400,7 @@ function main(): i32 {
         if (b.deps[1] != i + 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arr-arg-stored-safe", 0)
@@ -418,7 +418,7 @@ function main(): i32 {
         if (live[0] != i) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "producer-call-arr-arg-bound-local-safe", 0)
@@ -440,7 +440,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { acc = (acc + keep(mk(j), j)) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -463,7 +463,7 @@ function main(): i32 {
         if (r[0] != i || r[2] != i + 2) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-arr-arg-pointer-result-safe", 0)
@@ -476,7 +476,7 @@ function main(): i32 {
     var bad: i32 = 0;
     var i: i32 = 0;
     while (i < 3000) { if (hand(mk(i)) != 3 + i) { bad = 1; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-arr-arg-aliased-param-safe", 0)
@@ -497,7 +497,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { var d: Q = mkq("a-string-well-past-the-inline-threshold", j); acc = (acc + d.tag.len() + d.k) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -521,7 +521,7 @@ function main(): i32 {
         if (churn.len() != 40) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-str-arg-result-aliases-safe", 0)
@@ -543,7 +543,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (live.len() != 39) { bad = 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-str-arg-live-local-safe", 0)
@@ -565,7 +565,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { var d: Q = mkq2("tag", j); acc = (acc + d.k + d.tag.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -592,7 +592,7 @@ function main(): i32 {
         if (keep[j].k != j + 97 + (j % 8)) { bad = 1; }
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-str-arg-slice-view-safe", 0)
@@ -619,7 +619,7 @@ function main(): i32 {
         if (a.name[0] != 102) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "counted-retain-str-arg-uncounted-store-safe", 0)

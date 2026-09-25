@@ -11840,18 +11840,8 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         }
         return mf.emit(ir.op_call_direct("__fern_map_find", 4));
     }
-    // __rc_underflow_count() / __rc_underflow(): read the
-    // over-release counter. `__rc_underflow_count` is the
-    // NATIVE spelling (internal/checker/checker.go registers
-    // only that one), so it is what a source compiled by both
-    // compilers must use — the self-host drivers' own guard
-    // does. `__rc_underflow` is the older self-host-only alias
-    // that ~730 call sites in internal/e2eselfhost still use;
-    // it stays until those migrate. A third spelling,
-    // `__fern_rc_underflow_count`, was the RUNTIME symbol
-    // leaking into surface syntax; its 187 call sites moved to
-    // the native spelling and it is gone.
-    if (cid.name == "__rc_underflow_count" || cid.name == "__rc_underflow") {
+    // __rc_underflow_count(): read the over-release counter.
+    if (cid.name == "__rc_underflow_count") {
         if (c.args.len() != 0) { return s.fail(); }
         return s.emit(ir.op_call_direct("__fern_rc_underflow_get", 0));
     }
@@ -22082,7 +22072,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // (#7687). It owns no payload to deep-drop, and these helpers take no
     // alias_inc — routing the bind through one discards the retain and
     // leaves two slots decing a box with one count, which the census reads as a
-    // clean 200/200 and only __rc_underflow() catches. It falls through to
+    // clean 200/200 and only __rc_underflow_count() catches. It falls through to
     // emit_arr_store below, which emits the retain and a shallow dec of the
     // superseded box.
     if (slot_is_reclaimable_optarr(sb, slot) && !slot_nodeep(sb, slot)) {
@@ -31092,7 +31082,7 @@ function rcenum_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
                             // (`match (x) { Full(xs) => xs }`) moves the payload
                             // out from under the source's deep release. Measured:
                             // without this the shape over-releases
-                            // (`__rc_underflow` fires) where stock merely leaks.
+                            // (`__rc_underflow_count` fires) where stock merely leaks.
                             // This is the same condition the source's own
                             // match-consumed branch applies to itself.
                             && !enum_body_binds_rc_payload(body, v.name, structs)) {
@@ -41737,7 +41727,7 @@ function stmt_returns_bare_ident(st: ast.Stmt, name: string): boolean {
 // method RECEIVER being a borrow, but a method that hands its receiver BACK
 // turns that call into a move — `keep = b.me()` leaves `keep` holding b's own
 // box, and b's per-rebind reclaim then frees memory `keep` still reads
-// (measured: __rc_underflow() ticks, over-release not leak).
+// (measured: __rc_underflow_count() ticks, over-release not leak).
 //
 // So the borrow reading is only good while no "RECVRET:" method's result on
 // `name` reaches a move position. This is the CREDIT gate; the NODEEP
@@ -55927,7 +55917,7 @@ function body_unsafe_for_enumfield(stmts: ast.Stmt[], name: string, borrowable: 
 // The confinement proof is the whole safety argument, and its second half is
 // essential: without the payload-escape check an alias that returns its
 // match payload makes the source's deep release free a buffer the caller still
-// holds — measured as `__rc_underflow` firing where stock merely leaks, with a
+// holds — measured as `__rc_underflow_count` firing where stock merely leaks, with a
 // perfectly balanced census either way.
 function body_unsafe_for_enumfield_alias(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, alias_ok: string[]): boolean {
     for stmt in stmts { if (ef_unsafe_stmt_alias(stmt, name, borrowable, structs, alias_ok)) { return true; } }

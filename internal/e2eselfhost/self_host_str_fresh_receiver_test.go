@@ -49,7 +49,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
@@ -69,7 +69,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// NEGATIVE: `.replace(a, b)` returns the receiver UNCHANGED when the needle is
 	// absent, so the result can be the receiver's own box. Also exits 97 when the
 	// receiver is released.
@@ -84,7 +84,7 @@ function round(pre: string): i32 {
     if (!has_prefix(t, "abcdefgh-a-wide")) { return 0 - 1; }
     return t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A named local is not an anonymous temp, so it keeps its own scope-exit reclaim
 	// and the call site must not release it. Control: is_fresh_str_temp refuses it
 	// either way, and both the receiver and the copy stay readable afterwards.
@@ -100,7 +100,7 @@ function round(pre: string): i32 {
     if (has_sub(b, "XXXX") || has_sub(t, "XXXX")) { return 0 - 3; }
     return b.len() + t.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrFreshReceiverIRX86_64 drives the cases through the

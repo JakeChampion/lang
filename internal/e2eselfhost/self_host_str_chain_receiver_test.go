@@ -56,7 +56,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -98,7 +98,7 @@ var strChainReceiverCases = []struct {
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The `n >= sLen` path returns a LITERAL "", whose box is in .rodata and whose
 	// pointer differs from the root — so the compare admits it and the release runs
 	// on a static. That is safe because __fern_str_view_free's view case guards on
@@ -115,7 +115,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (c.len() != 0) { return 0 - 3; }
     return base.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the outer callee hands its receiver straight back, so it is not
 	// recv_borrow proven and the chain release is never emitted. The result aliases
 	// the view over base, which must survive being read after the call.
@@ -129,7 +129,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(c, "efgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 4000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrChainReceiverIRX86_64 drives the cases through the self-hosted

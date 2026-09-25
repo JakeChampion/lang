@@ -451,7 +451,7 @@ function main(): i32 {
 	// lowering left both naming one rc 1 buffer, and the first release freed it
 	// under the other (#8224). Struct elements, so a freed buffer's element boxes
 	// are recycled by `churn` and the read that follows sees 7 where it wrote
-	// 1..4 — or __rc_underflow() reports the double free.
+	// 1..4 — or __rc_underflow_count() reports the double free.
 	//
 	// A return-position receiver whose literal-init local keeps its DEEP sweep:
 	// the receiver-borrow registry clears `emit` as a pure borrow, so `ms` is not

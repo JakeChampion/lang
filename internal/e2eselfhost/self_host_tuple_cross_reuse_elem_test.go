@@ -81,7 +81,7 @@ func tupXReuseElemCases() []tupXReuseElemCase {
     var u: (i32, i32[]) = (i, ys);
     return a + u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -96,7 +96,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var u: (i32, i32[]) = (i, [i + 2, i + 3]);
     return a + u.1[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -113,7 +113,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var u: (i32, i32[]) = (i, ys);
     return a + u.1[1] + xs[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 61, allocs: 300,
 		},
 		{
@@ -130,7 +130,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var u: (i32[], i32[]) = (ps, qs);
     return a + u.0[1] + u.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 35, allocs: 500,
 		},
 		{
@@ -148,7 +148,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var v: (i32, i32[]) = (i, [i + 4, i + 5]);
     return a + b + v.1[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 29, allocs: 400,
 		},
 		{
@@ -164,7 +164,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var u: (i32, i32[]) = (i, ys);
     return a + u.1[1];
 }
-function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + feed(xs, r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + feed(xs, r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 57, allocs: 201,
 		},
 		{
@@ -187,7 +187,7 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
     }
     return acc;
 }
-function main(): i32 { var x: i32 = run(100); if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -210,7 +210,7 @@ function main(): i32 { var x: i32 = run(100); if (__rc_underflow() != 0) { retur
     }
     return acc;
 }
-function main(): i32 { var x: i32 = run(100); if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = run(100); if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 74, allocs: 300,
 		},
 		{
@@ -227,7 +227,7 @@ function main(): i32 { var x: i32 = run(100); if (__rc_underflow() != 0) { retur
     var b: i32 = u.1[1];
     return a + b + ys[0];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 78, allocs: 300,
 		},
 	}

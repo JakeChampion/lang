@@ -28,7 +28,7 @@ import (
 // qualified by "NODEEP:" so its release is the box dec alone while the source
 // keeps the one deep release.
 //
-// EVERY ROW IS GATED ON `__rc_underflow()`, NOT BYTES, and that is not
+// EVERY ROW IS GATED ON `__rc_underflow_count()`, NOT BYTES, and that is not
 // a redundant check here. Both intermediate states of this change balanced the
 // census perfectly while corrupting memory:
 //
@@ -54,7 +54,7 @@ type optAliasBindCase struct {
 
 const optAliasBindMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
 	"while (i < 100) { t = t + round(i); i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 func optAliasBindCases() []optAliasBindCase {
 	return []optAliasBindCase{

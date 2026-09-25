@@ -56,7 +56,7 @@ function main(): i32 {
         t = t + a.len() + a[3].len();
         r = r + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t %% 7;
 }`, rounds, set)
 }
@@ -161,7 +161,7 @@ function main(): i32 {
     var before: i32 = __heap_bump_bytes() as i32;
     if (churn() != 4) { return 88; }
     var after: i32 = __heap_bump_bytes() as i32;
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (after != before) { return 98; }
     return 0;
 }`

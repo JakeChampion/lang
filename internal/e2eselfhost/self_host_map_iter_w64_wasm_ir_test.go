@@ -48,7 +48,7 @@ func TestSelfHostMapIterW64WasmIR(t *testing.T) {
 		// iterate a map_new'd + .insert map with an OVERWRITE (key 1 twice): only the
 		// live value is snapshotted. 7e9 (key1 final) + 3e9 (key2) = 10e9; % 1000 == 0.
 		// Also guards no over-release of superseded cells (99).
-		{"insert-overwrite-iter", `function main(): i32 { var m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); var s: i64 = 0; for (k, v) in m { s = s + v; } if (__rc_underflow() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
+		{"insert-overwrite-iter", `function main(): i32 { var m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); var s: i64 = 0; for (k, v) in m { s = s + v; } if (__rc_underflow_count() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
 	}
 
 	for _, tc := range cases {

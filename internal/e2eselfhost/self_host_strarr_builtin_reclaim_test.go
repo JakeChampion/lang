@@ -77,7 +77,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
     return 0;
@@ -138,7 +138,7 @@ function main(): i32 {
         if (!has_prefix(keep.xs[1], "bbbb-")) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`
 
@@ -161,7 +161,7 @@ var strArrBuiltinFaultCases = []struct {
     if (keep != "payload") { return 0 - 1; }
     return parts.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The array itself escapes by return: not reclaimable, and the caller's read
 	// of the elements has to find them. The source string is the callee's PARAM,
 	// so it outlives the frame — a local source is a different (and on the
@@ -179,7 +179,7 @@ function round(pre: string): i32 {
     if (ps[2] != "wide") { return 0 - 2; }
     return ps.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The SOURCE is a .rodata literal, so its element views point outside the
 	// arena and the view free's heap-range guard has to decline them; and the
 	// second half overwrites one view element with a fresh string, leaving a MIXED
@@ -212,7 +212,7 @@ function main(): i32 {
         if (mixround(pre) != 18) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 	// Separator absent: ONE part covering the whole source. If the runtime handed
@@ -233,7 +233,7 @@ function main(): i32 {
     if (has_sub(base, "XXXX")) { return 0 - 4; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 1) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// An ELEMENT outliving the array: the credit must be withheld, or the sweep
 	// frees the box the caller is holding. The decoys are slices, so they allocate
 	// from the same 24-byte class a freed element box lands in.
@@ -255,7 +255,7 @@ function round(pre: string): i32 {
     if (head != "abcdefgh") { return 0 - 1; }
     return head.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 8) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// LIVENESS across both producers at once, with every element read after decoy
 	// allocations that would be handed a freed box if the sweep landed early.
 	{"strarr-builtin-elements-live", strArrBuiltinPrelude + `function round(pre: string): i32 {
@@ -279,7 +279,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (joinlen != 11) { return 0 - 8; }
     return n;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { if (round(pre) != 18) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 }
 
 const strArrBuiltinExitHint = "98 = the element boxes were stranded; 99 = over-release; 97 = value corrupted; 96/95 = the probe's own guards"

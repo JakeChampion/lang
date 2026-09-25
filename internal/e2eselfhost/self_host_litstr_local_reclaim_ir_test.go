@@ -63,7 +63,7 @@ var litStrLocalReclaimCases = []struct {
     var j: i32 = 0;
     while (j < 5000) { var p2: string = "cd"; acc = (acc + p2.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -83,7 +83,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t2: string = suffix(j); acc = (acc + t2.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -101,7 +101,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var t: string = ident(keep); acc = (acc + t.len()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (keep.len() != 4) { return 96; }
     if (acc != (200 * 4) % 251) { return 95; }
     return 0;
@@ -115,7 +115,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var p2: string = "cd"; var ys: i32[] = [p2.len(), 2]; acc = (acc + ys.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -132,7 +132,7 @@ function main(): i32 {
         acc = (acc + pre.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 149) { return 97; }
     return 0;
 }`, 0},
@@ -142,7 +142,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var s: string = mk(); acc = (acc + s.len()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 47) { return 97; }
     return 0;
 }`, 0},

@@ -21,7 +21,7 @@ import (
 //
 // with `allocs=255 frees=255 live_bytes=0`, which is the trap: a doubly-released
 // block goes back to the freelist, so the byte count is clean and only
-// `__rc_underflow()` reports it. This is the same defect #7272 fixed for the tuple
+// `__rc_underflow_count()` reports it. This is the same defect #7272 fixed for the tuple
 // classes and #7292 for "STR:", one class over.
 //
 // What isolates it is a one-word rename. `param_rename` below is `param_alias`
@@ -52,7 +52,7 @@ const strarrW = "function w(a: string): string { return a + \"!\"; }\n" +
 
 const strarrMain = "\nfunction main(): i32 { var b: string[] = [w(\"a\"), w(\"b\")]; " +
 	"var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 func strarrKeyCases() []strarrKeyCase {
 	return []strarrKeyCase{
@@ -92,7 +92,7 @@ func strarrKeyCases() []strarrKeyCase {
     if (i % 2 == 1) { var v: string[] = h.xs;  t = t + v.len(); }
     return t;
 }
-function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(h, i); i = i + 1; } if (__rc_underflow() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { var h: H = H { xs: [w("a"), w("b")] }; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(h, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34,
 		},
 		{
@@ -130,7 +130,7 @@ function round(base: i32[], i: i32): i32 {
     if (i % 2 == 1) { var v: i32[] = base;   t = t + v.len(); }
     return t;
 }
-function main(): i32 { var b: i32[] = [7, 8, 9]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow() != 0) { return 99; } return t % 83; }`,
+function main(): i32 { var b: i32[] = [7, 8, 9]; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(b, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 51,
 		},
 	}
@@ -140,7 +140,7 @@ function main(): i32 { var b: i32[] = [7, 8, 9]; var t: i32 = 0; var i: i32 = 0;
 // own binding earned.
 //
 // The exit code is the essential assertion: an over-release does not move
-// live_bytes, so `__rc_underflow()` is the only thing that separates a correct
+// live_bytes, so `__rc_underflow_count()` is the only thing that separates a correct
 // compiler from one that frees a live buffer. `fresh_only` carries the opposite
 // direction — it balances exactly, so a site key resolving to no credit fails
 // there instead of passing quietly.

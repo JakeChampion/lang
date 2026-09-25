@@ -55,7 +55,7 @@ function main(): i32 {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 4096) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -75,7 +75,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (keep.len() != 4) { return 88; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "rcenum-call-init-param-embed-safe-arm64", 0)
 
@@ -93,6 +93,6 @@ function main(): i32 {
     var f: i32 = 0;
     while (f < 1000) { s = s + readit(); f = f + 1; }
     if (s != 1000) { return 97; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`, "rcenum-struct-payload-detector-zero-arm64", 0)
 }

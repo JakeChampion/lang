@@ -63,7 +63,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -104,7 +104,7 @@ var strSliceViewReleaseCases = []struct {
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 125) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 125) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// WITNESS for the recv_borrow gate. `idv` returns its receiver, so the call's
 	// result IS the view box; releasing it frees what `v` still points at. Exit 97
 	// on a build with the gate dropped. body_unsafe_for refuses `idv` because a
@@ -121,7 +121,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A NAMED slice is not a receiver-position temp: `v` outlives the call and the
 	// exit sweep owns it, so this arm must not fire. Both the view and the copy are
 	// read afterwards.
@@ -135,7 +135,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(c, "efgh-a-wide")) { return 0 - 2; }
     return v.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 204) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 204) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The released box's SOURCE and the call's result both live on. Freeing the
 	// 24-byte box must leave the shared bytes alone — that is the whole point of
 	// __fern_str_view_free's immortal-rc case.
@@ -151,7 +151,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrSliceViewReleaseIRX86_64 drives the cases through the

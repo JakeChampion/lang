@@ -68,7 +68,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { var d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -90,7 +90,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { var d: P = outer(j, j + 1); acc = (acc + d.a + d.b) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -114,7 +114,7 @@ function main(): i32 {
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "forwarded-through-aliasing-callee-safe", 0)
@@ -135,7 +135,7 @@ function main(): i32 {
         if (c.b != i) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "forwarded-ungrounded-cycle-safe", 0)
@@ -158,7 +158,7 @@ function main(): i32 {
         if (keep[j].k != j) { bad = 1; }
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "forwarded-producer-survives-safe", 0)
@@ -195,7 +195,7 @@ function main(): i32 {
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -212,7 +212,7 @@ function main(): i32 {
         if (c.b != i + 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -230,7 +230,7 @@ function main(): i32 {
         if (keep[j].k != j) { bad = 1; }
         j = j + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},

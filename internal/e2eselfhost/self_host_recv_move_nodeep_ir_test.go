@@ -58,7 +58,7 @@ function main(): i32 {
     if (r.ops[0].x != 1 || r.ops[1].x != 2 || r.ops[2].x != 3 || r.ops[3].x != 4) { return 91; }
     if (r.n != 4) { return 92; }
     if (c != 64) { return 93; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The SNAPSHOT-LOCAL credit sibling: same chain, but ms is bound from a
@@ -96,7 +96,7 @@ function main(): i32 {
     if (r.ops[0].x != 1 || r.ops[1].x != 2 || r.ops[2].x != 3 || r.ops[3].x != 4) { return 91; }
     if (r.n != 4) { return 92; }
     if (c != 64) { return 93; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Read-only control: a local whose struct-array field is only READ
@@ -116,7 +116,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 2000) { acc = (acc + go(i)) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 98; }
     return 0;
 }`, 0},

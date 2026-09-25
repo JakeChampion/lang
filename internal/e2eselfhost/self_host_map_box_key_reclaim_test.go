@@ -22,7 +22,7 @@ import (
 // directory with the stdlib root rather than fed to a driver on stdin, which
 // cannot resolve an import.
 //
-// Every case also reads __rc_underflow(): a per-key dec that ran on a key the
+// Every case also reads __rc_underflow_count(): a per-key dec that ran on a key the
 // map did not solely own would read non-zero here, which is the direction a
 // wrong credit fails in.
 var mapBoxKeyReclaimPrograms = []struct {
@@ -55,7 +55,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
     return 0;
@@ -86,7 +86,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
     return 0;
@@ -117,7 +117,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 2000) { acc = acc + build(j); j = j + 1; }
     var s2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > 4096) { return 1; }
     if (acc != 17600) { return 88; }
     return 0;
@@ -146,7 +146,7 @@ function main(): i32 {
         if (m.get_or(Coord { x: 9, y: 9 }, 0) != 0) { bad = 1; }
         r = r + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`},
@@ -158,7 +158,7 @@ function main(): i32 {
 	// which rewrites every binding use to `$binding$N$TagNil` before lowering
 	// sees it, so the name never reaches the table. This pins that: were the
 	// credit issued, the map would deep-release a key the frame releases again
-	// and __rc_underflow() would read non-zero (exit 99).
+	// and __rc_underflow_count() would read non-zero (exit 99).
 	{"shadowed-variant-name-excluded", `import "core/map";
 import "core/cmp";
 
@@ -175,7 +175,7 @@ function main(): i32 {
         if (m.get_or(TagNil, 0) != 7) { bad = 1; }
         r = r + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`},
@@ -200,7 +200,7 @@ function main(): i32 {
         if (m.get_or(Coord { x: 1, y: 2 }, 0) != 7) { bad = 1; }
         r = r + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`},

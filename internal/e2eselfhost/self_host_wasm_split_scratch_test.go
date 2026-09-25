@@ -66,7 +66,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
     return 0;
@@ -136,7 +136,7 @@ const wasmSplitScratchSemanticsSrc = `function main(): i32 {
     var k: string[] = "1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20".split("-");
     if (k.len() != 20) { return 16; }
     if (k[0] != "1" || k[19] != "20" || k[9] != "10") { return 17; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`
 

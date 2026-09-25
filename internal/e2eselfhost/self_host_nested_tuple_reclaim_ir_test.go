@@ -33,7 +33,7 @@ var nestedTupleReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var t2: ((i32, i32[]), i32) = ((i, [i, i + 1]), i); acc = (acc + t2.1) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -56,7 +56,7 @@ var nestedTupleReclaimCases = []struct {
         j = j + 1;
     }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -71,7 +71,7 @@ function main(): i32 {
     var t = mk(5);
     var v: i32 = t.0.1[0] + t.0.1[1] + t.1;
     if (v != 16) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return v;
 }`, 16},
 	// IDENT-inner negative: the nested tuple's array element is a bare ident
@@ -84,7 +84,7 @@ function main(): i32 {
     while (w < 100) { var t: ((i32, i32[]), i32) = ((w, xs), w); acc = (acc + t.0.1[0]) % 251; w = w + 1; }
     var ok: i32 = xs[0] + xs[1];
     if (ok != 15) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Deeper nesting (three tuple levels) — the recursion frees every level.
@@ -96,7 +96,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { var t2: (((i32, i32[]), i32), i32) = (((i, [i, i + 1]), i), i); acc = (acc + t2.1) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -111,7 +111,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { var t2: ((i32, i32[]), i32[]) = ((i, [i, i + 1]), [i, i]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -127,7 +127,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { ((i, [i, i + 1]), i); i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;

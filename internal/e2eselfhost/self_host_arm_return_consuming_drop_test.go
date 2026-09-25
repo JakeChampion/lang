@@ -29,7 +29,7 @@ import (
 // (the candidate is admitted and the correct deep release IS selected; it is
 // simply not what the return path emits).
 //
-// The pairs below are the gate. Each row asserts `__rc_underflow() == 0` before
+// The pairs below are the gate. Each row asserts `__rc_underflow_count() == 0` before
 // its answer, because the fix makes the deep release reachable on a second path
 // and the failure mode of getting that wrong is a double free, which no byte
 // count shows — `docs/rc-log/2026-08-29-option-alias-payload-out.md` measured an
@@ -52,7 +52,7 @@ type armReturnDropCase struct {
 
 const armReturnDropMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
 	"while (i < 200) { t = t + round(i); i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 func armReturnDropCases() []armReturnDropCase {
 	return []armReturnDropCase{

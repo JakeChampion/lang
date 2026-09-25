@@ -21,7 +21,7 @@ import (
 //   - FIXPOINT: the loop's bump growth is now BOUNDED — equal at N=50 and N=5000.
 //   - OVER-RELEASE: the deep reclaim frees only the dead prior box's buffers
 //     (cow-guarded against the live value), so the field reads stay correct and
-//     __rc_underflow() reports 0.
+//     __rc_underflow_count() reports 0.
 
 func rcFieldLoopLocalLiteralSrc(n string) string {
 	return `struct P { x: i32, xs: i32[] }
@@ -65,7 +65,7 @@ function main(): i32 {
 
 // The deep reclaim must free only the dead PRIOR box's field buffers, never the
 // live value's: acc reads t.x + all three xs elements each iteration, and a wrong
-// free would corrupt the sum or trip __rc_underflow. per iter: i + i + (i+1) +
+// free would corrupt the sum or trip __rc_underflow_count. per iter: i + i + (i+1) +
 // (i+2) = 4i+3; sum over 0..199 = 4*19900 + 600 = 80200.
 const rcFieldLoopLocalDetectorSrc = `struct P { x: i32, xs: i32[] }
 function main(): i32 {
@@ -76,7 +76,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc != 80200) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 func TestSelfHostRcFieldLoopLocalReclaimIRX86_64(t *testing.T) {
@@ -131,7 +131,7 @@ func TestSelfHostRcFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "rcfield-loop-detector", rcFieldLoopLocalDetectorSrc); code != 0 {
-			t.Errorf("rc-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow)", code)
+			t.Errorf("rc-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow_count)", code)
 		}
 	})
 }

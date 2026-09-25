@@ -128,6 +128,11 @@ var intrinsicFamilies = []intrinsicFamily{
 			return false
 		})
 	}},
+	{"rc probe", func(m map[string]*sigShape) []string {
+		return matching(m, func(n string, _ *sigShape) bool {
+			return strings.HasPrefix(n, "__rc_") || strings.HasPrefix(n, "__arr_push_shared_")
+		})
+	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
 			for _, s := range []string{"__sum_bytes", "__ascii_run", "__count_byte", "__memchr", "__rmemchr", "__mismatch"} {

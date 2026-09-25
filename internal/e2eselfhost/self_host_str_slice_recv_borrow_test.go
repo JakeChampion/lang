@@ -55,7 +55,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= @LIMIT@) { return 98; }
     return 0;
@@ -111,7 +111,7 @@ function main(): i32 {
         if (!has_prefix(v, "defgh")) { return 95; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The same view-returning method with the result NOT escaping the frame:
@@ -127,7 +127,7 @@ function main(): i32 {
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 209) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 209) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The ADMITTED method's result and the source both live: `own2` copies, so
 	// releasing nothing and reclaiming `base` at scope end must leave both intact.
 	{"str-slice-recv-owned-live", sliceRecvPrelude + `function round(pre: string): i32 {
@@ -142,7 +142,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 3000) { var r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The key can only be spelled `string.<method>` — this scan has no types — so
 	// a same-named method on another type answers to it. Here `Hold.own2` RETAINS
 	// (it hands back a field holding `base`) while `string.own2` is proven
@@ -173,7 +173,7 @@ function main(): i32 {
         if (!has_prefix(c, "abcdefgh-a-wide")) { return 95; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

@@ -53,7 +53,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t: string = j.to_string(); acc = (acc + t.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -72,7 +72,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
@@ -96,7 +96,7 @@ function main(): i32 {
         if (!has_prefix(keep.tag, "bbbb-")) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// CONTROL: the free-function spelling was already credited and must stay bounded,
@@ -109,7 +109,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t: string = i32_to_string(j); acc = (acc + t.len()) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 2048) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -126,7 +126,7 @@ function main(): i32 {
         acc = (acc + s.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 239) { return 97; }
     return 0;
 }`, 0},
@@ -147,7 +147,7 @@ function main(): i32 {
         acc = (acc + s.len()) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 149) { return 97; }
     return 52;
 }`, 52},
@@ -158,7 +158,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var r: string = mk(i); acc = (acc + r.len()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 239) { return 97; }
     return 0;
 }`, 0},

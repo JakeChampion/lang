@@ -51,11 +51,11 @@ func TestSelfHostMapI64ValueWasmIR(t *testing.T) {
 		// (7) OVERWRITE churn: 200 inserts on the same key free 199 superseded cells;
 		// a double-free of a cell ticks the underflow detector → 99. Final value
 		// 199*3000000000 % 1000 == 0.
-		{"i64-overwrite-churn", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 200) { m = m.insert(1, (i as i64) * 3000000000); i = i + 1; } if (__rc_underflow() != 0) { return 99; } return (m.get_or(1, 0) % 1000) as i32; }`, 0},
+		{"i64-overwrite-churn", `function main(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 200) { m = m.insert(1, (i as i64) * 3000000000); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return (m.get_or(1, 0) % 1000) as i32; }`, 0},
 		// (8) BUILD-AND-DROP reclaim: a wide map built + dropped per call across 300
 		// iterations; every cell freed exactly once (99 = over-release, 88 = wrong
 		// value). m.get_or(2,·) == 2*5000000000 == 10000000000.
-		{"i64-build-drop-reclaim", `function build(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 8) { m = m.insert(i, (i as i64) * 5000000000); i = i + 1; } if (m.get_or(2, 0) != 10000000000) { return 1; } return 0; } function main(): i32 { var bad: i32 = 0; var k: i32 = 0; while (k < 300) { if (build() != 0) { bad = 1; } k = k + 1; } if (__rc_underflow() != 0) { return 99; } if (bad != 0) { return 88; } return 0; }`, 0},
+		{"i64-build-drop-reclaim", `function build(): i32 { var m: Map[i32, i64] = map_new(8); var i: i32 = 0; while (i < 8) { m = m.insert(i, (i as i64) * 5000000000); i = i + 1; } if (m.get_or(2, 0) != 10000000000) { return 1; } return 0; } function main(): i32 { var bad: i32 = 0; var k: i32 = 0; while (k < 300) { if (build() != 0) { bad = 1; } k = k + 1; } if (__rc_underflow_count() != 0) { return 99; } if (bad != 0) { return 88; } return 0; }`, 0},
 	}
 
 	for _, tc := range cases {

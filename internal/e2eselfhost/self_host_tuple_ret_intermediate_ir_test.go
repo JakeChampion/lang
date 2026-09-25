@@ -28,7 +28,7 @@ var tupleRetIntermediateCases = []struct {
 	{"tupret-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function go(k: i32): i32 { var t = mk(k); return t.0 + t.1; }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	// Loop-local rebind in one frame — per-iteration boxes reclaim at the rebind.
 	{"tupret-loop-rebind-flat", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function main(): i32 {
@@ -39,7 +39,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { var t2 = mk(j); acc = (acc + t2.0 + t2.1) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -54,7 +54,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 3000) { var t2 = mk(j); acc = (acc + t2.0 + t2.1) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -63,10 +63,10 @@ function main(): i32 {
 	// freed under the caller). Value correctness + detector zero.
 	{"tupret-escape-safe", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
 function wrap(k: i32): (i32, i32) { var t = mk(k); return t; }
-function main(): i32 { var u = wrap(20); if (__rc_underflow() != 0) { return 99; } return u.0 + u.1; }`, 41},
+function main(): i32 { var u = wrap(20); if (__rc_underflow_count() != 0) { return 99; } return u.0 + u.1; }`, 41},
 	// ALIAS negative: `var u = t` un-credits t (freeing would dangle u).
 	{"tupret-alias-safe", `function mk(k: i32): (i32, i32) { return (k, k + 1); }
-function main(): i32 { var t = mk(20); var u = t; var a: i32 = t.0 + u.1; if (__rc_underflow() != 0) { return 99; } return a; }`, 41},
+function main(): i32 { var t = mk(20); var u = t; var a: i32 = t.0 + u.1; if (__rc_underflow_count() != 0) { return 99; } return a; }`, 41},
 }
 
 // TestSelfHostTupleRetIntermediateIRX86_64 drives the cases through the

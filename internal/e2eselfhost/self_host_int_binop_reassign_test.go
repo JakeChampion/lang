@@ -71,7 +71,7 @@ function main(): i32 {
         t = s;
     }
     if (t != "abcd") { return 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 }

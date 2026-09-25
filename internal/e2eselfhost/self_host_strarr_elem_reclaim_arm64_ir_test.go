@@ -73,7 +73,7 @@ func TestSelfHostStrArrElemReclaimIRArm64(t *testing.T) {
 	// the transient reads stay correct. lens 3+3+4 = 10.
 	run(t, `function build(pre: string): i32 { var xs: string[] = ["lit", pre + "c"]; xs = xs.append(pre + "de"); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 10) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-reclaim-arm64", 0, "yes")
 
 	// LOOP-BODY REINIT (#4353 item 4): a string[] re-DECLARED each iteration is
@@ -83,14 +83,14 @@ function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow() != 0) { re
 	// (4) = 7 each iteration; a UAF from an early element free would read garbage
 	// (bad=1) or tick the underflow detector (99). underflow 0 + value 7 → 0.
 	run(t, `function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var xs: string[] = ["lit", pre + "x", pre + "yy"]; if (xs[1].len() + xs[2].len() != 7) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-reinit-loop-arm64", 0, "yes")
 
 	// ELEMENT ALIAS BINDING excludes: `var t = xs[0]` — xs stays on the shallow
 	// buffer-only dec, so t reads valid bytes and nothing double-frees. 3+2 = 5.
 	run(t, `function pick(pre: string): i32 { var xs: string[] = [pre + "x", "qq"]; var t: string = xs[0]; return t.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-alias-excluded-arm64", 0, "no")
 
 	// PRODUCER-CALL ELEMENT: the stored elements are calls to a proven
@@ -102,7 +102,7 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { re
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { var xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); var tl: i32 = 0; var j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-producer-store-arm64", 0, "yes")
 
 	// LOCAL BOUND FROM A PRODUCER: `var xs = mk(pre)` where `mk` is a "STRARR:"
@@ -113,7 +113,7 @@ function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { re
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); return xs.len() + xs[1].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-from-producer-arm64", 0, "yes")
 
 	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
@@ -135,7 +135,7 @@ function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; whi
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): i32 { var xs: string[] = mk(pre); var b: Box = keep(xs); return b.rows.len() + b.rows[0].len() + xs[2].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-stored-by-callee-counted-arm64", 0, "yes")
 
 	// The same store where the holder ESCAPES the frame that owns the array —
@@ -164,7 +164,7 @@ function main(): i32 {
     var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
     while (i < 500) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
 		"strarr-local-callee-holder-escapes-arm64", 8, "yes")
@@ -176,6 +176,6 @@ function main(): i32 {
 	run(t, `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 54) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-with-rebind-arm64", 0, "yes")
 }

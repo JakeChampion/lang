@@ -77,7 +77,7 @@ function main(): i32 {
 }
 
 // The freshly-built `name` (pre + "cd" = "abcd", len 4) is read every iteration; a
-// wrong free of the live string corrupts the sum or trips __rc_underflow. sum x =
+// wrong free of the live string corrupts the sum or trips __rc_underflow_count. sum x =
 // 0..199 = 19900; + 4*200 = 800 -> 20700.
 const stringFieldLoopLocalDetectorSrc = `struct S { x: i32, name: string }
 function main(): i32 {
@@ -85,7 +85,7 @@ function main(): i32 {
     var i: i32 = 0; var acc: i32 = 0;
     while (i < 200) { var t: S = S { x: i, name: pre + "cd" }; acc = acc + t.x + t.name.len(); i = i + 1; }
     if (acc != 20700) { return 99; }
-    return __rc_underflow();
+    return __rc_underflow_count();
 }`
 
 func TestSelfHostStringFieldLoopLocalReclaimIRX86_64(t *testing.T) {
@@ -145,7 +145,7 @@ func TestSelfHostStringFieldLoopLocalReclaimIRX86_64(t *testing.T) {
 
 	t.Run("no-over-release", func(t *testing.T) {
 		if code := run(t, "stringfield-loop-detector", stringFieldLoopLocalDetectorSrc); code != 0 {
-			t.Errorf("fresh-string-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow)", code)
+			t.Errorf("fresh-string-field loop-local deep reclaim over-released (exit %d, 99=value mismatch, >0=__rc_underflow_count)", code)
 		}
 	})
 }

@@ -42,7 +42,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.y) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -58,7 +58,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].1.xs[1]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -72,7 +72,7 @@ function main(): i32 {
     while (i < 50) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1; i = i + 1; }
     var acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ARRTUP escape-arrfield negative: `keep = xs[0].1.xs` extracts the struct's ARRAY
@@ -84,7 +84,7 @@ function main(): i32 {
     while (i < 50) { var xs: (i32, P)[] = [(i, P { xs: [i, i + 1], y: i })]; keep = xs[0].1.xs; i = i + 1; }
     var acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// OPTTUP `Option[(i32, P)]`, struct scalar-field read `g.1.y` — reclaims.
@@ -97,7 +97,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.y) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -112,7 +112,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.1.xs[1]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -125,7 +125,7 @@ function main(): i32 {
     while (i < 50) { var o: Option[(i32, P)] = Some((i, P { xs: [i, i + 1], y: i })); match (o) { Some(g) => { keep = g.1; }, None => {} } i = i + 1; }
     var acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// REGRESSION: the plain `(i32, i32[])[]` array-field reclaim (no struct element) still
@@ -138,7 +138,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, i32[])[] = [(j, [j, j + 1])]; acc = (acc + ys[0].1[1]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},

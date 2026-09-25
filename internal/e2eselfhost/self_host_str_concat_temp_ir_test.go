@@ -75,7 +75,7 @@ var strConcatTempIRCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var r2: string = "n" + i.to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -104,7 +104,7 @@ var strConcatTempIRCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var r2: string = "n" + (i % 8).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -120,7 +120,7 @@ var strConcatTempIRCases = []struct {
     var i: i32 = 1;
     while (i < 5000) { var r2: string = "v" + (-i).to_string(); acc = (acc + r2.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -136,7 +136,7 @@ var strConcatTempIRCases = []struct {
     var s: string = "abcd";
     if (("x" + ("a" + s).to_string()).len() != 6) { return 97; }
     if (s.len() != 4) { return 96; }
-    if (__rc_underflow() != 0) { return 95; }
+    if (__rc_underflow_count() != 0) { return 95; }
     return 0;
 }`,
 		0, -1, ""},

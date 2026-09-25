@@ -41,7 +41,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.y) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -61,7 +61,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t2: (i32, P) = (j, P { xs: [j, j + 1], y: j }); acc = (acc + t2.1.xs[1]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -79,7 +79,7 @@ function main(): i32 {
     }
     var acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// PAYLOAD-ESCAPE-CALL negative: `take(t.1)` passes the whole struct to a call (a
@@ -95,7 +95,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// PRE-EXISTING GAP, now closed by the same rctuple_payload_escapes gate: extracting
@@ -111,7 +111,7 @@ function main(): i32 {
     }
     var acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// REGRESSION guard: the borrow-only array-element tuple STILL reclaims (the gate
@@ -125,7 +125,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var t2: (i32, i32[]) = (j, [j, j + 1]); acc = (acc + t2.1[0]) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},

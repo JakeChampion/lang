@@ -44,7 +44,7 @@ func TestSelfHostMapValuesW64WasmIR(t *testing.T) {
 		// twice) so only the live value is snapshotted. sum = 7000000000 (key 1's
 		// final) + 3000000000 (key 2) = 10000000000; % 1000 == 0. Also guards no
 		// over-release of the superseded cell (99).
-		{"insert-overwrite", `function main(): i32 { var m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); var vs: i64[] = m.values(); var s: i64 = 0; var i: i32 = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } if (__rc_underflow() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
+		{"insert-overwrite", `function main(): i32 { var m: Map[i32, i64] = map_new(8); m = m.insert(1, 5000000000); m = m.insert(2, 3000000000); m = m.insert(1, 7000000000); var vs: i64[] = m.values(); var s: i64 = 0; var i: i32 = 0; while (i < vs.len()) { s = s + vs[i]; i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return (s % 1000) as i32; }`, 0},
 	}
 
 	for _, tc := range cases {

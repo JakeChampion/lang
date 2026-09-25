@@ -33,7 +33,7 @@ import (
 // reassigned nor escaping, so the three refusal rows below still refuse — an
 // element that is returned, stored, or rebound is not in the set.
 //
-// Every row is gated on `__rc_underflow()` and runs a second leg under
+// Every row is gated on `__rc_underflow_count()` and runs a second leg under
 // FERN_SANITIZE=1. This change WIDENS a deep free, which is the shape that
 // double-frees, and the census cannot see an over-release into a freelist —
 // `docs/rc-log/` has recorded that four times in this family now.
@@ -51,7 +51,7 @@ type tupleElemBindCase struct {
 func tupleElemBindMain(rounds string) string {
 	return "\nfunction main(): i32 { var x: i32 = 0; var r: i32 = 0; " +
 		"while (r < " + rounds + ") { x = x + round(r); r = r + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return x % 83; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return x % 83; }"
 }
 
 func tupleElemBindCases() []tupleElemBindCase {

@@ -36,7 +36,7 @@ var strTupleReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var t2: (i32, string) = (i, "n" + "x"); acc = (acc + t2.1.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -50,7 +50,7 @@ var strTupleReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var t2: (i32, string) = (i, i.to_string()); acc = (acc + t2.1.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -66,7 +66,7 @@ var strTupleReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var t2: (string, i32[]) = ("tag", [i, i + 1]); acc = (acc + t2.1[0]) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -83,7 +83,7 @@ var strTupleReclaimCases = []struct {
     var i: i32 = 0;
     while (i < 5000) { var t2: (i32, string) = (i, "abc"); acc = (acc + t2.0 + t2.1.len()) % 251; i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -96,7 +96,7 @@ var strTupleReclaimCases = []struct {
     var w: i32 = 0;
     while (w < 100) { var t: (i32, string) = (w, s); acc = (acc + t.1.len()) % 251; w = w + 1; }
     if (s.len() != 5) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ESCAPE negative: the tuple is returned — ownership moves out, nothing
@@ -109,7 +109,7 @@ function main(): i32 {
     var t = mk(5);
     if (t.0 != 5) { return 97; }
     if (t.1.len() != 2) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// EXTRACTION negative: `keep = t.1` pulls the owned string out — the
@@ -126,7 +126,7 @@ function main(): i32 {
         w = w + 1;
     }
     if (keep.len() < 2) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// DISCARDED statement `(w, "x" + "y");` — the discarded-statement arm
@@ -140,7 +140,7 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 5000) { (i, "x" + "y"); i = i + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;

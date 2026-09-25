@@ -39,7 +39,7 @@ const arrFreshMethProlog = "struct H { v: i32 }\n" +
 
 const arrFreshMethMain = "\nfunction main(): i32 { var hh: H = H { v: 5 }; var t: i32 = 0; var i: i32 = 0; " +
 	"while (i < 100) { BODY i = i + 1; } " +
-	"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+	"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 type arrFreshMethCase struct {
 	name string
@@ -94,7 +94,7 @@ func arrFreshMethCases() []arrFreshMethCase {
 				"function (g: G) copy(): i32[] { return [g.xs[0], g.xs[1]]; }\n" +
 				"function main(): i32 { var gg: G = G { xs: [1, 2, 3] }; var t: i32 = 0; var i: i32 = 0; " +
 				"while (i < 100) { t = t + gg.copy().len(); i = i + 1; } " +
-				"if (__rc_underflow() != 0) { return 99; } return t % 83; }",
+				"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }",
 			want: 34,
 		},
 	}
@@ -148,7 +148,7 @@ func TestSelfHostArrFreshRetMethodX86_64(t *testing.T) {
 // this admission rule exists to prevent, and the direction that corrupts rather
 // than leaks.
 //
-// It asserts the ANSWER and `__rc_underflow()`, not leak counts, and deliberately:
+// It asserts the ANSWER and `__rc_underflow_count()`, not leak counts, and deliberately:
 // this shape still leaks 48 bytes, which is #7259's OTHER two defects (the
 // unreleased return-transfer dup, and the struct losing its deep field-drop when
 // a function returns one of its array fields). Both are bounded per object and
@@ -164,7 +164,7 @@ func TestSelfHostArrFreshRetMethodRefusedX86_64(t *testing.T) {
 		"function (h: H) get(): i32[] { return h.xs; }\n" +
 		"function main(): i32 { var hh: H = H { xs: [1, 2, 3] }; var t: i32 = 0; var i: i32 = 0; " +
 		"while (i < 100) { t = t + hh.get().len(); i = i + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 
 	asm := hevCompile(t, runner, driverBin, src, nil)
 	progBin := buildBin(t, gcc, dir, "arrfreshmeth_borrowed_field_return", asm)

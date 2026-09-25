@@ -4335,7 +4335,12 @@ function rc_contracts(): ssasem.Contract[] {
         // point of a hook that exercises the underflow detector. The retain
         // answers the array with the unit it added, which the caller owns.
         ssasem.Contract { name: "__rc_dec", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: t_void() },
-        ssasem.Contract { name: "__rc_inc", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.TypeArray { elem: t_u8(), view: false } }
+        ssasem.Contract { name: "__rc_inc", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.borrow_mode()], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
+        // The detectors a program reads to report on itself: the over-release
+        // count and the two shared-append totals, each a read of a runtime word.
+        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() }
     ];
 }
 
@@ -4493,9 +4498,8 @@ function outcome_contracts(): ssasem.Contract[] {
 // The builtins whose result owns nothing: the process arguments and the
 // random buffer are fresh arrays of this function's own, the byte write and
 // the two bit reinterprets of the single-precision float are values, the
-// three clocks read a host counter, the two sleeps hand it one, and the
-// over-release counter and the two shared-append totals are reads of a runtime
-// word. None of them is handed a reference, so none of them borrows.
+// three clocks read a host counter, and the two sleeps hand it one. None of
+// them is handed a reference, so none of them borrows.
 function value_contracts(): ssasem.Contract[] {
     var value: i32[] = [ssaunits.value_mode()];
     return [
@@ -4509,10 +4513,7 @@ function value_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "sleep_ns", params: [t_i64()], modes: value, result: t_void() },
         ssasem.Contract { name: "putchar", params: [t_i32()], modes: value, result: t_void() },
         ssasem.Contract { name: "f32_bits", params: [t_f32()], modes: value, result: t_i32() },
-        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f32() },
-        ssasem.Contract { name: "__rc_underflow_count", params: [], modes: [], result: t_i32() },
-        ssasem.Contract { name: "__arr_push_shared_count", params: [], modes: [], result: t_i32() },
-        ssasem.Contract { name: "__arr_push_shared_bytes", params: [], modes: [], result: t_i64() }
+        ssasem.Contract { name: "f32_from_bits", params: [t_i32()], modes: value, result: t_f32() }
     ];
 }
 

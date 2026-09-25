@@ -50,7 +50,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -73,7 +73,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -94,7 +94,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
 }`, 2},
@@ -115,7 +115,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
 }`, 90},
@@ -139,7 +139,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w;
 }`, 7},

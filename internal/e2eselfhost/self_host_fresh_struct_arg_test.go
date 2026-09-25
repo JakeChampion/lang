@@ -54,7 +54,7 @@ func freshStructArgSrc(body string, rounds int) string {
 	return freshStructArgProlog +
 		"function main(): i32 { var st: St = St { n: 0 }; var i: i32 = 0; " +
 		"while (i < " + fmt.Sprint(rounds) + ") { " + body + " i = i + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return st.n % 83; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return st.n % 83; }"
 }
 
 type freshStructArgCase struct {
@@ -140,7 +140,7 @@ func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 // k }` moves it into a field; releasing after either call frees a box the
 // caller still reads. Both are correctly unborrowable, so no stash fires and
 // both keep their prior safe leak — which is why this asserts the ANSWER and
-// `__rc_underflow()` rather than leak counts. Removing the borrowability gate
+// `__rc_underflow_count()` rather than leak counts. Removing the borrowability gate
 // is what these two rows catch, and they catch it as a wrong answer or an
 // underflow, not as a number.
 func TestSelfHostFreshStructArgRefusedX86_64(t *testing.T) {

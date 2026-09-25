@@ -21,10 +21,9 @@ import (
 // Each case must produce WHOLE on the typed path. Production is all-or-nothing
 // per module, so one refused declaration sends every function to the AST
 // lowering and the counts below would then be measuring irlower, not ssarc —
-// which is exactly the mistake this check exists to prevent. That is also why
-// the guard is spelled `__rc_underflow_count`, the native spelling with a
-// semantic contract, rather than the `__rc_underflow` alias the AST-path
-// suites use: the alias has no contract, so it refuses the module.
+// which is exactly the mistake this check exists to prevent. Every intrinsic
+// a case calls must have a semantic contract for the same reason, as
+// `__rc_underflow_count` does.
 var semanticReuseCases = []struct {
 	name string
 	src  string

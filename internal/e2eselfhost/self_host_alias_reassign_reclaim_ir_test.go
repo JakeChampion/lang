@@ -59,7 +59,7 @@ function main(): i32 {
     if (r != 10) { return 90; }
     if (s.names.len() != 3 || s.types.len() != 3) { return 91; }
     if (s.types[0] + s.types[1] + s.types[2] != 6) { return 92; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Array-element alias (`t = b.items[i]`): the ExprIndex reassign branch.
@@ -82,7 +82,7 @@ function main(): i32 {
     var j2: i32[] = [8, 8, 8];
     var sum: i32 = b2.items[0].arr[0] + b2.items[0].arr[1] + b2.items[0].arr[2] + b2.items[1].arr[0] + b2.items[1].arr[1] + b2.items[1].arr[2];
     if (sum != 21) { return 90; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Struct-field alias (`t = b.items[i].s`): the ExprFieldAccess reassign branch.
@@ -106,7 +106,7 @@ function main(): i32 {
     var j2: i32[] = [8, 8, 8];
     var sum: i32 = b2.items[0].s.arr[0] + b2.items[1].s.arr[2];
     if (sum != 7) { return 90; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Negative: a fresh struct rebound from a fresh struct LITERAL (`t = S {..}`)
@@ -118,7 +118,7 @@ function main(): i32 {
     while (i < 100) { t = S { arr: [i, i + 1] }; i = i + 1; }
     var got: i32 = t.arr[0] + t.arr[1];
     if (got != 199) { return 90; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

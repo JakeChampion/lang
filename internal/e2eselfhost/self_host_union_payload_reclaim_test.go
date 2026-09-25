@@ -48,7 +48,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -72,7 +72,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -96,7 +96,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -123,7 +123,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -148,7 +148,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -173,7 +173,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churn(1000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
@@ -196,12 +196,12 @@ function main(): i32 {
 }
 function main(): i32 {
     var w: i32 = churn(100);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return w % 97;
 }`, 66},
 	// ALIASING control: the payload is a bare ident whose local is read after
 	// the tuple is built. It keeps its leak rather than its correctness — the
-	// value must be right and __rc_underflow() zero either way.
+	// value must be right and __rc_underflow_count() zero either way.
 	{"bare-ident-payload-safe", `function churn(n: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -218,7 +218,7 @@ function main(): i32 {
 function main(): i32 {
     var w: i32 = churn(1000);
     var x: i32 = churn(1000);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     return w % 91;
 }`, 1},

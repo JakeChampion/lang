@@ -43,7 +43,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[0]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -59,7 +59,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { n: j, xs: [j, j + 1] }); match (o2) { Some(p) => { acc = (acc + p.xs[1]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -77,7 +77,7 @@ function main(): i32 {
     }
     var acc: i32 = keep[0] + keep[1];
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// PAYLOAD-ESCAPE-CALL negative: `take(p.xs)` passes the array field to a call (a retain)
@@ -93,7 +93,7 @@ function main(): i32 {
         i = i + 1;
     }
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// STRING-FIELD payload (#6360): the payload's only rc field is a bare `string`.
@@ -115,7 +115,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { name: pre + "x", n: j }); match (o2) { Some(p) => { acc = (acc + p.n + p.name.len()) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -137,7 +137,7 @@ function main(): i32 {
     var sum: i32 = 0;
     var k: i32 = 0;
     while (k < shared.len()) { sum = sum + (shared[k] as i32); k = k + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0 || junk.len() != 4) { return 97; }
     if (sum != 394) { return 96; }
     return 0;
@@ -154,7 +154,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[P] = Some(P { a: j, b: j + 1 }); match (o2) { Some(p) => { acc = (acc + p.a + p.b) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -170,7 +170,7 @@ function main(): i32 {
         match (o) { Some(p) => { held = p.name; }, None => {} }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (held.len() != 2) { return 97; }
     return 0;
 }`, 0},
@@ -184,7 +184,7 @@ function pick(o: Option[P]): i32[] {
 function main(): i32 {
     var o: Option[P] = Some(P { xs: [6, 7] });
     var a = pick(o);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return a[0] + a[1];
 }`, 13},
 	// STRING[] payload (#6495) — the per-ELEMENT release, here on all three
@@ -202,7 +202,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[string[]] = Some(["a" + "b", "c"]); match (o2) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -217,7 +217,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Result[string[], string] = Ok(["ab", "cde"]); match (o2) { Ok(xs) => { acc = (acc + xs[0].len()) % 251; }, Err(e) => { acc = acc + e.len(); } } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -234,7 +234,7 @@ function main(): i32 {
         acc = acc + xs[0].len();
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc != 200) { return 97; }
     return 0;
 }`, 0},

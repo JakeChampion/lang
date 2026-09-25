@@ -82,7 +82,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 2000) { acc = acc + build_i32(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     var str_growth: i32 = s2 - s1;
     var i32_growth: i32 = k2 - s2;
     if (str_growth > i32_growth + 4096) { return 1; }
@@ -100,7 +100,7 @@ function main(): i32 {
         if (m.get_or(8, "").len() != 5) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "mapvs-value-correct", 0)
@@ -119,7 +119,7 @@ function main(): i32 {
         if (m.get_or(1, "").len() != 4) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, "mapvs-aliased-value-excluded", 0)

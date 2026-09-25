@@ -44,7 +44,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(1500);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
     if (gt > 60000 + 256) { return 98; }
@@ -64,7 +64,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(1500);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (w != x) { return 97; }
     var gt: i32 = b2 - b1;
     if (gt > 60000 + 256) { return 98; }
@@ -76,6 +76,6 @@ function main(): i32 {
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre); }
 function inner(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
 function go(pre: string): i32 { var r: i32 = 0; match (inner(pre)) { Ok(k) => { r = k; }, Err(e) => { r = e; }, } return r; }
-function main(): i32 { var keep: string = "abc" + "def"; var bad: i32 = 0; var i: i32 = 0; while (i < 500) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow() != 0) { return 99; } return bad; }`,
+function main(): i32 { var keep: string = "abc" + "def"; var bad: i32 = 0; var i: i32 = 0; while (i < 500) { if (go(keep) != 6) { bad = 1; } i = i + 1; } if (keep.len() != 6) { return 88; } if (__rc_underflow_count() != 0) { return 99; } return bad; }`,
 		"try-aliased-payload-excluded-arm64", 0)
 }

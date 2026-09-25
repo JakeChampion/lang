@@ -56,7 +56,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -93,7 +93,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -116,7 +116,7 @@ function main(): i32 {
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A two-link CHAIN, and the same witness one link deeper: the walk has to see
 	// through the inner call to reach base, the inner link takes its identity path
 	// and the outer allocates over base's bytes, so the result is NOT base's box
@@ -141,7 +141,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return h.name.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the method hands its receiver back on EVERY path, so it is not in
 	// the registry at all and the binding is a plain borrow. Pins that the credit
 	// is keyed on the whole-program proof, not on the shape of the call.
@@ -155,7 +155,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(c, "abcdefgh-a-wide")) { return 0 - 3; }
     return base.len() + c.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 212) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// LIVENESS for the released shape: the view has to read correctly after the
 	// call and after unrelated allocations, and base has to survive the release of
 	// a box built over its bytes.
@@ -169,7 +169,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (!has_prefix(v, "a-wide-payload")) { return 0 - 3; }
     return base.len() + v.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 203) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 203) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A STATIC root and the empty-literal return path in one round: `tail(9999)`
 	// hands back `""`, whose box is in .rodata and whose pointer differs from the
 	// root, so the compare admits it and the release runs on a static. That is
@@ -185,7 +185,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     if (e.len() != 0) { return 0 - 3; }
     return v.len() + base.len();
 }
-function main(): i32 { var i: i32 = 0; while (i < 4000) { var r: i32 = round(); if (r != 90) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var i: i32 = 0; while (i < 4000) { var r: i32 = round(); if (r != 90) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// The credit is keyed by NAME, so a second `var v` in another block shares it
 	// while holding a plain alias — here a struct FIELD, which no slot compare can
 	// name. Both the alias and the field it reads have to survive the sweep.
@@ -199,7 +199,7 @@ function main(): i32 { var i: i32 = 0; while (i < 4000) { var r: i32 = round(); 
     if (!has_prefix(h.name, "abcdefgh-a-wide")) { return 0 - 2; }
     return total;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 210) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 210) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// REFUSED: the binding ESCAPES (it is returned), so the shared escape gate
 	// withholds the credit and the caller keeps a live box.
 	{"str-bind-sfrrecv-escaping-refused", strBindPrelude + `function mk(pre: string): string { var base: string = w(pre); var v: string = base.pad2(4); return v; }
@@ -211,7 +211,7 @@ function round(pre: string): i32 {
     if (!has_suffix(r, "0123456789abcdef")) { return 0 - 3; }
     return r.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 154) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 154) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
 // TestSelfHostStrBindSfrrecvIRX86_64 drives the cases through the self-hosted
@@ -283,7 +283,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;

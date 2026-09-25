@@ -91,7 +91,7 @@ function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0
 function mk(deps: string[]): H { return H { deps: deps }; }
 function build(pre: string): i32 { var live: string[] = deps_of(pre); var h: H = mk(live); return h.deps.len() + live.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 6) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-caller-drops", 0, "__fn___struct_drop_H")
 
 	// SOUNDNESS, the sharpest shape: the struct is built from a LIVE local and
@@ -115,7 +115,7 @@ function build(pre: string): i32 {
     return seen + live.len() + live[0].len() + live[2].len();
 }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 92) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-local-outlives-struct", 0, "")
 
 	// TWO structs over ONE array: each drop decs, and the array survives both.
@@ -134,6 +134,6 @@ function build(pre: string): i32 {
     return a.deps.len() + b.deps.len() + live[1].len();
 }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 49) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"borrowed-field-two-structs-one-array", 0, "")
 }

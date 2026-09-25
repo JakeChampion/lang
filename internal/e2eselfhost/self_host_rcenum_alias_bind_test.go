@@ -28,7 +28,7 @@ function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; v
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 21, balance: true,
@@ -42,7 +42,7 @@ function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; m
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 6, balance: true,
@@ -57,7 +57,7 @@ function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; s
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 6, balance: true,
@@ -71,7 +71,7 @@ function round(i: i32): i32 { var src: E = E.Full([i, i + 1]); var x: E = src; r
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 6, balance: true,
@@ -87,7 +87,7 @@ function round(i: i32): i32 { var v: i32[] = g(i); return v.len(); }
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 6, balance: true,
@@ -103,7 +103,7 @@ function round(i: i32): i32 { var v: E = mk(i); match (v) { Full(xs) => { return
 function main(): i32 {
     var s: i32 = 0; var r: i32 = 0;
     while (r < 100) { s = s + round(r); r = r + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return s % 97;
 }`,
 			want: 6, balance: false, wantFrees: 0,
@@ -123,7 +123,7 @@ func TestSelfHostRcEnumAliasBindX86_64(t *testing.T) {
 			progBin := buildBin(t, gcc, dir, "rcenumalias_"+tc.name, asm)
 			stderr, exit := hevRun(t, runner, progBin)
 			if exit != tc.want {
-				t.Fatalf("%s exited %d, want %d — 99 means __rc_underflow() fired: the alias forgiveness "+
+				t.Fatalf("%s exited %d, want %d — 99 means __rc_underflow_count() fired: the alias forgiveness "+
 					"handed the source a credit that frees a payload someone else still holds. The census "+
 					"below balances either way, so the exit code is the whole signal.\n%s",
 					tc.name, exit, tc.want, leakSummaryLine(stderr))

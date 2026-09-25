@@ -75,7 +75,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
     return 0;
@@ -117,7 +117,7 @@ var strArrJoinFaultCases = []struct {
     if (again.len() != n) { return 0 - 8; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The array escapes by return, so the credit is withheld and the caller's
 	// reads have to find the elements — a join in the same frame does not
 	// change that verdict.
@@ -135,7 +135,7 @@ function round(pre: string): i32 {
     if (!has_prefix(ys[0], "e0-")) { return 0 - 2; }
     return ys.len();
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A `string[]` PARAM receiver, which the harvesters see now that they are
 	// seeded with the function's ParamDecl[]. Correctness only — the heap side of
 	// this shape is `strarr-join-param-receiver` below.
@@ -156,7 +156,7 @@ function main(): i32 {
     var i: i32 = 0;
     var want: i32 = round(xs);
     while (i < 2000) { if (round(xs) != want) { return 97; } i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 	// The heap side of the param receiver: 131200 on x86-64 and 128000 on wasm
@@ -174,7 +174,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(xs, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
@@ -196,7 +196,7 @@ function main(): i32 {
         if (!has_prefix(keep.tag, "bbbb-")) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 	// A USER method named `join` whose result aliases a field the receiver still
@@ -221,7 +221,7 @@ function main(): i32 {
         if (!has_prefix(keep.tag, "bbbb-")) { return 97; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
 }

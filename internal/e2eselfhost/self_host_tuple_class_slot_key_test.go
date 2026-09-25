@@ -59,7 +59,7 @@ func tupClassKeyCases() []tupClassKeyCase {
     { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 		{
@@ -74,7 +74,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     { var t: (i32, i32[]) = (i, xs); acc = acc + t.1[0]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 		{
@@ -88,7 +88,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     else { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 5,
 		},
 		{
@@ -105,7 +105,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     while (m < 2) { var t: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + t.1[1]; m = m + 1; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 20,
 		},
 		{
@@ -121,7 +121,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     { var t: (i32, i32[]) = (i, xs); acc = acc + t.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -137,7 +137,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     { var u: (i32, i32[]) = (i, [i + 7, i + 9]); acc = acc + u.1[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 10,
 		},
 	}
@@ -161,7 +161,7 @@ func leakSummaryLine(stderr string) string {
 //
 // The exit code is the essential assertion here and the byte count is the
 // secondary guard. An over-release does not move `live_bytes` — the block returns to
-// the freelist — so only `__rc_underflow()` separates a correct compiler from the
+// the freelist — so only `__rc_underflow_count()` separates a correct compiler from the
 // broken one. `allocs == frees` is what catches the opposite failure: a site key
 // that resolves to nothing would deny the credit and leak instead.
 func TestSelfHostTupleClassSlotKeyX86_64(t *testing.T) {

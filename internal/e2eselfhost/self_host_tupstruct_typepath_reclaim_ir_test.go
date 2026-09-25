@@ -41,7 +41,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, P)] = Some((j, P { xs: [j, j + 1], y: j })); match (o2) { Some(g) => { acc = (acc + g.0) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -56,7 +56,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var ys: (i32, P)[] = [(j, P { xs: [j, j + 1], y: j })]; acc = (acc + ys[0].0) % 251; j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -74,7 +74,7 @@ function main(): i32 {
     }
     var acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// ARRTUP struct WHOLE-EXTRACT: `keep = xs[0].1` — leak-safe, never over-released.
@@ -89,7 +89,7 @@ function main(): i32 {
     }
     var acc: i32 = keep.xs[0] + keep.y;
     if (acc < 0) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// REGRESSION: the pre-existing plain array-element OPTTUP still reclaims (the shared
@@ -102,7 +102,7 @@ function main(): i32 {
     var j: i32 = 0;
     while (j < 5000) { var o2: Option[(i32, i32[])] = Some((j, [j, j + 1])); match (o2) { Some(g) => { acc = (acc + g.1[1]) % 251; }, None => {} } j = j + 1; }
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     return 0;
 }`, 0},

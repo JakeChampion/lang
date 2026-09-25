@@ -48,7 +48,7 @@ function main(): i32 {
     var x: i32 = churn(100);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 900 || x != 900) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
@@ -73,7 +73,7 @@ function main(): i32 {
     var x: i32 = churn(100);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 1000 || x != 1000) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
@@ -98,7 +98,7 @@ function main(): i32 {
     var x: i32 = churn(100);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 5350 || x != 5350) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
@@ -126,7 +126,7 @@ function work(k: i32): i32 {
 }
 function main(): i32 {
     if (work(60) != 60) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Negative: the field is the caller's own buffer. Crediting the factory here
@@ -151,7 +151,7 @@ function work(k: i32): i32 {
 }
 function main(): i32 {
     if (work(60) != 60) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The DIRECT producer-call spelling, the shape #6758's widening stopped one
@@ -176,7 +176,7 @@ function main(): i32 {
     var x: i32 = churn(100);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (w != 500 || x != 500) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
@@ -201,7 +201,7 @@ function main(): i32 {
     var x: i32 = churn(2000);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (w0 != x) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 256) { return 98; }
     return 0;
 }`, 0},
@@ -236,7 +236,7 @@ function work(k: i32): i32 {
 }
 function main(): i32 {
     if (work(2000) != 2000) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// A LOCAL shadows the producer's name, so the value reaches the field as a
@@ -263,7 +263,7 @@ function work(k: i32): i32 {
 }
 function main(): i32 {
     if (work(2000) != 2000) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// Negative: one local, two fields. The box carries a single rc and
@@ -284,7 +284,7 @@ function work(k: i32): i32 {
 }
 function main(): i32 {
     if (work(60) != 960) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

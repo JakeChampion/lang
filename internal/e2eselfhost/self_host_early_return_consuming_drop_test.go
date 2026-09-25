@@ -39,7 +39,7 @@ import (
 // and a bounded leak is whether live_bytes moves with the round count, and a
 // single count cannot show it. The `..._400` row is not redundant with the 100 one.
 //
-// Every row asserts `__rc_underflow() == 0` before its answer. Widening a release
+// Every row asserts `__rc_underflow_count() == 0` before its answer. Widening a release
 // window is the shape that double-frees, and the census cannot see an
 // over-release into a freelist — so each row also runs a second leg under
 // FERN_SANITIZE=1. `TestSelfHostNestedMatchBorrowNoUnderflow` covers the same
@@ -56,7 +56,7 @@ type earlyReturnDropCase struct {
 func earlyReturnDropMain(rounds string) string {
 	return "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
 		"while (i < " + rounds + ") { t = t + round(i); i = i + 1; } " +
-		"if (__rc_underflow() != 0) { return 99; } return t % 83; }"
+		"if (__rc_underflow_count() != 0) { return 99; } return t % 83; }"
 }
 
 func earlyReturnDropCases() []earlyReturnDropCase {

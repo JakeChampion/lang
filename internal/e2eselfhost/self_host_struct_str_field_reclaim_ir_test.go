@@ -19,7 +19,7 @@ import (
 // dropped every iteration. WITHOUT the field-drop the fresh name box leaks each
 // iteration and millions of iterations exhaust the heap (SIGKILL 137); WITH it
 // the heap stays flat. A spurious double-free would instead tick
-// __rc_underflow() -> exit 99. Exit 0 proves the field is reclaimed
+// __rc_underflow_count() -> exit 99. Exit 0 proves the field is reclaimed
 // AND balanced (no over-release) over millions of build/drop cycles.
 func TestSelfHostStructStrFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -59,7 +59,7 @@ func TestSelfHostStructStrFieldReclaimIRX86_64(t *testing.T) {
 	// cycles stay flat (name freed) → exit 0; a leak would SIGKILL (137).
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "aa"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-reclaim-churn", 0)
 
 	// NON-FRESH (aliased) string field: `name` is bound from a live local `nm`,
@@ -69,7 +69,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) {
 	// (r.name reads len 3 while nm is still live). Exit 0.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r: R = R { name: nm, items: [1] }; if (r.name.len() != 3) { bad = 1; } if (nm.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-aliased-balanced", 0)
 
 	// FUNCTIONAL-UPDATE base-copy: `r2 = R { ...r1, items: [...] }` copies `name`
@@ -81,7 +81,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) {
 	// the pre-fix double-free would tick the underflow counter → exit 99.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var nm: string = "abc"; var r1: R = R { name: nm, items: [1] }; var r2: R = R { ...r1, items: [2, 3] }; if (r2.name.len() != 3) { bad = 1; } if (r1.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-base-copy-balanced", 0)
 
 	// NESTED string-only struct (deep-drop): `B { name: string }` has no rc-array
@@ -94,7 +94,7 @@ function main(): i32 { var v: i32 = churn(2000000); if (__rc_underflow() != 0) {
 	run(t, `struct B { name: string }
 struct A { inner: B, items: i32[] }
 function churn(n: i32): i32 { var pre: string = "z"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { var a: A = A { inner: B { name: pre + "xy" }, items: [1, 2] }; if (a.inner.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(1500000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(1500000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"nested-string-only-struct-reclaim", 0)
 
 	// STRING[] FIELD (the k_str_arr slice): a struct whose string[] field is
@@ -106,7 +106,7 @@ function main(): i32 { var v: i32 = churn(1500000); if (__rc_underflow() != 0) {
 	// (underflow 0) and correct values → exit 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function churn(n: i32): i32 { var bad: i32 = 0; var i: i32 = 0; while (i < n) { var d: Diag = Diag { code: i, notes: ["alpha", "beta" + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(4000000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(4000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-reclaim-churn", 0)
 
 	// NON-admitted: the string[] field value is a bare IDENT (an alias of a
@@ -114,14 +114,14 @@ function main(): i32 { var v: i32 = churn(4000000); if (__rc_underflow() != 0) {
 	// type keeps the sound leak — xs's element boxes must survive the struct
 	// drop (xs is read after). Value correct, underflow 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { code: 3, notes: xs }; var s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
+function main(): i32 { var xs: string[] = ["ab", "cd"]; var d: Diag = Diag { code: 3, notes: xs }; var s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 		"strarr-field-aliased-excluded", 0)
 
 	// NON-admitted: an ELEMENT READ (`d.notes[0]`) binds an uncounted alias of
 	// an element box, so the read gate excludes the type — the element must
 	// survive the struct's exit drop. Value correct, underflow 0.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__rc_underflow() != 0) { return 99; } return 0; }`,
+function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] }; var n0: string = d.notes[0]; var s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 		"strarr-field-read-excluded", 0)
 
 	// PRODUCER-CALL ELEMENTS, BOUNDED HIGH-WATER: the field is built from calls
@@ -134,7 +134,7 @@ function main(): i32 { var d: Diag = Diag { code: 3, notes: ["alpha", "beta"] };
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-producer-elements-flat", 0)
 
 	// A SIBLING TYPE'S IDENTICALLY-NAMED FIELD no longer costs this one its
@@ -152,7 +152,7 @@ function mkother(notes: string[]): Other { return Other { notes: notes }; }
 function useother(pre: string): i32 { var o: Other = mkother([pre]); return o.notes.len(); }
 function build(pre: string): i32 { var d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var seed: i32 = useother("q"); if (seed < 0) { return 96; } var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var seed: i32 = useother("q"); if (seed < 0) { return 96; } var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-sibling-name-not-poisoned", 0)
 
 	// A BORROWED-PARAMETER store is admitted, and the retain is what makes that
@@ -171,7 +171,7 @@ function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n
 function mkesc(notes: string[]): Esc { return Esc { notes: notes }; }
 function build(pre: string): i32 { var live: string[] = [w(pre), w(pre)]; var e: Esc = mkesc(live); var o: Ok = Ok { notes: [w(pre)] }; var junk: string = fill(20); if (junk.len() < 0) { return 0; } return e.notes.len() + live[0].len() + live[1].len() + o.notes.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-borrowed-param-retained", 0)
 
 	// WHOLE-ARRAY PRODUCER CALL as the field value, BOUNDED HIGH-WATER: the
@@ -187,7 +187,7 @@ function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-
 function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function build(pre: string): i32 { var f: Node = Node { name: w(pre), deps: deps_of(pre), mtime: 1 }; return f.deps.len() + f.name.len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
+function main(): i32 { var w0: i32 = churn(5000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(5000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-producer-call-store-flat", 0)
 
 	// A LOCAL SHADOWING the producer's name: `deps_of` here is a string[] local,
@@ -203,6 +203,6 @@ function deps_of(pre: string): string[] { var out: string[] = []; var i: i32 = 0
 function fill(n: i32): string { var s: string = ""; var i: i32 = 0; while (i < n) { s = s + "0123456789012345678901234567890123456789"; i = i + 1; } return s; }
 function build(pre: string): i32 { var deps_of: string[] = [w(pre)]; var o: Sh = Sh { deps: deps_of }; var j: string = fill(20); if (j.len() < 0) { return 0; } return o.deps.len() + deps_of[0].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 44) { bad = 1; } i = i + 1; } return bad; }
-function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow() != 0) { return 99; } return v; }`,
+function main(): i32 { var v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-producer-name-shadowed-retained", 0)
 }

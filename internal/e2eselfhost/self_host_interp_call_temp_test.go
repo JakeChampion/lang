@@ -54,7 +54,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     var b: i32 = churn(pre, 400);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (a != b) { return 97; }
     if (b2 - b1 >= ` + fmt.Sprint(limit) + `) { return 98; }
     return 0;
@@ -113,7 +113,7 @@ var interpCallFaultCases = []struct {
     if (!has_sub(interp, "|")) { return 0 - 7; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `to_string` returning a field ALIAS, on a struct local AND on a
 	// fresh-ret struct temp. Neither may be credited: the receiver being fresh
 	// says nothing about whether the RESULT is fresh once a user method is in the
@@ -134,7 +134,7 @@ function round(pre: string): i32 {
     if (has_sub(s, "XXXX")) { return 0 - 4; }
     return 3;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 3) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// ESCAPE: the credited local is returned, so it must not be freed.
 	{"interp-call-escape-return", interpCallPrelude + `function mk(pre: string): string { var s: string = f"{w(pre)}"; return s; }
 function round(pre: string): i32 {
@@ -144,7 +144,7 @@ function round(pre: string): i32 {
     if (!has_prefix(s, "abcdefgh-")) { return 0 - 1; }
     return s.len() % 251;
 }
-function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`},
+function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; var want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 }
 
 const interpCallExitHint = "98 = the interpolated call's box was stranded; 99 = over-release; 97 = value corrupted"

@@ -60,7 +60,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_ik(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -86,7 +86,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_ii(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -100,7 +100,7 @@ function main(): i32 {
         if (m.get_or("world", "").len() != 4) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -114,7 +114,7 @@ function main(): i32 {
         if (m.get_or("aabb", 0) != 7) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -147,7 +147,7 @@ function main(): i32 {
     var k: i32 = 0;
     while (k < 500) { acc = acc + build_ik_over(k); k = k + 1; }
     var k2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if ((s2 - s1) > (k2 - s2) + 4096) { return 1; }
     if (acc < 0) { return 97; }
     return 0;
@@ -165,7 +165,7 @@ function main(): i32 {
         if (m.len() != 1) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},
@@ -184,7 +184,7 @@ function main(): i32 {
         if (m.get_or("word", 0) != 7) { bad = 1; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (bad != 0) { return 88; }
     return 0;
 }`, 0},

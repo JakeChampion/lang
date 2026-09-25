@@ -50,7 +50,7 @@ function main(): i32 {
     while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.keep().n) % 251; i = i + 1; }
     if (alias.tag.len() != 15) { return 95; }
     if (held.tag.len() != 15) { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -68,7 +68,7 @@ function main(): i32 {
     while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.label().len()) % 251; i = i + 1; }
     if (moved.len() != 15) { return 95; }
     if (slice_unchecked(moved, 0, 5) != "start") { return 96; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -83,7 +83,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 4000) { var b: Box = Box { tag: "start-tag-value", n: i % 8 }; acc = (acc + b.via()) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -104,7 +104,7 @@ function main(): i32 {
         if (b.tag.len() != 15) { return 96; }
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -112,7 +112,7 @@ function main(): i32 {
 	// assigns the receiver's own box to a name that outlives the loop body, and
 	// `b` was credited anyway — on the strength of a method receiver counting as
 	// a borrow — so its per-rebind reclaim freed the box `keep` still reads.
-	// Measured on the parent as a genuine over-release (__rc_underflow() ticked,
+	// Measured on the parent as a genuine over-release (__rc_underflow_count() ticked,
 	// not a leak), which is why this row asserts 0 and not merely flatness:
 	// exit 99 is the pre-fix outcome.
 	{"recvret-rebound-outer-no-over-release", `struct Box { tag: string, n: i32 }
@@ -126,7 +126,7 @@ function rounds(n: i32): i32 {
 function main(): i32 {
     var acc: i32 = rounds(4000);
     if (acc < 15) { return 95; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The same gate through a RETURN: `me()`'s result leaves the function, so
@@ -138,7 +138,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 4000) { var r: Box = mk(i % 8); if (r.tag.len() != 15) { return 95; } acc = (acc + r.n) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -156,7 +156,7 @@ function main(): i32 {
         acc = (acc + xs[0].n) % 251;
         i = i + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -168,7 +168,7 @@ function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 4000) { var b: Box = Box { tag: "start-tag-value", items: [1, 2, 3] }; if (b.total() != 18) { return 95; } acc = (acc + b.items[i % 3]) % 251; i = i + 1; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
@@ -176,7 +176,7 @@ function main(): i32 {
 
 // recvBorrowDeepDropLeakCases assert heap FLATNESS, so they are register-backend
 // only — the wasm driver's own allocations sit between the two probes and the
-// WAT leg reads __rc_underflow() instead (see the trap note in
+// WAT leg reads __rc_underflow_count() instead (see the trap note in
 // docs/RC-PERCEUS-SELF-HOST-PORT.md §9).
 var recvBorrowDeepDropLeakCases = []struct {
 	name string
@@ -197,7 +197,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -219,7 +219,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -242,7 +242,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -261,7 +261,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -284,7 +284,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -305,7 +305,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -327,7 +327,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -349,7 +349,7 @@ function main(): i32 {
     var b1: i32 = (__heap_bump_bytes() as i32);
     acc = acc + rounds(5000);
     var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (b2 - b1 >= 512) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -442,7 +442,7 @@ func TestSelfHostRecvBorrowDeepDropArm64(t *testing.T) {
 
 // TestSelfHostRecvBorrowDeepDropWasm runs the SAFETY cases on the wasm IR
 // backend. The flatness cases are excluded: the WAT driver's own allocations
-// sit between the probes, so __rc_underflow() is the witness there.
+// sit between the probes, so __rc_underflow_count() is the witness there.
 func TestSelfHostRecvBorrowDeepDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host receiver-borrow deep-drop wasm e2e")

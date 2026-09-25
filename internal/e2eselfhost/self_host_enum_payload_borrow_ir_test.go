@@ -79,7 +79,7 @@ function main(): i32 {
     var churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "enum-field-into-array-literal", 0)
 
@@ -97,7 +97,7 @@ function main(): i32 {
     var churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "enum-field-into-append", 0)
 
@@ -127,7 +127,7 @@ function main(): i32 {
         if (churn[0] != k + 100) { return 97; }
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "enum-array-payload-arm-borrow", 0)
 
@@ -154,7 +154,7 @@ function main(): i32 {
         if (churn[2] != k + 2) { return 97; }
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "enum-strarr-payload-arm-borrow", 0)
 
@@ -183,7 +183,7 @@ function main(): i32 {
         if (churn[0] != k + 9) { return 97; }
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, "option-array-payload-arm-borrow", 0)
 }
@@ -221,7 +221,7 @@ function main(): i32 {
     var churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// The .append sibling — the in-place arr_push path, where the retain is an
@@ -237,7 +237,7 @@ function main(): i32 {
     var churn2: N = Leaf(55);
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 	// TWO containers off one alias: the retain is per-store, not per-bind, so
@@ -255,7 +255,7 @@ function main(): i32 {
     if (describe(xs[0]) != 102) { return 97; }
     if (describe(xs[1]) != 102) { return 97; }
     if (describe(churn[0]) + describe(churn2) != 56) { return 97; }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
 }

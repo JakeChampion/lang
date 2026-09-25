@@ -17,7 +17,7 @@ import (
 // overwrite can release the consumed key it discards.
 //
 // The assert is ABSOLUTE and on every backend: the heap bump across 1000
-// build-and-drop rounds is flat, `__rc_underflow()` reads zero, and the
+// build-and-drop rounds is flat, `__rc_underflow_count()` reads zero, and the
 // module is produced WHOLE by the typed path — a body the typed path refused
 // would fall to the AST lowering and the flat heap would say nothing about
 // this path. Each program is also checked to answer what the interpreter

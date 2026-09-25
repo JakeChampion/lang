@@ -51,7 +51,7 @@ function main(): i32 {
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (total(h) != 5) { return 98; }
     if (acc < 0) { return 97; }
     return 0;
@@ -78,7 +78,7 @@ function main(): i32 {
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (pick(g, 1) != 7) { return 98; }
     if (firstof(t) != 11) { return 97; }
     if (acc < 0) { return 96; }
@@ -107,7 +107,7 @@ function main(): i32 {
         acc = (acc + junk[0]) % 251;
         k = k + 1;
     }
-    if (__rc_underflow() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     if (total(h, ["z"]) != 5) { return 98; }
     if (acc < 0) { return 97; }
     return 0;

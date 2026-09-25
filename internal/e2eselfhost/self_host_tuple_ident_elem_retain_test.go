@@ -118,7 +118,7 @@ function main(): i32 { var xs: i32[] = [7, 11]; var x: i32 = 0; var r: i32 = 0; 
     var acc: i32 = t.1[0];
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 53,
 		},
 		{
@@ -133,7 +133,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var acc: i32 = t.0;
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 53,
 		},
 		{
@@ -153,7 +153,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     { var t: (i32[], i32) = (xs, i); acc = acc + t.0[1]; }
     return acc;
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -183,7 +183,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 // the "TUPRC:" class has always applied, for the reason its own comment gives —
 // "leaving a live alias to over-release".
 //
-// Each probe ends with an explicit `__rc_underflow()` check, and that is the
+// Each probe ends with an explicit `__rc_underflow_count()` check, and that is the
 // essential part: WITHOUT it both cases pass on a compiler that over-releases,
 // because a doubly-released block goes back to the freelist and the arithmetic
 // still comes out at 40. The first version of this test was vacuous for exactly
@@ -226,7 +226,7 @@ function round(i: i32): i32 {
     if (d[0] < 0) { return 0; }
     return u[0] + u[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 		{
@@ -239,7 +239,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     var u: i32[] = t.1;
     return u[0] + u[1];
 }
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow() != 0) { return 99; } return x % 83; }`,
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 40,
 		},
 	} {
