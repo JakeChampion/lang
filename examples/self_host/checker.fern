@@ -11891,9 +11891,9 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, settles: boolean, s: 
   return call_diags(e, s);
 }
 
-// method_missing: a method call on a scalar, string, array or map receiver
-// names no method that receiver has, the E043 each receiver's arm reports.
-// Any other receiver answers false.
+// method_missing: a method call names nothing its receiver can call — no
+// method on a scalar, string, array or map, and on a struct neither a method,
+// a builtin, nor a function-typed field. Any other receiver answers false.
 function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean {
   match (recv) {
     typeinfo.TypeI32(it) => { return s.lookup_method(field, int_label(it)).name.len() == 0; },
@@ -11901,6 +11901,15 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     typeinfo.TypeString(_) => { return field != "len" && field != "as_bytes" && s.lookup_method(field, "string").name.len() == 0; },
     typeinfo.TypeArray(_) => { return field != "append" && field != "with" && field != "len" && !s.has_array_method(field); },
     typeinfo.TypeMap(_) => { return !util.has_str(s.methods_in_namespace("Map"), field); },
+    typeinfo.TypeStruct(sn) => {
+      if (is_cell_type(recv) || s.lookup_method(field, sn.name).name.len() > 0 || !is_unknown(builtin_method_sig(sn.name, field))) { return false; }
+      var fsig: StructSig = s.lookup_struct(sn.name);
+      if (fsig.name.len() == 0) { return false; }
+      var fi: i32 = field_index(fsig, field);
+      if (fi < 0) { return true; }
+      if let typeinfo.TypeFunc(_) = fsig.field_types[fi] { return false; }
+      return true;
+    },
     _ => { return false; }
   }
   return false;
@@ -11916,8 +11925,9 @@ function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
 }
 
 // The declared parameter types of a call where the callee resolves: a free
-// function, a struct's method, a function value, or a builtin method that
-// stores its argument into a map or an array. Empty otherwise.
+// function, a struct's method or function-typed field, a function value, or a
+// builtin method that stores its argument into a map or an array. Empty
+// otherwise.
 function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -11928,7 +11938,13 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
     },
     ast.ExprFieldAccess(mfa) => {
       var rt: typeinfo.Type = check_expr(mfa.obj, s);
-      if let typeinfo.TypeStruct(sn) = rt { return s.lookup_method(mfa.field, sn.name).param_types; }
+      if let typeinfo.TypeStruct(sn) = rt {
+        var msig: MethodSig = s.lookup_method(mfa.field, sn.name);
+        if (msig.name.len() > 0) { return msig.param_types; }
+        if let typeinfo.TypeFunc(ff) = check_expr(c.callee, s) {
+          if (ff.params_known) { return ff.param_types; }
+        }
+      }
       if let typeinfo.TypeMap(mt) = rt {
         if (mfa.field == "insert") { return [mt.key, mt.value]; }
       }

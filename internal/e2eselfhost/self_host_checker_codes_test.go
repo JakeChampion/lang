@@ -2899,6 +2899,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"unresolved-method-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = []; xs = xs.frob(Same { a: 1, b: y }); return 0; }\n"},
 		{"retired-method-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = []; xs = xs.set(Same { a: 1, b: y }); return 0; }\n"},
 		{"undefined-function-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; return nope(Same { a: 1, b: y }); }\n"},
+		{"struct-receiver-unresolved-args-unchecked", "struct Same[T] { a: T, b: T }\nstruct P { x: i32, f: (Same[i64]) => i32 }\nfunction main(): i32 { var y: i64 = 5; var p: P = P { x: 1, f: (s: Same[i64]): i32 => 0 }; var a: i32 = p.nope(Same { a: 1, b: y }); var b: i32 = p.x(Same { a: 1, b: y }); var c: i32 = p.f(Same { a: 1, b: y }); return 0; }\n"},
 		{"struct-lit-later-literal-settles-ok", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var u = Same { a: y, b: 1 }; var r: i64 = u.b; return 0; }\n"},
 		{"struct-lit-field-e043-var", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[string] = Box { v: 1 }; return 0; }\n"},
 		{"struct-lit-field-e043-return", "struct Box[T] { v: T }\nfunction mk(): Box[string] { return Box { v: 1 }; }\nfunction main(): i32 { return 0; }\n"},
