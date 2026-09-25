@@ -12534,6 +12534,25 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
   return acc;
 }
 
+// registered_intrinsics are the `__` names native registers a signature for
+// before it reads a program; TestSelfHostRegisteredIntrinsicsMatch pins the
+// list entry for entry.
+function registered_intrinsics(): string[] {
+  return [
+    "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count",
+    "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
+    "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
+    "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
+    "__count_runs", "__crc32_cksum", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_drop_arr_ptr",
+    "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
+    "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
+    "__map_hash_seed", "__memchr", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+    "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
+    "__round_f64", "__scale_f64", "__scan_set", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
+    "__store_ptr", "__sum_bytes", "__trunc_f64"
+  ];
+}
+
 // redeclares reports whether funcs[di] redeclares an earlier function, method
 // or associated function, or a surface builtin.
 function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
@@ -12558,9 +12577,9 @@ function redeclares(funcs: parser.FuncDecl[], di: i32): boolean {
     }
     ej = ej + 1;
   }
-  // A free function named like a surface builtin redeclares it, as native's
-  // pre-registered signature makes it there.
-  if (f2.receiver_type.len() == 0 && !is_unknown(builtin_sig(f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it, as
+  // native's pre-registered signature makes it there.
+  if (f2.receiver_type.len() == 0 && (!is_unknown(builtin_sig(f2.name)) || util.has_str(registered_intrinsics(), f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -15166,7 +15185,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
 // two claim sets; the callee rule picks which of them this function may reach.
 // fip_builtin_callees is native's fipNonAllocBuiltins: the builtins that lower
 // to instructions or a runtime scan allocating nothing and returning a scalar,
-// less any name the module declares itself. irfipverify's E068 stays the
+// less any name the module declares as a free function. irfipverify's E068 stays the
 // backstop for what they emit.
 function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   var out: string[] = [];
@@ -15175,7 +15194,7 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
       "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns"] {
     var declared: boolean = false;
     for fd in funcs {
-      if (fd.name == name) { declared = true; }
+      if (fd.name == name && fd.receiver_type.len() == 0) { declared = true; }
     }
     if (!declared) { out = out.append(name); }
   }

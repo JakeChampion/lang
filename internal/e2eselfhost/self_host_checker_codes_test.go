@@ -197,6 +197,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e053-fbip-calls-nonalloc-builtin", "fbip function f(x: u32): i32 { return __ctz32(x); }\nfunction main(): i32 { return f(8 as u32); }\n", nil},
 		{"e053-fip-calls-allocating-builtin", "fip function f(xs: f64[]): f64[] { return __scale_f64(xs, 2.0); }\nfunction main(): i32 { return f([1.0]).len(); }\n", []string{"E053"}},
 		{"e006-builtin-redeclared", "function print(s: string): void { }\nfunction main(): i32 { print(\"x\"); return 0; }\n", []string{"E006"}},
+		// An intrinsic's name is registered too, so a free function taking it
+		// is E006; a METHOD of that name shadows nothing, natively or here.
+		{"e006-intrinsic-redeclared", "function __memchr(s: string, b: i32, f: i32): i32 { return 0; }\nfunction main(): i32 { return __memchr(\"a\", 1, 0); }\n", []string{"E006"}},
+		{"e053-method-named-like-builtin", "struct R { v: i32 }\nfunction (r: R) __memchr(): i32 { var a: i32[] = [1]; return a.len(); }\nfip function f(s: string): i32 { return __memchr(s, 44, 0); }\nfunction main(): i32 { return f(\"a,b\"); }\n", nil},
 		{"e006-builtin-redeclared-fip-callee", "function monotonic_ns(): i64 { var a: i32[] = [1]; return a.len() as i64; }\nfip function f(): i32 { return monotonic_ns() as i32; }\nfunction main(): i32 { return f(); }\n", []string{"E006", "E053"}},
 		// A method call's written type arguments bind the method's parameters
 		// (#9976): a short list the method's own, the last ones, a full list all
