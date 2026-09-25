@@ -1279,7 +1279,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, type_param_count: i32, type_params: string[], param_bound: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, type_param_count: i32, type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -2147,7 +2147,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -4467,7 +4467,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // binds, so a call with no variable in it reaches the fallthrough as before.
   if (type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
     let (bn, bt) = arg_bindings(sig, c, s);
-    let (bbn, bbt) = bound_bindings(sig, c, s, bn, bt);
+    let (bbn, bbt) = bound_bindings(sig, s, bn, bt);
     bn = bbn;
     bt = bbt;
     // A type parameter every one of whose arguments is an integer literal
@@ -4524,33 +4524,37 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
 function bound_arg_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], bt: typeinfo.Type[], s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   var i: i32 = 0;
-  while (i < sig.param_bound.len() && i < c.args.len()) {
-    if (sig.param_bound[i].len() > 0) {
-      var at: typeinfo.Type = check_expr(c.args[i], s);
-      for entry in parser.split_plus_bounds(sig.param_bound[i]) {
-        var bref: parser.TypeRef = parser.parse_type_ref(entry);
-        var iargs: typeinfo.Type[] = impl_trait_args(bref, at, s);
-        if (iargs.len() > 0 && iargs.len() == bref.args.len()) {
-          var want: typeinfo.Type[] = [];
-          var clash: boolean = false;
-          var k: i32 = 0;
-          while (k < iargs.len()) {
-            var w: typeinfo.Type = type_from_ref_subst(bref.args[k], bn, bt, s.structs.names, s.unions.names);
-            if (type_contains_unknown(w)) { return out; }
-            if (!type_eq(w, iargs[k])) { clash = true; }
-            want = want.append(w);
-            k = k + 1;
-          }
-          if (clash) {
-            var tr: string = trait_display(parser.derive_simple_name(bref.base), s.trait_reqs);
-            out = out.append(dg_at("E021", "type argument " + sig.param_type_names[i] + " = " + util.demangle(type_label(at)) + " implements " + tr + trait_args_label(iargs) + " but the bound requires " + tr + trait_args_label(want) + " (in " + util.demangle(sig.name) + ")", c.line, c.col));
-          }
-        }
+  while (i < sig.type_params.len() && i < sig.type_bounds.len()) {
+    var bi: i32 = util.index_of_str(bn, sig.type_params[i]);
+    if (sig.type_bounds[i].len() > 0 && bi >= 0) {
+      for entry in parser.split_plus_bounds(sig.type_bounds[i]) {
+        out = util.append_diags(out, bound_entry_diag(sig, sig.type_params[i], bt[bi], parser.parse_type_ref(entry), bn, bt, c, s));
       }
     }
     i = i + 1;
   }
   return out;
+}
+
+// bound_entry_diag is bound_arg_diags for one bound on type parameter `tp`,
+// bound to `at`: nothing while either side still has an unknown in it.
+function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: parser.TypeRef, bn: string[], bt: typeinfo.Type[], c: ast.ExprCall, s: Scope): util.Diag[] {
+  var none: util.Diag[] = [];
+  var iargs: typeinfo.Type[] = impl_trait_args(bref, at, s);
+  if (iargs.len() == 0 || iargs.len() != bref.args.len()) { return none; }
+  var want: typeinfo.Type[] = [];
+  var clash: boolean = false;
+  var k: i32 = 0;
+  while (k < iargs.len()) {
+    var w: typeinfo.Type = type_from_ref_subst(bref.args[k], bn, bt, s.structs.names, s.unions.names);
+    if (type_contains_unknown(w)) { return none; }
+    if (!type_eq(w, iargs[k])) { clash = true; }
+    want = want.append(w);
+    k = k + 1;
+  }
+  if (!clash) { return none; }
+  var tr: string = trait_display(parser.derive_simple_name(bref.base), s.trait_reqs);
+  return [dg_at("E021", "type argument " + tp + " = " + util.demangle(type_label(at)) + " implements " + tr + trait_args_label(iargs) + " but the bound requires " + tr + trait_args_label(want) + " (in " + util.demangle(sig.name) + ")", c.line, c.col)];
 }
 
 // trait_display names a trait as the reader wrote it, qualified by the module
@@ -4583,16 +4587,25 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
     for arm in arms { out = util.append_diags(out, dest_bound_diags(arm, dest, s)); }
     return out;
   }
+  if let ast.ExprArray(arr) = e {
+    var elem: typeinfo.Type = array_elem_type_of(dest);
+    var eout: util.Diag[] = [];
+    if (is_unknown(elem)) { return eout; }
+    for element in arr.elements { eout = util.append_diags(eout, dest_bound_diags(element, elem, s)); }
+    return eout;
+  }
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(id) = c.callee {
       if (s.defines(id.name)) { return none; }
       var sig: FuncSig = s.lookup_sig(id.name);
       if (sig.type_param_count == 0 || sig.ret_type_name.len() == 0 || c.args.len() != sig.param_types.len()) { return none; }
       let (bn, bt) = arg_bindings(sig, c, s);
-      if (bound_arg_diags(sig, c, bn, bt, s).len() > 0) { return none; }
+      let (cn, ct) = bound_bindings(sig, s, bn, bt);
+      if (bound_arg_diags(sig, c, cn, ct, s).len() > 0) { return none; }
       let (dn, dt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest, sig.type_params, s.structs.names, s.unions.names, bn, bt);
       if (dn.len() == bn.len()) { return none; }
-      return bound_arg_diags(sig, c, dn, dt, s);
+      let (fn_, ft) = bound_bindings(sig, s, dn, dt);
+      return bound_arg_diags(sig, c, fn_, ft, s);
     }
   }
   return none;
@@ -4625,28 +4638,34 @@ function collect_arm_result(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 
 // bound_bindings binds the type variables a call's bounds name: `I:
 // Iterator[T]` with I at a type whose impl is `Iterator[i32]` binds T to i32.
-function bound_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+// A variable one bound binds can make another bound's subject known, so it
+// runs until nothing new binds.
+function bound_bindings(sig: FuncSig, s: Scope, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
-  var i: i32 = 0;
-  while (i < sig.param_bound.len() && i < c.args.len()) {
-    if (sig.param_bound[i].len() > 0) {
-      var at: typeinfo.Type = check_expr(c.args[i], s);
-      for entry in parser.split_plus_bounds(sig.param_bound[i]) {
-        var bref: parser.TypeRef = parser.parse_type_ref(entry);
-        var iargs: typeinfo.Type[] = impl_trait_args(bref, at, s);
-        if (iargs.len() == bref.args.len()) {
-          var k: i32 = 0;
-          while (k < iargs.len()) {
-            let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], sig.type_params, s.structs.names, s.unions.names, ns, ts);
-            ns = n2;
-            ts = t2;
-            k = k + 1;
+  var before: i32 = 0 - 1;
+  while (ns.len() > before) {
+    before = ns.len();
+    var i: i32 = 0;
+    while (i < sig.type_params.len() && i < sig.type_bounds.len()) {
+      var bi: i32 = util.index_of_str(ns, sig.type_params[i]);
+      if (sig.type_bounds[i].len() > 0 && bi >= 0) {
+        for entry in parser.split_plus_bounds(sig.type_bounds[i]) {
+          var bref: parser.TypeRef = parser.parse_type_ref(entry);
+          var iargs: typeinfo.Type[] = impl_trait_args(bref, ts[bi], s);
+          if (iargs.len() == bref.args.len()) {
+            var k: i32 = 0;
+            while (k < iargs.len()) {
+              let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], sig.type_params, s.structs.names, s.unions.names, ns, ts);
+              ns = n2;
+              ts = t2;
+              k = k + 1;
+            }
           }
         }
       }
+      i = i + 1;
     }
-    i = i + 1;
   }
   return (ns, ts);
 }
@@ -5666,7 +5685,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.all_type_params.len(), type_params: fd.type_params, param_bound: pbnd, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.all_type_params.len(), type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -10770,7 +10789,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             }
             if (sig.type_param_count > 0) {
               let (abn, abt) = arg_bindings(sig, c, s);
-              out = util.append_diags(out, bound_arg_diags(sig, c, abn, abt, s));
+              let (fbn, fbt) = bound_bindings(sig, s, abn, abt);
+              out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
             }
           }
         }
@@ -11757,7 +11777,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     ast.ExprArray(arr) => {
       for element in arr.elements {
         var ekt: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s)) {
+        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element type " + type_label(ekt) + ", expected " + type_label(elem_ty), expr_line(element), expr_col(element)));
         }
       }
