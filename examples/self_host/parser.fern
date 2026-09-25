@@ -12927,9 +12927,10 @@ function fn_spelling_ret(t: string): string {
 // form: a simple nominal (`i32`, `string`, a bare struct `P`) passes through;
 // a NESTED monomorphisable generic-enum arg (`Opt[i32]`) recurses to its
 // mangled clone name (`Opt__i32`); a fn type (`(i32) => i32`) sanitises to a
-// symbol-safe token (native parity). Returns "" for an arg this pass still
-// can't key (an array, tuple, generic struct, or a non-generic enum), so the
-// enclosing instantiation bails cleanly.
+// symbol-safe token (native parity), and a tuple to native's `tup_…` name.
+// Returns "" for an arg this pass still can't key (an array, a generic struct,
+// a non-generic enum, or a tuple holding one), so the enclosing instantiation
+// bails cleanly.
 function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     if (arg.len() == 0) { return ""; }
     if (pk_is_fn_spelling(arg)) { return fn_key_sanitize(arg); }
@@ -12943,6 +12944,12 @@ function ge_targ_mangle(arg: string, enums: EnumDecl[]): string {
     var gi: GEInst = ge_inst_of(arg, enums);
     if (gi.ok) { return gi.mang; }
     return "";
+}
+
+// keyed_by_mangle: a spelling whose key is a mangled token rather than the
+// spelling itself, so a clone's field types must read the spelling back.
+function keyed_by_mangle(t: string): boolean {
+    return pk_is_fn_spelling(t) || (t.len() > 0 && t[0] == b'(');
 }
 
 // ge_tuple_mangle names a tuple type argument as native's mangleArg does:
@@ -13153,15 +13160,15 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
             if (owner >= 0) {
                 key = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
                 if (key.len() > 0) {
-                    // The original single-arg spelling (for a fn-keyed clone's
-                    // field type). From the annotation when present; else for
-                    // an INFERRED fn key the payload arg's full spelling
-                    // (phase-2 coarsens it to the "fn" + fn_ret field shape);
-                    // else the key IS the arg spelling (a nominal key).
+                    // The original single-arg spelling, for the clone's field
+                    // types. From the annotation when present; else for an
+                    // INFERRED mangled key (a fn or a tuple) the payload arg's
+                    // full spelling; else the key IS the arg spelling (a
+                    // nominal key).
                     carg = genum_single_arg(expected);
                     if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
                         var raw0: string = mono_infer(c.args[0], env, funcs);
-                        if (pk_is_fn_spelling(raw0)) { carg = raw0; }
+                        if (keyed_by_mangle(raw0)) { carg = raw0; }
                     }
                     if (carg.len() == 0) { carg = key; }
                     fexps = me_variant_field_expectations(enums[owner], vname, expected, key, carg, structs);
@@ -13437,7 +13444,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
                             var vga: string = vgk;
                             if (enums[vgo].type_params.len() == 1 && c.args.len() > 0) {
                                 var vgr: string = mono_infer(c.args[0], env, funcs);
-                                if (pk_is_fn_spelling(vgr)) { vga = vgr; }
+                                if (keyed_by_mangle(vgr)) { vga = vgr; }
                             }
                             return enums[vgo].name + "[" + vga + "]";
                         }

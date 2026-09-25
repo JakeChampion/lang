@@ -704,6 +704,24 @@ function main(): i32 {
     var p: (i32, i32) = b.get_or((5, 5));
     return a.get_or(9) * 10 + n.get_or(4) + p.0 + p.1;
 }`},
+	// The inferred spelling of a tuple key, bound and matched inline. The
+	// clone's name comes from the key; its payload type must come from the
+	// tuple's own spelling, not the mangled key.
+	{name: "generic-enum-at-an-inferred-tuple-key", atLeast: 2, noLeak: true, src: `
+enum Opt[T] { Sm(T), Nn }
+
+function (o: Opt[T]) get_or(d: T): T {
+    match (o) { Sm(x) => { return x; }, Nn => { return d; } }
+}
+
+function main(): i32 {
+    var o = Sm((3, 4));
+    var p: (i32, i32) = o.get_or((0, 0));
+    var q: i32 = 0;
+    match (Sm((5, 6))) { Sm(t) => { q = t.0 + t.1; }, Nn => { q = 0; } }
+    return p.0 + p.1 + q - 18;
+}
+`},
 	// A tuple key holding an array and a nested tuple with a string: the clone
 	// is `Opt__tup_i32_arr_tup_i32_string`, and its payload's counted parts are
 	// released through the clone's drop.
