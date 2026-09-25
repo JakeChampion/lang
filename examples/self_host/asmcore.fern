@@ -6621,15 +6621,24 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     return errs;
 }
 
-// refuse_decl_names prints check_decl_names' diagnostics and reports whether
-// there were any. It reads the module as parsed: the local-function lift adds
-// capture parameters with no type, so a module past module_with_builtins
-// would be refused for them. A module holding parser sentinels is left to the
-// pass that reports those (the checker maps some to their own codes), so the
-// gate never speaks over them.
-pub function refuse_decl_names(mod: parser.Module): boolean {
-    if (parse_unknown_errors_module(mod).len() > 0) { return false; }
-    var errs: util.Diag[] = check_decl_names(mod);
+// refuse_decl_names prints check_decl_names' diagnostics for every module and
+// reports whether there were any. It reads modules as parsed: the
+// local-function lift adds capture parameters with no type, so a module past
+// module_with_builtins would be refused for them.
+pub function refuse_decl_names(mods: parser.Module[]): boolean {
+    var errs: util.Diag[] = [];
+    for m in mods { errs = util.append_diags(errs, check_decl_names(m)); }
+    if (errs.len() == 0) { return false; }
+    eprint(util.format_diags(errs));
+    return true;
+}
+
+// refuse_parse_unknowns prints the parser's sentinel diagnostics and reports
+// whether there were any. A stdin driver runs it ahead of refuse_decl_names,
+// as the emitters' prologue orders the two, and it is the only parser check on
+// asm_ir_run's gated path.
+pub function refuse_parse_unknowns(mod: parser.Module): boolean {
+    var errs: util.Diag[] = parse_unknown_errors_module(mod);
     if (errs.len() == 0) { return false; }
     eprint(util.format_diags(errs));
     return true;

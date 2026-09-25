@@ -97,8 +97,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 }
 
 // TestSelfHostDeclNamesGateNativeX86_64 is the same refusal on the x86-64
-// driver, which emits through asm_ir and so reaches the gate through
-// asmcore.check_module rather than a driver's own call.
+// stdin driver, which calls the gate before emitting through asm_ir.
 func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -124,6 +123,62 @@ func TestSelfHostDeclNamesGateNativeX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostDeclNamesGateRawPathsX86_64 covers the driver paths that emit or
+// report without the emitters' checked prologue: asm_ir_run's `-ir` fast path,
+// and asm_modload_run's merged, per-module and probe paths. A parser sentinel
+// must not stand in for the declaration gate on any of them.
+func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	irDir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, irDir, "asm_ir_run.fern")
+	irBin := buildSelfHostBin(t, gcc, irDir, "asm_ir_run.fern", "driver")
+
+	const untyped = "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n"
+	const sentinel = "function main(): i32 { return @; }\n"
+	const both = "function f(x): i32 { return @; }\nfunction main(): i32 { return f(1); }\n"
+	for _, tc := range []struct{ name, src, cause string }{
+		{"untyped", untyped, "has no type"},
+		{"sentinel", sentinel, "parser-side unknown"},
+		{"sentinel-and-untyped", both, "parser-side unknown"},
+	} {
+		t.Run("asm_ir_run-ir/"+tc.name, func(t *testing.T) {
+			out, stderr, code := runDeclGate(t, runner, irBin, []byte(tc.src), "-ir")
+			if code == 0 || len(out) != 0 {
+				t.Fatalf("driver exited %d with %d bytes, want a refusal before codegen", code, len(out))
+			}
+			if !strings.Contains(stderr, tc.cause) {
+				t.Errorf("refusal did not name the cause:\n%s", stderr)
+			}
+		})
+	}
+	out, stderr, code := runDeclGate(t, runner, irBin, []byte("function main(): i32 { return 42; }\n"), "-ir")
+	if code != 0 || len(out) == 0 {
+		t.Fatalf("asm_ir_run -ir exited %d with %d bytes for a legal program\n%s", code, len(out), stderr)
+	}
+
+	if len(runner) != 0 {
+		t.Skip("modload driver runs natively; skipping under an exec runner")
+	}
+	mlDir := writeSelfHostModloadProject(t)
+	mlBin := buildSelfHostBin(t, gcc, mlDir, "asm_modload_run.fern", "modload")
+	stage := t.TempDir()
+	for _, tc := range []struct{ name, src string }{{"untyped", untyped}, {"sentinel-and-untyped", both}} {
+		mainPath := writeTemp(t, stage, tc.name+".fern", []byte(tc.src))
+		for _, args := range [][]string{nil, {"-per-module-count"}, {"-ir-probe"}} {
+			t.Run("asm_modload_run/"+tc.name+"/"+strings.Join(args, ""), func(t *testing.T) {
+				cmd := exec.Command(mlBin, append([]string{mainPath}, args...)...)
+				combined, _ := cmd.CombinedOutput()
+				if cmd.ProcessState.ExitCode() == 0 {
+					t.Fatalf("driver accepted an untyped parameter:\n%s", combined)
+				}
+				if !strings.Contains(string(combined), "has no type") {
+					t.Errorf("refusal did not name the cause:\n%s", combined)
+				}
+			})
+		}
+	}
+}
+
 func writeTemp(t *testing.T, dir, name string, src []byte) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
@@ -135,13 +190,13 @@ func writeTemp(t *testing.T, dir, name string, src []byte) string {
 
 // runDeclGate runs the driver returning stdout, stderr and the exit code — the
 // gate cases expect a non-zero exit, which runCapture would fatal on.
-func runDeclGate(t *testing.T, runner []string, bin string, stdin []byte) ([]byte, string, int) {
+func runDeclGate(t *testing.T, runner []string, bin string, stdin []byte, args ...string) ([]byte, string, int) {
 	t.Helper()
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
-		cmd = exec.Command(bin)
+		cmd = exec.Command(bin, args...)
 	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), bin), args...)...)
 	}
 	cmd.Stdin = strings.NewReader(string(stdin))
 	var stdout, stderr strings.Builder

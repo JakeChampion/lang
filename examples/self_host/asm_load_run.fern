@@ -261,6 +261,10 @@ function main(): i32 {
         }
     }
 
+    var parsed: parser.Module[] = [entry_mod];
+    for lm in loaded { parsed = parsed.append(lm.mod); }
+    if (asmcore.refuse_decl_names(parsed)) { return 1; }
+
     // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
     // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
     // un-mangled modules. The native runtime's global string buffer can hold
@@ -350,7 +354,6 @@ function main(): i32 {
     }
 
     var merged: parser.Module = flatten.bundle(entry_mod, loaded);
-    if (asmcore.refuse_decl_names(merged)) { return 1; }
 
     // Prune unreachable functions (sound, name-based reachability from main)
     // so a stdlib-importing program's merged module fits the IR budget. Raw
