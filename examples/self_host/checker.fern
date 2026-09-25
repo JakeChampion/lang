@@ -10716,7 +10716,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
   while (di < c.args.len()) {
     var dest: typeinfo.Type = t_unknown("no declared parameter");
     if (di < dests.len()) { dest = dests[di]; }
-    out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
+    out = util.append_diags(out, dest_call_diags(c.args[di], dest, false, s));
     di = di + 1;
   }
   // E038: calling a NON-FUNCTION value (`x(3)` where x is an i32 /
@@ -11644,7 +11644,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     if (fsig.name.len() > 0 && vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
       fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
     }
-    out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
+    out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, true, s));
     vi = vi + 1;
   }
   if (sl.has_base) {
@@ -11864,7 +11864,11 @@ function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scop
 // element checked against that type by `array_elem_check`, so the literal's
 // own first-element-anchored E034 stands down: `[1, "a"]` is a valid
 // `dyn Show[]` (#10097).
-function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
+// `settles` says whether the destination settles what it receives, as a `var`,
+// a `return` and a struct field do: there an array literal's elements are read
+// at its element type. A call argument does not: native reads an array
+// argument's elements without the parameter's, and the two must agree.
+function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, settles: boolean, s: Scope): util.Diag[] {
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ds) = dest {
       if (ds.name == sl.type_name) { return call_diags_struct_lit(sl, ds.args, s, []); }
@@ -11874,7 +11878,10 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       var out: util.Diag[] = [];
-      for element in a.elements { out = util.append_diags(out, dest_call_diags(element, elem, s)); }
+      for element in a.elements {
+        if (settles) { out = util.append_diags(out, dest_call_diags(element, elem, true, s)); }
+        else { out = util.append_diags(out, call_diags(element, s)); }
+      }
       return out;
     }
   }
@@ -11945,11 +11952,11 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         }
         var vdest: typeinfo.Type = t_unknown("no declared type");
         if (v.type_name.len() > 0) { vdest = vsc.resolve_type(v.type_name); }
-        out = util.append_diags(out, dest_call_diags(v.init, vdest, vsc));
+        out = util.append_diags(out, dest_call_diags(v.init, vdest, true, vsc));
         out = util.append_diags(out, array_elem_check(array_elem_type_of(vdest), v.init, vsc));
       },
       ast.StmtReturn(r) => {
-        out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, cur));
+        out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, true, cur));
         // E034: a composite-array `return` value's elements checked
         // against the function's declared element type (top-level
         // stmts carry an unknown ret_type sentinel and are skipped).
