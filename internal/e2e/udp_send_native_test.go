@@ -27,8 +27,12 @@ func TestX86_64UdpSend(t *testing.T) {
 
 func TestArm64UdpSend(t *testing.T) {
 	_, qemu := arm64Tooling(t)
+	var runner []string
+	if qemu != "" {
+		runner = []string{qemu}
+	}
 	for _, backend := range []string{"flat", "ssa"} {
-		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, []string{qemu}) })
+		t.Run(backend, func(t *testing.T) { runNativeUdpSend(t, "arm64-linux", backend, runner) })
 	}
 }
 
@@ -61,7 +65,11 @@ func runNativeUdpSend(t *testing.T, target, backend string, runner []string) {
 	run := func(bin string) int {
 		args := append(append([]string{}, runner...), bin)
 		cmd := exec.Command(args[0], args[1:]...)
-		_ = cmd.Run()
+		if err := cmd.Run(); err != nil {
+			if _, exited := err.(*exec.ExitError); !exited {
+				t.Fatalf("run %s: %v", bin, err)
+			}
+		}
 		return cmd.ProcessState.ExitCode()
 	}
 
