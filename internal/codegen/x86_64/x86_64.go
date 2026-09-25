@@ -918,6 +918,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.emitTcpCloseRuntime()
 		g.emitTcpConnectRuntime()
 		g.emitTcpPollableRuntime()
+	}
+	if g.usesUdp {
 		g.emitUdpSendRuntime()
 	}
 	if g.usesPoll {
@@ -1400,6 +1402,7 @@ type generator struct {
 	// exited yet.
 	usesProcWaitpidNohang bool
 	usesTcp               bool
+	usesUdp               bool
 	usesEnv               bool
 	usesArgs              bool
 	usesAllocU8           bool
@@ -2090,7 +2093,9 @@ func (g *generator) recordUse(target string) {
 		g.usesProcWaitpid = true
 	case "proc_waitpid_nohang":
 		g.usesProcWaitpidNohang = true
-	case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable", "udp_send":
+	case "udp_send":
+		g.usesUdp = true
+	case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_connect", "tcp_pollable":
 		g.usesTcp = true
 		// usesTcp always emits the __fern_tcp_recv helper, which calls
 		// __alloc_u8 for its read buffer — so any tcp builtin needs

@@ -876,6 +876,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitTcpSendRuntime()
 		g.emitTcpCloseRuntime()
 		g.emitTcpPollableRuntime()
+	}
+	if g.usesUdp {
 		g.emitUdpSendRuntime()
 	}
 	if g.usesPoll {
@@ -15978,6 +15980,8 @@ type generator struct {
 	// site reachability so non-server programs don't pay for
 	// the socket boilerplate.
 	usesTcp bool
+	// usesUdp pulls in __fern_udp_send alone.
+	usesUdp bool
 	// usesPoll pulls in `__fern_poll(fds, timeout_ms)` — the std/task
 	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
 	// Darwin pending kqueue).
@@ -20721,7 +20725,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect", "udp_send":
+		case "udp_send":
+			target = "__fern_" + target
+			g.usesUdp = true
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
 			target = "__fern_" + target
 			g.usesTcp = true
 			// usesTcp always emits __fern_tcp_recv, which calls
