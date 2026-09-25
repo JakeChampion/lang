@@ -4577,6 +4577,12 @@ function trait_args_label(args: typeinfo.Type[]): string {
 // `Iterator[string]`.
 function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   var none: util.Diag[] = [];
+  var arms: ast.Expr[] = value_if_results(e);
+  if (arms.len() > 0) {
+    var out: util.Diag[] = [];
+    for arm in arms { out = util.append_diags(out, dest_bound_diags(arm, dest, s)); }
+    return out;
+  }
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(id) = c.callee {
       if (s.defines(id.name)) { return none; }
@@ -4590,6 +4596,31 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
     }
   }
   return none;
+}
+
+// value_if_results are the values a value-`if` or value-`match` yields, the
+// arms its desugared IIFE returns or stores into its value local; none for any
+// other expression. An arm that binds names is read in the enclosing scope, so
+// what it mentions from them stays unknown.
+function value_if_results(e: ast.Expr): ast.Expr[] {
+  var none: ast.Expr[] = [];
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lam) = c.callee {
+      if (c.args.len() != 0 || (lam.origin != parser.ORIGIN_IF_EXPR && lam.origin != parser.ORIGIN_MATCH_EXPR)) { return none; }
+      var out: ast.Expr[] = [];
+      for st in lam.body { out = astwalk.fold_stmt_spine(st, out, collect_arm_result); }
+      return out;
+    }
+  }
+  return none;
+}
+
+function collect_arm_result(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
+  if let ast.StmtReturn(r) = st { return acc.append(r.value); }
+  if let ast.StmtAssign(a) = st {
+    if (parser.is_value_local_name(a.target)) { return acc.append(a.value); }
+  }
+  return acc;
 }
 
 // bound_bindings binds the type variables a call's bounds name: `I:

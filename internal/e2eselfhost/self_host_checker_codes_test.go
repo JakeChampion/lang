@@ -3147,6 +3147,12 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bound-lambda-binds-e021", "import \"core/iter\";\nfunction main(): i32 { return iter.count_by(iter.range(0, 5), (x: string): boolean => true); }\n"},
 		{"bound-qualified-infers-e003", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { var r = grab(iter.range(0, 3)); var x: string = r; return 0; }\n"},
 		{"bound-qualified-dest-e021", "import \"core/iter\";\nfunction grab[T, I: iter.Iterator[T]](it: I): Option[T] { return iter.nth(it, 0); }\nfunction main(): i32 { var y: Option[string] = grab(iter.range(0, 3)); return 0; }\n"},
+		// A value-`if` or value-`match` arm is read at the destination too
+		// (#10264): the desugared IIFE's results each take it.
+		{"bound-dest-value-if-var-e021", "import \"core/iter\";\nfunction main(): i32 { var xs: string[] = if (true) { iter.to_array(iter.range(0, 5)) } else { [] }; return 0; }\n"},
+		{"bound-dest-value-if-return-e021", "import \"core/iter\";\nfunction f(c: boolean): string[] { return if (c) { iter.to_array(iter.range(0, 5)) } else { [] }; }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-dest-value-match-e021", "import \"core/iter\";\nfunction g(k: i32): string[] { var xs: string[] = match (k) { 0 => iter.to_array(iter.range(0, 5)), _ => [] }; return xs; }\nfunction main(): i32 { return 0; }\n"},
+		{"bound-dest-value-if-agrees-ok", "import \"core/iter\";\nfunction ok(c: boolean): i32[] { var xs: i32[] = if (c) { iter.to_array(iter.range(0, 5)) } else { [] }; return xs; }\nfunction main(): i32 { return ok(true).len(); }\n"},
 		{"bound-dest-agrees-ok", "import \"core/iter\";\nfunction main(): i32 { var xs: i32[] = iter.to_array(iter.range(0, 5)); var m: Option[i32] = iter.nth(iter.range(0, 5), 1); return xs[0]; }\n"},
 		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
 		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { var xs: i32[] = [2, 3]; return num.product(xs); }\n"},
