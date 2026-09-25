@@ -278,7 +278,7 @@ function concrete_union(u: typeinfo.TypeUnion): boolean {
 }
 
 function concrete_list(ts: typeinfo.Type[]): boolean {
-    for t in ts { if (!concrete(t, false)) { return false; } }
+    for t in ts { if (!concrete(t, true)) { return false; } }
     return true;
 }
 

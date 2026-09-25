@@ -1559,6 +1559,23 @@ function main(): i32 {
     return bad;
 }
 `},
+	// The unit value in every position it takes: a parameter, a binding with
+	// and without an annotation, a tuple element read back, and a variant
+	// payload. It is the constant 0 in an i32-shaped slot, as the AST lowering
+	// has it, so a unit argument crosses a call the same way on both.
+	{name: "the-unit-value-in-every-position", atLeast: 3, noLeak: true, src: `
+function sink(u: ()): i32 { return 7; }
+function fallible(): Result[(), i32] { return Ok(()); }
+function main(): i32 {
+    var u: () = ();
+    var v = ();
+    var t: ((), i32) = ((), 5);
+    var w: (i32, ()) = (4, u);
+    var n: i32 = 0;
+    match (fallible()) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 10; } }
+    return n + sink(u) + sink(v) + sink(t.0) + sink(w.1) + t.1 + w.0 - 38;
+}
+`},
 	// `without` over a counted column releases the removed entry's key and
 	// value (#9970): a string key, a string value, and a keyed column over a
 	// column of boxes, each read back after the delete and re-inserted once.
