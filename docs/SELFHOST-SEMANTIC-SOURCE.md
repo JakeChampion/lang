@@ -2146,8 +2146,9 @@ What is left, in order:
    credential and signal leaves, `stat` / `lstat` / `statfs`, the file
    readers and writers, the directory walkers, and the `Reader` / `Writer`
    handle operations; the environment, host, stdin, process, signal,
-   terminal, timer, poll and socket leaves. 119 of the 128 helper sources
-   check on their own; the rest are listed below.
+   terminal, timer, poll and socket leaves, and `arr_slice`, which reaches its
+   source array's address through `__raw_arr_ptr`. 120 of the 128 helper
+   sources check on their own; the rest are listed below.
 
    The AST lowering still lowers every helper when the typed path is off, so
    it takes the retyped spellings as well: a 64-bit syscall operand lowers at
@@ -2161,8 +2162,7 @@ What is left, in order:
 
    A bundle routes only when every helper in it checks, so the filesystem
    bundle takes the typed path for a program only once all the fs helpers
-   that program needs are retyped. `__fern_arr_slice` needs an array's box
-   address, which the raw floor has no intrinsic for. A helper that calls
+   that program needs are retyped. A helper that calls
    another helper outside its source (`open_with` calls `__fern_open_res`)
    is checked alone and fails on the callee. `__fern_map_find` and
    `__fern_map_delete_rel` call through a bare code address (`eqfn(k,

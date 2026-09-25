@@ -2872,8 +2872,8 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 // The floor the runtime helpers are written on, and the two rc test hooks:
 // the ops irlower emits for each. `__raw_data` has no op of its own: a string
-// value is its box, and the data word is slot 0 of it. `__raw_array` emits
-// nothing: the address already is the array.
+// value is its box, and the data word is slot 0 of it. `__raw_array` and
+// `__raw_arr_ptr` emit nothing: the address already is the array.
 struct RawOps { name: string, ops: ir.Op[] }
 
 function raw_floor_ops(): RawOps[] {
@@ -2885,6 +2885,7 @@ function raw_floor_ops(): RawOps[] {
         RawOps { name: "__raw_load_ptr", ops: [ir.op_raw_load_ptr()] },
         RawOps { name: "__raw_string", ops: [ir.op_raw_string()] },
         RawOps { name: "__raw_array", ops: [] },
+        RawOps { name: "__raw_arr_ptr", ops: [] },
         RawOps { name: "__raw_data", ops: [ir.op_const_i32(0), ir.op_raw_load_ptr()] },
         RawOps { name: "__raw_addr", ops: [ir.op_raw_addr()] },
         RawOps { name: "__raw_arr_box", ops: [ir.op_raw_arr_box()] },

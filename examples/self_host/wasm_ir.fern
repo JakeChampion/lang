@@ -1755,8 +1755,8 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
 // space nor a syscall instruction to lower them onto.
 //
 // __raw_load8 / __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm
-// selects them (kind_tag 83 / 84 / 85; raw_load8 also backs __load_u8) — and neither are their two type-only bridges: __raw_data
-// lowers to a raw_load_ptr and __raw_array emits nothing at all.
+// selects them (kind_tag 83 / 84 / 85; raw_load8 also backs __load_u8) — and neither are their type-only bridges: __raw_data
+// lowers to a raw_load_ptr, and __raw_array and __raw_arr_ptr emit nothing at all.
 function is_raw_floor_builtin(name: string): boolean {
     if (name == "__raw_alloc" || name == "__raw_store8") { return true; }
     if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") { return true; }
