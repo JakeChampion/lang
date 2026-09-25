@@ -1649,9 +1649,10 @@ function instruction_error(ins: ssa.SInst, f: Func): string {
 // environment box every function value is, so a parameter or result of
 // function type is a slot when its own signature is (#10024). A void result is a word like any other: every backend hands one back from
 // a void body, so the call stands in statement position like any void call.
+// A unit parameter is a word too, the constant 0.
 function func_shape_error(fn: typeinfo.TypeFunc): string {
     if (!fn.params_known) { return "function type without a signature"; }
-    for p in fn.param_types { if (!signature_slot(p)) { return "function signature slot"; } }
+    for p in fn.param_types { if (!is_void(p) && !signature_slot(p)) { return "function signature slot"; } }
     if (!is_void(fn.ret_type) && !signature_slot(fn.ret_type)) { return "function signature slot"; }
     return "";
 }
