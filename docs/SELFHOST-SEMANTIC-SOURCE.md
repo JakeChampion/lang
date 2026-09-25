@@ -2147,8 +2147,10 @@ What is left, in order:
    readers and writers, the directory walkers, and the `Reader` / `Writer`
    handle operations; the environment, host, stdin, process, signal,
    terminal, timer, poll and socket leaves, and `arr_slice`, which reaches its
-   source array's address through `__raw_arr_ptr`. 120 of the 128 helper
-   sources check on their own; the rest are listed below.
+   source array's address through `__raw_arr_ptr`, and the map helpers, which
+   call the eq and release functions an op site hands them through
+   `__raw_call1` / `__raw_call2`. 112 of the 114 helper sources check on their
+   own; the rest are listed below.
 
    The AST lowering still lowers every helper when the typed path is off, so
    it takes the retyped spellings as well: a 64-bit syscall operand lowers at
@@ -2162,12 +2164,10 @@ What is left, in order:
 
    A bundle routes only when every helper in it checks, so the filesystem
    bundle takes the typed path for a program only once all the fs helpers
-   that program needs are retyped. A helper that calls
-   another helper outside its source (`open_with` calls `__fern_open_res`)
-   is checked alone and fails on the callee. `__fern_map_find` and
-   `__fern_map_delete_rel` call through a bare code address (`eqfn(k,
-   key)`), which has no typed spelling yet. `__fern_str_eq` takes either a
-   string or a raw pointer today, and needs one signature.
+   that program needs are retyped. The two helpers left call another helper
+   outside their own source (`open_with` calls `__fern_open_res`, `read_file`
+   calls `__fern_utf8_valid`), so they fail when checked alone and check inside
+   the bundle.
 2. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column.
 3. The AST lowering is deleted, along with the differential legs that compare

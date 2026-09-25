@@ -120,6 +120,18 @@ function main(): i32 {
     match (m.values().max()) { Some(v) => { if (v != 20) { return 2; } }, None => { return 3; } }
     return m.values().sum();
 }`},
+	// std/array's methods on an untyped literal: the element type is inferred,
+	// so the i32 instance is chosen, and min/max answer Some or None.
+	{"untyped-literal-array-methods", `import "std/array";
+function main(): i32 {
+    var a = [5, 3, 8, 1];
+    var t: i32 = a.sum() + a.product();
+    match (a.min()) { Some(m) => { t = t + m; }, None => { return 1; } }
+    match (a.max()) { Some(m) => { t = t + m; }, None => { return 2; } }
+    var e: i32[] = [];
+    match (e.max()) { Some(_) => { return 3; }, None => {} }
+    return t; // 17 + 120 + 1 + 8
+}`},
 	// std/i32's methods run their own bodies. The self-host used to call a
 	// runtime helper of its own for pow / gcd / lcm, and its pow answered 1 for a
 	// negative exponent where the stdlib answers 0 (#10244).

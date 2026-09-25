@@ -200,7 +200,7 @@ guard excludes this shape.
 ### Closed, no longer avoid-list items
 
 - **Runtime-helper migration to Fern is complete** — `chr`, `str_concat`,
-  `i32_to_string`, `str_to_upper`/`lower`, `str_repeat`, `str_reverse`,
+  `i32_to_string`, `str_to_upper`/`lower`, `str_repeat`,
   `str_replace`, `string_from_bytes`, `str_split` all lower as Fern functions
   via the raw-memory intrinsics.
 - **Filesystem ops** (`stat` / `read_dir` / `remove_file` / `remove_dir_all` /

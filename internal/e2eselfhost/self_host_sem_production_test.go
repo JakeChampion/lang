@@ -1511,7 +1511,13 @@ function main(): i32 { return boxes() % 100; }
 	// `without` over a counted column releases the removed entry's key and
 	// value (#9970): a string key, a string value, and a keyed column over a
 	// column of boxes, each read back after the delete and re-inserted once.
-	{name: "map-delete-releases-the-entry", atLeast: 3, noLeak: true, src: `
+	// The map helpers are typed: the keyed column's search calls its eq
+	// function, and its release the value column's, through __raw_call*.
+	{name: "map-delete-releases-the-entry", atLeast: 3, noLeak: true,
+		reports: []string{
+			"runtime __fern_map_find: produced", "runtime __fern_map_delete: produced",
+			"runtime __fern_map_delete_rel: produced",
+		}, src: `
 import "core/map";
 import "core/cmp";
 @derive(cmp.Eq, cmp.Hash)
