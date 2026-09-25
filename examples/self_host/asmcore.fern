@@ -6590,8 +6590,9 @@ pub function check_call_arity(mod: parser.Module): util.Diag[] {
     });
 }
 
-// check_decl_names rejects a module holding a NAMELESS function, trait, trait
-// requirement, struct, enum or type alias, or a parameter written with no type.
+// check_decl_names rejects a module holding a NAMELESS function, const, trait,
+// trait requirement, struct, enum or type alias, or a parameter written with no
+// type.
 // mod.resources is not walked: parse_module records a resource only when a name
 // follows `resource`, and refuses an `@import` with neither form through a
 // sentinel.
@@ -6621,7 +6622,10 @@ pub function check_decl_names(mod: parser.Module): util.Diag[] {
     var errs: util.Diag[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (mod.funcs[i].name.len() == 0) {
+        if (mod.funcs[i].name.len() == 0 && mod.funcs[i].is_const) {
+            errs = errs.append(util.Diag { code: "P001", message: malformed_type_decl_message("const"),
+                line: mod.funcs[i].line, col: mod.funcs[i].col });
+        } else if (mod.funcs[i].name.len() == 0) {
             errs = errs.append(util.Diag { code: "P001",
                 message: parser.malformed_fn_decl_message(),
                 line: mod.funcs[i].line, col: mod.funcs[i].col });
@@ -6686,9 +6690,10 @@ pub function refuse_parse_unknowns(mods: parser.Module[]): boolean {
     return true;
 }
 
-// malformed_type_decl_message is the nameless trait, struct, enum or alias text. The parser
-// returns an empty name for any token that is not an identifier, so it names no
-// cause as the cause, as parser.malformed_fn_decl_message does.
+// malformed_type_decl_message is the nameless trait, struct, enum, alias or
+// const text. The parser returns an empty name for any token that is not an
+// identifier, so it names no cause as the cause, as
+// parser.malformed_fn_decl_message does.
 function malformed_type_decl_message(kw: string): string {
     return "malformed " + kw + " declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)";
 }

@@ -8371,8 +8371,8 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
     var cline: i32 = p.peek_line();
     var ccol: i32 = p.peek_col();
     p = p.advance();  // consume `const`
+    // An identifier or nothing: check_decl_names refuses a nameless const.
     var name: string = p.peek_ident();
-    if (name.len() == 0) { name = p.peek_keyword(); }
     if (name.len() > 0) { p = p.advance(); }
     var ty: string = "";
     if (p.peek_punct() == ":") {
@@ -18728,6 +18728,7 @@ function parse_resource_decl_name(p: Par): (string, Par) {
 // trait. Mirrors the Go parser's impl desugaring (docs/TRAITS.md).
 function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[], string[], string, ImplDecl, ast.Stmt[], Par) {
     var out: FuncDecl[] = [];
+    var impl_bad: ast.Stmt[] = [];
     var method_names: string[] = [];
     var iline: i32 = p.peek_line();
     var icol: i32 = p.peek_col();
@@ -18767,6 +18768,10 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     if (p.peek_ident().len() > 0 && (p.peek_punct_at(1) == "." || p.peek_punct_at(1) == "::") && p.peek_ident_at(2).len() > 0) {
         first_spelling = p.peek_ident() + p.peek_punct_at(1) + p.peek_ident_at(2);
     }
+    // parse_type_name admits a keyword, which a built-in type name is; a trait
+    // name never is, so a keyword followed by `for` is refused below.
+    var first_is_kw: boolean = p.peek_ident().len() == 0 && p.peek_keyword().len() > 0;
+    var first_at: Par = p;
     var (tnr_name, tnr_ret_arr, tnr_fn_ret, tnr_p) = parse_type_name(p);
     p = tnr_p;
     var first_name: string = tnr_name;
@@ -18774,6 +18779,9 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     var trait_name: string = "";
     var impl_type: string = "";
     if (p.peek_keyword() == "for") {
+        if (first_is_kw) {
+            impl_bad = impl_bad.append(decl_sentinel(first_at, "malformed impl: its trait name could not be read (a keyword such as `use`, `type` or `match` cannot be a name)"));
+        }
         p = p.advance();
         // Trait name retained so parse_module can match the impl against
         // the trait's default methods.
@@ -18794,7 +18802,6 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
     // the impl type, as it does in a method signature.
     var assoc_names: string[] = [];
     var assoc_values: string[] = [];
-    var impl_bad: ast.Stmt[] = [];
     while (!p.at_end()) {
         if (p.peek_punct() == "}") { break; }
         var kw: string = p.peek_keyword();
