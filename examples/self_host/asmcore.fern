@@ -1805,7 +1805,7 @@ pub function rt_src_tcp_recv(t: string): string {
 // helper copies nothing: __raw_data(s) is slot 0 of the box the caller already
 // holds.
 pub function rt_src_print_str(t: string): string {
-    return "function __fern_print_str(s: string): i32 { return __syscall3(" + sysno(t, "write") + ", 1, __raw_data(s), s.len()); }";
+    return "function __fern_print_str(s: string): i32 { return __syscall3(" + sysno(t, "write") + ", 1, __raw_data(s) as i64, s.len() as i64) as i32; }";
 }
 
 // rt_src_eprint_str backs `eprint(s)` → the string's bytes on fd 2 followed by a
@@ -1814,14 +1814,14 @@ pub function rt_src_print_str(t: string): string {
 // buffer build: the payload goes straight out of the caller's box, and the newline
 // is one byte of the shared static scratch, so the helper allocates nothing.
 pub function rt_src_eprint_str(t: string): string {
-    return "function __fern_eprint_str(s: string): i32 { __syscall3(" + sysno(t, "write") + ", 2, __raw_data(s), s.len()); var p: i32 = __raw_scratch(1); __raw_store8(p, 0, 10); return __syscall3(" + sysno(t, "write") + ", 2, p, 1); }";
+    return "function __fern_eprint_str(s: string): i32 { __syscall3(" + sysno(t, "write") + ", 2, __raw_data(s) as i64, s.len() as i64); var p: usize = __raw_scratch(1); __raw_store8(p, 0, 10); return __syscall3(" + sysno(t, "write") + ", 2, p as i64, 1) as i32; }";
 }
 
 // rt_src_putchar backs `putchar(c)` → c's low byte on fd 1, the byte-level twin of
 // print_str. The byte is materialised in the shared static scratch; the hand-asm
 // used a stack slot, which is the one thing a Fern helper cannot name.
 pub function rt_src_putchar(t: string): string {
-    return "function __fern_putchar(c: i32): i32 { var p: i32 = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p, 1); }";
+    return "function __fern_putchar(c: i32): i32 { var p: usize = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p as i64, 1) as i32; }";
 }
 
 // rt_src_print_int backs `print_int(n)` → n's decimal text on fd 1, no newline.

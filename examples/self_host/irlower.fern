@@ -186,6 +186,9 @@ pub struct LocalInfo {
     // which the signed ones get wrong once bit 63 is set. No wrap step — i64
     // ops are already full-width, only signedness differs.
     is_u64: boolean,
+    // is_usize: a `usize` scalar, a machine address. It fills the pointer-width
+    // slot, so widening it to i64 moves nothing on the register backends.
+    is_usize: boolean,
     // subword: the sub-32-bit integer kind ("u8"), or "" if not one; for a u8[]
     // slot it holds the ELEMENT kind (disambiguated by is_arr). Drives the
     // post-arithmetic WIDTH WRAP — a u8 `+`/`-`/`*`/`<<` whose result can exceed
@@ -281,7 +284,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -434,6 +437,9 @@ pub function li_set_arrarr_elem(li: LocalInfo, v: string): LocalInfo {
 
 pub function li_set_is_u32(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, is_u32: v };
+}
+pub function li_set_is_usize(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, is_usize: v };
 }
 
 pub function li_set_is_u64(li: LocalInfo, v: boolean): LocalInfo {
@@ -1968,6 +1974,14 @@ pub function (s: LowerState) is_u64_slot(i: i32): boolean {
 }
 pub function (s: LowerState) mark_u64(i: i32, v: boolean): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_is_u64(s.locals[i], v)) };
+}
+pub function (s: LowerState) is_usize_slot(i: i32): boolean {
+    if (i < 0) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    return s.locals[i].is_usize;
+}
+pub function (s: LowerState) mark_usize(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_is_usize(s.locals[i], v)) };
 }
 // subword_kind_of_slot returns slot i's sub-word int kind ("u8")
 // or "". mark_subword sets it. For an array slot the kind is the ELEMENT
@@ -10103,6 +10117,51 @@ pub function expr_is_u32arr(e: ast.Expr, s: LowerState): boolean {
 // internally so value WRAPPING stays off, but a clean u32 with bit 31 set still
 // reads signed-negative in the i32 slot, so a chained `>>` / `/` / compare must
 // select the unsigned form (#5245).
+// lower_address_widened is `p as i64` / `p as u64` for a usize `p`: the
+// address fills the pointer-width slot, so on the register backends the
+// widen moves nothing, and on wasm it zero-extends.
+function lower_address_widened(e: ast.Expr, s: LowerState): LowerState {
+    var pw: LowerState = lower_expr(e, s);
+    if (!pw.ok) { return pw; }
+    return pw.emit(ir.op_int_extend_ptr());
+}
+
+// syscall_arity is the argument count a `__syscallN` intrinsic takes, or -1.
+function syscall_arity(name: string): i32 {
+    if (name == "__syscall3") { return 3; }
+    if (name == "__syscall4") { return 4; }
+    if (name == "__syscall5") { return 5; }
+    if (name == "__syscall6") { return 6; }
+    return 0 - 1;
+}
+
+function syscall_op(arity: i32): ir.Op {
+    if (arity == 3) { return ir.op_syscall3(); }
+    if (arity == 4) { return ir.op_syscall4(); }
+    if (arity == 5) { return ir.op_syscall5(); }
+    return ir.op_syscall6();
+}
+
+// expr_is_usize reports an address-valued expression: a `usize` local, a
+// raw-floor intrinsic that returns an address, or an `as usize` cast.
+pub function expr_is_usize(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return s.is_usize_slot(s.slot_of(id.name)) || id.ty == "usize"; },
+        ast.ExprUnary(u) => { return u.op == "as_usize"; },
+        ast.ExprCall(c) => {
+            if (c.ty == "usize") { return true; }
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    return util.has_str(["__raw_alloc", "__raw_load_ptr", "__raw_data", "__raw_addr", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe"], cid.name);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function expr_is_u32(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         // A bare literal carrying a `u32` SUFFIX is unsigned — the u32 sibling of
@@ -10841,6 +10900,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (infer_expr_width(u.operand, s) == 64) {
                     return lower_i64(u.operand, s);
                 }
+                if (expr_is_usize(u.operand, s)) { return lower_address_widened(u.operand, s); }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
                 // The extension's signedness is the SOURCE's, not the
@@ -12705,19 +12765,16 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rst1.ok) { return rst1; }
         return rst1.emit(ir.op_raw_string());
     }
-    // __syscall3(nr, a1, a2, a3) — the syscall sub-floor (#2649).
-    // Lower the four args left-to-right, then the single-instruction
-    // syscall op. Only the audited syscall-leaf helpers use it.
-    if (cid.name == "__syscall3" && c.args.len() == 4) {
-        var sc0: LowerState = lower_expr(c.args[0], s);
-        if (!sc0.ok) { return sc0; }
-        var sc1: LowerState = lower_expr(c.args[1], sc0);
-        if (!sc1.ok) { return sc1; }
-        var sc2: LowerState = lower_expr(c.args[2], sc1);
-        if (!sc2.ok) { return sc2; }
-        var sc3: LowerState = lower_expr(c.args[3], sc2);
-        if (!sc3.ok) { return sc3; }
-        return sc3.emit(ir.op_syscall3());
+    // __syscall3..6(nr, a1, …) — the syscall sub-floor (#2649). A word spelled
+    // as an i64 lowers at 64 bits; an i32 one from a helper not yet retyped
+    // fills the same slot.
+    if (syscall_arity(cid.name) >= 0 && c.args.len() == syscall_arity(cid.name) + 1) {
+        var sc: LowerState = s;
+        for arg in c.args {
+            if (infer_expr_width(arg, sc) == 64) { sc = lower_i64(arg, sc); } else { sc = lower_expr(arg, sc); }
+            if (!sc.ok) { return sc; }
+        }
+        return sc.emit(syscall_op(syscall_arity(cid.name)));
     }
     // __raw_environ() — the process envp pointer (#2649 env slice).
     if (cid.name == "__raw_environ" && c.args.len() == 0) {
@@ -12761,45 +12818,6 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         var ra1: LowerState = lower_expr(c.args[1], ra0);
         if (!ra1.ok) { return ra1; }
         return ra1.emit(ir.op_raw_addr());
-    }
-    // __syscall4(nr, a1, a2, a3, a4) — the 4-arg sub-floor sibling.
-    if (cid.name == "__syscall4" && c.args.len() == 5) {
-        var s40: LowerState = lower_expr(c.args[0], s);
-        if (!s40.ok) { return s40; }
-        var s41: LowerState = lower_expr(c.args[1], s40);
-        if (!s41.ok) { return s41; }
-        var s42: LowerState = lower_expr(c.args[2], s41);
-        if (!s42.ok) { return s42; }
-        var s43: LowerState = lower_expr(c.args[3], s42);
-        if (!s43.ok) { return s43; }
-        var s44: LowerState = lower_expr(c.args[4], s43);
-        if (!s44.ok) { return s44; }
-        return s44.emit(ir.op_syscall4());
-    }
-    // __syscall5(nr, a1, a2, a3, a4, a5) — the 5-arg sub-floor sibling.
-    if (cid.name == "__syscall5" && c.args.len() == 6) {
-        var s50: LowerState = lower_expr(c.args[0], s);
-        if (!s50.ok) { return s50; }
-        var s51: LowerState = lower_expr(c.args[1], s50);
-        if (!s51.ok) { return s51; }
-        var s52: LowerState = lower_expr(c.args[2], s51);
-        if (!s52.ok) { return s52; }
-        var s53: LowerState = lower_expr(c.args[3], s52);
-        if (!s53.ok) { return s53; }
-        var s54: LowerState = lower_expr(c.args[4], s53);
-        if (!s54.ok) { return s54; }
-        var s55: LowerState = lower_expr(c.args[5], s54);
-        if (!s55.ok) { return s55; }
-        return s55.emit(ir.op_syscall5());
-    }
-    // __syscall6(nr, a1..a6): the networking syscall floor (#9853).
-    if (cid.name == "__syscall6" && c.args.len() == 7) {
-        var s6: LowerState = s;
-        for arg in c.args {
-            s6 = lower_expr(arg, s6);
-            if (!s6.ok) { return s6; }
-        }
-        return s6.emit(ir.op_syscall6());
     }
     // __raw_scratch(n) — fixed static scratch buffer ptr (#2649).
     if (cid.name == "__raw_scratch" && c.args.len() == 1) {
@@ -21799,6 +21817,20 @@ function emit_slice_boundary_probe(s: LowerState, srcslot: i32, atslot: i32, len
 // stamp the classified type facts onto it, and emit the initialising store.
 // `s` is the state on entry to the statement, `se` the state after the
 // initialiser was lowered — both are needed, and they differ.
+// A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at 2^32
+// and its `>>` is logical (expr_is_u32 / the binary-op masking); a u64 one
+// selects the unsigned i64 ops, and a usize one widens as an address. An
+// un-annotated binding has an empty type_name, so the kind is inferred from
+// the INITIALIZER (`var a = X as u32`) — otherwise a later `a > b` emits a
+// SIGNED compare, wrong once bit 31/63 is set (wasm's `i32.gt_s`; #3537).
+function mark_unsigned_binding(sb: LowerState, slot: i32, v: ast.StmtVar, s: LowerState): LowerState {
+    var out: LowerState = sb;
+    if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { out = out.mark_u32(slot, true); }
+    if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { out = out.mark_u64(slot, true); }
+    if (v.type_name == "usize" || (v.type_name == "" && expr_is_usize(v.init, s))) { out = out.mark_usize(slot, true); }
+    return out;
+}
+
 function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTypes): LowerState {
     var opt_ty: string = vt.opt_ty;
     var sb: LowerState = se.add_local(v.name);
@@ -22140,14 +22172,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
             _ => {}
         }
     }
-    // A u32 / u32[] binding marks the slot u32 so its arithmetic wraps at
-    // 2^32 and its `>>` is logical (expr_is_u32 / the binary-op masking).
-    // An un-annotated binding has an empty type_name, so also infer the
-    // u32 / u64-ness from the INITIALIZER (`var a = X as u32`) — otherwise
-    // a later `a > b` emits a SIGNED compare, wrong once bit 31/63 is set
-    // (visible on wasm's true-32-bit `i32.gt_s`; #3537).
-    if (is_u32_type_name(v.type_name) || (v.type_name == "" && expr_is_u32(v.init, s))) { sb = sb.mark_u32(slot, true); }
-    if (is_u64_type_name(v.type_name) || (v.type_name == "" && expr_is_u64(v.init, s))) { sb = sb.mark_u64(slot, true); }
+    sb = mark_unsigned_binding(sb, slot, v, s);
     // A u8 (or array thereof) binding records the sub-word
     // kind so the slot's arithmetic wraps back to width (mark_subword /
     // expr_subword_kind / the binary-op masking) — the sub-32-bit
@@ -60111,6 +60136,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var isbool: boolean[] = [];
     var isu32: boolean[] = [];
     var isu64: boolean[] = [];
+    var isusize: boolean[] = [];
     // local_subword kind per slot ("" / "u8"); the
     // sub-32-bit sibling of isu32/isu64. Drives the post-arithmetic width wrap.
     var subword: string[] = [];
@@ -60181,6 +60207,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         isbool = isbool.append(fn.receiver_type == "boolean");
         isu32 = isu32.append(is_u32_type_name(fn.receiver_type));
         isu64 = isu64.append(is_u64_type_name(fn.receiver_type));
+        isusize = isusize.append(fn.receiver_type == "usize");
         subword = subword.append(subword_kind_of_name(fn.receiver_type));
     }
     var i: i32 = 0;
@@ -60299,6 +60326,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         isbool = isbool.append(fn.params[i].type_name == "boolean");
         isu32 = isu32.append(is_u32_type_name(fn.params[i].type_name));
         isu64 = isu64.append(is_u64_type_name(fn.params[i].type_name));
+        isusize = isusize.append(fn.params[i].type_name == "usize");
         subword = subword.append(subword_kind_of_name(fn.params[i].type_name));
         i = i + 1;
     }
@@ -60475,7 +60503,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`

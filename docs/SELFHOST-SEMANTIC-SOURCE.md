@@ -2141,7 +2141,11 @@ What is left, in order:
    each one. `chr`, `str_concat`, the four integer `to_string` helpers, and
    the string and string-array helpers (`str_cmp`, the case, `trim`,
    `repeat`, `replace`, `split`, `lines`, `bytes`, `string_from_bytes` and
-   `join` bodies) are done. `__fern_arr_slice` needs an array's box address,
+   `join` bodies), and the three stdio writers behind `write`, `eprint` and
+   `putchar` are done. The AST lowering takes a retyped syscall word too: an
+   `i64` operand lowers at 64 bits, and `usize as i64` widens the address
+   without masking it. `print_int` and `read_int` are left for #10244, which
+   retires them: native rejects both. `__fern_arr_slice` needs an array's box address,
    which the raw floor has no intrinsic for. A helper that calls another
    helper (`i32_lcm` calls `gcd` as a method; `open_with` calls
    `__fern_open_res`) is checked alone and fails on the callee.
