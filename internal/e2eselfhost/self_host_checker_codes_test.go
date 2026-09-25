@@ -2894,6 +2894,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// field's array, a return, and a map or array method's stored value,
 		// so the literal field settles there as native settles it.
 		{"struct-lit-nested-destinations-ok", "import \"core/map\";\nstruct Same[T] { a: T, b: T }\nstruct Holder { xs: Same[i64][] }\nfunction mk(y: i64): Same[i64][] { return [Same { a: 1, b: y }]; }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = [Same { a: 1, b: y }]; var h: Holder = Holder { xs: [Same { a: 2, b: y }] }; var m: Map[i32, Same[i64]] = Map {}; m = m.insert(1, Same { a: 3, b: y }); var ys: Same[i64][] = []; ys = ys.append(Same { a: 4, b: y }); var t: i64 = xs[0].a + h.xs[0].a + ys[0].a + mk(y)[0].a; return t as i32; }\n"},
+		// An unresolved callee is its own error: native checks none of its
+		// arguments, so a literal passed to one draws nothing more.
+		{"unresolved-method-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = []; xs = xs.frob(Same { a: 1, b: y }); return 0; }\n"},
+		{"retired-method-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var xs: Same[i64][] = []; xs = xs.set(Same { a: 1, b: y }); return 0; }\n"},
+		{"undefined-function-args-unchecked", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; return nope(Same { a: 1, b: y }); }\n"},
 		{"struct-lit-later-literal-settles-ok", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var u = Same { a: y, b: 1 }; var r: i64 = u.b; return 0; }\n"},
 		{"struct-lit-field-e043-var", "struct Box[T] { v: T }\nfunction main(): i32 { var b: Box[string] = Box { v: 1 }; return 0; }\n"},
 		{"struct-lit-field-e043-return", "struct Box[T] { v: T }\nfunction mk(): Box[string] { return Box { v: 1 }; }\nfunction main(): i32 { return 0; }\n"},
