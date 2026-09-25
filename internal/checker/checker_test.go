@@ -412,6 +412,11 @@ func TestGenericStructLitFieldCheckedAgainstDestination(t *testing.T) {
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.v; }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b: Box[string] = Box { v: "x" }; return b.v.len(); }`)
 	mustOK(`struct Box[T] { v: T } function main(): i32 { var b = Box { v: "x" }; return 0; }`)
+	// A generic struct parameter is the destination too, whatever the
+	// callee's body reads (#10262).
+	mustErr(`struct Box[T] { v: T } function take(b: Box[string]): i32 { return 0; } function main(): i32 { return take(Box { v: 3 }); }`,
+		`field "v": expected string, got i32`)
+	mustOK(`struct Box[T] { v: T } function take(b: Box[i64]): i64 { return b.v; } function main(): i32 { var n: i64 = take(Box { v: 5 }); return 0; }`)
 }
 
 // TestArrayLitElementReadsElementDestination: an array literal's elements
