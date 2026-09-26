@@ -235,7 +235,7 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 				if tupleFieldShareBalanced(tc.balanced, tc.pinned, lw.name) {
 					assertBalancedCensus(t, stderr)
 				} else if pin, ok := tc.pinned[lw.name]; ok {
-					assertRefusedCensus(t, stderr, pin)
+					assertLeakPinned(t, stderr, pin)
 				}
 				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
 				if exit != tc.want || forArrStructSanitizerFault(stderr, tupleFieldShareBalanced(tc.balanced, tc.pinned, lw.name)) {
@@ -292,7 +292,7 @@ func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 				if tupleFieldShareBalanced(tc.balanced, tc.pinned, lw.name) {
 					assertBalancedCensus(t, eb.String())
 				} else if pin, ok := tc.pinned[lw.name]; ok {
-					assertRefusedCensus(t, eb.String(), pin)
+					assertLeakPinned(t, eb.String(), pin)
 				}
 			})
 		}
@@ -315,9 +315,25 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 				if tupleFieldShareBalanced(tc.balanced, tc.pinned, lw.name) {
 					assertBalancedCensus(t, stderr)
 				} else if pin, ok := tc.pinned[lw.name]; ok {
-					assertRefusedCensus(t, stderr, pin)
+					assertLeakPinned(t, stderr, pin)
 				}
 			})
 		}
+	}
+}
+
+// assertLeakPinned: a row that still leaks on this leg (#10326) left exactly
+// its pinned allocs and frees. Fewer frees is a regression; more frees is a fix
+// of the element leak, which moves the pin.
+func assertLeakPinned(t *testing.T, stderr string, want [2]int64) {
+	t.Helper()
+	summary := leakSummaryLine(stderr)
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if got := [2]int64{allocs, frees}; got != want {
+		t.Errorf("%s, pinned allocs=%d frees=%d — fewer frees means the sweep lost a release; "+
+			"more frees means the element leak (#10326) closed, so move the pin", summary, want[0], want[1])
 	}
 }

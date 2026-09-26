@@ -41,7 +41,9 @@ mix, on x86-64 (the sanitizer too), arm64, wasm and native. Main leaks 192 and
 
 The gate reaches every array field kind, not just the two above. An
 array-of-structs and an array-of-enums field in the same shape now answer
-correctly with no sanitizer finding, and they leak less than main. They still
+correctly, and they leak less than main. On those legs the sanitizer reports
+the leak (336 and 224 bytes on x86-64) and nothing else; the test gates on no
+other finding. They still
 leak, though. The record's gated element walk declines while the tuple holds
 the buffer, and the tuple's `a` release is one buffer dec, so the elements are
 left behind. With a semantic callee, the `ARRF:` flag for such a position is
