@@ -7138,7 +7138,10 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
         // types, so a non-admitted type's fields are uncounted aliases this
         // release would dangle. A non-admitted type keeps the sound leak.
         var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
-        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        // An Option / Result field is counted like an enum one and released
+        // shallow; its payload is not walked (#10299).
+        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str
+            && (irlower.decl_is_enum(s.struct_decls, fdt) || irlower.is_opt_box_field(fdt));
         var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
         var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
         // The buffer half of a string[] the element scan refused: a read hazard
@@ -7204,7 +7207,7 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
         var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
         var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
         var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
-        var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        var fr_enum: boolean = (irlower.decl_is_enum(s.struct_decls, fdt) || irlower.is_opt_box_field(fdt)) && s.has_need("structfldok:" + sty);
         var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum
             && !irlower.is_leaksafe_array_field(fdt)
             && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))

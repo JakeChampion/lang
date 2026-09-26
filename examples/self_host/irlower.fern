@@ -1339,7 +1339,7 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
 // then needs the same Perceus dup the direct read gets, because
 // __struct_drop_<T>'s k_enum arm decs that box when the source struct is
 // reclaimed. Appended rather than pre-scanned: the bind always precedes the
-// store, and enum_field_read_type needs the slot types the scan does not have.
+// store, and box_field_read_type needs the slot types the scan does not have.
 pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
 }
@@ -1363,7 +1363,7 @@ pub function ident_name_or_empty(e: ast.Expr): string {
 
 // enum_alias_ident_escapes reports whether `e` is a bare ident on a local bound
 // from an enum field read — the routed-through-a-local form of the direct
-// `enum_field_read_type` container store, and retained at the same three sites.
+// `box_field_read_type` container store, and retained at the same three sites.
 pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     var nm: string = ident_name_or_empty(e);
     if (nm.len() == 0) { return false; }
@@ -4801,6 +4801,36 @@ pub function decl_is_enum(structs: StructTab, name: string): boolean {
     return stab_enum_first(structs, name) >= 0;
 }
 
+// is_opt_box_field: an Option / Result field. The struct counts its box the way
+// it counts a direct enum field's — retained at every non-fresh store, released
+// shallow by __struct_drop_<T> — and the payload keeps its own leak (#10299).
+pub function is_opt_box_field(t: string): boolean {
+    return t.len() > 7 && (slice_unchecked(t, 0, 7) == "Option[" || slice_unchecked(t, 0, 7) == "Result[");
+}
+
+// opt_field_value_fresh: a value stored at an Option / Result field that hands
+// the struct a box nobody else holds — a constructor, an OPTFRESH producer, a
+// builtin producer, or a builtin Map `get`.
+function opt_field_value_fresh(e: ast.Expr, s: LowerState): boolean {
+    if (opt_ctor_init_variant(e) != "") { return true; }
+    var callee: string = direct_call_callee_name(e);
+    if (callee != "") {
+        if (sig_reg_has_name(s.frame.sigs.opt_fresh_ret_fns, callee)) { return true; }
+        return !sig_reg_has_name(s.frame.sigs.fn_names, callee) && builtin_opt_ret_type(callee) != "";
+    }
+    match (e) {
+        ast.ExprCall(c) => {
+            if (c.args.len() == 1) {
+                if let ast.ExprFieldAccess(fa) = c.callee {
+                    if (fa.field == "get") { return get_or_recv_map_type(fa.obj, s) != ""; }
+                }
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
 // try_enum_shape describes a two-variant enum for the `?` operator: the success
 // variant's payload type, and whether the failure variant carries one. The
 // third result is false for anything that is not the shape `?` lowers against —
@@ -5122,10 +5152,9 @@ function is_leaksafe_payload(p: string): boolean {
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
-// are leak-safe scalars/strings, structs, tuples, arrays, or enums.
-// Options/Results are leak-only on the IR path (the exit sweep never frees them),
-// so such a field needs no RC / aliasing bail — it leaks with the struct, like a
-// string field.
+// are leak-safe scalars/strings, structs, tuples, arrays, or enums. The box is
+// counted and released shallow with the struct (is_opt_box_field) and the
+// payload is never walked, so such a field needs no RC / aliasing bail.
 pub function is_leaksafe_opt_field(t: string): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
@@ -5548,7 +5577,7 @@ pub function nested_arr_field_read_type(e: ast.Expr, s: LowerState): string {
     return "";
 }
 
-// enum_field_read_type is the DIRECT-enum twin of enum_arr_field_read_type: it
+// box_field_read_type is the DIRECT-enum twin of enum_arr_field_read_type: it
 // returns the field type of a plain ENUM struct field read (`p.node` where
 // `node: RNode` and RNode is an enum), else "". Storing such a read into a
 // CONTAINER makes the container a second owner of the field's enum box while the
@@ -5565,13 +5594,13 @@ pub function nested_arr_field_read_type(e: ast.Expr, s: LowerState): string {
 // handed the same block back for the enclosing RGroup — a self-referential parse
 // tree that made `__rx_match` alternate between its RGroup and RAlt arms until
 // the stack ran out (six regex fixtures, on both the x86-64 and arm64 legs).
-pub function enum_field_read_type(e: ast.Expr, s: LowerState): string {
+pub function box_field_read_type(e: ast.Expr, s: LowerState): string {
     match (e) {
         ast.ExprFieldAccess(fa) => {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
-            if (decl_is_enum(s.frame.structs, ft)) { return ft; }
+            if (decl_is_enum(s.frame.structs, ft) || is_opt_box_field(ft)) { return ft; }
             return "";
         },
         _ => { return ""; }
@@ -5591,7 +5620,7 @@ pub function counted_field_read_reaches_drop(e: ast.Expr, s: LowerState): boolea
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
             var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
-            return decl_is_enum(s.frame.structs, ft) || decl_is_struct(s.frame.structs, ft)
+            return decl_is_enum(s.frame.structs, ft) || decl_is_struct(s.frame.structs, ft) || is_opt_box_field(ft)
                 || is_leaksafe_array_field(ft) || is_struct_array_field_type(s.frame.structs, ft)
                 || is_enum_array_field_type(s.frame.structs, ft);
         },
@@ -17374,6 +17403,10 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                     fav_alias_inc = true;
                 }
             }
+            // An Option / Result field, on the same terms as the enum field above.
+            if (!fav_alias_inc && is_opt_box_field(cfft) && !opt_field_value_fresh(slit.field_values[found], s)) {
+                fav_alias_inc = true;
+            }
             // A direct TUPLE field, now released by emit_struct_tuple_field_drops
             // (child walk under is_unique, one box dec per owner). The retain is
             // that dec's other half and is gated on the SAME routing predicate,
@@ -17539,7 +17572,7 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // nested-struct copy above. No slit_reclaim gate: a struct with a direct
             // enum field is always reclaimable (struct_has_reclaim_array_field), so
             // the __struct_drop and this inc always pair.
-            if (decl_is_enum(s.frame.structs, cpft)) {
+            if (decl_is_enum(s.frame.structs, cpft) || is_opt_box_field(cpft)) {
                 sm = sm.retain_tos("base-copy-enum-field");
             }
             // A `string` field COPIED from the base (`R { ...base, other: v }`,
@@ -22636,7 +22669,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // the source struct's enum box (#6121). No dup here — an alias that never
     // escapes must not outlive the struct — only the mark, so a later container
     // store of `tmp` retains exactly as the direct `[first.node]` read does.
-    if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
+    if (box_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
         var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
@@ -29033,6 +29066,7 @@ pub function struct_has_reclaim_array_field(structs: StructTab, sty: string): bo
         // struct's __struct_drop is emitted; the construction alias-inc balances the
         // dec. #4297 A2.
         if (decl_is_enum(structs, fdt)) { return true; }
+        if (is_opt_box_field(fdt)) { return true; }
         fi = fi + 1;
     }
     return false;
@@ -29167,7 +29201,7 @@ pub function struct_copy_eligible(structs: StructTab, sty: string): boolean {
     while (fi < n) {
         var t: string = decl_field_type_at(structs, sty, fi);
         if (decl_is_struct(structs, t)) { return false; }
-        if (decl_is_enum(structs, t)) { return false; }
+        if (decl_is_enum(structs, t) || is_opt_box_field(t)) { return false; }
         if (t == "string") { return false; }
         if (t == "i64" || t == "u64" || t == "f64") { return false; }
         fi = fi + 1;
@@ -29259,6 +29293,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
         } else if (decl_is_enum(structs, fdt) && enum_arr_elems_walk_ok(structs, fdt)) {
             has_arr = true;   // deep_enum_drop walks its payloads
+        } else if (is_opt_box_field(fdt)) {
+            has_arr = true;
         }
         fi = fi + 1;
     }
@@ -43159,7 +43195,7 @@ function stmt_unsafe_for_ret_ok(st: ast.Stmt, name: string, borrowable: string[]
 // owners one buffer. Claiming it segfaulted gen1 of the per-module emit-all
 // fixpoint while every small-program gate stayed green.
 function spread_copy_field_counted(structs: StructTab, sfok: string[], sty: string, t: string): boolean {
-    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t) || field_type_is_array(t)) { return true; }
+    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || is_opt_box_field(t) || decl_is_struct(structs, t) || field_type_is_array(t)) { return true; }
     return t == "string" && struct_routes_field_reclaim_at(structs, sfok, sty);
 }
 
@@ -47851,7 +47887,7 @@ function fieldmove_counted_field_alias(e: ast.Expr, name: string, sty: string, s
                 ast.ExprIdent(oid) => {
                     if (oid.name != name) { return false; }
                     var ft: string = decl_field_type(structs, sty, fa.field);
-                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft)
+                    return decl_is_struct(structs, ft) || decl_is_enum(structs, ft) || is_opt_box_field(ft)
                         || is_leaksafe_array_field(ft) || is_struct_array_field_type(structs, ft);
                 },
                 _ => { return false; }
@@ -55232,13 +55268,14 @@ function struct_fields_reusable(structs: StructTab, struct_name: string): boolea
 
 // struct_fields_reusable_param widens struct_fields_reusable for the OWN-PARAM
 // reuse families (own_param_reuse_sites / own_param_self_overwrite_sites, via
-// struct_fields_reusable_ownparam below): Map / leak-safe tuple / leak-safe
-// Option fields are additionally admitted. All three are leak-only boxes on
-// the IR path (never released anywhere), so overwriting or carrying one in a
-// reused param box leaks it exactly like the normal drop path would have, and
-// a copied pointer can never dangle — the emitters' release / carried-copy
-// walks are per-type allowlists that already skip them (same reasoning as the
-// _cross widening below).
+// struct_fields_reusable_ownparam below): Map / leak-safe tuple fields are
+// additionally admitted. Both are leak-only boxes on the IR path (never
+// released anywhere), so overwriting or carrying one in a reused param box
+// leaks it exactly like the normal drop path would have, and a copied pointer
+// can never dangle — the emitters' release / carried-copy walks are per-type
+// allowlists that already skip them (same reasoning as the _cross widening
+// below). An Option field is counted and released (is_opt_box_field), which no
+// reuse emitter balances, so it is not admitted.
 function struct_fields_reusable_param(structs: StructTab, struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
     var si: i32 = stab_struct_first(structs, struct_name);
@@ -55246,7 +55283,7 @@ function struct_fields_reusable_param(structs: StructTab, struct_name: string): 
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
         var t: string = fld.type_name;
-        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
+        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t) && !is_leaksafe_tuple_field(t)) { return false; }
     }
     return true;
 }
@@ -55273,7 +55310,7 @@ function struct_fields_reusable_ownparam(structs: StructTab, sfok: string[], str
     for fld in structs.decls[si].fields {
         var t: string = fld.type_name;
         if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
-            && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
+            && !is_leaksafe_tuple_field(t)
             && !decl_is_enum(structs, t) && t != "string") { return false; }
     }
     return true;
@@ -55297,18 +55334,17 @@ function struct_fields_reusable_cross(structs: StructTab, struct_name: string): 
     if (structs.decls[si].fields.len() == 0) { return false; }
     for fld in structs.decls[si].fields {
         var t: string = fld.type_name;
-        // Map[K,V] / tuple / Option-Result fields (#4356 divergence 1)
-        // are admitted with NO release, NO carried-copy inc, and NO
-        // freshness gate: all three are leak-only boxes on the IR path
-        // (a map or Option box is never freed anywhere; a tuple box is
-        // exit-swept ONLY as a fresh scalar-literal local that never
-        // escapes, and binding one into a struct-lit field IS an
+        // Map[K,V] / tuple fields (#4356 divergence 1) are admitted
+        // with NO release, NO carried-copy inc, and NO freshness gate:
+        // both are leak-only boxes on the IR path (a map box is never
+        // freed anywhere; a tuple box is exit-swept ONLY as a fresh
+        // scalar-literal local that never escapes, and binding one into a struct-lit field IS an
         // escape), so overwriting one in a reused box leaks it exactly
         // like the normal drop path would have, and a copied pointer
         // can never dangle. Both emitters' release / carried-copy walks
         // are per-type allowlists, so these fields already take their
         // skip branch. (is_enum_like_name excludes bracketed generics
-        // and "(...)" spellings, so none of the three ever routes into
+        // and "(...)" spellings, so neither ever routes into
         // the enum flat-dec release by accident.)
         // string[] (#4356 Delta B, rc-element arrays): admitted with a
         // DEEP __fern_str_arr_free release arm in emit_cross_struct_reuse
@@ -55335,7 +55371,7 @@ function struct_fields_reusable_cross(structs: StructTab, struct_name: string): 
         if (is_struct_array_field_type(structs, t)) {
             if (struct_lit_all_scalar(structs, slice_unchecked(t, 0, t.len() - 2))) { bx_ok = true; }
         } else if (is_enum_array_field_type(structs, t)) { bx_ok = true; }
-        if (!bx_ok && !reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && t != "string[]" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
+        if (!bx_ok && !reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_enum_like_name(t, structs) && t != "string" && t != "string[]" && !is_map_type_name(t) && !is_leaksafe_tuple_field(t)) { return false; }
     }
     return true;
 }
@@ -56193,7 +56229,7 @@ function struct_fields_reusable_own(structs: StructTab, struct_name: string): bo
     for fld in structs.decls[si].fields {
         var t: string = fld.type_name;
         if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
-            && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t) && !decl_is_enum(structs, t)
+            && !is_leaksafe_tuple_field(t) && !decl_is_enum(structs, t)
             && t != "string" && t != "string[]" && !is_struct_array_field_type(structs, t) && !is_enum_array_field_type(structs, t)) { return false; }
     }
     return true;
@@ -56339,6 +56375,7 @@ function own_upd_scan_expr(e: ast.Expr, own acc: OwnUpdScan): OwnUpdScan {
 function own_override_owned(fty: string, v: ast.Expr, base: string, structs: StructTab): boolean {
     if (reuse_field_is_scalar(fty)) { return true; }
     if (decl_is_enum(structs, fty)) { return variant_ctor_enum_owner(v, structs) == fty; }
+    if (is_opt_box_field(fty)) { return opt_ctor_init_variant(v) != ""; }
     if (is_leaksafe_array_field(fty) || fty == "string[]" || is_struct_array_field_type(structs, fty) || is_enum_array_field_type(structs, fty)) {
         match (v) {
             ast.ExprArray(_) => { return true; },
@@ -63001,7 +63038,7 @@ pub function structfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: St
         var ok: boolean = true;
         for fld in sd.fields {
             var fdt: string = fld.type_name;
-            if (decl_is_struct(structs, fdt) || decl_is_enum(structs, fdt)) {
+            if (decl_is_struct(structs, fdt) || decl_is_enum(structs, fdt) || is_opt_box_field(fdt)) {
                 has = true;
                 if (util.index_of_str(unsafe_names, fld.name) >= 0) { ok = false; }
             }
@@ -63053,7 +63090,7 @@ function structfld_counted_literal_field(fname: string, structs: StructTab): boo
         for fld in sd.fields {
             if (fld.name == fname) {
                 seen = true;
-                if (!(decl_is_struct(structs, fld.type_name) || decl_is_enum(structs, fld.type_name)
+                if (!(decl_is_struct(structs, fld.type_name) || decl_is_enum(structs, fld.type_name) || is_opt_box_field(fld.type_name)
                       || is_leaksafe_array_field(fld.type_name) || is_struct_array_field_type(structs, fld.type_name))) {
                     return false;
                 }

@@ -11024,7 +11024,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                 // the x86 fr_struct / fr_enum arms. Gated on the whole-program
                 // read scan (nest_ok); #6148 is what happens without it.
                 var frk_nest: boolean = nest_ok
-                    && (irlower.decl_is_struct(structs, ft) || irlower.decl_is_enum(structs, ft));
+                    && (irlower.decl_is_struct(structs, ft) || irlower.decl_is_enum(structs, ft) || irlower.is_opt_box_field(ft));
                 if (frk == "a" || (frk == "s" && str_ok) || (ft == "fn" && clo_ok) || frk_nest) {
                     var off: string = util.i32_to_string(8 + k * 8);
                     var oldf: string = "(i32.load offset=" + off + " (local.get $old))";
