@@ -39,6 +39,27 @@ They are census-balanced under every lowering, including the callee-skipped
 mix, on x86-64 (the sanitizer too), arm64, wasm and native. Main leaks 192 and
 240 bytes on them.
 
-Struct-array and enum-array fields answer correctly with no sanitizer finding
-and leak less than main. A nested `i32[][]` field does not lower on the AST
-path at all (#10318).
+The gate reaches every array field kind, not just the two above. An
+array-of-structs and an array-of-enums field in the same shape now answer
+correctly with no sanitizer finding, and they leak less than main. They still
+leak, though. The record's gated element walk declines while the tuple holds
+the buffer, and the tuple's `a` release is one buffer dec, so the elements are
+left behind. With a semantic callee, the `ARRF:` flag for such a position is
+`0`, and even the buffer stays. That is #10326.
+
+`callee_local_structarr` and `callee_local_enumarr` pin the counts (allocs /
+frees) on every leg that leaks:
+
+| lowering | `Pt[]` | `Flag[]` |
+|---|---|---|
+| semantic | balanced | balanced |
+| AST, and AST callee | 30 / 22 | 28 / 22 |
+| AST main, semantic callee | 30 / 20 | 28 / 20 |
+
+A nested `i32[][]` field does not lower on the AST path at all (#10318).
+
+The native leg surfaced a native bug in the same rows (#10325). `t.1[0].x`, a field
+read through an index into a tuple element, failed with `ir: field access on
+unresolved struct ""`, because `exprStaticType` had no arm for a numeric
+selector. It now resolves one through `targetTupleType`, with two
+`TestTupleElementFieldAccessLowers` rows.

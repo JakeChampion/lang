@@ -12891,6 +12891,13 @@ func (b *builder) exprStaticType(e ast.Expr) ast.Type {
 			}
 		}
 	case *ast.FieldAccess:
+		// A numeric selector names a tuple element: `t.1[0].x` indexes it.
+		if i, err := strconv.Atoi(x.Field); err == nil {
+			if tt, ok := b.targetTupleType(x.Target); ok && i >= 0 && i < len(tt.Elems) {
+				return tt.Elems[i]
+			}
+			return nil
+		}
 		owner := b.fieldOwner(x.Target)
 		if sd, ok := b.info.Structs[owner]; ok {
 			for _, f := range sd.Fields {

@@ -32,7 +32,10 @@ These readers must move together when either alphabet grows:
 - `tup_kinds_rebind_safe`, which accepts `S` like `a`;
 - `mark_tuple_elem_binding`, the bound-result `ARRF:` reader;
 - the discarded-call `ARRF:` release in `lower_stmt_inner`;
-- `ssarc.tuple_flags`, which writes `2` for a produced callee's `string[]` position.
+- `ssarc.tuple_flags`, which writes `2` for a produced callee's `string[]` position;
+- `returned_moved_arr_slots`, whose tuple arm skips a retained element instead
+  of keeping its struct from the return sweep (#10315,
+  `2026-09-26-zd-a-callee-local-record-behind-a-returned-tuple.md`).
 
 The admission side also changed:
 - `tuple_ann_admits_fresh_mixed` admits the element to the shallow `TUP:` class.
