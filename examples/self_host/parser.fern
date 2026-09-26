@@ -13624,9 +13624,12 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
                     // to `fn => Fut[i32]`): calling it yields that return type, so
                     // a nested `match (cont(tok))` over a recursive generic enum
                     // recovers its instantiation and rewrites its arms (#4722).
-                    // Falls back to a top-level function's declared return type.
+                    // Otherwise a top-level function's return type, its type
+                    // params bound from the arguments (`whole[C](c: C): C`).
                     var fr: string = me_fn_ret_spelling(env.elook(cid.name));
                     if (fr.len() > 0) { return fr; }
+                    var crt: string = call_ret_type(funcs, cid.name, c.args, env);
+                    if (crt.len() > 0) { return crt; }
                     return func_ret_of(funcs.decls, cid.name);
                 },
                 ast.ExprFieldAccess(cfa) => {
