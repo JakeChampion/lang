@@ -3236,6 +3236,12 @@ pub function route_normalized(mod: parser.Module): parser.Module {
     return lift_lambdas(ircore.script_normalized(mod));
 }
 
+// route_normalized_typed is route_normalized for the typed lowering, which
+// keeps each `str` as a view.
+pub function route_normalized_typed(mod: parser.Module): parser.Module {
+    return irlower.lift_lambdas_typed(ircore.script_normalized(mod));
+}
+
 // lift_lambdas re-exports irlower's lambda-lift pre-pass (closures slice 2a) so
 // the wasm dispatch sites can hoist no-capture lambda arguments before the
 // eligibility check + emit. A lambda-free module is returned unchanged.

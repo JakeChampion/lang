@@ -1941,8 +1941,8 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 // flag they never read.
 function cli_substitution(typed: parser.Module, target: string): ircore.Sub {
     if (!semlower.sem_ir_on()) { return ircore.no_sub(); }
-    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas(typed));
-    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(typed); }
+    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas_typed(typed));
+    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized_typed(typed); }
     // The typed lowering reads im; the AST lowering's tables read its erasure.
     var lowered: parser.Module = parser.erase_str_module(im);
     var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
