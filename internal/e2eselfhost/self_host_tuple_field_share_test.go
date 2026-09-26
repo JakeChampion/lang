@@ -168,6 +168,23 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 	}
 }
 
+// TestSelfHostTupleFieldShareNative holds the native compiler to the same
+// rows: every one clean, with the answer the self-host legs expect. The
+// self-host legs are four paths through one compiler, so this is the check a
+// miscompile they share cannot pass.
+func TestSelfHostTupleFieldShareNative(t *testing.T) {
+	cli := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	for _, tc := range tupleFieldShareCases {
+		t.Run(tc.name, func(t *testing.T) {
+			v, exit := nativeLeakVerdict(t, cli, dir, tc.name, tupleFieldShareDecls+tc.src)
+			if v != verdictClean || exit != tc.want {
+				t.Fatalf("native: %s, exit = %d, want clean and %d", v, exit, tc.want)
+			}
+		})
+	}
+}
+
 func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	cli := buildSelfHostCLI(t)
