@@ -2242,6 +2242,19 @@ the typed path into them would grow each by 6.7–10.2% (the reason
 The drivers keep the AST lowering until the lowering is deleted. Then the
 ones whose tests have all moved or gone go too.
 
+Three drivers are exceptions, because what they are for is neither a
+language test nor the AST lowering, and the CLI cannot stand in for them.
+Each takes a typed-path substitution before step 3, and pays the growth:
+- `playground_run` is the browser playground's compiler. It is a product,
+  and it should emit what the CLI emits. Its embedded stdlib overlay is the
+  thing the CLI does not have.
+- `ir_const_numeric_run` checks that each backend reads both forms of a
+  numeric constant. It rewrites the constants in the substitution it is
+  given, not in an AST-lowered one.
+- `wasm_units_probe` checks that two separately emitted wasm units link. Its
+  lowering (`lower_all_for_view` / `lower_all_for_base`) gains a substitution
+  parameter.
+
 **`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
 `lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
 and its methods, `lower_expr` / `lower_stmt` and their arms, and the reuse
