@@ -19,7 +19,7 @@ import (
 // IR path (the differential gate only proves "still correct", not "now lowers").
 // The cases pin the four signals the report distinguishes: a fully-eligible
 // module, a per-function `BAIL call` (a call to an unknown / builtin-only name),
-// the no-main "module: AST" verdict, and — as a regression guard on a frontier
+// the no-main "module: refused" verdict, and — as a regression guard on a frontier
 // comment that had gone stale — that break/continue inside a `for x in arr`
 // body DOES lower (the increment-at-top loop shape, #2788, makes `continue`
 // safe, so these statements are on the IR path, not a bail).
@@ -62,7 +62,7 @@ func TestSelfHostIREligibilityProbe(t *testing.T) {
 		{
 			name:        "unknown-call-bails",
 			src:         "function main(): i32 { return mystery(3); }",
-			wantVerdict: "module: AST",
+			wantVerdict: "module: refused",
 			wantLines:   []string{"main: BAIL call"},
 		},
 		{

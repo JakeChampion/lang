@@ -1158,7 +1158,7 @@ function main(): i32 {
                 // module_with_builtins pipeline the emit path below uses
                 // (monomorphise drops un-instantiated bounded-generic templates
                 // like core/cmp's min[T:Ord], whose type-param-receiver call
-                // otherwise bails and mis-reports `module: AST` for a program
+                // otherwise bails and mis-reports `module: refused` for a program
                 // that in fact routes IR — #4374), not the raw merged module.
                 write(ircore.eligibility_report(ircore.lift_lambdas(parser.module_with_builtins(merged))));
                 return 0;
