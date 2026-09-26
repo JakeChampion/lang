@@ -72070,12 +72070,11 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // targets, so this is a gap to close rather than a rule of the language.
 //
 // FLOAT keys are listed even though E045 refuses every written float-key
-// spelling in both checkers now (#10009), because a written spelling is not
-// the only way one arrives: the self-host runs no diagnostic pass over a
-// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
-// generic reaches here with no diagnostic behind it (#10018). Native
-// re-checks its instantiations and reports; until the self-host does, this
-// is the only thing standing between that program and the string column.
+// spelling in both checkers (#10009), and the self-host checker re-checks the
+// instantiations of generic free functions as native does (#10018). A driver
+// that lowers without running the checker still reaches here with no
+// diagnostic behind it, and an instantiation the checker cannot bind is not
+// re-checked, so this is what stands between those and the string column.
 //
 // The COMPOSITES have no hash or equality to dispatch: a tuple, an array or a
 // slice is not a struct, so there is nothing for @derive(Eq) + @derive(Hash)

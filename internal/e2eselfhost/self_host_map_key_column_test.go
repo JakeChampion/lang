@@ -335,13 +335,13 @@ function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
 // map_key_has_no_column, which nothing else does now that E045 refuses every
 // written float-key spelling (#10009).
 //
-// This program writes none. Native re-checks its instantiations and reports
-// E045 on the monomorphised copy; the self-host runs no diagnostic pass over
-// an instantiated clone, so it reaches the lowering with nothing behind it
-// (#10018). map_key_kind_of would then answer 0 for the f64 key — the STRING
-// column, which reads a key's VALUE as an address: the #9973 segfault by
-// another road. The lowering refusal is the only thing in the way, which is
-// why deleting it was wrong, and why this test exists.
+// This program writes none. Both checkers re-check its instantiations and
+// report E045 on the monomorphised copy (#10018,
+// TestSelfHostInstantiationRecheckDifferentialX86_64), but `-decide` lowers
+// without the checker, as does any driver that skips it. map_key_kind_of would
+// then answer 0 for the f64 key — the STRING column, which reads a key's VALUE
+// as an address: the #9973 segfault by another road. The lowering refusal is
+// what stands in the way there, and this test pins it.
 //
 // It takes no interpreter oracle. The other cases have one to prove they are
 // well-formed programs refused for their key; this one native refuses
@@ -362,19 +362,17 @@ func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
 		t.Fatalf("write entry: %v", err)
 	}
 
-	// Half one: native still catches it, so the gap below is the self-host's
-	// alone. The whole pipeline is what is run, not checker.Check — the
-	// diagnostic arrives with MONOMORPHISATION, which is precisely the pass
-	// the self-host does not have. When #10018 closes, this stays green.
+	// Half one: native catches it. The whole pipeline is what is run, not
+	// checker.Check — the diagnostic arrives with MONOMORPHISATION.
 	if _, code := runFixtureInterp(t, entry, ""); code == 0 {
 		t.Errorf("native ran a program with a monomorphised f64 map key; it reported E045 when this " +
 			"test was written, so either the instantiation re-check regressed or the rule moved")
 	}
 
-	// Half two: the self-host lowering refuses it with no diagnostic behind it.
+	// Half two: the self-host lowering refuses it with no checker in front.
 	route, _ := exec.Command(driver, entry, root, "-decide").Output()
 	if got := strings.TrimSpace(string(route)); got != "refused" {
-		t.Errorf("-decide = %q, want \"refused\": the self-host checker does not see this f64 key (#10018), "+
-			"so lowering it puts the key's VALUE through the string column as an address", got)
+		t.Errorf("-decide = %q, want \"refused\": lowering this f64 key without the checker "+
+			"puts the key's VALUE through the string column as an address", got)
 	}
 }
