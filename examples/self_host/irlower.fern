@@ -42283,7 +42283,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var asnm: string = reclaim_site_name(asts[asti]);
         if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
             && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok)
-            && !arrarr_row_escapes(body, asnm)
+            && !arrstruct_row_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, borrowable)
             && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites, borrowable, sfok)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
@@ -50387,6 +50387,109 @@ function elem_box_iter_bind_escapes_stmt(st: ast.Stmt, bnd: string): boolean {
     return false;
 }
 
+// arrstruct_row_escapes: arrarr_row_escapes for an array of structs whose
+// element walk is DEEP. A bare element bind still refuses, but `for p in name`
+// is admitted, since the loop ends before the reclaim runs, when `p` stays in
+// the body (body_unsafe_for), none of its rc fields is extracted bare
+// (forvar_field_escapes), and the body does not rebind `name` under the loop
+// iterating it (#10161).
+function arrstruct_row_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, borrowable: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
+            ast.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
+            ast.StmtFor(fo) => {
+                if (ident_named_is(fo.iter, name)) {
+                    if (sty == "" || body_unsafe_for(fo.body, fo.var_name, borrowable, [])
+                            || forvar_field_escapes(fo.body, fo.var_name, sty, structs)
+                            || stmts_assign_name_deep(fo.body, name)) { return true; }
+                }
+                if (arrstruct_row_escapes(fo.body, name, sty, structs, borrowable)) { return true; }
+            },
+            ast.StmtIf(f) => {
+                if (arrstruct_row_escapes(f.then_body, name, sty, structs, borrowable)
+                        || arrstruct_row_escapes(f.else_body, name, sty, structs, borrowable)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (arrstruct_row_escapes(w.body, name, sty, structs, borrowable)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { if (arrstruct_row_escapes(arm.body, name, sty, structs, borrowable)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// forvar_field_escapes: does the loop body read an rc field of the struct loop
+// var `p` (element type `sty`) other than as a borrow? A scalar field is a copy,
+// and `p.f[j]` / `p.f.len()` read through the field without keeping it; any
+// other `p.f` over a non-scalar field hands out a pointer the element walk frees.
+function forvar_field_escapes(stmts: ast.Stmt[], p: string, sty: string, structs: StructTab): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return forvar_field_esc_at(x, esc, p, sty, structs); }
+    function descend(x: ast.Expr): boolean { return forvar_field_shape(x, p, sty, structs) == 0; }
+    for stmt in stmts {
+        if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
+    }
+    return false;
+}
+
+function forvar_field_esc_expr(e: ast.Expr, p: string, sty: string, structs: StructTab): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return forvar_field_esc_at(x, esc, p, sty, structs); }
+    function descend(x: ast.Expr): boolean { return forvar_field_shape(x, p, sty, structs) == 0; }
+    return astwalk.fold_expr_pruned(e, false, visit, descend);
+}
+
+// forvar_field_shape: 0 descend, 1 safe leaf, 2 escape, 3 a borrow through
+// `p.f` whose index still needs the scan.
+function forvar_field_shape(e: ast.Expr, p: string, sty: string, structs: StructTab): i32 {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            if (ident_name_or_empty(fa.obj) != p) { return 0; }
+            var ft: string = decl_field_type(structs, sty, fa.field);
+            if (ft != "" && !is_scalar_type_name(ft)) { return 2; }
+            return 1;
+        },
+        ast.ExprIndex(ix) => {
+            if let ast.ExprFieldAccess(ifa) = ix.array {
+                if (ident_name_or_empty(ifa.obj) == p) { return 3; }
+            }
+            return 0;
+        },
+        ast.ExprCall(c) => {
+            if let ast.ExprFieldAccess(cfa) = c.callee {
+                if (cfa.field == "len" && c.args.len() == 0) {
+                    if let ast.ExprFieldAccess(rfa) = cfa.obj {
+                        if (ident_name_or_empty(rfa.obj) == p) { return 1; }
+                    }
+                }
+            }
+            return 0;
+        },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+function forvar_field_esc_at(x: ast.Expr, esc: boolean, p: string, sty: string, structs: StructTab): boolean {
+    if (esc) { return true; }
+    var code: i32 = forvar_field_shape(x, p, sty, structs);
+    if (code == 2) { return true; }
+    if (code == 3) {
+        if let ast.ExprIndex(ix) = x { return forvar_field_esc_expr(ix.index, p, sty, structs); }
+    }
+    return false;
+}
+
+// stmts_assign_name_deep: some statement at any depth of `stmts` assigns `name`.
+function stmts_assign_name_deep(stmts: ast.Stmt[], name: string): boolean {
+    function hit(st: ast.Stmt, own acc: boolean): boolean { return acc || stmt_assigns_name(st, name); }
+    function no_expr(x: ast.Expr, own acc: boolean): boolean { return acc; }
+    for stmt in stmts {
+        if (astwalk.fold_stmt_nodes(stmt, false, hit, no_expr, astwalk.descend_all)) { return true; }
+    }
+    return false;
+}
+
 function expr_is_bare_row_read(e: ast.Expr, name: string): boolean {
     match (e) {
         ast.ExprIndex(ix) => {
@@ -53905,11 +54008,35 @@ function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs
     return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
 
+// A `for p in name` iterable is not an escape here: arrstruct_row_escapes
+// judges the iteration, and only its body is scanned.
 function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
     function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
     function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
+    function esc_expr(x: ast.Expr): boolean { return astwalk.fold_expr_pruned(x, false, visit, descend); }
+    function esc_body(b: ast.Stmt[]): boolean { return arrstruct_elem_payload_escapes(b, name, sty, structs, msites, borrowable, sfok); }
     for stmt in stmts {
-        if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
+        match (stmt) {
+            ast.StmtFor(fo) => {
+                if (!ident_named_is(fo.iter, name) && esc_expr(fo.iter)) { return true; }
+                if (esc_body(fo.body)) { return true; }
+            },
+            ast.StmtIf(f) => {
+                if (esc_expr(f.cond) || esc_body(f.then_body) || esc_body(f.else_body)) { return true; }
+            },
+            ast.StmtWhile(w) => {
+                if (esc_expr(w.cond) || esc_body(w.body)) { return true; }
+            },
+            ast.StmtMatch(m) => {
+                if (esc_expr(m.scrutinee)) { return true; }
+                for arm in m.arms {
+                    if (arm.has_guard && esc_expr(arm.guard)) { return true; }
+                    if (esc_body(arm.body)) { return true; }
+                }
+            },
+            ast.StmtDefer(d) => { if (esc_body([d.action])) { return true; } },
+            _ => { if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; } }
+        }
     }
     return false;
 }
