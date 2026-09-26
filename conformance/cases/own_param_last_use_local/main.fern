@@ -1,0 +1,67 @@
+// A local handed to an `own` parameter where it dies is a move, not a borrow:
+// nothing reads the binding again (#9541). Each function below builds a value
+// into a local and hands it over at a different kind of last use; `main` runs
+// them all three times over, so a reference released twice reaches the
+// freelist and is caught by __rc_underflow_count().
+struct W { d: i32[], n: i32 }
+struct Pair { a: W, b: W }
+enum E { A, B }
+
+@noinline function keep(own xs: i32[], k: i32): i32 { return xs[0] + k; }
+@noinline function eat(own w: W): i32 { return w.n + w.d.len(); }
+@noinline function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }
+@noinline function regrow(own w: W, v: i32): W { return W { d: w.d.append(v), n: w.n + 1 }; }
+@noinline function mk(n: i32): i32[] { return [n, n]; }
+@noinline function mkw(n: i32): W { return W { d: [n], n: n }; }
+@noinline function mkp(n: i32): Pair { return Pair { a: mkw(n), b: mkw(n + 1) }; }
+@noinline function peek(w: W): i32 { return w.n; }
+@noinline function (w: W) bump(k: i32): W { return W { d: w.d, n: w.n + k }; }
+@noinline function both(own a: W, own b: W): i32 { return a.n + b.n; }
+@noinline function pr(own xs: i32[]): (i32[], i32) { return (xs, 1); }
+
+// Returned straight out of the function, whatever built the local.
+@noinline function ret_lit(n: i32): i32 { var a: i32[] = [n]; return keep(a, 1); }
+// The textually last read of a call-initialised local.
+@noinline function mid_call(n: i32): i32 { var a: i32[] = mk(n); var r: i32 = keep(a, 1); return r; }
+// Rebound by the call that takes it, inside a loop and one call deep.
+@noinline function loop_reassign(n: i32): i32 { var a: i32[] = mk(n); var t: i32 = 0; while (t < 3) { a = grow(a, t); t = t + 1; } return a.len(); }
+@noinline function loop_nested(n: i32): i32 { var a: i32[] = mk(n); var t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }
+// Rebound by the next statement.
+@noinline function two_stmt(n: i32): i32 { var a: i32[] = mk(n); var b: i32[] = grow(a, 2); a = b; return a.len(); }
+@noinline function two_stmt_loop(n: i32): i32 { var a: i32[] = mk(n); var t: i32 = 0; while (t < 2) { var b: i32[] = grow(a, 2); a = b; t = t + 1; } return a.len(); }
+// The last read on the path that returns; the other path reads it later.
+@noinline function path_last(n: i32): i32 { var w: W = mkw(n); if (n > 1) { var r: i32 = eat(w); return r; } return w.n; }
+// Unpacked from a call-initialised local, and renamed.
+@noinline function unpack(n: i32): i32 { var p: Pair = mkp(n); var x: W = p.a; var r: i32 = eat(x); return r; }
+@noinline function rename_call(n: i32): i32 { var w0: W = mkw(n); var w: W = w0; var r: i32 = eat(w); return r; }
+// A rename of a BORROWED parameter holds no reference of its own, so the one
+// the callee consumes has to be bought for it; the caller reads its value after.
+@noinline function rename_param(w0: W): i32 { var w: W = w0; var r: i32 = eat(w); return r; }
+// Threaded through method calls.
+@noinline function method_init(n: i32): i32 { var w0: W = mkw(n); var w: W = w0.bump(1); var r: i32 = eat(w); return r; }
+@noinline function method_chain(n: i32): i32 { var w: W = mkw(n); var v: W = w.bump(1); var u: W = v.bump(2); return eat(u); }
+@noinline function self_reassign(n: i32): i32 { var w: W = mkw(n); w = regrow(w, 2); return w.n; }
+// Inside an if / match expression and a match arm.
+@noinline function if_expr(n: i32): i32 { var a: i32[] = mk(n); var r: i32 = if (n > 1) { keep(a, 1) } else { 0 }; return r; }
+@noinline function match_arm(e: E): i32 { var w: W = mkw(3); match (e) { A => { return eat(w); }, B => { return 0; } } }
+@noinline function match_expr(e: E): i32 { var w: W = mkw(4); var r: i32 = match (e) { A => eat(w), B => 0 }; return r; }
+// An inner binding of the same name, two locals at once, and a borrow first.
+@noinline function shadow_inner(n: i32): i32 { var w: W = mkw(n); if (n > 1) { var w: W = mkw(2); return eat(w); } return w.n; }
+@noinline function two_args(n: i32): i32 { var x: W = mkw(n); var y: W = mkw(2); return both(x, y); }
+@noinline function after_peek(n: i32): i32 { var x: W = mkw(n); var k: i32 = peek(x); return eat(x) + k; }
+@noinline function tuple_rebind(n: i32): i32 { var a: i32[] = mk(n); var (b, k) = pr(a); a = b; return a.len() + k; }
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var w: W = mkw(i);
+        total = total + ret_lit(i) + mid_call(i) + loop_reassign(i) + loop_nested(i) + two_stmt(i) + two_stmt_loop(i);
+        total = total + path_last(i) + unpack(i) + rename_param(w) + w.n + rename_call(i) + method_init(i) + method_chain(i);
+        total = total + self_reassign(i) + if_expr(i) + match_arm(A) + match_arm(B) + match_expr(A) + match_expr(B);
+        total = total + shadow_inner(i) + two_args(i) + after_peek(i) + tuple_rebind(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return total % 100;
+}

@@ -785,6 +785,19 @@ function main(): i32 {
     return (u as i32) & 255i32;
 }
 `, "main", "did not lower: `var u` bound from immediately-invoked value block"},
+	// A struct local handed to an `own` parameter at its last use (#9541). The
+	// AST lowering cannot tell whether such a local holds a counted reference
+	// of its own — a rename of a borrowed parameter holds none — so it refuses
+	// rather than guess, and the semantic lowering moves it.
+	{"own-last-use-local", `struct W { d: i32[], n: i32 }
+function eat(own w: W): i32 { return w.n + w.d.len(); }
+function mkw(n: i32): W { return W { d: [n], n: n }; }
+function f(n: i32): i32 {
+    var w: W = mkw(n);
+    return eat(w);
+}
+function main(): i32 { return f(3); }
+`, "f", "a boxed local handed to an `own` parameter at its last use"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own

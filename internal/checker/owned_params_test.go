@@ -198,12 +198,88 @@ function f(p: Pair): i32 {
 }`)
 }
 
-func TestOwnGuardRejectsPlainLocal(t *testing.T) {
-	wantE051(t, "plain-local-arg", ownConsumer+`
+// A local handed over where it dies is a move (#9541): nothing reads the
+// binding again. The admission is CallArgDeaths', the analysis the IR moves by.
+func TestOwnGuardAllowsLocalAtLastUse(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"returned-call", `
 function f(): i32 {
     var xs: i32[] = [1, 2];
-    return consume(xs);        // E051: a plain local isn't tracked as owned yet
-}`)
+    return consume(xs);
+}`},
+		{"call-initialised-last-read", `
+function mk(): i32[] { return [1, 2]; }
+function f(): i32 {
+    var xs: i32[] = mk();
+    var n: i32 = consume(xs);
+    return n;
+}`},
+		{"last-read-on-the-returning-path", `
+function mk(): Box { return Wrap([1]); }
+function f(c: boolean): i32 {
+    var b: Box = mk();
+    if (c) {
+        var n: i32 = consumeBox(b);
+        return n;
+    }
+    match (b) { Wrap(xs) => { return xs.len(); } }
+}`},
+		{"two-statement-rebind", `
+function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }
+function f(): i32 {
+    var xs: i32[] = [1];
+    var ys: i32[] = grow(xs, 2);
+    xs = ys;
+    return xs.len();
+}`},
+	} {
+		wantOK(t, tc.name, ownConsumer+tc.body)
+	}
+}
+
+// Every way the binding can still be read after the call keeps the refusal.
+func TestOwnGuardRejectsLocalStillLive(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"read-again", `
+function mk(): i32[] { return [1, 2]; }
+function f(): i32 {
+    var xs: i32[] = mk();
+    var n: i32 = consume(xs);
+    return n + xs.len();
+}`},
+		{"inside-a-loop", `
+function mk(): i32[] { return [1, 2]; }
+function f(): i32 {
+    var xs: i32[] = mk();
+    var n: i32 = 0;
+    while (n < 3) { n = n + consume(xs); }
+    return n;
+}`},
+		{"read-by-a-defer", `
+function mk(): i32[] { return [1, 2]; }
+function f(): i32 {
+    var xs: i32[] = mk();
+    defer { var k: i32 = xs.len(); }
+    return consume(xs);
+}`},
+		{"captured-by-a-lambda", `
+function mk(): i32[] { return [1, 2]; }
+function f(): i32 {
+    var xs: i32[] = mk();
+    var g = (): i32 => xs.len();
+    return consume(xs) + g();
+}`},
+		// A literal-initialised local is admitted at a return, not at an
+		// ordinary last read: CallArgDeaths cannot rule out that it aliases.
+		{"literal-local-not-returned", `
+function f(): i32 {
+    var xs: i32[] = [1, 2];
+    var n: i32 = consume(xs);
+    return n;
+}`},
+	} {
+		wantE051(t, tc.name, ownConsumer+tc.body)
+	}
 }
 
 func TestOwnGuardAllowsConstruction(t *testing.T) {
@@ -357,13 +433,15 @@ function f(): i32 {
 }
 
 // The admission is for VARIANTS, not for any bare name that happens to match a
-// declaration: a plain local of enum type is still a borrow.
+// declaration: a local of enum type read after the call is still a borrow.
 func TestOwnGuardRejectsEnumLocal(t *testing.T) {
 	wantE051(t, "enum-local-arg", `enum Span { Empty, Wide(i32[]) }
 function eat(own sp: Span): i32 { return 0; }
+function peek(sp: Span): i32 { return 0; }
 function f(): i32 {
     var sp: Span = Empty;
-    return eat(sp);                    // a plain local is not owned
+    var n: i32 = eat(sp);              // read again below, so not a move
+    return n + peek(sp);
 }`)
 }
 

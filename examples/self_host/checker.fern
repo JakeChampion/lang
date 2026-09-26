@@ -13242,7 +13242,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 // the Go checker's checkOwnedParams; conservative where the self-host
 // lacks the type detail (no match-payload ownership transfer, no
 // dyn-trait consuming methods) — it under-reports rather than over-reports.
-pub struct OwnFunc { name: string, flags: boolean[] }
+pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 
 struct MovedEntry { mname: string, mline: i32 }
 
@@ -13259,7 +13259,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], last_use: string[] }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -13335,7 +13335,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   }
   var bound: string[] = ctx.bound;
   for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound };
+  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, last_use: ctx.last_use };
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -13404,9 +13404,9 @@ function ow_struct_known(structs: parser.StructDecl[], name: string): boolean {
 
 // ow_is_owned_expr: a value the caller owns and may transfer into an `own`
 // parameter — a fresh construction (struct/tuple/array literal, string
-// concat) or another owned parameter, or a variant-constructor call.
-// Anything else (borrowed param, projection, plain local, ordinary call)
-// is not provably owned → E051.
+// concat), another owned parameter, a variant-constructor call, or a local at
+// its last use (lu_last_use_args). Anything else (borrowed param, projection,
+// a local still read afterwards, ordinary call) is not provably owned → E051.
 // ow_scalar_literal: a literal carrying no unit. A consuming position takes
 // nothing from the caller there, so there is nothing to prove owned — and a
 // generic `own acc: T` reaches every instantiation, so refusing the scalar one
@@ -13459,6 +13459,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
         return true;
       }
+      if (util.has_str(ctx.last_use, lu_key(id.line, id.col))) {
+        return true;
+      }
       if (ow_variant_known(ctx.structs, id.name, "")) {
         return true;
       }
@@ -13490,6 +13493,426 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return false;
     }
   }
+}
+
+// ===================== last-use transfer (E051, #9541) ====================
+// A local handed to an `own` parameter at its LAST use is a move: nothing reads
+// the binding again. lu_last_use_args names those argument occurrences, as
+// "line:col" keys, by native's CallArgDeaths (internal/checker/
+// call_arg_deaths.go), which is also what the IR moves by. Only the question
+// E051 asks is ported: a `var` local, at an `own` position of a direct call,
+// outside any lambda, read by no defer or lambda.
+//
+// The source order of two occurrences is their position, where native numbers
+// idents in walk order; the two agree wherever the parser leaves source order
+// alone.
+
+struct LuOcc { name: string, line: i32, col: i32 }
+
+struct LuVar { name: string, init: ast.Expr }
+
+struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[] }
+
+// LuFn is what every verdict reads: the body's facts, its parameter names and
+// the own-func table.
+struct LuFn { facts: LuFacts, params: string[], ofuncs: OwnFunc[] }
+
+// LuSite is the statement a call sits in: its innermost statement list, its
+// index there, whether a loop re-runs it, and whether that list is the body of
+// a parser-synthesised IIFE — a match / if expression or value block, which
+// native keeps as an expression, so a `return` there does not leave the
+// function.
+struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, in_iife: boolean }
+
+function lu_key(line: i32, col: i32): string {
+  return util.i32_to_string(line) + ":" + util.i32_to_string(col);
+}
+
+// lu_all_names is every name `st` mentions: each identifier, anywhere, and each
+// assignment target.
+function lu_all_names(st: ast.Stmt, own acc: string[]): string[] {
+  function at_stmt(s: ast.Stmt, own a: string[]): string[] {
+    if let ast.StmtAssign(asg) = s { return a.append(asg.target); }
+    return a;
+  }
+  function at_expr(e: ast.Expr, own a: string[]): string[] {
+    if let ast.ExprIdent(id) = e { return a.append(id.name); }
+    return a;
+  }
+  return astwalk.fold_stmt_nodes(st, acc, at_stmt, at_expr, astwalk.descend_all);
+}
+
+function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
+  match (st) {
+    ast.StmtAssign(a) => {
+      return LuFacts { ...f, occ: f.occ.append(LuOcc { name: a.target, line: a.target_line, col: a.target_col }) };
+    },
+    ast.StmtVar(v) => {
+      return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
+    },
+    ast.StmtDefer(d) => {
+      return LuFacts { ...f, escaping: lu_all_names(d.action, f.escaping) };
+    },
+    _ => { return f; }
+  }
+  return f;
+}
+
+// A lambda the parser synthesised for a value block or a match / if expression
+// stands for a node native has no lambda for, so it makes nothing escape.
+function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return LuFacts { ...f, occ: f.occ.append(LuOcc { name: id.name, line: id.line, col: id.col }) };
+    },
+    ast.ExprLambda(lm) => {
+      if (lm.origin.len() > 0) { return f; }
+      var esc: string[] = f.escaping;
+      for st in lm.body { esc = lu_all_names(st, esc); }
+      return LuFacts { ...f, escaping: esc };
+    },
+    _ => { return f; }
+  }
+  return f;
+}
+
+function lu_occ_count(fx: LuFn, name: string): i32 {
+  var n: i32 = 0;
+  for o in fx.facts.occ {
+    if (o.name == name) { n = n + 1; }
+  }
+  return n;
+}
+
+function lu_decl_count(fx: LuFn, name: string): i32 {
+  var n: i32 = 0;
+  for v in fx.facts.vars {
+    if (v.name == name) { n = n + 1; }
+  }
+  return n;
+}
+
+// lu_init_of is the initialiser of the single declaration of `name`; `ok` is
+// false for a name declared other than exactly once.
+struct LuInit { ok: boolean, init: ast.Expr }
+
+function lu_init_of(fx: LuFn, name: string): LuInit {
+  var found: i32 = 0;
+  var init: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  for v in fx.facts.vars {
+    if (v.name == name) {
+      found = found + 1;
+      init = v.init;
+    }
+  }
+  return LuInit { ok: found == 1, init: init };
+}
+
+function lu_is_local(fx: LuFn, name: string): boolean {
+  return !util.has_str(fx.params, name) && lu_decl_count(fx, name) > 0;
+}
+
+// lu_call_init: declared once, from a call whose callee is named — a function,
+// or a method, which native has rewritten to one by the time it asks.
+function lu_call_init(fx: LuFn, name: string): boolean {
+  var li: LuInit = lu_init_of(fx, name);
+  if (!li.ok) { return false; }
+  if let ast.ExprCall(c) = li.init {
+    if let ast.ExprIdent(_) = c.callee { return true; }
+    if let ast.ExprFieldAccess(_) = c.callee { return true; }
+  }
+  return false;
+}
+
+// lu_unpack_init: declared once as `h.f` of a call-initialised `h`, where that is
+// the only read of `h.f` and every mention of `h` selects a field.
+function lu_unpack_init(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
+  var li: LuInit = lu_init_of(fx, name);
+  if (!li.ok) { return false; }
+  if let ast.ExprFieldAccess(fa) = li.init {
+    var h: string = ow_ident_name(fa.obj);
+    if (h.len() == 0 || !lu_call_init(fx, h)) { return false; }
+    var reads: i32 = 0;
+    var selections: i32 = 0;
+    for st in body {
+      reads = reads + lu_field_reads(st, h, fa.field);
+      selections = selections + lu_field_reads(st, h, "");
+    }
+    return reads == 1 && selections == lu_occ_count(fx, h);
+  }
+  return false;
+}
+
+// lu_field_reads counts the `h.field` selections in `st`, or every selection
+// on `h` when `field` is "".
+function lu_field_reads(st: ast.Stmt, h: string, field: string): i32 {
+  function at_expr(e: ast.Expr, own n: i32): i32 {
+    if let ast.ExprFieldAccess(fa) = e {
+      if (ow_ident_name(fa.obj) == h && (field.len() == 0 || fa.field == field)) { return n + 1; }
+    }
+    return n;
+  }
+  return astwalk.fold_stmt_nodes(st, 0i32, (s: ast.Stmt, own n: i32) => n, at_expr, astwalk.descend_all);
+}
+
+// lu_rename_source is the name `var name = src;` renames, when `src` is named
+// nowhere else; "" otherwise.
+function lu_rename_source(fx: LuFn, name: string): string {
+  var li: LuInit = lu_init_of(fx, name);
+  if (!li.ok) { return ""; }
+  var src: string = ow_ident_name(li.init);
+  if (src.len() == 0 || lu_occ_count(fx, src) != 1) { return ""; }
+  return src;
+}
+
+// lu_admitted is the binding the last-occurrence shapes admit: one bound from a
+// call, unpacked from one, or a rename of such a binding or of a parameter.
+function lu_admitted(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
+  if (lu_call_init(fx, name) || lu_unpack_init(fx, name, body)) { return true; }
+  var root: string = lu_rename_source(fx, name);
+  if (root.len() == 0) { return false; }
+  var seen: string[] = [name, root];
+  var next: string = lu_rename_source(fx, root);
+  while (next.len() > 0 && !util.has_str(seen, next)) {
+    root = next;
+    seen = seen.append(next);
+    next = lu_rename_source(fx, root);
+  }
+  return util.has_str(fx.params, root) || lu_call_init(fx, root) || lu_unpack_init(fx, root, body);
+}
+
+// lu_is_last: no occurrence of the name sits after this one.
+function lu_is_last(fx: LuFn, id: ast.ExprIdent): boolean {
+  for o in fx.facts.occ {
+    if (o.name == id.name && (o.line > id.line || (o.line == id.line && o.col > id.col))) { return false; }
+  }
+  return true;
+}
+
+function lu_mentions(st: ast.Stmt, name: string): i32 {
+  var n: i32 = 0;
+  for nm in lu_all_names(st, []) {
+    if (nm == name) { n = n + 1; }
+  }
+  return n;
+}
+
+// lu_jump_escapes: a break / continue in `st` that can leave the statement list
+// holding it — unlabelled outside every loop `st` contains, or labelled.
+function lu_jump_escapes(st: ast.Stmt, depth: i32): boolean {
+  match (st) {
+    ast.StmtBreak(b) => { return depth == 0 || b.label.len() > 0; },
+    ast.StmtContinue(c) => { return depth == 0 || c.label.len() > 0; },
+    ast.StmtIf(f) => {
+      for s in f.then_body { if (lu_jump_escapes(s, depth)) { return true; } }
+      for s in f.else_body { if (lu_jump_escapes(s, depth)) { return true; } }
+      return false;
+    },
+    ast.StmtWhile(w) => {
+      for s in w.body { if (lu_jump_escapes(s, depth + 1)) { return true; } }
+      return false;
+    },
+    ast.StmtFor(fo) => {
+      for s in fo.body { if (lu_jump_escapes(s, depth + 1)) { return true; } }
+      return false;
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        for s in arm.body { if (lu_jump_escapes(s, depth)) { return true; } }
+      }
+      return false;
+    },
+    ast.StmtDefer(d) => { return lu_jump_escapes(d.action, depth); },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// lu_returns_before_reading: the statement list holding the call returns before
+// naming `name` again, so this read is the last on every path through it.
+function lu_returns_before_reading(site: LuSite, name: string): boolean {
+  if (lu_mentions(site.stmts[site.idx], name) != 1) { return false; }
+  var j: i32 = site.idx + 1;
+  while (j < site.stmts.len()) {
+    var st: ast.Stmt = site.stmts[j];
+    if (lu_mentions(st, name) != 0 || lu_jump_escapes(st, 0)) { return false; }
+    if let ast.StmtReturn(_) = st { return true; }
+    j = j + 1;
+  }
+  return false;
+}
+
+function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
+  for ofn in fx.ofuncs {
+    if (ofn.name == callee) { return i >= ofn.arr.len() || ofn.arr[i]; }
+  }
+  return true;
+}
+
+// lu_dies reports whether the argument `aid` (position `i` of `call`) is dead at
+// the call. `outer` is the outermost call enclosing it, when `has_outer`;
+// `is_root` says `call` is the statement's whole expression.
+function lu_dies(fx: LuFn, body: ast.Stmt[], call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite): boolean {
+  var name: string = aid.name;
+  if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) { return false; }
+  var once: boolean = astwalk.count_ident_expr(call, name) == 1;
+  match (site.stmts[site.idx]) {
+    // `x = f(.., x, ..)`, the call anywhere in the value.
+    ast.StmtAssign(a) => {
+      if let ast.ExprCall(_) = a.value {
+        if (a.target == name && astwalk.count_ident_expr(a.value, name) == 1) { return true; }
+      }
+    },
+    // `return f(.., x, ..)`.
+    ast.StmtReturn(_) => {
+      if (is_root && once && !site.in_iife) { return true; }
+    },
+    // `var y = f(.., x, ..); x = y;` — the store supersedes x before anything
+    // else runs.
+    ast.StmtVar(v) => {
+      if let ast.ExprCall(_) = v.init {
+        if (site.idx + 1 < site.stmts.len() && astwalk.count_ident_expr(v.init, name) == 1) {
+          if let ast.StmtAssign(nxt) = site.stmts[site.idx + 1] {
+            if (nxt.target == name && astwalk.count_ident_expr(nxt.value, name) == 0) { return true; }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  if (site.in_loop || !once || !lu_admitted(fx, name, body)) { return false; }
+  if (lu_is_last(fx, aid)) {
+    // An enclosing call that also names x already holds it (#9879).
+    return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
+  }
+  if (site.in_iife || lu_arr_position(fx, callee, i)) { return false; }
+  return lu_returns_before_reading(site, name);
+}
+
+// lu_call collects the keys of `c`'s own-position arguments that die at it.
+function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+  var cname: string = ow_ident_name(c.callee);
+  if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) { return acc; }
+  var flags: boolean[] = ow_func_flags(fx.ofuncs, cname);
+  var i: i32 = 0;
+  while (i < c.args.len() && i < flags.len()) {
+    if (flags[i]) {
+      if let ast.ExprIdent(aid) = c.args[i] {
+        if (lu_dies(fx, body, e, cname, i, aid, outer, has_outer, is_root, site)) {
+          acc = acc.append(lu_key(aid.line, aid.col));
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// lu_children lists an expression's operands. A lambda has none here: its body
+// is lowered as a function of its own.
+function lu_children(e: ast.Expr): ast.Expr[] {
+  var out: ast.Expr[] = [];
+  match (e) {
+    ast.ExprBinary(b) => { out = out.append(b.left); out = out.append(b.right); },
+    ast.ExprUnary(u) => { out = out.append(u.operand); },
+    ast.ExprCall(c) => {
+      out = out.append(c.callee);
+      for a in c.args { out = out.append(a); }
+    },
+    ast.ExprArray(a) => { for el in a.elements { out = out.append(el); } },
+    ast.ExprTuple(t) => { for el in t.elements { out = out.append(el); } },
+    ast.ExprMapLit(ml) => {
+      var k: i32 = 0;
+      while (k < ml.keys.len()) { out = out.append(ml.keys[k]); out = out.append(ml.vals[k]); k = k + 1; }
+    },
+    ast.ExprFString(fs) => {
+      var k: i32 = 0;
+      while (k < fs.exprs.len()) { if (fs.is_expr[k]) { out = out.append(fs.exprs[k]); } k = k + 1; }
+    },
+    ast.ExprIndex(x) => { out = out.append(x.array); out = out.append(x.index); },
+    ast.ExprSlice(sl) => { out = out.append(sl.array); out = out.append(sl.start); out = out.append(sl.end); },
+    ast.ExprStructLit(sl) => {
+      if (sl.has_base) { out = out.append(sl.base); }
+      for fv in sl.field_values { out = out.append(fv); }
+    },
+    ast.ExprFieldAccess(fa) => { out = out.append(fa.obj); },
+    _ => {}
+  }
+  return out;
+}
+
+function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+  var o: ast.Expr = outer;
+  var ho: boolean = has_outer;
+  if let ast.ExprCall(c) = e {
+    // A written lambda is lowered as a function of its own, so its calls stay
+    // out; a synthesised one runs in place.
+    if let ast.ExprLambda(lm) = c.callee {
+      if (lm.origin.len() == 0 || c.args.len() > 0) { return acc; }
+      return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, body, acc);
+    }
+    acc = lu_call(c, e, outer, has_outer, is_root, site, fx, body, acc);
+    if (!ho) { o = e; ho = true; }
+  }
+  for child in lu_children(e) {
+    acc = lu_expr(child, o, ho, false, site, fx, body, acc);
+  }
+  return acc;
+}
+
+// lu_root walks a statement's own expression. `outer` carries an enclosing call
+// into the body of a synthesised IIFE, which native sees as one expression.
+function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+  if (has_outer) { return lu_expr(e, outer, true, true, site, fx, body, acc); }
+  return lu_expr(e, e, false, true, site, fx, body, acc);
+}
+
+function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+  var i: i32 = 0;
+  while (i < stmts.len()) {
+    var site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, in_iife: in_iife };
+    match (stmts[i]) {
+      ast.StmtVar(v) => { acc = lu_root(v.init, site, outer, has_outer, fx, body, acc); },
+      ast.StmtAssign(a) => { acc = lu_root(a.value, site, outer, has_outer, fx, body, acc); },
+      ast.StmtReturn(r) => { acc = lu_root(r.value, site, outer, has_outer, fx, body, acc); },
+      ast.StmtExpr(x) => { acc = lu_root(x.value, site, outer, has_outer, fx, body, acc); },
+      ast.StmtIf(f) => {
+        acc = lu_root(f.cond, site, outer, has_outer, fx, body, acc);
+        acc = lu_stmts(f.then_body, in_loop, in_iife, outer, has_outer, fx, body, acc);
+        acc = lu_stmts(f.else_body, in_loop, in_iife, outer, has_outer, fx, body, acc);
+      },
+      ast.StmtWhile(w) => {
+        acc = lu_root(w.cond, LuSite { ...site, in_loop: true }, outer, has_outer, fx, body, acc);
+        acc = lu_stmts(w.body, true, in_iife, outer, has_outer, fx, body, acc);
+      },
+      ast.StmtFor(fo) => {
+        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true }, outer, has_outer, fx, body, acc);
+        acc = lu_stmts(fo.body, true, in_iife, outer, has_outer, fx, body, acc);
+      },
+      ast.StmtMatch(m) => {
+        acc = lu_root(m.scrutinee, site, outer, has_outer, fx, body, acc);
+        for arm in m.arms {
+          if (arm.has_guard) { acc = lu_root(arm.guard, site, outer, has_outer, fx, body, acc); }
+          acc = lu_stmts(arm.body, in_loop, in_iife, outer, has_outer, fx, body, acc);
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return acc;
+}
+
+// lu_last_use_args is the E051 admission for `fn`: the keys of the local
+// arguments handed to an `own` parameter where they die.
+function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
+  var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [] };
+  for st in fn.body {
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  var fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
+  var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+  return lu_stmts(fn.body, false, false, none, false, fx, fn.body, []);
 }
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere
@@ -13667,7 +14090,7 @@ function ow_guard_call(c: ast.ExprCall, ctx: OwnCtx): util.Diag[] {
             var aline: i32 = ast.expr_line(c.args[i]);
             var acol: i32 = ast.expr_col(c.args[i]);
             if (aline <= 0) { aline = c.line; acol = c.col; }
-            out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one", aline, acol));
+            out = out.append(dg_at("E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", aline, acol));
           }
           i = i + 1;
         }
@@ -14078,15 +14501,18 @@ function collect_own_funcs(funcs: parser.FuncDecl[]): OwnFunc[] {
   for func in funcs {
     var any_own: boolean = false;
     var flags: boolean[] = [];
+    var arr: boolean[] = [];
     for param in func.params {
       var o: boolean = param.own;
       flags = flags.append(o);
+      var tn: string = param.type_name;
+      arr = arr.append(tn.len() >= 2 && tn[tn.len() - 2] == b'[' && tn[tn.len() - 1] == b']');
       if (o) {
         any_own = true;
       }
     }
     if (any_own && func.receiver_name.len() == 0) {
-      out = out.append(OwnFunc { name: func.name, flags: flags });
+      out = out.append(OwnFunc { name: func.name, flags: flags, arr: arr });
     }
   }
   return out;
@@ -14394,7 +14820,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn) };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), last_use: lu_last_use_args(fn, ofuncs) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);

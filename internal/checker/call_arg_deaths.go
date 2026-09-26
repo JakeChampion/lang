@@ -830,3 +830,49 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 	}
 }
 
+// lastUseArgs is the E051 admission for a local handed over at its last use
+// (#9541): each ident argument of a direct call that CallArgDeaths marks dead
+// there, names a `var` local of fn, and is read by no defer or lambda. Those
+// are the positions computeOwnedArgMoves moves into an owned parameter.
+// Calls inside a nested function or lambda are left out: those bodies are
+// lowered as functions of their own.
+func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
+	out := map[ast.Expr]bool{}
+	if fn.Body == nil {
+		return out
+	}
+	d := CallArgDeaths(fn, info)
+	isParam := map[string]bool{}
+	for _, p := range fn.Params {
+		isParam[p.Name] = true
+	}
+	local := map[string]bool{}
+	nested := map[*ast.Call]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if !isParam[x.Name] {
+				local[x.Name] = true
+			}
+		case *ast.FuncDecl, *ast.Lambda:
+			ast.Walk(x, func(m ast.Node) bool {
+				if c, ok := m.(*ast.Call); ok {
+					nested[c] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	for call, dies := range d.Dies {
+		if _, direct := call.Callee.(*ast.Ident); !direct || nested[call] {
+			continue
+		}
+		for _, a := range call.Args {
+			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && local[id.Name] && !d.Escaping[id.Name] {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}

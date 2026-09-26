@@ -12730,9 +12730,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	// isOwnedExpr reports whether `e` is a value the caller owns and can
 	// TRANSFER into an `own` parameter: a fresh construction (struct / tuple /
-	// array / map literal, string concat, variant-constructor call) or another
-	// `own` parameter of the current function. A borrowed value — a borrowed
-	// param, a field / index read, a plain local, a non-fresh call result —
+	// array / map literal, string concat, variant-constructor call), another
+	// `own` parameter of the current function, or a local at its last use
+	// (lastUseArgs). A borrowed value — a borrowed param, a field / index
+	// read, a local still read afterwards, a non-fresh call result —
 	// cannot be transferred (the caller, or someone, still owns it), so passing
 	// it to an `own` parameter is E051. Conservative: anything not provably
 	// owned is rejected.
@@ -12753,6 +12754,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// g(.., x.f, ..) }` — or the return of that literal — supersedes the one
 	// field the call consumes.
 	selfMoveArgs := map[ast.Expr]bool{}
+	lastUse := lastUseArgs(fn, c.info)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -12770,7 +12772,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
 			}
-			return owned[x.Name] || selfMoveArgs[e] || c.scalarArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			// `Span.Empty` — a qualified payload-less variant stays a
 			// FieldAccess rather than being rewritten to an Ident, so it is
@@ -12817,7 +12819,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		for i := 0; i < len(x.Args) && i < len(flags); i++ {
 			if flags[i] && !isOwnedExpr(x.Args[i]) {
-				c.errfCode(x.Args[i].Pos(), "E051", "argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one")
+				c.errfCode(x.Args[i].Pos(), "E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one")
 			}
 		}
 	}

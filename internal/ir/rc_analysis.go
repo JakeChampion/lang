@@ -8850,8 +8850,8 @@ func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 }
 
 // computeSelfReassignOwnMoves claims the `p = f(…, p, …)` sites that hand THIS
-// function's `own` param p straight on to another `own` parameter and rebind p
-// to the result. The argument stops paying `ownArgNeedsRetain`'s compensating
+// function's `own` param p, or a local, straight on to another `own` parameter
+// and rebind p to the result. The argument stops paying `ownArgNeedsRetain`'s compensating
 // retain.
 //
 // The retain was never balanced on this shape. A self-reassign emits NO
@@ -8877,15 +8877,23 @@ func (b *builder) computeSelfReassignOwnMoves() {
 	if b.fn.Body == nil || len(b.info.OwnFuncs) == 0 {
 		return
 	}
-	ownParam := map[string]bool{}
+	// claimable names what can reach ownArgNeedsRetain: a param the sweep
+	// actually decs, and a local of this function.
+	claimable := map[string]bool{}
+	isParam := map[string]bool{}
 	for _, p := range b.fn.Params {
-		// Only a param the sweep actually decs can reach ownArgNeedsRetain;
-		// for any other no retain is emitted and there is nothing to claim.
+		isParam[p.Name] = true
 		if p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name] {
-			ownParam[p.Name] = true
+			claimable[p.Name] = true
 		}
 	}
-	if len(ownParam) == 0 {
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok && !isParam[v.Name] {
+			claimable[v.Name] = true
+		}
+		return true
+	})
+	if len(claimable) == 0 {
 		return
 	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
@@ -8894,7 +8902,7 @@ func (b *builder) computeSelfReassignOwnMoves() {
 			return true
 		}
 		target, ok := asg.Target.(*ast.Ident)
-		if !ok || !ownParam[target.Name] {
+		if !ok || !claimable[target.Name] {
 			return true
 		}
 		uses := 0
@@ -8933,7 +8941,8 @@ func (b *builder) computeSelfReassignOwnMoves() {
 }
 
 // computeOwnedArgMoves claims the call arguments this frame hands to an
-// OWNED-BY-DEFAULT parameter without a retain: a bare ident naming a value
+// OWNED-BY-DEFAULT parameter, or a local handed to an explicit `own` one (the
+// last use E051 admits, #9541), without a retain: a bare ident naming a value
 // the frame holds one reference to (frameOwnsIdent) that DIES at the call
 // (callArgDeaths — the self-reassign `x = f(.., x, ..)` and `return f(..,
 // x, ..)` shapes, and a sole-occurrence param outside any loop). The
@@ -8955,6 +8964,10 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	}
 	deaths := b.curCallArgDies()
 	esc := checker.DeferOrLambdaNames(b.fn.Body)
+	isParam := map[string]bool{}
+	for _, p := range b.fn.Params {
+		isParam[p.Name] = true
+	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.Call)
 		if !ok {
@@ -8971,12 +8984,14 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 		if !isFunc {
 			return true
 		}
+		ownFlags := b.info.OwnFuncs[callee.Name]
 		for i, a := range call.Args {
 			arg, isArgID := a.(*ast.Ident)
 			if !isArgID || i >= len(sig.Params) || !deaths[call][arg.Name] || esc[arg.Name] {
 				continue
 			}
-			if !b.calleeParamOwnedByDefault(callee.Name, sig.Params[i], i) || !b.frameOwnsIdent(arg.Name) {
+			explicitLocal := i < len(ownFlags) && ownFlags[i] && !isParam[arg.Name]
+			if !(explicitLocal || b.calleeParamOwnedByDefault(callee.Name, sig.Params[i], i)) || !b.frameOwnsIdent(arg.Name) {
 				continue
 			}
 			out[arg] = true

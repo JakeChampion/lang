@@ -20422,9 +20422,51 @@ function const_agg_of(slit: ast.ExprStructLit, structs: StructTab): ConstAgg {
 // statement's dying call args (grow_exempt_names_of_stmt) are visible to the
 // call-site bracket only while THIS statement lowers.
 pub function lower_stmt(st: ast.Stmt, s: LowerState): LowerState {
+    if (own_local_transfer_in(st, s)) {
+        return s.note_fail("a boxed local handed to an `own` parameter at its last use (lowered by the semantic path)").fail();
+    }
     var r: LowerState = lower_stmt_grow_exempt(st, s);
     if (r.ok) { return r; }
     return r.note_fail(stmt_bail_tag(st));
+}
+
+// own_local_transfer_in: does `st` hand a boxed LOCAL to a declared `own`
+// position other than as its own rebind (`w = f(w)`, whose store call_owns_arg
+// leaves bare)? E051 admits one at its last use (#9541), and whether this
+// lowering bound it with a counted reference of its own depends on how it was
+// bound — a rename of a borrowed parameter holds none — which it does not
+// track. So it refuses rather than guess; the semantic lowering moves it.
+function own_local_transfer_in(st: ast.Stmt, s: LowerState): boolean {
+    if (s.frame.sigs.own_positions.len() == 0) { return false; }
+    var rebind: string = "";
+    if let ast.StmtAssign(a) = st {
+        if (call_owns_arg(a.value, a.target, s)) { rebind = a.target; }
+    }
+    function no_lambda(e: ast.Expr): boolean {
+        if let ast.ExprLambda(_) = e { return false; }
+        return true;
+    }
+    function at_expr(e: ast.Expr, own found: boolean): boolean {
+        if (found) { return true; }
+        if let ast.ExprCall(c) = e {
+            var cname: string = ident_name_or_empty(c.callee);
+            if (cname.len() == 0 || s.slot_of(cname) >= 0) { return false; }
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var nm: string = ident_name_or_empty(c.args[i]);
+                var sl: i32 = s.slot_of(nm);
+                if (nm.len() > 0 && nm != rebind && sl >= s.frame.n_params && !s.is_arr_slot(sl)
+                    && (s.struct_type_of_slot(sl).len() > 0 || s.slot_is_tuple_box(sl))
+                    && util.index_of_str(s.frame.sigs.own_positions, cname + "|" + util.i32_to_string(i)) >= 0
+                    && !s.callee_param_is_typevar(cname, i)) {
+                    return true;
+                }
+                i = i + 1;
+            }
+        }
+        return false;
+    }
+    return astwalk.fold_stmt_own_pruned(st, false, at_expr, no_lambda);
 }
 
 function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {
