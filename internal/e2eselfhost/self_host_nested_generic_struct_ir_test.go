@@ -11,8 +11,10 @@ import (
 // nestedGenericStructIRCase is a self-host generic-struct program whose
 // instantiation the struct monomorphiser has to infer: a type argument that is
 // ITSELF a generic struct (`Box[Box[i32]]`, a COMPOSITE instantiation key), or
-// one read off a local whose own type was inferred. The generic-struct monomorphiser (parser.fern) rewrites a
-// nested struct literal's inner instantiation first, so `infer_lit_key` already
+// one read off a local whose own type was inferred.
+//
+// For the composite key, the generic-struct monomorphiser (parser.fern)
+// rewrites a nested struct literal's inner instantiation first, so `infer_lit_key` already
 // sees the mangled inner type (`Box__i32`) and keys the outer clone
 // `Box__Box__i32`; the bug was phase-2 (and the method clone) splitting that
 // single-param key on `__`, fracturing the mangled nested arg back into `["Box",
@@ -108,6 +110,52 @@ function main(): i32 {
     for p in ps { var q = P { b: p.b }; n = n + q.b.len(); }
     return n;
 }`, 5},
+	// the same over an unannotated Option / Result scrutinee, both Result arms,
+	// and a user enum's variant payload (#10302).
+	{"field_of_unannotated_ok_payload", `struct P[T] { b: T }
+function mk(): Result[P[string], string] { return Ok(P { b: "xy" }); }
+function main(): i32 {
+    var r = mk();
+    match (r) {
+        Ok(p) => { var q = P { b: p.b }; return q.b.len(); },
+        Err(e) => { return 9; }
+    }
+}`, 2},
+	{"field_of_unannotated_err_payload", `struct P[T] { b: T }
+function mk(): Result[i32, P[string]] { return Err(P { b: "abc" }); }
+function main(): i32 {
+    var r = mk();
+    match (r) {
+        Ok(v) => { return v; },
+        Err(p) => { var q = P { b: p.b }; return q.b.len(); }
+    }
+}`, 3},
+	{"field_of_unannotated_some_payload", `struct P[T] { b: T }
+function main(): i32 {
+    var o = Some(P { b: "xy" });
+    match (o) {
+        Some(p) => { var q = P { b: p.b }; return q.b.len(); },
+        None => { return 9; }
+    }
+}`, 2},
+	{"field_of_enum_payload", `struct P[T] { b: T }
+enum E { A(P[string]), B }
+function main(): i32 {
+    var e: E = A(P { b: "xy" });
+    match (e) {
+        A(p) => { var q = P { b: p.b }; return q.b.len(); },
+        B => { return 9; }
+    }
+}`, 2},
+	{"field_of_generic_enum_payload", `struct P[T] { b: T }
+enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
+function main(): i32 {
+    var t: Tree[string] = Leaf("xyz");
+    match (t) {
+        Leaf(v) => { var q = P { b: v }; return q.b.len(); },
+        Node(l, r) => { return 9; }
+    }
+}`, 3},
 	{"field_of_option_payload", `struct P[T] { b: T }
 function main(): i32 {
     var o: Option[P[string]] = Some(P { b: "xy" });
