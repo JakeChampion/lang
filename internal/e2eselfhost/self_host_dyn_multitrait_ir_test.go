@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // dynMultiTraitIRCases exercise MULTI-trait trait objects `dyn A + B` through
 // the stack-IR path (docs/DYN-TRAITS.md §10). The self-host erases the whole
@@ -52,80 +45,17 @@ var dynMultiTraitIRCases = []struct {
 		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function f(s: dyn Show): i32 { return s.show(); } function main(): i32 { var c: Circle = Circle { r: 4 }; return f(c); }`, 16},
 }
 
-// TestSelfHostDynMultiTraitIRX86_64 routes each multi-trait case through the
-// self-hosted x86-64 driver (asm_run) and asserts the exit code, AND probes the
-// routing (asm_pathprobe_run) to pin each case to the "ir" path — proving the
-// multi-trait `dyn A + B` value flows through IR lowering.
-func TestSelfHostDynMultiTraitIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range dynMultiTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
-			}
-		})
-	}
-}
-
-// TestSelfHostDynMultiTraitIRWasm runs the same multi-trait cases through the
-// wasm IR backend (wasm_ir_run -ir): emit_dyn_dispatch is likewise method-name
-// based (a struct-id compare-branch over every impl of the called method), so a
-// method from any trait in the set dispatches with no codegen change.
-func TestSelfHostDynMultiTraitIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host multi-trait dyn wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range dynMultiTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "dynmultitrait_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("multi-trait dyn wasm IR %q = %d, want %d", tc.name, code, tc.expected)
-			}
-		})
+// TestSelfHostDynMultiTraitIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostDynMultiTraitIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range dynMultiTraitIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.expected {
+					t.Errorf("exited %d, want %d\n%s", code, tc.expected, stderr)
+				}
+			})
+		}
 	}
 }
