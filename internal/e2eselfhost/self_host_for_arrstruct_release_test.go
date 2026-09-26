@@ -12,8 +12,10 @@ import (
 // costs the array its element walk in the AST lowering (FERN_SEM_IR=), so the
 // element boxes and their `ops` buffers come back (#10161). The loop var is a
 // borrow the loop ends before the exit sweep runs; the `refused` rows keep the
-// walk off because the body would let an element or its buffer outlive it, and
-// they pin that the answer stays right under the sanitizer.
+// walk off because the body would let an element or its buffer outlive it. They
+// pin that the answer stays right under the sanitizer, and that the AST leg
+// still leaks: a balance there means the credit reached a shape the
+// confinement proof does not cover.
 const forArrStructDecls = `struct St { ops: i32[], n: i32 }
 function build(): St[] {
     var hold: St[] = [];
@@ -107,6 +109,9 @@ func TestSelfHostForArrStructReleaseX86_64(t *testing.T) {
 					if mode == "FERN_LEAKCHECK=1" && tc.balanced {
 						assertBalancedCensus(t, stderr)
 					}
+					if mode == "FERN_LEAKCHECK=1" && !tc.balanced && sem == "FERN_SEM_IR=" {
+						assertRefusedStillLeaks(t, stderr)
+					}
 				}
 			}
 		})
@@ -146,4 +151,19 @@ func forArrStructSanitizerFault(stderr string, balanced bool) bool {
 		}
 	}
 	return false
+}
+
+// assertRefusedStillLeaks: a refused row keeps the shallow fallback, so its
+// census on the AST leg is not balanced.
+func assertRefusedStillLeaks(t *testing.T, stderr string) {
+	t.Helper()
+	summary := leakSummaryLine(stderr)
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if live == 0 {
+		t.Errorf("%s — this row is REFUSED and must still take the shallow fallback; "+
+			"a balance means the credit reaches a shape the confinement proof does not cover", summary)
+	}
 }
