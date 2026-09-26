@@ -127,7 +127,8 @@ func selfHostCompiler(t *testing.T) string {
 // FERN_STRICT_IR=1 is the point of the exercise: it names the function that
 // failed to lower instead of leaving a whole-module refusal to be read off a
 // downstream symptom, and it is what turns "the self-host cannot compile this
-// tree" into a message a reader can act on.
+// tree" into a message a reader can act on. FERN_SEM_IR_STRICT=1 does the same
+// for a module the typed path does not produce whole.
 func selfHostBin(t *testing.T, util string) string {
 	t.Helper()
 	selfHostBinsMu.Lock()
@@ -150,7 +151,7 @@ func selfHostBin(t *testing.T, util string) string {
 		filepath.Join(root, "coreutils", util+".fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
+	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_STRICT=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)
 	}
