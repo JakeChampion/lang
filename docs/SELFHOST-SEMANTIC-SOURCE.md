@@ -426,7 +426,21 @@ Unsupported constructs refuse the whole function with a reason.
   (`copy_returned_views`): a counted string retagged, which anchors nothing.
   Any other result holding views with no one source is refused ("view result
   escapes its source"). The parameter stays lent: a returned view reads it
-  without taking its unit. A view as an
+  without taking its unit.
+
+  A view bound under a second name is a fresh view of the same bytes
+  (`semsource.unaliased_view`): a declaration or assignment from another
+  view, or the value an if- or match-expression arm yields, which a value
+  block copies into the result while the source name stays live. No two live
+  names then share a view box, so a loop rebinding one name never merges a
+  box the other still holds. A literal and a retagged string are counted and
+  keep their box. The cost is one box per such binding: the compiler has
+  none, and the stdlib has three bindings and no yielding arm. A match
+  expression desugared through a value local freshens twice, once at the
+  local's assignment and again when the block yields it; the second box is
+  redundant but harmless, and no site takes that route.
+
+  A view as an
   array element — an array literal's, `.append`'s or `.with`'s — makes the
   array a value gathering views (`ssasem.gathers_views`), anchored the same
   way: to its one source inside the body, and as a result to the one
