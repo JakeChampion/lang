@@ -21,9 +21,10 @@ import (
 //     is not p's.
 //
 // Every program answers 99 if a release ran past zero; the `hostile` rows are
-// shapes the credit must not over-release, checked for the answer, the
-// sanitizer, and the AST leg's alloc and free counts: more frees there means a
-// widening reached a shape this credit refuses.
+// shapes the credit must not over-release, checked for the answer and the
+// sanitizer. A hostile row the credit reaches (a zero `refused`) must balance;
+// one it refuses pins the AST leg's alloc and free counts, so more frees there
+// means a widening reached a shape this credit refuses.
 var structAliasShareCases = []struct {
 	name    string
 	src     string
