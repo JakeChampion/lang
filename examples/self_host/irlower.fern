@@ -8267,6 +8267,7 @@ function str_local_binding_is_fresh(init: ast.Expr): boolean {
             if (str_free_producer_ident(c)) { return true; }
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "to_string") { return c.args.len() == 0 && stamped_scalar(cfa.obj); }
                     if (!str_fresh_alloc_method(cfa.field)) { return false; }
                     if (cfa.field == "repeat") { return c.args.len() == 1; }
                     return c.args.len() == 0;
@@ -8370,6 +8371,16 @@ function is_fresh_str_temp(e: ast.Expr, s: LowerState): boolean {
 // credit comes from the receiver-TYPE-gated trim collector instead. `replace`
 // returns the receiver unchanged when the needle is absent, so it stays out —
 // and `lines` / `split` return arrays, not strings.
+// stamped_scalar reports whether the checker typed `e` a number, whose
+// `to_string` is the builtin decimal-text producer and always allocates. A
+// struct's may return an alias of a field, and an unstamped receiver proves
+// nothing.
+function stamped_scalar(e: ast.Expr): boolean {
+    if let ast.ExprNumber(_) = e { return true; }
+    var t: string = ast.expr_ty(e);
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "f64" || t == "f32" || t == "u8" || t == "usize";
+}
+
 function str_fresh_alloc_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "repeat";
 }
