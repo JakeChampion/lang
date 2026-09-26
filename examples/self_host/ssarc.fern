@@ -3129,7 +3129,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // reference whose container owns its children. Rows the caller's reading of
 // the callee's syntax recorded for the same result are replaced. Only the
 // shapes those registries can release get a row: a tuple's scalar-element
-// array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
+// and string[] array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
 // is exact for a retained buffer and at worst strands a fresh one's pointer
 // elements, #9187) and a box with no reference field or payload; every other
 // position keeps the AST caller's leak-mode floor.
@@ -3372,10 +3372,21 @@ function scalar_array(t: typeinfo.Type): boolean {
     return false;
 }
 
+function string_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t {
+        if let typeinfo.TypeString(_) = a.elem { return !a.view; }
+    }
+    return false;
+}
+
+// One irlower ARRF: flag per element: '1' a scalar array (a buffer dec), '2' a
+// string[] (__fern_str_arr_free), '0' left to the leak-mode floor.
 function tuple_flags(tup: typeinfo.TypeTuple): string {
     var flags: string = "";
     for elem in tup.elements {
-        if (scalar_array(elem)) { flags = flags + "1"; } else { flags = flags + "0"; }
+        if (scalar_array(elem)) { flags = flags + "1"; }
+        else if (string_array(elem)) { flags = flags + "2"; }
+        else { flags = flags + "0"; }
     }
     return flags;
 }
