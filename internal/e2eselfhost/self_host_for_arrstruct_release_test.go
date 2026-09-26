@@ -13,9 +13,9 @@ import (
 // element boxes and their `ops` buffers come back (#10161). The loop var is a
 // borrow the loop ends before the exit sweep runs; the `refused` rows keep the
 // walk off because the body would let an element or its buffer outlive it. They
-// pin that the answer stays right under the sanitizer, and that the AST leg
-// still leaks: a balance there means the credit reached a shape the
-// confinement proof does not cover.
+// pin that the answer stays right under the sanitizer, and the AST leg's alloc
+// and free counts: more frees there means the credit reached a shape the confinement
+// proof does not cover.
 const forArrStructDecls = `struct St { ops: i32[], n: i32 }
 function build(): St[] {
     var hold: St[] = [];
@@ -30,6 +30,7 @@ var forArrStructCases = []struct {
 	src      string
 	want     int
 	balanced bool
+	refused  [2]int64 // allocs, frees on the AST leg
 }{
 	{"scalar_field", `function main(): i32 {
     var hold: St[] = [];
@@ -39,7 +40,7 @@ var forArrStructCases = []struct {
     for h in hold { s = s + h.n; }
     return s;
 }
-`, 10, true},
+`, 10, true, [2]int64{}},
 	{"field_len", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -48,7 +49,7 @@ var forArrStructCases = []struct {
     for h in hold { s = s + h.ops.len(); }
     return s;
 }
-`, 25, true},
+`, 25, true, [2]int64{}},
 	{"field_index", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -57,7 +58,7 @@ var forArrStructCases = []struct {
     for h in hold { s = s + h.ops.len() * 10 + h.ops[0]; }
     return s % 100;
 }
-`, 60, true},
+`, 60, true, [2]int64{}},
 	{"refused_field_returned", `function last_ops(): i32[] {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -71,7 +72,7 @@ function main(): i32 {
     var junk: i32[] = [9, 9, 9, 9, 9];
     return k[0] * 10 + k[4] + junk[0] - 9;
 }
-`, 44, false},
+`, 44, false, [2]int64{15, 5}},
 	{"refused_elem_escapes", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -80,7 +81,7 @@ function main(): i32 {
     for h in hold { if (h.n > 2) { other = other.append(h); } }
     return other.len() * 10 + other[1].ops[0];
 }
-`, 24, false},
+`, 24, false, [2]int64{15, 5}},
 	{"refused_rebind_in_loop", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -89,7 +90,7 @@ function main(): i32 {
     for h in hold { s = s + h.ops[0]; if (h.n == 1) { hold = hold.append(St { ops: [7], n: 7 }); } }
     return s * 10 + hold.len();
 }
-`, 106, false},
+`, 106, false, [2]int64{16, 4}},
 }
 
 func TestSelfHostForArrStructReleaseX86_64(t *testing.T) {
@@ -110,7 +111,7 @@ func TestSelfHostForArrStructReleaseX86_64(t *testing.T) {
 						assertBalancedCensus(t, stderr)
 					}
 					if mode == "FERN_LEAKCHECK=1" && !tc.balanced && sem == "FERN_SEM_IR=" {
-						assertRefusedStillLeaks(t, stderr)
+						assertRefusedCensus(t, stderr, tc.refused)
 					}
 				}
 			}
@@ -136,6 +137,8 @@ func TestSelfHostForArrStructReleaseWasm(t *testing.T) {
 				}
 				if tc.balanced {
 					assertBalancedCensus(t, stderr)
+				} else if sem == "FERN_SEM_IR=" {
+					assertRefusedCensus(t, stderr, tc.refused)
 				}
 			}
 		})
@@ -153,17 +156,18 @@ func forArrStructSanitizerFault(stderr string, balanced bool) bool {
 	return false
 }
 
-// assertRefusedStillLeaks: a refused row keeps the shallow fallback, so its
-// census on the AST leg is not balanced.
-func assertRefusedStillLeaks(t *testing.T, stderr string) {
+// assertRefusedCensus: a refused row keeps the shallow fallback, so its AST-leg
+// census is exactly the shallow one.
+func assertRefusedCensus(t *testing.T, stderr string, want [2]int64) {
 	t.Helper()
 	summary := leakSummaryLine(stderr)
 	var allocs, frees, live int64
 	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 		t.Fatalf("parse %q: %v", summary, err)
 	}
-	if live == 0 {
-		t.Errorf("%s — this row is REFUSED and must still take the shallow fallback; "+
-			"a balance means the credit reaches a shape the confinement proof does not cover", summary)
+	if got := [2]int64{allocs, frees}; got != want {
+		t.Errorf("%s, want allocs=%d frees=%d — this row is REFUSED and must still take the shallow "+
+			"fallback; more frees means the credit reaches a shape the confinement proof does not cover",
+			summary, want[0], want[1])
 	}
 }
