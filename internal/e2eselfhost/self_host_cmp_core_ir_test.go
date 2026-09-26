@@ -18,10 +18,10 @@ import (
 //
 // Before #4374 the `-ir-probe` diagnostic scanned the RAW merged module
 // (pre-monomorphise), where the un-instantiated templates were still
-// present and bailed, so it mis-reported `module: AST` for a program that
+// present and bailed, so it mis-reported `module: refused` for a program that
 // `-decide` and the actual emit route through IR. The probe now runs the
 // same module_with_builtins pipeline the emitter does, so its verdict
-// matches reality — this test would fail (`module: AST`) against the old
+// matches reality — this test would fail (`module: refused`) against the old
 // probe and passes now.
 var cmpCoreIRCases = []struct {
 	name string
@@ -70,7 +70,7 @@ func TestSelfHostCmpCoreIRX86_64(t *testing.T) {
 				t.Fatalf("write main.fern: %v", err)
 			}
 			// Routing assertion: the whole program must reach the IR path
-			// (pre-#4374 this reported module: AST from the phantom template bail).
+			// (pre-#4374 this reported module: refused from the phantom template bail).
 			probe, err := exec.Command(mmc, mainPath, stdlibRoot, "-ir-probe").Output()
 			if err != nil {
 				t.Fatalf("ir-probe: %v", err)

@@ -56,8 +56,8 @@ func TestSelfHostIRExternProbe(t *testing.T) {
 		prog := "function main(): i32 { return mystery(3); }"
 
 		bail := probe(t, prog)
-		if !strings.Contains(bail, "main: BAIL call") || !strings.Contains(bail, "module: AST") {
-			t.Errorf("without -ir-extern: expected BAIL call / module: AST\n--- report ---\n%s", bail)
+		if !strings.Contains(bail, "main: BAIL call") || !strings.Contains(bail, "module: refused") {
+			t.Errorf("without -ir-extern: expected BAIL call / module: refused\n--- report ---\n%s", bail)
 		}
 
 		ok := probe(t, prog, "-ir-extern", "mystery")
@@ -72,7 +72,7 @@ func TestSelfHostIRExternProbe(t *testing.T) {
 		// blanket "ignore unknown calls" switch.
 		prog := "function main(): i32 { return mystery(3); }"
 		rep := probe(t, prog, "-ir-extern", "unrelated")
-		if !strings.Contains(rep, "main: BAIL call") || !strings.Contains(rep, "module: AST") {
+		if !strings.Contains(rep, "main: BAIL call") || !strings.Contains(rep, "module: refused") {
 			t.Errorf("extern of an unrelated name should not admit mystery\n--- report ---\n%s", rep)
 		}
 	})

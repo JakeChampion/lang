@@ -19,7 +19,7 @@ import (
 // `lib__Nil`, but `E.Wrap` was only ever tested against the module-qualifier
 // reading. Missing it left the constructor as a field access on a mangled enum
 // NAME (bailing IR eligibility at `lib__probe` and taking the whole module to
-// `module: AST`) and left the pattern spelled `E.Wrap` against an enum whose
+// `module: refused`) and left the pattern spelled `E.Wrap` against an enum whose
 // variants are `lib__Wrap` — so every variant read as uncovered and E030 fired
 // on a match covering both.
 //
@@ -59,7 +59,7 @@ function main(): i32 { return lib.probe(5); }
 //
 // Two assertions, because the bug had two symptoms and one resolution behind
 // them. `-ir-probe` is the eligibility half: it reported
-// `lib__probe: BAIL lower call const_func` and `module: AST`. Emitting and
+// `lib__probe: BAIL lower call const_func` and `module: refused`. Emitting and
 // RUNNING the program is the other half plus the proof the arms still select:
 // the checker rejected these files outright with E030, and a fix that merely
 // stopped erroring while the qualified arm no longer matched would be worse

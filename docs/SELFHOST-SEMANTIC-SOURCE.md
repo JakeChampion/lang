@@ -2220,11 +2220,11 @@ drivers fall into four groups:
   `wasm_runio_run`, `wasm_modload_run` and `playground_run`. The per-module and
   modload whole-compiler fixpoints build the compiler through the load and
   modload drivers, and `asm_modload_run` also calls `irlower.lower_module`
-  directly for its provided-symbol check. Each of these has to take a
-  substitution.
+  directly for its provided-symbol check. The plan below says which of
+  these take a substitution.
 - Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
   `ircore.all_eligible` and emit nothing, so they need no substitution. The
-  verdict the probes and `-decide` print is `ir` or `refused`.
+  verdict `asm_pathprobe_run` and `-decide` print is `ir` or `refused`.
 - `wasm_units_probe`, which lowers through `wasm_ir.lower_all_for_view` /
   `lower_all_for_base`. Those take no substitution at all, so it is AST-lowered
   unconditionally.
@@ -2233,8 +2233,8 @@ drivers fall into four groups:
   as a `Sub`. It needs rewriting against a typed-path substitution, not
   threading.
 
-**The plan for the drivers.** They do not take the substitution: linking
-the typed path into them would grow each by 6.7–10.2% (the reason
+**The plan for the drivers.** Most of them do not take the substitution:
+linking the typed path into them would grow each by 6.7–10.2% (the reason
 `cli_substitution` lives in `fern.fern`). Instead:
 - a test that checks what the language does moves to the CLI;
 - a test that exists to inspect the AST lowering's own output goes with it.
@@ -2298,7 +2298,8 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 
 The gate's verdict was spelled `ast`, from when a bail routed to the AST
 emitter. It already meant the drivers refuse the module, and it is now
-spelled `refused`; step 3 does not change the gate.
+spelled `refused`, as is the `-ir-probe` report's `module:` line; step 3
+does not change the gate.
 
 `TestSelfHostSSALoopTailBlockEmittedOnce` checks self-tail calls, which
 only the AST lowering performs, so the typed path needs that first.

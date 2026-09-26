@@ -691,7 +691,7 @@ pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
 // which gate(s) failed (`lower` = lower_func bailed the body; `call` = a direct
 // call targets a builtin / unknown function; `const_func` = a function-value
 // names an unknown function). The final line is the module verdict
-// ("module: IR" / "module: AST"), including the no-main / empty-module cases
+// ("module: IR" / "module: refused"), including the no-main / empty-module cases
 // all_eligible rejects.
 //
 // Read-only: it runs exactly the checks eligible_core / all_eligible route on,
@@ -720,7 +720,7 @@ pub function eligibility_report_known(mod: parser.Module, known: string[]): stri
         out = out + eligibility_line(mod.funcs[i], mod, known, stab, freg, sga, sgn);
         i = i + 1;
     }
-    var verdict: string = "module: AST";
+    var verdict: string = "module: refused";
     if (all_eligible_known(mod, known)) { verdict = "module: IR"; }
     return out + verdict + "\n";
 }

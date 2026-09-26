@@ -397,7 +397,7 @@ function main(): i32 {
     // the module codegen actually sees. Without it the probe scanned the RAW
     // merged module, whose un-instantiated bounded-generic TEMPLATES
     // (core/cmp's min[T:Ord] etc.) are still present — their `a.cmp(b)` on a
-    // type-param receiver bails, so the probe reported `module: AST` for a
+    // type-param receiver bails, so the probe reported `module: refused` for a
     // program that in fact routes IR once monomorphise drops those templates
     // (#4374). Lambda-lifted last, matching what the emitter routes on.
     if (probe) {
