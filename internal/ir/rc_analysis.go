@@ -4130,36 +4130,44 @@ func (b *builder) computeMovedLocals() map[string]bool {
 			// scrutinee — its box is shallow-freed at the match — so the exit
 			// sweep must not ALSO deep-drop it. Mark the own-param scrutinee
 			// moved (its last use is the match).
-			markScrutinee := func(tag ast.Expr) {
-				if id, ok := tag.(*ast.Ident); ok && ownParam[id.Name] &&
-					order.isLast(id) {
-					moved[id.Name] = true
+			//
+			// Both claims are made at the identifier itself rather than at the
+			// match or call holding it, because walkDominatingExprs withholds
+			// an identifier an early exit in its own statement can skip.
+			scrutinee := map[*ast.Ident]bool{}
+			ownArg := map[*ast.Ident]bool{}
+			noteScrutinee := func(tag ast.Expr) {
+				if id, ok := tag.(*ast.Ident); ok && ownParam[id.Name] {
+					scrutinee[id] = true
 				}
 			}
 			walkDominatingExprs(b.fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.Match:
-					markScrutinee(x.Tag)
+					noteScrutinee(x.Tag)
 				case *ast.MatchExpr:
-					markScrutinee(x.Tag)
+					noteScrutinee(x.Tag)
 				case *ast.Call:
 					id, ok := x.Callee.(*ast.Ident)
 					if !ok {
 						return true
 					}
 					flags := b.calleeOwnFlags(id.Name)
-					if len(flags) == 0 {
+					for i := 0; i < len(x.Args) && i < len(flags); i++ {
+						if arg, ok := x.Args[i].(*ast.Ident); ok && flags[i] && ownParam[arg.Name] {
+							ownArg[arg] = true
+						}
+					}
+				case *ast.Ident:
+					if !order.isLast(x) {
 						return true
 					}
-					for i := 0; i < len(x.Args) && i < len(flags); i++ {
-						if !flags[i] {
-							continue
-						}
-						if arg, ok := x.Args[i].(*ast.Ident); ok &&
-							ownParam[arg.Name] && order.isLast(arg) {
-							moved[arg.Name] = true
-							b.rc.ownCallMoveArgs[arg] = true
-						}
+					if scrutinee[x] {
+						moved[x.Name] = true
+					}
+					if ownArg[x] {
+						moved[x.Name] = true
+						b.rc.ownCallMoveArgs[x] = true
 					}
 				}
 				return true
@@ -4177,24 +4185,35 @@ func (b *builder) computeMovedLocals() map[string]bool {
 // skipped on the path leaving through that return. Within a statement only the
 // always-evaluated positions are offered — an `if` gives its condition, not its
 // arms; a `match` its scrutinee, not its bodies — and a LOOP gives nothing,
-// since a transfer under one runs once per iteration rather than once.
+// since a transfer under one runs once per iteration rather than once. Nor is
+// an identifier evaluated after a `?` in its own statement
+// (identsAfterEarlyExit): the `?` can leave before it runs.
 func walkDominatingExprs(body *ast.Block, f func(ast.Node) bool) {
 	if body == nil {
 		return
 	}
+	offer := func(e ast.Expr) {
+		after := identsAfterEarlyExit(e)
+		walkAlwaysEvaluated(e, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && after[id] {
+				return false
+			}
+			return f(n)
+		})
+	}
 	for _, st := range body.Stmts {
 		switch s := st.(type) {
 		case *ast.Var:
-			walkAlwaysEvaluated(s.Init, f)
+			offer(s.Init)
 		case *ast.ExprStmt:
-			walkAlwaysEvaluated(s.Expr, f)
+			offer(s.Expr)
 		case *ast.Return:
-			walkAlwaysEvaluated(s.Value, f)
+			offer(s.Value)
 		case *ast.If:
-			walkAlwaysEvaluated(s.Cond, f)
+			offer(s.Cond)
 		case *ast.Match:
 			if f(s) {
-				walkAlwaysEvaluated(s.Tag, f)
+				offer(s.Tag)
 			}
 		}
 		if stmtCanLeaveFunction(st) {
@@ -4259,13 +4278,16 @@ func walkAlwaysEvaluated(e ast.Expr, f func(ast.Node) bool) {
 // own dominance guards, documented there. A nil `allow` admits every name,
 // which is the top-level caller's behaviour.
 func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved map[string]bool, allow func(string) bool) {
+	// An operand evaluated after a `?` in the same expression has not been
+	// consumed when the `?` leaves, and the exit sweep skips a moved local.
+	afterExit := identsAfterEarlyExit(val)
 	// mark moves the Ident when it's an owned rc local at its last use.
 	// The caller has established the dominance guards; the per-container
 	// drop (struct field-drop / array drop_arr_ptr) releases the moved
 	// value exactly once, balancing the skipped construction inc.
 	mark := func(e ast.Expr) {
 		id, ok := e.(*ast.Ident)
-		if !ok || !b.isOwnedRcLocal(id.Name) || !order.isLast(id) {
+		if !ok || !b.isOwnedRcLocal(id.Name) || !order.isLast(id) || afterExit[id] {
 			return
 		}
 		if allow != nil && !allow(id.Name) {
@@ -4360,6 +4382,47 @@ func (b *builder) markConstructionMoves(val ast.Expr, order identOrder, moved ma
 		}
 	}
 	visit(val)
+}
+
+// identsAfterEarlyExit returns the identifiers in e evaluated after an early
+// exit in e has had its chance to leave: after a whole `?` (its operand runs
+// first), or after a `return`, `break` or `continue`. Source order stands in
+// for evaluation order, which operands, arguments and fields all follow.
+func identsAfterEarlyExit(e ast.Expr) map[*ast.Ident]bool {
+	var out map[*ast.Ident]bool
+	if e == nil {
+		return nil
+	}
+	exited := false
+	var visit func(ast.Node) bool
+	visit = func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Lambda:
+			return false
+		case *ast.TryOp:
+			ast.Walk(x.Inner, visit)
+			exited = true
+			return false
+		case *ast.Return:
+			if x.Value != nil {
+				ast.Walk(x.Value, visit)
+			}
+			exited = true
+			return false
+		case *ast.Break, *ast.Continue:
+			exited = true
+		case *ast.Ident:
+			if exited {
+				if out == nil {
+					out = map[*ast.Ident]bool{}
+				}
+				out[x] = true
+			}
+		}
+		return true
+	}
+	ast.Walk(e, visit)
+	return out
 }
 
 // storedArrayElemOperand returns the element operand of an array-store call
