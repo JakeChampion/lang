@@ -913,6 +913,26 @@ function main(): i32 {
 	// The mirror: the source is rebound, in a loop too, while the alias
 	// survives and is read afterwards. The alias's fresh view is anchored to
 	// the same bytes, so the source's rebinding releases nothing it reads.
+	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+function pick(t: string, k: i32): i32 {
+    var a: str = slice_unchecked(t, 0, 3);
+    var b: str = a;
+    a = slice_unchecked(t, 3, 6);
+    var n: i32 = 0;
+    while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
+    return b.len() * 10 + a.len() + (b[0] as i32) - 97;
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 25) {
+        var t: string = "abcdefg" + "hij";
+        total = total + pick(t, i % 4);
+        i = i + 1;
+    }
+    return total % 256;
+}`},
 	// An if-expression or match-expression arm that yields a live view binds
 	// it under the result's name. The arm yields a fresh view of the same
 	// bytes, as a second name does, so the loop rebinding the source merges
@@ -959,26 +979,6 @@ function main(): i32 {
         var t: string = "abcdefg" + "hij";
         var ws: str[] = [slice_unchecked(t, 0, 2), slice_unchecked(t, 2, 7), slice_unchecked(t, 1, 4)];
         total = total + longest(ws);
-        i = i + 1;
-    }
-    return total % 256;
-}`},
-	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
-function pick(t: string, k: i32): i32 {
-    var a: str = slice_unchecked(t, 0, 3);
-    var b: str = a;
-    a = slice_unchecked(t, 3, 6);
-    var n: i32 = 0;
-    while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
-    return b.len() * 10 + a.len() + (b[0] as i32) - 97;
-}
-
-function main(): i32 {
-    var total: i32 = 0;
-    var i: i32 = 0;
-    while (i < 25) {
-        var t: string = "abcdefg" + "hij";
-        total = total + pick(t, i % 4);
         i = i + 1;
     }
     return total % 256;
