@@ -88,7 +88,10 @@ struct State {
     funcs: parser.FuncDecl[],
     // The module's `impl … for …` table, which a dyn type's concretes are read
     // from (`dyn_concretes`).
-    impls: parser.ImplInfo[]
+    impls: parser.ImplInfo[],
+    // What a `?` failure edge runs before it returns: the defer desugar's
+    // cleanup behind `__dfa_tryall` and `__dfa_tryerr` (parser.lower_defers_body).
+    try_cleanup: ast.Stmt[]
 }
 
 struct Value { s: State, id: i32 }
@@ -1214,8 +1217,10 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     if (gone_shape.types.len() > 1 || gone_shape.types.len() != out_shape.types.len()) {
         return refused(s, "try failure does not match the body's result");
     }
+    var convert: string = "";
     if (gone_shape.types.len() == 1 && !semtypes.equal(gone_shape.types[0], out_shape.types[0])) {
-        return refused(s, "try failure does not match the body's result");
+        convert = try_conversion(gone_shape.types[0], out_shape.types[0], s);
+        if (convert == "") { return refused(s, "try failure does not match the body's result"); }
     }
 
     var pred: i32 = s.cur.id;
@@ -1225,17 +1230,34 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     var test: Value = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], t_bool());
     s = terminate(test.s, t_brif(test.id, good, leave));
 
-    var gone: State = open(s, leave, [pred]);
+    var gone: State = stmts(s.try_cleanup, open(s, leave, [pred]));
+    if (!gone.ok) { return Value { s: gone, id: 0 }; }
     var args: i32[] = [];
     if (gone_shape.types.len() == 1) {
         var carried: Value = define(gone, ssasem.variant_get(), [v.id], 0, fnames[1], gone_shape.types[0]);
+        if (convert == "dyn") { carried = widen(carried, out_shape.types[0]); }
+        if (convert != "" && convert != "dyn") { carried = operator_method(carried, [], convert, carried.s); }
         gone = carried.s;
+        if (!gone.ok) { return carried; }
+        if (!semtypes.equal(gone.values[carried.id], out_shape.types[0])) { return refused(gone, "try failure does not match the body's result"); }
         args = [carried.id];
     }
     var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
     s = terminate(out.s, t_ret(out.id));
 
     return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
+}
+
+// How a failure payload becomes the body's: a dyn result widens it, and any
+// other takes the target's `from` (`Err(E2.from(e))`, docs/TRY.md). The answer
+// is "dyn", the `from` contract's key, or "" when neither applies.
+function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): string {
+    if (ssasem.is_dyn(to)) { return "dyn"; }
+    var key: string = nominal_method_key("from", to, s);
+    if (key == "") { return ""; }
+    var c: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
+    if (c.params.len() != 1 || !semtypes.equal(c.params[0], from)) { return ""; }
+    return key;
 }
 
 function try_layout(layout: i32): boolean {
@@ -3521,7 +3543,23 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
         template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers,
-        name: name, modes: [], funcs: funcs, impls: impls };
+        name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body) };
+}
+
+// The desugar leaves the cleanup a `?` exit owes behind two always-false
+// guards at the top level of the body, plain defers first, then errdefers.
+function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    for st in body {
+        if let ast.StmtIf(f) = st {
+            if let ast.ExprIdent(id) = f.cond {
+                if (id.name == "__dfa_tryall" || id.name == "__dfa_tryerr") {
+                    for c in f.then_body { out = out.append(c); }
+                }
+            }
+        }
+    }
+    return out;
 }
 
 // ---- record schemas ---------------------------------------------------------

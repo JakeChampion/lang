@@ -1828,7 +1828,7 @@ artificial `BAIL call` for any cross-module call). Results, to focus goal-1
   **monomorphisation**. The uninstantiated template bails, but CONCRETE usage
   lowers IR (`TestSelfHostCmpHelpersIR`, routing-pinned to `ir`). So
   `std/array`, `std/string`, `std/format`, `std/option`, `std/result`,
-  `std/sort`, `std/csv`, `core/cmp` show `module: AST` *in isolation* but are
+  `std/sort`, `std/csv`, `core/cmp` show `module: refused` *in isolation* but are
   **not** real blockers for real (monomorphised) programs. A probe artifact —
   not a construct gap.
 - **Real `BAIL lower` (body construct gaps):** concentrated in the **`core/iter`
@@ -1840,8 +1840,8 @@ artificial `BAIL call` for any cross-module call). Results, to focus goal-1
   cloned-method-return lowering subproblem).
 
 Takeaway: the keystone goal-1 blocker is `core/iter`'s combinator lowering;
-most other `module: AST` verdicts are monomorphisation-template artifacts, not
-constructs to lower. The probe (`asm_ir.eligibility_report` /
+most other `module: refused` verdicts are monomorphisation-template artifacts, not
+constructs to lower. The probe (`ircore.eligibility_report` /
 `asm_modload_run -ir-probe`) is the canonical way to re-check this frontier.
 
 ### 2026-06-23 — std/io_buffered BytesWriter: pure-Fern std/test coverage (interp-gated) + another RC-drop data point
