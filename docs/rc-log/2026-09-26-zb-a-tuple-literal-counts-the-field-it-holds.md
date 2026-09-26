@@ -64,12 +64,22 @@ that matrix until its driver annotates.
 
 ## Still leaking
 
-These leak exactly as on main:
-- a destructure `var (a, b) = (r.n, r.ys)`;
-- a call argument `f((r.n, r.ys))`;
-- a match scrutinee `match ((r.n, r.xs))`.
+The retain has no releaser in these contexts, so they still leak on the AST
+lowering, as on main. The byte totals moved, in opposite directions. Each
+probe rebinds the record after the literal, on x86-64; the census is allocs /
+frees / live bytes:
 
-The retain has no releaser in any of the three. `refused_elem_extracted`
+| fragment | main | this change |
+|---|---|---|
+| `var (a, b) = (r.n, r.ys)` (`i32[]`) | 5 / 3 / 72 | 5 / 3 / 88 |
+| `f((r.n, r.ys))` (`i32[]`) | 5 / 3 / 72 | 5 / 3 / 88 |
+| `var (a, b) = (r.n, r.xs)` (`string[]`) | 5 / 2 / 112 | 5 / 3 / 80 |
+| `match ((r.n, r.xs))` (`string[]`) | 5 / 2 / 112 | 5 / 3 / 80 |
+
+The `string[]` rows gain a free because the record's deep drop is no longer
+withheld. The `i32[]` rows now keep the buffer the tuple retained, 16 bytes
+more. On main that buffer was freed under a tuple that still pointed at it.
+The semantic lowering is clean on all four. `refused_elem_extracted`
 (`var u = p.1`) also leaks. Its mechanism changed: before, `strarrfld_scan`'s
 mark withheld the record's drop; now it is the tuple's unreleased retain, since
 the extraction refuses `TUPELEMOK:`. The byte count is the same.
