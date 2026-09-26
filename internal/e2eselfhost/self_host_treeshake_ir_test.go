@@ -188,7 +188,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 	// survive treeshake. ts_names_stmt's StmtMatch arm walked the scrutinee and
 	// arm bodies but NOT the guard, so guard_only was pruned and the emitted
 	// guard called a stripped symbol → segfault (exit 139). Routing-independent
-	// (a treeshake reachability bug), so this asserts the run result, not ir/ast.
+	// (a treeshake reachability bug), so this asserts the run result, not ir/refused.
 	t.Run("guard-reachability", func(t *testing.T) {
 		const guardProg = `function guard_only(n: i32): boolean { return n > 5; }
 enum E { N(i32), Z }

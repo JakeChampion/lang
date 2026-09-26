@@ -2597,7 +2597,7 @@ tier → leak.
 
      **`-decide` is the enumeration tool for the loader drivers**, and it works
      interpreted: `fern -interp asm_load_run.fern -- main.fern <stdlibRoot>
-     -decide` prints `ir` / `ast`. Slow (it loads the whole stdlib per invocation,
+     -decide` prints `ir` / `refused`. Slow (it loads the whole stdlib per invocation,
      minutes each), so sample rather than sweep.
 
      **The measurement that IS sound (2026-07-31).**

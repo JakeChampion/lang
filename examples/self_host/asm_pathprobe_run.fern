@@ -3,8 +3,8 @@
 // lambdas, and prints "ir" if the module is fully IR-eligible
 // (ircore.all_eligible), or "refused" if any function bails it, since the
 // drivers then refuse the module. This is a pure decision probe: it emits NO
-// assembly, so the Go-side
-// gates can assert the verdict without assembling + running.
+// assembly, so the Go-side gates can assert the verdict without assembling +
+// running.
 
 import "./lexer";
 import "./parser";

@@ -1158,7 +1158,7 @@ pub function all_runtime_need_roots(): string[] {
 // The eligibility PROBES must normalise through this too, not just the emitter:
 // judging the raw script module asks "does it have a `main`?" of a module whose
 // main has not been synthesised yet, so `-decide` / asm_pathprobe_run printed
-// "ast" for a script that emit_module_ir_gated then lowered through the IR path.
+// "refused" for a script that emit_module_ir_gated then lowered through the IR path.
 pub function script_normalized(mod: parser.Module): parser.Module {
     if (!asmcore.is_script_module(mod)) { return mod; }
     return lift_lambdas(asmcore.synth_script_main(mod));
