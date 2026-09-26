@@ -27110,18 +27110,15 @@ function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState
 // later read can observe, with the caller-side grow bracket covering what the
 // borrowed container's owner can still see.
 //
-// arr_push never frees its receiver, so the reallocating path leaves the
-// pre-grow buffer valid for the container that still names it.
-//
-// The IN-PLACE result IS the source container's own buffer, so the identity arm
-// MOVES it: the field is nulled, and the value is the buffer's only name. The
-// result is uncounted either way — a fresh rc 1 buffer, or the field's own with
-// the field no longer claiming it — so whoever releases the box afterwards
-// (the rebind's __field_reclaim_<T>, a sweep's __struct_drop_<T>, an `own`
-// param's exit release, the value's own holder) finds nothing there to free.
-// Every rc helper skips a null field. Without the move, the box and the value
-// both name the buffer at rc 1, and the first of those releases frees it out
-// from under the other.
+// A buffer at rc 1 is CONSUMED by the push, whether it grows in place or into
+// a fresh box that takes over its element pointers uncounted (the owned push
+// then frees the superseded shell). So on that arm the field is nulled and the
+// value is the only name for what the buffer held; whoever releases the box
+// afterwards (the rebind's __field_reclaim_<T>, a sweep's __struct_drop_<T>, an
+// `own` param's exit release) finds nothing there to free. Every rc helper
+// skips a null field. A grown buffer is not the result, so pointer identity
+// cannot stand in for the move. A shared buffer takes arr_push's copy, and the
+// field keeps its own count.
 //
 // The move is only sound for a box this frame holds alone. A second name the
 // CALLER binds (`var cur = s`, the checker's scope walks) is grow_alias_bind's
@@ -27147,31 +27144,35 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_store_local(uniqslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    var consname: string = "$fiac" + util.i32_to_string(st.locals.len());
+    st = st.add_local(consname);
+    var consslot: i32 = st.slot_of(consname);
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(consslot));
     if (is_counted_elem_array_type(st.frame.structs, decl_field_type_at(st.frame.structs, sty, fidx))) {
-        st = emit_secure_shared_elems(st, srcslot);
+        st = emit_secure_shared_elems(st, consslot, srcslot);
     }
     st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_i64());
+        st = st.emit(ir.op_arr_push_owned_i64());
     } else if (kind == "f64") {
         st = lower_expr(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_f64());
+        st = st.emit(ir.op_arr_push_owned_f64());
     } else {
         st = lower_append_elem_value(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push());
+        st = st.emit(ir.op_arr_push_owned());
     }
     var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
     st = st.add_local(resname);
     var resslot: i32 = st.slot_of(resname);
     st = st.emit(ir.op_store_local(resslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
-    st = st.emit(ir.op_load_local(resslot));
-    st = st.emit(ir.op_load_local(srcslot));
-    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_load_local(consslot));
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(root));
     st = st.emit(ir.op_const_i32(0));
@@ -27247,14 +27248,13 @@ function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// emit_secure_shared_elems emits `if (!is_unique(src)) { arr_inc_elems(src) }`
-// ahead of an arr_push on a pointer-element buffer: a shared receiver takes
-// arr_push's un-share copy, which duplicates every element pointer, and the
-// retain gives the copy and the original a count of each element apiece. A
-// unique receiver grows in place and its elements change hands with it.
-function emit_secure_shared_elems(s: LowerState, srcslot: i32): LowerState {
-    var st: LowerState = s.emit(ir.op_load_local(srcslot));
-    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+// emit_secure_shared_elems emits `if (!unique) { arr_inc_elems(src) }` ahead of
+// an arr_push on a pointer-element buffer: a shared receiver takes arr_push's
+// un-share copy, which duplicates every element pointer, and the retain gives
+// the copy and the original a count of each element apiece. A unique receiver's
+// elements change hands with it, in place or grown.
+function emit_secure_shared_elems(s: LowerState, uniqslot: i32, srcslot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(uniqslot));
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("eq", 0, false));
     st = st.emit(ir.op_if(0));
