@@ -239,16 +239,39 @@ function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
 // function type's slot, a receiver's argument — marks the declaration a
 // template: a method on `Option[T]` declares no type parameter of its own,
 // and the parser's instance of `map[T, U]` at `T = i32` keeps `U` in its
-// result for the function argument to bind.
+// result for the function argument to bind. The names a `dyn` set lists are
+// traits, never variables, so the set is skipped whole.
 function spelled_typevar(spelling: string, scope: checker.Scope): boolean {
     var i: i32 = 0;
     while (i < spelling.len()) {
         var start: i32 = i;
-        while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
-        if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) { return true; }
+        i = ident_end(spelling, i);
+        if (i > start && slice_unchecked(spelling, start, i) == "dyn") {
+            i = dyn_set_end(spelling, i);
+        } else if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) {
+            return true;
+        }
         if (i == start) { i = i + 1; }
     }
     return false;
+}
+
+function ident_end(spelling: string, i: i32): i32 {
+    while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
+    return i;
+}
+
+// Past `dyn`, the end of its `T1 + T2 + …` trait set.
+function dyn_set_end(spelling: string, i: i32): i32 {
+    while (true) {
+        while (i < spelling.len() && spelling[i] == b' ') { i = i + 1; }
+        i = ident_end(spelling, i);
+        var j: i32 = i;
+        while (j < spelling.len() && spelling[j] == b' ') { j = j + 1; }
+        if (j >= spelling.len() || spelling[j] != b'+') { return i; }
+        i = j + 1;
+    }
+    return i;
 }
 
 // A type variable reaches the checker as an UNKNOWN naming it: a promoted
