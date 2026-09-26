@@ -943,8 +943,8 @@ function main(): i32 {
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 			// through a `str`-typed local
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; var v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
-			// and with the callee itself declared `str`, which erases to
-			// owned `string` in the signature
+			// and with the callee itself declared `str`, which the AST
+			// lowering erases to `string` in the signature
 			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 		} {
 			srcPath := filepath.Join(dir, "strview_arg.fern")

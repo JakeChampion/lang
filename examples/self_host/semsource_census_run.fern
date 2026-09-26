@@ -265,9 +265,9 @@ function main(): i32 {
             // here and produces whole in production, because
             // `hoist_local_funcs_module` is one of the passes that was missing
             // (#9773, #9778).
-            merged = parser.module_with_builtins(merged);
-            merged = irlower.lift_lambdas(merged);
-            var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
+            merged = parser.module_with_builtins_typed(merged);
+            merged = irlower.lift_lambdas_typed(merged);
+            var tab: irlower.StructTab = irlower.struct_tab(parser.erase_str_structs(merged.structs));
 
             report(merged, tab);
             return 0;

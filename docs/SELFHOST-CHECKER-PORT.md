@@ -1306,9 +1306,9 @@ slice:
   included), non-`fip` calls, non-whitelisted methods (`len` and
   own-rooted `.with` allowed), indirect calls, and non-`own` index/field
   writes.
-- **E065** — the parse-time `str`→`string` erasure now records the raw
-  spelling on `FuncDecl.ret_str` / `StmtVar.is_str`, so `e065_diags` can
-  mirror the native chase: local owned `string` = backing storage, local
+- **E065** — a `str` spelling reaches the checker unerased (#9915), so
+  `e065_diags` reads it off `FuncDecl.ret_type` / `StmtVar.type_name` and
+  mirrors the native chase: local owned `string` = backing storage, local
   `str` binding = view of its init, params/literals safe.
 - **E032** — the `use` desugar marks its synthesised callback
   (`ExprLambda.use_infer`) when the binding is un-annotated;

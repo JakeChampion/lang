@@ -178,10 +178,7 @@ function t_string(): typeinfo.Type {
   return typeinfo.TypeString { tag: 0 };
 }
 
-// `str` — the borrowed-string view (#4813). The parser erases the SPELLING to
-// "string" (parse_type_name), so view-ness is carried by the sidecars (StmtVar.is_str,
-// FuncDecl.ret_str); this constructor is how they re-enter the type system.
-// tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
+// `str` — the borrowed-string view (#4813). tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
 // tag-blind — a view IS a string box everywhere but at an owning sink, which
 // is the one place type_assignable reads the tag (#7293).
 function t_str(): typeinfo.Type {
@@ -5709,13 +5706,8 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
 // func_ret_type resolves a FuncDecl's declared return type, re-entering the
-// `str` / `[T]` view-ness the parse-time erasure recorded on ret_str (#7293)
-// and ret_slice (#9944).
+// `[T]` view-ness the parse-time erasure recorded on ret_slice (#9944).
 function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names: string[]): typeinfo.Type {
-  if (fd.ret_str) {
-    return t_str();
-  }
-  if (fd.ret_str_elem) { return t_array(t_str()); }
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
   }
@@ -5731,22 +5723,15 @@ const INFERRED_RESULT: string = "inferred lambda result";
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) { return t_unknown(INFERRED_RESULT); }
-  if (lm.ret_str) { return t_str(); }
-  if (lm.ret_str_elem) { return t_array(t_str()); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
     return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
   return s.resolve_type(lm.ret_type);
 }
 
-// var_declared_type resolves a StmtVar's annotation, re-entering the `str` /
-// `str[]` / `[T]` view-ness the parse-time erasure recorded on is_str (#7293),
-// str_elem and is_view (#9944).
+// var_declared_type resolves a StmtVar's annotation, re-entering the `[T]`
+// view-ness the parse-time erasure recorded on is_view (#9944).
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
-  if (v.is_str) {
-    return t_str();
-  }
-  if (v.str_elem) { return t_array(t_str()); }
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
@@ -5925,7 +5910,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], struct_names: string[], u
         pts = pts.append(param_decl_type(param, fd.type_params, struct_names, union_names));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
     }
   }
   return out;
@@ -6614,8 +6599,6 @@ function param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: stri
 }
 
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
-  if (p.is_str) { return t_str(); }
-  if (p.str_elem) { return t_array(t_str()); }
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
@@ -12719,6 +12702,14 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // are detectable from the decl tables alone (no positions, no type
 // inference): E007 (a struct field name repeated) and E018 (a function
 // parameter name repeated). These mirror the Go checker's E007 / E018.
+// receiver_namespace is the method table a receiver spelling registers in: a
+// `str` receiver shares the `string` methods, as native's ReceiverTypeName
+// maps it.
+function receiver_namespace(rt: string): string {
+  if (rt == "str") { return "string"; }
+  return rt;
+}
+
 // receiver_type_ok reports whether a method's receiver type names a valid
 // receiver — a primitive, or a declared struct / enum / union (alias). A
 // generic / Map / array receiver (`X[...]`) or a `dyn Trait` object is
@@ -12735,7 +12726,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
     return true;
   }
   for ch in rt {
@@ -14885,10 +14876,7 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
   // and the stdlib uses them pervasively (`var b: u8` in std/string,
   // `var p: usize` scratch pointers in core/int), so flagging them would
   // diverge from the oracle on every program importing those modules.
-  // `str` (the borrowed-string view, #4813): the self-host parser erases
-  // a BARE `str` to "string" at the parse boundary, but a `str` inside a
-  // generic argument (`Option[str]`) keeps its verbatim spelling — a real
-  // native type, so the generic-arg widening must not flag it.
+  // `str` (the borrowed-string view, #4813): a real native type.
   // `char` (the Unicode scalar, #5629): a real native type since slice 1,
   // and std/utf8 now returns `char[]` / `Option[char]`, so every program
   // importing std/string reaches it. It used to be listed below as
@@ -15699,12 +15687,10 @@ function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], varia
 
 // ---- E065: returning a `str` view of a function-local string ---------------
 // Port of the native checkStrEscape (checker.go): a function whose declared
-// return type is `str` (recorded on FuncDecl.ret_str before the parse-time
-// erasure) must not return a view of a function-LOCAL owned string — the
+// return type is `str` must not return a view of a function-LOCAL owned string — the
 // backing box is reclaimed when the frame drops. Mirrors the native chase:
 // a string literal is immortal, a parameter caller-owned; a local owned
-// `string` IS the backing storage; a local `str` binding (StmtVar.is_str)
-// views whatever its initializer views; and a call views whatever its
+// `string` IS the backing storage; a local `str` binding views whatever its initializer views; and a call views whatever its
 // callee's summary says it hands back (see ViewSum below). `sbacked`
 // accumulates locals known to be (views of) local string storage.
 // E065Walk is one statement walk's result: the diagnostics it found, the
@@ -15894,7 +15880,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        if (v.is_str) {
+        if (v.type_name == "str") {
           // A `str` binding views its initializer: tainted only
           // when the init is (a view of) local string storage —
           // a backed ident, or a `slice_unchecked` whose SOURCE
@@ -16051,7 +16037,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
 function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): E065Walk {
   var params: string[] = view_positions(efn);
   var none: string[] = [];
-  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_str);
+  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_type == "str");
 }
 
 // e065_cursor_diags is E065 for a `MapIter`, the native checkCursorEscapes: a
@@ -16472,9 +16458,8 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 // The scalar list must track what ast.ReceiverTypeName names, since that
 // is the set native's pre-check reasons about: a name missing here is a
 // field native checks and this side silently skips, not a conservative
-// omission. `u8` and `char` were both missing. (`str` needs no entry —
-// the parser already records a `str` field's type as "string", which is
-// also what ReceiverTypeName maps it to.)
+// omission. `u8` and `char` were both missing. (`str` needs no entry: a field
+// is checked in its receiver namespace, where a `str` is a `string`.)
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
   if (fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string") {
     return true;
@@ -16606,7 +16591,7 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
   }
   var fi: i32 = 0;
   while (fi < ftys.len()) {
-    var fty: string = ftys[fi];
+    var fty: string = receiver_namespace(ftys[fi]);
     if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
       if (!e021_derive_conforms(mod, tr, tidx, fty)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
@@ -17110,7 +17095,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
 // definitely-wrong `as?` targets the target-shape arm flags. Mirrors the
 // zero-false-positive primitive gates of E033/E042/E059.
 function e060_is_primitive_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize" || t == "char";
+  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
 }
 
 // e060_e062_stmts walks every statement in `stmts`, flagging at each
@@ -17450,12 +17435,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // caller, so it cannot dangle. Reporting on both flags every
     // `T[]`-returning function that hands a local array back — a move,
     // and legal — which is what bigint / sort / cmp / unicode do.
-    // The flag comes from the parser, not from ret_type: parse_type_name
-    // erases `[T]` to `T[]` exactly as it erases `str` to `string`, so
-    // by here the two spellings are one (hence ret_str beside it). The
-    // flag comes from the parser rather than ret_type because
-    // parse_type_name erases `[T]` to `T[]`, exactly as it erases `str`
-    // to `string` (hence ret_str beside it).
+    // The flag comes from the parser rather than ret_type because
+    // parse_type_name erases `[T]` to `T[]`.
     if (mod.funcs[i].ret_slice) {
       body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
@@ -17626,7 +17607,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     if (func.fbip) {
       fbip_names = fbip_names.append(func.name);
     }
-    if (func.ret_str) {
+    if (func.ret_type == "str") {
       str_ret_names = str_ret_names.append(func.name);
     }
   }
@@ -17656,7 +17637,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // ones: a view of the owned string one of them BUILT dangles once
     // this frame drops it, so `slice_unchecked(mkstr(), 0, 1)` needs
     // mkstr's summary. Only `str` returns are REPORTED against.
-    if (sfn.ret_str || sfn.ret_type == "string") {
+    if (sfn.ret_type == "str" || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
       var initial: boolean[] = [];
@@ -17705,7 +17686,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, util.append_all(fip_names, fip_builtin_callees(mod.funcs)), fbip_names, e053_variants, xsc));
     }
-    if (xfn.ret_str) {
+    if (xfn.ret_type == "str") {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
     body_diags = util.append_diags(body_diags, e065_cursor_diags(xfn));
@@ -19769,7 +19750,7 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
     if (p.type_name.len() == 0) {
       var sp: string = typeinfo.spelling(t);
       if (sp.len() == 0) { return c; }
-      p = ast.ParamDecl { ...lm.params[0], type_name: sp, is_str: sp == "str" };
+      p = ast.ParamDecl { ...lm.params[0], type_name: sp };
     }
     var nparams: ast.ParamDecl[] = [p];
     var i: i32 = 1;
