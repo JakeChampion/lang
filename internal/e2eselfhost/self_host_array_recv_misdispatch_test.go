@@ -83,7 +83,7 @@ func TestSelfHostArrayRecvMisdispatchRefuses(t *testing.T) {
 			"which means it dispatched as i32.pow and captured std/i32's integer pow "+
 			"instead of the receiver's method (oracle says %d)", want)
 	}
-	if got != "ast" {
-		t.Fatalf("-decide = %q, want \"ast\" (module refuses to lower)", got)
+	if got != "refused" {
+		t.Fatalf("-decide = %q, want \"refused\" (module refuses to lower)", got)
 	}
 }

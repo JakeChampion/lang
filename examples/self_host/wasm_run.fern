@@ -18,7 +18,7 @@ import "./wasm_ir";
 import "./util";
 
 function main(): i32 {
-    // `-decide`: print the ROUTING verdict ("ir" / "ast") instead of emitting.
+    // `-decide`: print the ROUTING verdict ("ir" / "refused") instead of emitting.
     // The wasm side had no such probe — its drivers expose only `-ir`, which
     // FORCES the IR path and so bypasses the gates whose declines are exactly
     // what an IR-or-error reroute turns into hard errors. Enumerating those
@@ -60,7 +60,7 @@ function main(): i32 {
     // Builtins with no wasm meaning at all (subprocess #4320, timer_fd #4317,
     // the raw/syscall floor #6946). The emit below runs this same gate, but only
     // on the emit path: the `-decide` probe returns before it, and answering
-    // "ir" or "ast" for a program neither path can compile would be wrong.
+    // "ir" or "refused" for a program neither path can compile would be wrong.
     var unsupported: string = wasm_ir.wasm_unsupported_builtin(mod);
     if (unsupported.len() > 0) {
         eprint(wasm_ir.wasm_unsupported_message(unsupported));
@@ -72,7 +72,7 @@ function main(): i32 {
         // (non-component) mode — reused from wasm_ir rather than restated, so
         // the probe cannot drift from the emitter it describes.
         var plm: parser.Module = wasm_ir.route_normalized(mwb);
-        if (wasm_ir.ir_route_ok(plm, false, false)) { print("ir\n"); } else { print("ast\n"); }
+        if (wasm_ir.ir_route_ok(plm, false, false)) { print("ir\n"); } else { print("refused\n"); }
         return 0;
     }
     var emitted: string = wasm_ir.emit_module_mode_or_error(mwb, false, false);

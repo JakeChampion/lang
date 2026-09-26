@@ -9,7 +9,7 @@ import (
 
 // traitIRPath records, for every case in traitsCases, WHICH backend path the
 // self-hosted x86-64 compiler routes it through: "ir" (the stack-IR path,
-// asm_ir.emit_module_ir) or "ast" (the legacy AST emitter). The trait cases
+// asm_ir.emit_module_ir) or "refused" (the drivers refuse the module). The trait cases
 // themselves only assert exit codes, so without this gate a regression that
 // silently kicked a trait program off the IR path — or, conversely, a change
 // that made one newly IR-eligible — would go unnoticed. This is the
@@ -19,7 +19,7 @@ import (
 //
 // The path decision is probed via the asm_pathprobe_run driver, which runs the
 // EXACT production pipeline (parser.module_with_builtins → lift_lambdas →
-// asm_ir.all_eligible — what emit_module checks) and prints "ir"/"ast" without
+// asm_ir.all_eligible — what emit_module checks) and prints "ir"/"refused" without
 // emitting any assembly, so the gate is fast and assembler-free.
 //
 // Frontier (post to_string-builtin slice):

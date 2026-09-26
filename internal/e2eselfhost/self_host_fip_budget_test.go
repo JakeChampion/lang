@@ -242,7 +242,7 @@ func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 	if strings.Contains(out, "E068") {
 		t.Errorf("the routing probe refused instead of answering:\n%s", out)
 	}
-	if !strings.Contains(out, "ir") && !strings.Contains(out, "ast") {
+	if !strings.Contains(out, "ir") && !strings.Contains(out, "refused") {
 		t.Errorf("the routing probe printed no verdict:\n%s", out)
 	}
 

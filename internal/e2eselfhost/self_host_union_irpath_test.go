@@ -26,7 +26,7 @@ import (
 //
 // The probe reuses asm_pathprobe_run (parser.module_with_builtins ->
 // lift_lambdas -> asm_ir.all_eligible, the exact production decision) and
-// prints "ir"/"ast" without emitting assembly.
+// prints "ir"/"refused" without emitting assembly.
 var unionIRPathCases = []struct {
 	name string
 	src  string

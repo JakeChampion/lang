@@ -133,7 +133,7 @@ func TestSelfHostArrmResidualRetIR(t *testing.T) {
 			_, want := runFixtureInterp(t, entry, "")
 
 			// `-decide` is the assertion this test exists for: the bug was a
-			// REFUSAL, so a regression shows up here as "ast" (or as an empty
+			// REFUSAL, so a regression shows up here as "refused" (or as an empty
 			// emit below) rather than as a wrong answer.
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\" — the IR path declined the module again", tc.name, strings.TrimSpace(out))

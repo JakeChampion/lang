@@ -121,7 +121,7 @@ func TestWasmRouteProbe(t *testing.T) {
 		{"erased-wide-uses-typevar", usesTypevar, "ir"},
 		{"erased-wide-two-typevars", twoTypevars, "ir"},
 		{"erased-wide-fold-shape", foldShape, "ir"},
-		{"erased-wide-two-var-array", twoVarArrayShape, "ast"},
+		{"erased-wide-two-var-array", twoVarArrayShape, "refused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := strings.TrimSpace(string(runCaptureArgs(t, runner, driverBin, []byte(tc.src), "-decide")))
