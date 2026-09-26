@@ -95,12 +95,12 @@ var fernImportRe = regexp.MustCompile(`(?m)^\s*import\s+"([^"]+)"`)
 // part of the cache key: the stdlib and the compiler are fixed for the run (see
 // the cache-key note above), so hashing them would only add churn.
 //
-// Everything else (`./lexer`, a bare sibling `lexer`) is LOCAL and must
-// resolve. The distinction is explicit so that a genuinely missing local
+// Everything else (`./lexer`, `../lib/gnu`, a bare sibling `lexer`) is LOCAL
+// and must resolve. The distinction is explicit so that a genuinely missing local
 // source is an error rather than being silently skipped as if it were a
 // stdlib import.
 func isExternalFernImport(imp string) bool {
-	return !strings.HasPrefix(imp, "./") && strings.Contains(imp, "/")
+	return !strings.HasPrefix(imp, ".") && strings.Contains(imp, "/")
 }
 
 // SelfHostImportClosure returns the entry file plus the transitive set of local

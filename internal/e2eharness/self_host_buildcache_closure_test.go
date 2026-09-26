@@ -54,6 +54,40 @@ func TestImportClosureCoversTransitiveLocalImports(t *testing.T) {
 	}
 }
 
+// TestImportClosureFollowsParentImports — an entry in a subdirectory that
+// imports `../sibling` (the multicall dispatcher's shape) keeps the sibling in
+// its key.
+func TestImportClosureFollowsParentImports(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "multicall")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, src := range map[string]string{
+		filepath.Join(sub, "entry.fern"): "import \"../util\";\nfunction main(): i32 { return 0; }\n",
+		filepath.Join(dir, "util.fern"):  "import \"./lib/leaf\";\npub function u(): i32 { return 1; }\n",
+	} {
+		if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Mkdir(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lib", "leaf.fern"), []byte("pub function l(): i32 { return 2; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, p := range SelfHostImportClosure(t, sub, "entry.fern") {
+		got[filepath.Base(p)] = true
+	}
+	for _, want := range []string{"entry.fern", "util.fern", "leaf.fern"} {
+		if !got[want] {
+			t.Errorf("closure is missing %s — it would be absent from the cache key", want)
+		}
+	}
+}
+
 // TestImportClosureKeyChangesWhenAnyClosureFileChanges — the property the cache
 // exists to have. Asserted at the LEAF, the file furthest from the entry, since
 // a key that only tracked direct imports would still pass at depth 1.
@@ -113,6 +147,8 @@ func TestImportClosureExternalImportClassification(t *testing.T) {
 		{"./lexer", false},
 		{"lexer", false},
 		{"./sub/lexer", false},
+		{"../cat", false},
+		{"../lib/gnu", false},
 	} {
 		if got := isExternalFernImport(c.imp); got != c.external {
 			t.Errorf("isExternalFernImport(%q) = %v, want %v", c.imp, got, c.external)
