@@ -9379,7 +9379,7 @@ function split_dunder(s: string): string[] {
 // generic-struct-of-generic-enum combo (#3694). The raw bracketed key is kept
 // for field-type SUBSTITUTION (so the enum pass still sees `Opt[i32]` to clone);
 // only the emitted NAME is sanitized.
-function sanitize_key(s: string): string {
+pub function sanitize_key(s: string): string {
     var out: string = "";
     var i: i32 = 0;
     while (i < s.len()) {
@@ -11371,8 +11371,12 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     // Without it the clone keeps a `T` naming nothing, so its return resolves
     // to `Option[unknown]` and every reader downstream is left guessing.
     let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
-    tparams = btp;
-    cts = bct;
+    return instantiate_func(fd, fd.name + "__" + sanitize_key(key), btp, bct, impls);
+}
+
+// instantiate_func is `fd` renamed to `name` with each of `tparams` replaced by
+// the matching spelling in `cts` across params, return and body annotations.
+pub function instantiate_func(fd: FuncDecl, name: string, tparams: string[], cts: string[], impls: ImplInfo[]): FuncDecl {
     var nparams: ast.ParamDecl[] = [];
     var i: i32 = 0;
     while (i < fd.params.len()) {
@@ -11388,7 +11392,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
     var notp: string[] = [];
     return FuncDecl {
         ...fd,
-        name: fd.name + "__" + sanitize_key(key),
+        name: name,
         receiver_name: "",
         receiver_type: "",
         type_params: notp,

@@ -32,6 +32,11 @@ func goCheckerDiags(t *testing.T, dir, src string) []driverDiag {
 		return nil
 	}
 	_, err = checker.Check(prog)
+	return checkErrDiags(err)
+}
+
+// checkErrDiags splits a checker error into code/message pairs.
+func checkErrDiags(err error) []driverDiag {
 	if err == nil {
 		return nil
 	}
