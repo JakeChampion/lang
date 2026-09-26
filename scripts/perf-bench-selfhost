@@ -90,7 +90,8 @@ for src in "$BENCH_DIR"/*.fern; do
 
   for target in x86-64-linux arm64-linux wasm32-wasi; do
     out="$work/$name.$target.out"
-    if ! "$SELFHOST" -target "$target" -emit asm "$ROOT/$src" "$STDLIB" -o "$out" > "$work/err" 2>&1; then
+    # Strict, so the size measured is the typed path's, never a mixed module.
+    if ! FERN_SEM_IR_STRICT=1 "$SELFHOST" -target "$target" -emit asm "$ROOT/$src" "$STDLIB" -o "$out" > "$work/err" 2>&1; then
       echo "perf-bench-selfhost: $name failed to compile for $target" >&2
       sed -n '1,20p' "$work/err" >&2
       exit 1
