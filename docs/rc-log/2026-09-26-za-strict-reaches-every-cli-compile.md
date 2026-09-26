@@ -20,8 +20,9 @@ the scripts, the release step and the coreutils self-host compiles pin
 four settings: `FERN_SEM_IR=1`, the two lists empty, and strict on. The
 coreutils package shares them as `typedPathEnv`. The two package
 `TestMain`s set strict alone, and only when the environment leaves it
-unset: an ambient value is deliberately left to override them, since
-that is how a developer runs the suite against the AST lowering.
+unset. An ambient value is deliberately left to override them, so a run
+can tolerate a module the typed path refuses. The AST lowering itself is
+selected by `FERN_SEM_IR=` (set empty), which neither `TestMain` guards.
 
 The multicall test's cache key had been one file. The build-cache import
 walker treated `../cat` as an external import, so all 107 of the
