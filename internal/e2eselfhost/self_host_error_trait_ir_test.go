@@ -1,30 +1,16 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// errorTraitIRCases exercise the stdlib `Error` trait pattern through the
-// stack-IR path.  The key shapes validated here:
+// errorTraitIRCases exercise the stdlib `Error` trait pattern. The key shapes:
 //
 //   - A `Result[i32, dyn Error]`-returning function that propagates a concrete
-//     `E: Error` via `?` (lower_try forwards the Err box unchanged; the
-//     concrete pointer's layout is identical to a `dyn Error` pointer).
-//   - A statement-position `match` binding `Err(e)` where `e: dyn Error`:
-//     the StmtMatch handler must admit the `dyn` payload and mark the slot
-//     so that `e.method()` routes through op_dyn_dispatch.
-//   - A value-position (IIFE) `match` binding `Err(e)` into an i32 temp:
-//     `iife_payload_bindable` must admit the `dyn` payload.
-//   - Methods on `dyn Error` that return i32 (`code()`).
-//   - Methods on `dyn Error` that return `string` (`message()`) via an
-//     explicit `var m: string = e.message()` binding (the declared type
-//     drives string-slot marking without requiring expr_is_str to recognise
-//     the dyn-dispatch call).
+//     `E: Error` via `?`, which widens the failure payload to `dyn Error`.
+//   - A statement-position `match` binding `Err(e)` where `e: dyn Error`, and
+//     `e.method()` dispatching on it.
+//   - A value-position `match` binding `Err(e)` into an i32 temp.
+//   - Methods on `dyn Error` that return i32 (`code()`) and `string`
+//     (`message()`, bound with `var m: string = e.message()`).
 //
 // Exit codes are the oracle.
 var errorTraitIRCases = []struct {
@@ -73,77 +59,19 @@ var errorTraitIRCases = []struct {
 		8},
 }
 
-// TestSelfHostErrorTraitIRX86_64 routes each case through the self-hosted
-// x86-64 driver (asm_run) and asserts the exit code, AND probes the routing
-// (asm_pathprobe_run) to pin each case to the "ir" path.
-func TestSelfHostErrorTraitIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range errorTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
-			}
-		})
-	}
-}
-
-// TestSelfHostErrorTraitIRWasm runs the same cases through the wasm IR backend
-// (wasm_ir_run -ir).
-func TestSelfHostErrorTraitIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host error-trait wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range errorTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "error_trait_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("error-trait wasm IR %q = %d, want %d", tc.name, code, tc.expected)
-			}
-		})
+// TestSelfHostErrorTraitIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code and the leak census.
+func TestSelfHostErrorTraitIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range errorTraitIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+				if code != tc.expected {
+					t.Fatalf("exited %d, want %d\n%s", code, tc.expected, stderr)
+				}
+				assertBalancedCensus(t, stderr)
+			})
+		}
 	}
 }

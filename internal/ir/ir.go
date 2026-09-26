@@ -5236,38 +5236,115 @@ type loopFrame struct {
 	deferIdxs []int
 }
 
-// pendingScrutineeDrop is one entry of builder.pendingScrutineeDrops.
-// loopDepth is the number of enclosing loops at the match, which is what
-// tells a `break` / `continue` which entries it is leaving.
-type pendingScrutineeDrop struct {
+// pendingDrop is one entry of builder.pendingDrops.
+// loopDepth is the number of enclosing loops where the entry was pushed, which
+// is what tells a `break` / `continue` which entries it is leaving.
+type pendingDrop struct {
 	emit      func()
 	loopDepth int
 }
 
-// pushScrutineeDrop registers the box release a match owes for the extent of
-// its arms, and returns the pop.
-func (b *builder) pushScrutineeDrop(emit func()) func() {
-	b.pendingScrutineeDrops = append(b.pendingScrutineeDrops,
-		pendingScrutineeDrop{emit: emit, loopDepth: len(b.loopFrames)})
+// pushPendingDrop registers a release owed for the extent that follows, and
+// returns the pop.
+func (b *builder) pushPendingDrop(emit func()) func() {
+	b.pendingDrops = append(b.pendingDrops,
+		pendingDrop{emit: emit, loopDepth: len(b.loopFrames)})
 	return func() {
-		b.pendingScrutineeDrops = b.pendingScrutineeDrops[:len(b.pendingScrutineeDrops)-1]
+		b.pendingDrops = b.pendingDrops[:len(b.pendingDrops)-1]
 	}
 }
 
-// emitPendingScrutineeDrops replays, innermost first, the release owed by
-// every match whose extent this exit leaves. `minLoopDepth` bounds it: 0 for a
-// return (which leaves every enclosing match), and for a `break` / `continue`
-// the depth of the outermost loop being left, so a match wrapping that loop
-// keeps its own join drop.
+// operandDropType reports whether an owned operand of type t carries a count
+// that emitArgTempDrop releases.
+func (b *builder) operandDropType(t ast.Type) bool {
+	if !ast.RcFreeEnabled || t == nil {
+		return false
+	}
+	if _, isDyn := t.(ast.DynTraitType); isDyn {
+		return b.dynReclaim()
+	}
+	return rcTrackedSlotType(t)
+}
+
+// pushOperandDrop registers the release of the owned operand parked in
+// `slot` until its consumer runs, so an exit taken while a later sibling is
+// evaluated — `Pair { a: mk(), b: g()? }` — does not abandon it. The caller
+// truncates b.pendingDrops back once the consumer has taken the value.
+func (b *builder) pushOperandDrop(slot int32, t ast.Type) {
+	if b.operandDropType(t) {
+		b.pushPendingDrop(func() { b.emitArgTempDrop(slot, t) })
+	}
+}
+
+// teeOperandDrop parks a copy of the owned value on top of the stack in a
+// scratch slot and registers its release (pushOperandDrop). The value stays
+// on the stack for its consumer.
+func (b *builder) teeOperandDrop(t ast.Type) {
+	if !b.operandDropType(t) {
+		return
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__opnd_%d", slot)] = slot
+	b.scratchType[slot] = t
+	b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	b.pushOperandDrop(slot, t)
+}
+
+// loweredValueType is the type of the value b.expr(e) leaves: a dyn coercion
+// site lowers to the dyn value rather than its concrete.
+func (b *builder) loweredValueType(e ast.Expr) ast.Type {
+	if b.info != nil && b.info.DynCoercions != nil {
+		if dc, ok := b.info.DynCoercions[e]; ok {
+			return ast.DynTraitType{Traits: dc.Traits}
+		}
+	}
+	return b.exprType(e)
+}
+
+// lastEarlyExitOperand is the index of the last operand that can leave the
+// function or a loop part-way through its evaluation (exprCanExitEarly), or
+// -1. The operands before it are the ones such an exit can abandon.
+func lastEarlyExitOperand(exprs []ast.Expr) int {
+	for i := len(exprs) - 1; i >= 0; i-- {
+		if exprCanExitEarly(exprs[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+// exprCanExitEarly reports whether evaluating e can leave through a `?`, a
+// `return`, a `break` or a `continue`. Coarse: a jump that stays inside a
+// loop nested in e counts too. A lambda body is another function's.
+func exprCanExitEarly(e ast.Expr) bool {
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.Lambda:
+			return false
+		case *ast.TryOp, *ast.Return, *ast.Break, *ast.Continue:
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// emitPendingDrops replays, innermost first, the release owed by every
+// extent this exit leaves. `minLoopDepth` bounds it: 0 for a return or a `?`
+// (which leave every extent), and for a `break` / `continue` the depth of the
+// outermost loop being left, so an extent wrapping that loop keeps its own
+// release.
 //
 // Net-zero on the operand stack, like the exit sweep it runs beside, so a
 // return value already pushed survives.
-func (b *builder) emitPendingScrutineeDrops(minLoopDepth int) {
-	for i := len(b.pendingScrutineeDrops) - 1; i >= 0; i-- {
-		if b.pendingScrutineeDrops[i].loopDepth < minLoopDepth {
+func (b *builder) emitPendingDrops(minLoopDepth int) {
+	for i := len(b.pendingDrops) - 1; i >= 0; i-- {
+		if b.pendingDrops[i].loopDepth < minLoopDepth {
 			return
 		}
-		b.pendingScrutineeDrops[i].emit()
+		b.pendingDrops[i].emit()
 	}
 }
 
@@ -5529,13 +5606,14 @@ type builder struct {
 	// when unlabeled) and its break/continue target depths. A labeled
 	// `break`/`continue` resolves by scanning this for the named loop.
 	loopFrames []loopFrame
-	// pendingScrutineeDrops carries the fresh-scrutinee box release each
-	// match currently being lowered owes — the same emitOwnedEnumDrop /
-	// emitFreshBoxFreeSized its post-match join emits. An arm that leaves
-	// the match early branches straight past that join, so the release is
-	// replayed at the exit instead (emitPendingScrutineeDrops). Innermost
-	// last.
-	pendingScrutineeDrops []pendingScrutineeDrop
+	// pendingDrops carries the releases owed by the extents currently being
+	// lowered whose normal end an early exit branches past: a match's fresh
+	// scrutinee box (released at its join), and the operands an expression
+	// has already evaluated for a consumer that has not yet run — an
+	// aggregate's staged fields, a call's earlier arguments, a string op's
+	// stashed left operand. Every exit replays them (emitPendingDrops).
+	// Innermost last.
+	pendingDrops []pendingDrop
 	// curPos is the source position of the AST node currently being
 	// lowered. emit() stamps it onto every op so backends can drive
 	// per-statement DWARF / .loc directives.
@@ -6716,6 +6794,10 @@ func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.
 	// construction by the position its OpAlloc carries (fip_verify.go).
 	litPos := b.curPos
 	defer func() { b.curPos = litPos }()
+	// A staged operand is owned by the literal-to-be, so an exit taken while
+	// a later one is evaluated releases it (pushOperandDrop).
+	dropMark := len(b.pendingDrops)
+	defer func() { b.pendingDrops = b.pendingDrops[:dropMark] }()
 	slots := make([]int32, len(exprs))
 	for i := range exprs {
 		if i > last {
@@ -6726,12 +6808,14 @@ func (b *builder) spillAggregateOperands(exprs []ast.Expr, typeOf func(int) ast.
 			return nil, err
 		}
 		s := b.allocSlot()
-		if t := typeOf(i); t != nil {
+		t := typeOf(i)
+		if t != nil {
 			b.scratchType[s] = t
 		}
 		b.locals[fmt.Sprintf("__agg_operand_%d", s)] = s
 		b.emit(Op{Kind: OpStoreLocal, I32: s})
 		slots[i] = s
+		b.pushOperandDrop(s, t)
 	}
 	return slots, nil
 }
@@ -6833,11 +6917,18 @@ func (b *builder) emitEnumNew(callNode *ast.Call, enumName string, varIdx int, p
 	// one, so there is no purchase for the payloads to precede.
 	hoistPayloads := !b.rc.consumingMatchReuse[callNode]
 	if hoistPayloads {
+		// A hoisted payload the box will own is released by an exit taken
+		// while a later payload is evaluated (pushOperandDrop).
+		dropMark := len(b.pendingDrops)
 		for i := range args {
 			if err := payloadIntoSlot(i); err != nil {
 				return err
 			}
+			if i < len(payloadTypes) && b.enumRcPayloadsEligible(enumName) {
+				b.pushOperandDrop(valSlots[i], payloadTypes[i])
+			}
 		}
+		b.pendingDrops = b.pendingDrops[:dropMark]
 		// Ops emitted from here still belong to the construction, not to
 		// whichever payload was lowered last — E068 names an un-paired
 		// construction by the position its OpAlloc carries (fip_verify.go).
@@ -9107,7 +9198,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
 				return err
 			}
-			b.emitPendingScrutineeDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
+			b.emitPendingDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
 			b.brTo(fr.breakD, false)
 			break
 		}
@@ -9117,7 +9208,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if err := b.emitIterDeferCleanupThrough(1); err != nil {
 			return err
 		}
-		b.emitPendingScrutineeDrops(len(b.loopFrames))
+		b.emitPendingDrops(len(b.loopFrames))
 		b.brTo(b.breakStack[len(b.breakStack)-1], false)
 	case *ast.Continue:
 		if n.Label != "" {
@@ -9128,7 +9219,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitIterDeferCleanupThrough(b.loopFrameLevels(n.Label)); err != nil {
 				return err
 			}
-			b.emitPendingScrutineeDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
+			b.emitPendingDrops(len(b.loopFrames) - b.loopFrameLevels(n.Label) + 1)
 			b.brTo(fr.contD, false)
 			break
 		}
@@ -9138,7 +9229,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		if err := b.emitIterDeferCleanupThrough(1); err != nil {
 			return err
 		}
-		b.emitPendingScrutineeDrops(len(b.loopFrames))
+		b.emitPendingDrops(len(b.loopFrames))
 		b.brTo(b.contStack[len(b.contStack)-1], false)
 	case *ast.Return:
 		// Cleanup-before-return: replay every active defer in
@@ -9763,9 +9854,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// match, so an arm that returns / breaks / continues has to emit it
 		// at its own exit instead.
 		if reclaimScrut {
-			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
+			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet && !pairFormScrutinee {
-			defer b.pushScrutineeDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
+			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -10063,7 +10154,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 			popPayRelease := func() {}
 			if payReleaseSlot >= 0 {
 				slot, ty := payReleaseSlot, payReleaseType
-				popPayRelease = b.pushScrutineeDrop(func() { b.emitOwnedSlotDrop(slot, ty) })
+				popPayRelease = b.pushPendingDrop(func() { b.emitOwnedSlotDrop(slot, ty) })
 			}
 			if err := b.stmt(arm.Body); err != nil {
 				popPayRelease()
@@ -10722,9 +10813,9 @@ func (b *builder) expr(e ast.Expr) error {
 		// An arm body is an expression, but a `{ … return … }` value block
 		// can still leave the function — see the statement form.
 		if reclaimScrut {
-			defer b.pushScrutineeDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
+			defer b.pushPendingDrop(func() { b.emitOwnedEnumDrop(ptrSlot, scrutEnum, true) })()
 		} else if reclaimMapGet {
-			defer b.pushScrutineeDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
+			defer b.pushPendingDrop(func() { b.emitMapGetScrutineeReclaim(ptrSlot, mapGetPlan) })()
 		}
 		b.openBlock(BlockTypeVoid)
 		matchEndD := b.depth
@@ -13054,6 +13145,14 @@ func (b *builder) isOwnedStringTemp(e ast.Expr) bool {
 			return false
 		}
 		return b.isOwnedContainerRead(x)
+	case *ast.TryOp:
+		// A fresh source box is freed once the payload is out, and a string
+		// payload moves out with its reference (reclaimableTryScrutinee).
+		if _, isStr := x.Type.(ast.StringType); !isStr {
+			return false
+		}
+		_, ok := b.reclaimableTryScrutinee(x)
+		return ok
 	}
 	return false
 }
@@ -13078,6 +13177,16 @@ func (b *builder) stashOwnedStringOperand(e ast.Expr) (int32, error) {
 	b.emit(Op{Kind: OpStoreLocal, I32: sl}) // pop (data,len) → slot
 	b.emit(Op{Kind: OpLoadLocal, I32: sl})  // re-push for the borrowing op
 	return sl, nil
+}
+
+// pushStashedStringDrop registers the release of a slot
+// stashOwnedStringOperand handed back while the op that borrows it has yet to
+// run, and returns the pop. A -1 slot owes nothing.
+func (b *builder) pushStashedStringDrop(sl int32) func() {
+	if sl < 0 {
+		return func() {}
+	}
+	return b.pushPendingDrop(func() { b.decStashedStringTemps(sl) })
 }
 
 // spillStringOperand lowers `e` and stores the result in a string-typed
@@ -13260,9 +13369,12 @@ func (b *builder) binary(n *ast.Binary) error {
 		// arm64 and wasm once the order was corrected. Copy instead; the
 		// stash below releases the read's retain exactly as for any other
 		// borrowed operand.
+		//
+		// A right operand that can exit early keeps the left temp in a slot
+		// instead, where the exit can release it (pushStashedStringDrop).
 		consumeLeftTemp := ast.RcFreeEnabled &&
 			b.isOwnedStringTemp(n.Left) && !isCellStringGetExpr(n.Left) &&
-			ast.Expr(n) != b.selfStrAppendBin
+			ast.Expr(n) != b.selfStrAppendBin && !exprCanExitEarly(n.Right)
 		stash := func(e ast.Expr, consumed bool) (int32, error) {
 			if consumed {
 				return -1, b.expr(e)
@@ -13277,10 +13389,12 @@ func (b *builder) binary(n *ast.Binary) error {
 		// its result anyway, so there is no second copy to remove.
 		if appendPath {
 			if src, lo, hi, ok := b.sliceUncheckedArgs(n.Right); ok {
+				dropMark := len(b.pendingDrops)
 				slL, err := stash(n.Left, consumeLeftTemp)
 				if err != nil {
 					return err
 				}
+				b.pushStashedStringDrop(slL)
 				// The SOURCE keeps the ordinary borrowing-operand
 				// discipline: `acc + slice_unchecked(f(x), lo, hi)` has an
 				// owned temp nothing else reclaims.
@@ -13288,12 +13402,14 @@ func (b *builder) binary(n *ast.Binary) error {
 				if err != nil {
 					return err
 				}
+				b.pushStashedStringDrop(slSrc)
 				if err := b.expr(lo); err != nil {
 					return err
 				}
 				if err := b.expr(hi); err != nil {
 					return err
 				}
+				b.pendingDrops = b.pendingDrops[:dropMark]
 				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_append_range", Width: ResAddr, I32: 4,
 					Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
 				if !consumeLeftTemp {
@@ -13307,10 +13423,12 @@ func (b *builder) binary(n *ast.Binary) error {
 		if err != nil {
 			return err
 		}
+		popL := b.pushStashedStringDrop(slL)
 		slR, err := stash(n.Right, false)
 		if err != nil {
 			return err
 		}
+		popL()
 		// A marked string self-append (`s = s + piece`) takes
 		// __fern_str_append: when `s`'s buffer is uniquely held and the
 		// grown length still classes to the same allocator block, the
@@ -13351,10 +13469,12 @@ func (b *builder) binary(n *ast.Binary) error {
 		if err != nil {
 			return err
 		}
+		popL := b.pushStashedStringDrop(slL)
 		slR, err := b.stashOwnedStringOperand(n.Right)
 		if err != nil {
 			return err
 		}
+		popL()
 		b.emit(Op{Kind: OpStrEq})
 		if n.Op == "!=" {
 			b.emit(Op{Kind: OpNot})
@@ -13371,10 +13491,12 @@ func (b *builder) binary(n *ast.Binary) error {
 		if err != nil {
 			return err
 		}
+		popL := b.pushStashedStringDrop(slL)
 		slR, err := b.stashOwnedStringOperand(n.Right)
 		if err != nil {
 			return err
 		}
+		popL()
 		b.emit(Op{Kind: OpStrCmp})
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: strOrdOp(n.Op)})
@@ -16346,6 +16468,11 @@ func (b *builder) callBody(n *ast.Call) error {
 		return !(ai < len(ownArgFlags) && ownArgFlags[ai]) &&
 			calleeSig != nil && ai < len(calleeSig.Params) && b.calleeParamOwnedByDefault(id.Name, calleeSig.Params[ai], ai)
 	}
+	// What an argument owes until the call runs is released by an exit taken
+	// while a later argument is evaluated: a stashed temp or lent view from
+	// its slot, a value the callee would consume from a tee'd copy.
+	exitArg := lastEarlyExitOperand(n.Args)
+	dropMark := len(b.pendingDrops)
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
 		// A view is a borrow, so the checker refuses it at an `own` position
@@ -16357,6 +16484,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			return err
 		} else if ok {
 			lentViewSlots = append(lentViewSlots, slot)
+			b.pushPendingDrop(func() { b.emitLentViewDrops([]int32{slot}) })
 			continue
 		}
 		boxTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
@@ -16383,6 +16511,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				argTempTypes = append(argTempTypes, tt)
 				argTempGuarded = append(argTempGuarded, guardArgTemp)
 				argTempIdentityDec = append(argTempIdentityDec, boxTemp)
+				b.pushOperandDrop(slot, tt)
 				continue
 			}
 		}
@@ -16444,7 +16573,11 @@ func (b *builder) callBody(n *ast.Call) error {
 		// mutates it in place (visible to the caller), while
 		// genuine ownership transfers (Var init, struct/array/
 		// closure capture, assignment) still inc at their sites.
+		if toOwnParam && ai < exitArg {
+			b.teeOperandDrop(b.loweredValueType(a))
+		}
 	}
+	b.pendingDrops = b.pendingDrops[:dropMark]
 	argCount := int32(len(n.Args))
 	// `map_new(cap)` is a generic builtin: the runtime helper
 	// takes two extra runtime-tag args so the stdlib can branch
@@ -16613,6 +16746,7 @@ func (b *builder) indirectCalleeFuncType(callee ast.Expr) *ast.FuncType {
 // after the arguments, and releases the argument temps emitIndirectCallArgs
 // stashed.
 func (b *builder) emitIndirectCall(args []ast.Expr, callee ast.Expr, ft *ast.FuncType) error {
+	dropMark := len(b.pendingDrops)
 	slots, types, err := b.emitIndirectCallArgs(args, ft)
 	if err != nil {
 		return err
@@ -16620,6 +16754,7 @@ func (b *builder) emitIndirectCall(args []ast.Expr, callee ast.Expr, ft *ast.Fun
 	if err := b.expr(callee); err != nil {
 		return err
 	}
+	b.pendingDrops = b.pendingDrops[:dropMark]
 	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(args)), Ext: &OpExt{Sig: ft}})
 	b.emitArgTempDrops(slots, types)
 	return nil
@@ -16638,6 +16773,9 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 	reclaim := ast.RcFreeEnabled && resultCannotAliasArg(sig.Result)
 	var slots []int32
 	var types []ast.Type
+	// The pending drops stay registered through the callee expression, which
+	// emitIndirectCall evaluates after the arguments; it truncates them.
+	exitArg := lastEarlyExitOperand(args)
 	for ai, a := range args {
 		// A slot the function type spells `own` is CONSUMING: the argument
 		// is the callee's to release, so the caller neither stashes it for
@@ -16651,6 +16789,9 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 			} else {
 				b.emitBorrowedArrayOwnArgRetain(a)
 			}
+			if ai < exitArg {
+				b.teeOperandDrop(b.loweredValueType(a))
+			}
 			continue
 		}
 		if reclaim || b.dynCoercedArg(a) || (ast.RcFreeEnabled && b.indirectArgCounted(ai)) {
@@ -16661,6 +16802,7 @@ func (b *builder) emitIndirectCallArgs(args []ast.Expr, sig *ast.FuncType) ([]in
 			if ok {
 				slots = append(slots, slot)
 				types = append(types, tt)
+				b.pushOperandDrop(slot, tt)
 				continue
 			}
 		}

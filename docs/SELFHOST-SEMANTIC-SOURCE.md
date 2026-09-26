@@ -2247,7 +2247,10 @@ language test nor the AST lowering, and the CLI cannot stand in for them.
 Each takes a typed-path substitution before step 3, and pays the growth:
 - `playground_run` is the browser playground's compiler. It is a product,
   and it should emit what the CLI emits. Its embedded stdlib overlay is the
-  thing the CLI does not have.
+  thing the CLI does not have. It ships as a wasm module, so the typed path
+  has to build for `wasm32-wasi` inside it, which nothing yet shows; and the
+  6.7–10.2% was measured on the x86-64 emitter, not on its 4.1 MB bundle,
+  whose size nothing gates.
 - `ir_const_numeric_run` checks that each backend reads both forms of a
   numeric constant. It rewrites the constants in the substitution it is
   given, not in an AST-lowered one.

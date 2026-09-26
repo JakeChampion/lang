@@ -20,6 +20,7 @@
 //   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
 //     `a + b` keeps `*.add`, …) — covering operator overloading even if the
 //     `+`→`.add()` rewrite has not run yet,
+//   * the conversion a `?` may make (`e?` keeps `*.from`),
 //   * the method an array-method helper or an interposed collision provider was
 //     renamed away from (ts_kept_name), neither of which the syntax spells.
 // The collector uses astwalk's fold spine, so it reaches every Expr/Stmt
@@ -127,6 +128,9 @@ function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
             return acc.append(m);
         },
         ast.ExprUnary(u) => {
+            // A `?` whose error types differ converts through the target's
+            // `from`, which the syntax does not name.
+            if (u.op == "try_") { return acc.append("from"); }
             if (u.op != "-") { return acc; }
             var ut: string = ts_recv_tag(u.operand);
             if (ut.len() > 0) { return acc.append(ts_qualified_root(ut, "neg")); }

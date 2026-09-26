@@ -1225,9 +1225,9 @@ func (b *builder) emitRcDecLocalsAtExit() {
 //
 // Every path that leaves the function funnels through here, which is what
 // makes it the place to replay the box releases an enclosing match's arms
-// would otherwise branch past (emitPendingScrutineeDrops).
+// would otherwise branch past (emitPendingDrops).
 func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
-	b.emitPendingScrutineeDrops(0)
+	b.emitPendingDrops(0)
 	// Local aliases so existing call sites stay unchanged; the bodies were
 	// promoted to *builder methods (decValueOnStack / dropStructField) so the
 	// shared emitEnumSlotDrop can reuse them.
