@@ -2107,7 +2107,7 @@ What the typed path produced whole, 2026-09-24:
 | the compiler compiling itself | every declaration |
 | `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
 | `coreutils/` | all 106 programs |
-| e2eselfhost under strict | every test, 2026-09-25 |
+| e2eselfhost under strict, 2026-09-25 | 2737 tests, the one failure #10291 (since fixed); a later sweep ran into the local 3 h timeout with no refusal |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
