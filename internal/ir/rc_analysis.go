@@ -2800,8 +2800,10 @@ func (b *builder) computeCowThreadedMapParams() map[string]bool {
 // mutate-in-place fast path. For now, the rc just goes
 // briefly to zero on the returned ptr, harmless under the
 // no-free regime.
-// countedBindingAlias reports whether `target = e` emits a transfer inc, making
-// `target` an owner rather than an inheritor of `e`'s borrow taint.
+// countedIdentAssign reports whether `target = e` gives `target` a count of its
+// own, making it an owner rather than an inheritor of `e`'s borrow taint. What
+// `target` does inherit is `e`'s ESCAPE: a value an uncounted sink holds must
+// not be freed through the new owner either (computeFreeEligible's fixpoint).
 //
 // It holds when `e` is a BINDING — a match / if-let / let-else / for-in name,
 // which is neither a declared local nor a parameter. Such a name is
@@ -2809,14 +2811,15 @@ func (b *builder) computeCowThreadedMapParams() map[string]bool {
 // dup), but `keep = g` is not that alias: needsRcIncOnAlias fires on the
 // assignment, so `keep` takes a reference of its own and reclaims through
 // __fern_arr_dec — whose is_unique gate can never free out from under the
-// binding.
+// binding. A binding cannot reach either cancellation of that inc: a move site
+// and a borrowed-alias site both need an owned rc LOCAL source.
 //
-// The two cancellations that would remove that inc cannot reach here, which is
-// what makes the untaint sound rather than optimistic: a move site needs an
-// owned rc LOCAL source (computeMovedLocals' isOwnedRcLocal), and so does a
-// borrowed-alias site. A binding is neither, so the inc the Assign lowering
-// emits is unconditional. That matters because moveSites is not populated yet
-// when this analysis runs — it is built from computeFreeEligible's result.
+// It holds for an owned rc LOCAL source too, tainted or not (#9948). The Assign
+// lowering retains it unless the site is a move (moveSites, decided after this
+// analysis), and a moved source hands over a count it owns: the one local that
+// holds no count is a borrowed alias whose inc was cancelled, and every
+// borrowed-alias leg refuses a moved name. So `chunk = kept`, with `kept` such
+// an alias, leaves `chunk` owning its reference either way.
 //
 // The countedness is read off the TARGET's declared type, not the binding's. A
 // binding has no resolvable type this early — needsRcIncOnAlias answers false
@@ -2832,12 +2835,9 @@ func (b *builder) computeCowThreadedMapParams() map[string]bool {
 // local borrow-tainted, so its overwrite-dec fell back to the flat
 // __fern_rc_dec that decrements without reclaiming — one leaked buffer per
 // assignment (#7163).
-func (b *builder) countedBindingAlias(target string, e ast.Expr) bool {
+func (b *builder) countedIdentAssign(target string, e ast.Expr) bool {
 	id, ok := e.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	if b.isOwnedRcLocal(id.Name) || b.paramNamed(id.Name) != nil {
+	if !ok || b.paramNamed(id.Name) != nil {
 		return false
 	}
 	return b.isOwnedRcLocal(target)
@@ -2900,10 +2900,10 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// *ast.Assign later overwrites. countedSeed below combines them.
 	seedParamInit := map[string]ast.Expr{}
 	reassignedIdent := map[string]bool{}
-	// countedAssign[rhs] marks an `L = <binding>` whose lowering emits the
-	// transfer inc, so L owns a reference of its own and does not inherit the
-	// binding's borrow taint. Populated in the *ast.Assign case below, and in
-	// the *ast.Var case for a cell cow-in-place initialiser.
+	// countedAssign[rhs] marks an `L = <name>` that gives L a count of its own
+	// (countedIdentAssign), so L does not inherit the source's borrow taint.
+	// Populated in the *ast.Assign case below, and in the *ast.Var case for a
+	// cell cow-in-place initialiser.
 	countedAssign := map[ast.Expr]bool{}
 	markBindings := func(names []string) {
 		for _, n := range names {
@@ -3044,7 +3044,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			if id, ok := s.Target.(*ast.Ident); ok {
 				assigns[id.Name] = append(assigns[id.Name], s.Value)
 				reassignedIdent[id.Name] = true
-				if b.countedBindingAlias(id.Name, s.Value) {
+				if b.countedIdentAssign(id.Name, s.Value) {
 					countedAssign[s.Value] = true
 				}
 			} else {
@@ -3371,6 +3371,13 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			for _, rhs := range rhss {
 				if !tainted[name] && !countedSeed[rhs] && !countedAssign[rhs] && b.rhsTainted(rhs, tainted) {
 					tainted[name] = true
+					changed = true
+				}
+				// A counted copy of an ESCAPED value is freed through its new
+				// owner while the uncounted sink still holds it.
+				if src, ok := rhs.(*ast.Ident); ok && countedAssign[rhs] && escaped[src.Name] && !escaped[name] {
+					tainted[name] = true
+					escaped[name] = true
 					changed = true
 				}
 				// Backward alias propagation: a tainted local
