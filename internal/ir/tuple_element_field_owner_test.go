@@ -39,6 +39,8 @@ func TestTupleElementFieldAccessLowers(t *testing.T) {
 		{"off the call result", `return origin().1.y;`},
 		{"two levels off the call result", `return span().1.from.y;`},
 		{"through an array element", `var ps: (i32, Point)[] = [origin()]; return ps[0].1.x;`},
+		{"an array element of a tuple element", `var t: (i32, Point[]) = (1, [Point { x: 7, y: 9 }]); return t.1[0].x;`},
+		{"a nested array element of a tuple element", `var t: (i32, Point[][]) = (1, [[Point { x: 7, y: 9 }]]); return t.1[0][0].y;`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			lowerOK(t, tupleFieldDecls+"\nfunction main(): i32 { "+tc.body+" }\n")

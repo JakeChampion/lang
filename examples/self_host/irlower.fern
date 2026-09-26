@@ -33059,7 +33059,11 @@ function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]):
 //   - an enum-variant construction `return V(a, …)`       — each bare array-local
 //     payload arg is moved into the (leaking) enum box (#3720);
 //   - a struct literal whose enum-typed field is built from such a construction
-//     (`return S { node: Many(items), … }`) — the array under the enum payload.
+//     (`return S { node: Many(items), … }`) — the array under the enum payload;
+//   - a returned pointer-shaped field of a reclaimable struct local
+//     (`return r.node`, #4801) — the struct itself, which the field aliases;
+//   - each element of a returned tuple, except an array field read the tuple
+//     literal retained (tuple_field_share_kind), which is its own count.
 // Struct ARRAY fields (`S { xs: a }`) are deliberately NOT collected: those take
 // an alias-inc at the struct-lit lowering, so the sweep dec is balanced and must
 // still run. A fresh array literal payload (`Many([…])`) names no slot, so it is
@@ -33200,9 +33204,13 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // recycled the freed block). Recurse per element so the ident /
             // `.append` / enum-ctor / reclaimable-struct/-string shapes are all
             // kept from their sweeps, matching the single-value return paths.
+            // An array field read is the exception: the literal retains it
+            // (tuple_field_share_kind), so its struct is still swept (#10315).
             var tli: i32 = 0;
             while (tli < tl.elements.len()) {
-                out = returned_moved_arr_slots(tl.elements[tli], s, out);
+                if (tuple_field_share_kind(tl.elements[tli]).len() == 0) {
+                    out = returned_moved_arr_slots(tl.elements[tli], s, out);
+                }
                 tli = tli + 1;
             }
         },
