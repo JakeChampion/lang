@@ -50254,7 +50254,7 @@ function arrarr_lit_is_empty(e: ast.Expr): boolean {
 // arrarr_row_escapes_iter; the option-element class takes
 // arrarr_row_escapes_boxiter — see the two below.
 function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
-    return arrarr_row_escapes_ex(stmts, name, false, [], false);
+    return arrarr_row_escapes_ex(stmts, name, false, [], false, "", struct_tab_empty());
 }
 
 // arrarr_row_escapes_boxiter: the strict form with `for o in xs` readmitted on a
@@ -50273,7 +50273,7 @@ function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
 // — 160 B/round, unbounded, against native's 0 — while `match (keep[i])` next to
 // it balanced. Only the iteration was ever the difference.
 function arrarr_row_escapes_boxiter(stmts: ast.Stmt[], name: string): boolean {
-    return arrarr_row_escapes_ex(stmts, name, false, [], true);
+    return arrarr_row_escapes_ex(stmts, name, false, [], true, "", struct_tab_empty());
 }
 
 // arrarr_row_escapes_iter: the ARR-OF-ARR form. A row read — `var row = g[i]` or
@@ -50291,7 +50291,7 @@ function arrarr_row_escapes_boxiter(stmts: ast.Stmt[], name: string): boolean {
 // therefore admitted on the same terms structarr_elem_escapes admits its own
 // iteration, and refused only when the body lets the loop var escape.
 function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
-    return arrarr_row_escapes_ex(stmts, name, true, borrowable, false);
+    return arrarr_row_escapes_ex(stmts, name, true, borrowable, false, "", struct_tab_empty());
 }
 
 // One walker behind all three, rather than a near-copy per class (the 08-22
@@ -50300,8 +50300,10 @@ function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string, borrowable: st
 // borrow the reclaim can outlive; `box_iter_ok` says whether its `for` iteration
 // — transient in every class, since the loop ends before the reclaim — has a
 // confinement proof for a BOX loop var, which is a separate question from the
-// index bind and answered by a different walk.
-function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean, borrowable: string[], box_iter_ok: boolean): boolean {
+// index bind and answered by a different walk. `elem_sty` names the element
+// struct of a class whose walk is DEEP (arrstruct_row_escapes), and is "" for
+// every other class.
+function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean, borrowable: string[], box_iter_ok: boolean, elem_sty: string, structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => { if (!dup_at_index && expr_is_bare_row_read(v.init, name)) { return true; } },
@@ -50321,16 +50323,23 @@ function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: bo
                     } else if (box_iter_ok) {
                         if (body_unsafe_for_match_borrow(fo.body, fo.var_name, no_names(), no_names(), no_names())) { return true; }
                         if (elem_box_iter_bind_escapes(fo.body, fo.var_name)) { return true; }
+                    } else if (elem_sty != "") {
+                        // A struct element whose walk frees its fields: the loop
+                        // var stays in the body, hands out none of its rc fields,
+                        // and the array is not rebound under the loop (#10161).
+                        if (body_unsafe_for(fo.body, fo.var_name, borrowable, [])
+                                || forvar_field_escapes(fo.body, fo.var_name, elem_sty, structs)
+                                || stmts_assign_name_deep(fo.body, name)) { return true; }
                     } else {
                         return true;
                     }
                 }
-                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; }
+                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index, borrowable, box_iter_ok, elem_sty, structs)) { return true; }
             },
-            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index, borrowable, box_iter_ok) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } },
-            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } },
+            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index, borrowable, box_iter_ok, elem_sty, structs) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index, borrowable, box_iter_ok, elem_sty, structs)) { return true; } },
+            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index, borrowable, box_iter_ok, elem_sty, structs)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } }
+                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index, borrowable, box_iter_ok, elem_sty, structs)) { return true; } }
             },
             _ => {}
         }
@@ -50388,36 +50397,10 @@ function elem_box_iter_bind_escapes_stmt(st: ast.Stmt, bnd: string): boolean {
 }
 
 // arrstruct_row_escapes: arrarr_row_escapes for an array of structs whose
-// element walk is DEEP. A bare element bind still refuses, but `for p in name`
-// is admitted, since the loop ends before the reclaim runs, when `p` stays in
-// the body (body_unsafe_for), none of its rc fields is extracted bare
-// (forvar_field_escapes), and the body does not rebind `name` under the loop
-// iterating it (#10161).
+// element walk is DEEP. A bare element bind still refuses; `for p in name` is
+// admitted on the struct proof in arrarr_row_escapes_ex (#10161).
 function arrstruct_row_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, borrowable: string[]): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
-            ast.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
-            ast.StmtFor(fo) => {
-                if (ident_named_is(fo.iter, name)) {
-                    if (sty == "" || body_unsafe_for(fo.body, fo.var_name, borrowable, [])
-                            || forvar_field_escapes(fo.body, fo.var_name, sty, structs)
-                            || stmts_assign_name_deep(fo.body, name)) { return true; }
-                }
-                if (arrstruct_row_escapes(fo.body, name, sty, structs, borrowable)) { return true; }
-            },
-            ast.StmtIf(f) => {
-                if (arrstruct_row_escapes(f.then_body, name, sty, structs, borrowable)
-                        || arrstruct_row_escapes(f.else_body, name, sty, structs, borrowable)) { return true; }
-            },
-            ast.StmtWhile(w) => { if (arrstruct_row_escapes(w.body, name, sty, structs, borrowable)) { return true; } },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_row_escapes(arm.body, name, sty, structs, borrowable)) { return true; } }
-            },
-            _ => {}
-        }
-    }
-    return false;
+    return arrarr_row_escapes_ex(stmts, name, false, borrowable, false, sty, structs);
 }
 
 // forvar_field_escapes: does the loop body read an rc field of the struct loop
@@ -50445,9 +50428,10 @@ function forvar_field_shape(e: ast.Expr, p: string, sty: string, structs: Struct
     match (e) {
         ast.ExprFieldAccess(fa) => {
             if (ident_name_or_empty(fa.obj) != p) { return 0; }
-            var ft: string = decl_field_type(structs, sty, fa.field);
-            if (ft != "" && !is_scalar_type_name(ft)) { return 2; }
-            return 1;
+            // A name the declaration does not know (a method) is refused rather
+            // than read as a scalar.
+            if (is_scalar_type_name(decl_field_type(structs, sty, fa.field))) { return 1; }
+            return 2;
         },
         ast.ExprIndex(ix) => {
             if let ast.ExprFieldAccess(ifa) = ix.array {
