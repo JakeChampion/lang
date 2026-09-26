@@ -24874,6 +24874,12 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
         }
     }
     if (alias_reassign_inc) { se = se.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
+    // The retained box may be the one the target already holds (`prev = s` with
+    // prev == s), and the struct rebinds below keep an identical box without a
+    // release, so the extra count goes back here.
+    if (alias_reassign_inc && !target_is_arr && decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot))) {
+        se = emit_handback_identity_dec_tos(se, slot, 0 - 1);
+    }
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
     // storing the fresh one — closes the register-backend per-reassign payload leak
@@ -30960,7 +30966,11 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // state as a credited source (slot_is_credited_tuple); it did not, which is
 // why this credit measured an over-release on the tuple pair before the gate
 // was completed.
-function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
+//
+// `counted_reassign` is the struct family's: its `link = src` assignment retains
+// (the "ALIASSRC:" row), so a link reassigned only from the source keeps a
+// counted share and stays in the chain.
+function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[], counted_reassign: boolean): string[] {
     var sites: string[] = [];
     var names: string[] = [src];
     var ni: i32 = 0;
@@ -30980,7 +30990,8 @@ function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string
     var reasg: string[] = body_assign_targets(body);
     var vi: i32 = 1;
     while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
+        if (util.index_of_str(reasg, names[vi]) >= 0
+                && !(counted_reassign && reassigned_only_from(body, names[vi], src))) { return acc; }
         if (body_unsafe_for_alias(body, names[vi], borrowable, recv_borrow, sites)) { return acc; }
         vi = vi + 1;
     }
@@ -32671,6 +32682,21 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_drop());
         }
         j = j + 1;
+    }
+    // A snapshot local derived from a PARAMETER (`var a: T = p`, rebound to boxes
+    // this frame builds) is not credited, since its final box may still be p's.
+    // Its exit release is the one its rebinds already take, with p's box standing
+    // in for the new value: nothing when the local still holds p's box, and
+    // otherwise the fields p does not share and the box (#10162). A parameter
+    // outlives the frame, so the snapshot is still readable here.
+    var psj: i32 = st.frame.n_params;
+    while (psj < st.locals.len()) {
+        if (!slot_list_has(keeps, psj) && !slot_list_has(st.frame.moved_elided, psj) && param_snapshot_local(st, psj)) {
+            var psnap: i32 = st.slot_of(snapshot_slot_name(psj));
+            st = st.emit(ir.op_load_local(psnap));
+            st = emit_field_reclaim_store(st, psj, st.struct_type_of_slot(psj), psnap, false);
+        }
+        psj = psj + 1;
     }
     // Reclaimable dyn-Trait STRUCT-payload locals (#4351) — the dyn local holds
     // the concrete's rc-headered struct box (structs flow unboxed behind dyn),
@@ -42087,6 +42113,22 @@ function stmt_reassigns_alias(st: ast.Stmt, name: string, src: string, borrows: 
     return false;
 }
 
+// reassigned_only_from: every assignment to `name` in `stmts` is `name = src`.
+function reassigned_only_from(stmts: ast.Stmt[], name: string, src: string): boolean {
+    function bad(st: ast.Stmt, own acc: boolean): boolean {
+        if (acc) { return true; }
+        if let ast.StmtAssign(a) = st {
+            if (a.target == name) { return ident_name_or_empty(a.value) != src; }
+        }
+        return false;
+    }
+    function no_expr(x: ast.Expr, own acc: boolean): boolean { return acc; }
+    for stmt in stmts {
+        if (astwalk.fold_stmt_nodes(stmt, false, bad, no_expr, astwalk.descend_all)) { return false; }
+    }
+    return true;
+}
+
 // struct_bare_assigned_src: `name` appears as the bare RHS of an assignment
 // to ANOTHER name (`held = s`). The plan's alias forgiveness is sound only
 // where the alias BIND retains; a plain assignment retains nothing on the
@@ -44850,6 +44892,11 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: St
                     if (!rebinds_only) { a = push_str_unique(a, key); }
                     if (src.len() > 0) { a = push_str_unique(a, "SNAPSRC:" + key + "|" + src); }
                     if (lu.len() > 0) { a = push_str_unique(a, "LASTUSE:" + lu + "|" + v.name); }
+                    // An alias of a parameter that no `return` mentions owns
+                    // whatever box its rebinds leave it at exit (#10162).
+                    if (alias_init && fn_has_param(fn, src) && !returns_escape(fn.body, v.name, v.type_name, structs)) {
+                        a = push_str_unique(a, "PSNAPEXIT:" + key);
+                    }
                 }
             },
             ast.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
@@ -78368,6 +78415,60 @@ function emit_own_lift_retain(v: ast.StmtVar, sv: LowerState): LowerState {
     return sv.retain(slot, "own-lift-field");
 }
 
+// param_snapshot_local: slot `i` is an uncredited struct local bound as an
+// alias of a parameter and never returned ("PSNAPEXIT:"), with its snapshot
+// seeded, of a type that routes field reclaim.
+function param_snapshot_local(s: LowerState, i: i32): boolean {
+    if (slot_is_reclaimable_struct(s, i) || s.is_arr_slot(i)) { return false; }
+    if (!reclaim_has(s.frame.reclaimable_names, "PSNAPEXIT:", s.reclaim_site_key(i))) { return false; }
+    var sty: string = s.struct_type_of_slot(i);
+    if (sty.len() == 0 || !s.struct_routes_field_reclaim(sty)) { return false; }
+    return s.slot_of(snapshot_slot_name(i)) >= 0;
+}
+
+// fn_has_param: `name` is one of `fn`'s parameters.
+function fn_has_param(fn: parser.FuncDecl, name: string): boolean {
+    for pd in fn.params { if (pd.name == name) { return true; } }
+    return false;
+}
+
+// returns_escape: some `return` in `stmts` hands out the struct local `name`
+// (of type `sty`) or one of its rc fields. Reading a scalar field or an rc
+// field's `.len()` hands out nothing.
+function returns_escape(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return esc || ret_read_shape(x, name, sty, structs) == 2; }
+    function descend(x: ast.Expr): boolean { return ret_read_shape(x, name, sty, structs) == 0; }
+    for r in noesc_collect_rets(stmts, []) {
+        if (astwalk.fold_expr_pruned(r, false, visit, descend)) { return true; }
+    }
+    return false;
+}
+
+// ret_read_shape: 0 descend, 1 a read through `name` that hands out nothing,
+// 2 `name` or one of its rc fields handed out.
+function ret_read_shape(e: ast.Expr, name: string, sty: string, structs: StructTab): i32 {
+    match (e) {
+        ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },
+        ast.ExprFieldAccess(fa) => {
+            if (ident_name_or_empty(fa.obj) != name) { return 0; }
+            if (is_scalar_type_name(decl_field_type(structs, sty, fa.field))) { return 1; }
+            return 2;
+        },
+        ast.ExprCall(c) => {
+            if let ast.ExprFieldAccess(cfa) = c.callee {
+                if (cfa.field == "len" && c.args.len() == 0) {
+                    if let ast.ExprFieldAccess(rfa) = cfa.obj {
+                        if (ident_name_or_empty(rfa.obj) == name) { return 1; }
+                    }
+                }
+            }
+            return 0;
+        },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
 // seed_snapshot_local: a struct local whose binding recorded the variable its
 // value derives from ("SNAPSRC:<site>|<name>", snapshot_local_names_of) gets a
 // hidden copy of that variable's box, `$snap$<slot>`, right after the binding.
@@ -78381,6 +78482,9 @@ function seed_snapshot_local(v: ast.StmtVar, sv: LowerState): LowerState {
     var slot: i32 = sv.slot_of(v.name);
     var srcslot: i32 = sv.slot_of(src);
     if (slot < 0 || srcslot < 0 || sv.struct_type_of_slot(slot).len() == 0) { return sv; }
+    // A credited alias bind retained its source, so the box it holds is counted
+    // and its rebinds release it like any other.
+    if (slot_is_reclaimable_struct(sv, slot) && ident_name_or_empty(v.init) == src) { return sv; }
     var st: LowerState = sv.add_local(snapshot_slot_name(slot));
     if (last_use_release_slot(v, st) == srcslot) {
         // The source's box goes at this statement (release_last_use_source),
@@ -78786,7 +78890,7 @@ while (ti < tups.len()) {
     // credit. The bind retained it (lower_stmt_var's ExprIdent arm), both
     // slots sweep, and the refcount arbitrates.
     var tal: string[] = [];
-    tal = alias_chain_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
+    tal = alias_chain_sites_of(body, tnm, borrowable, recv_borrow, body, tal, false);
     if (!body_unsafe_for_alias_ret_ok(body, tnm, borrowable, recv_borrow, tal, util.index_of_str(tretn, tnm) >= 0)) {
         out = out.append("TUP:" + tups[ti]);
         out = credit_alias_sites(out, "TUP:", tal);
@@ -78842,7 +78946,7 @@ while (rti < rctups.len()) {
     // Binding-SITE keys here too (#7272); the gates take the bare name.
     var rnm: string = reclaim_site_name(rctups[rti]);
     var ral: string[] = [];
-    ral = alias_chain_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
+    ral = alias_chain_sites_of(body, rnm, borrowable, recv_borrow, body, ral, false);
     // Struct literals that took a COUNTED share of this tuple (the field retain
     // + emit_struct_tuple_field_drops pair). Not escapes: both owners release.
     var rcnt: string[] = rctuple_counted_store_sites(body, rnm, structs, msites, []);
@@ -78965,7 +79069,7 @@ while (si < strs.len()) {
     // deep release here to withhold from it, which is what makes this simpler
     // than the struct and rc-tuple cases rather than merely different.
     var sal: string[] = [];
-    sal = alias_chain_sites_of(body, snm, borrowable, recv_borrow, body, sal);
+    sal = alias_chain_sites_of(body, snm, borrowable, recv_borrow, body, sal, false);
     // The alias REASSIGN (`t = s`) joins the alias BIND, on the same terms: the
     // assignment now RETAINS (keyed on the "STRALIASSRC:" row below), so `t`
     // holds a counted share rather than a borrow. Its site goes into `sal` so
@@ -79630,7 +79734,7 @@ while (i < fresh.len()) {
     // slots holding plain SCALARS. `__fern_i32_to_string` binds the negated
     // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
     // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
-    var sal: string[] = alias_chain_sites_of(body, fnm, borrowable, recv_borrow, body, []);
+    var sal: string[] = alias_chain_sites_of(body, fnm, borrowable, recv_borrow, body, [], true);
     // Step-2 routing, struct family: the ESCAPE conjunct is the plan's
     // per-site verdict (free_eligible_sites_of; the alias forgiveness is
     // the plan's own #7282 arithmetic, sound because the struct alias
@@ -79660,8 +79764,10 @@ while (i < fresh.len()) {
     // Its header named the precondition itself — "family knowledge until
     // assignments carry the co-extensive retain" — and lower_stmt_assign now
     // carries it, keyed on the "ALIASSRC:" row this branch emits.
+    var held: string[] = fresh;
+    for asite in sal { held = held.append(asite); }
     var bas_ok: boolean = !struct_bare_assigned_src(body, fnm)
-        || bare_assign_targets_all_fresh(body, fnm, fresh);
+        || bare_assign_targets_all_fresh(body, fnm, held);
     // Every gate but the RETURN. A returned name still fails the credit below —
     // the caller's fresh-ret release and this slot's would be two claims on the
     // final box — but the boxes its REBINDS supersede are a separate question,
