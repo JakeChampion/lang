@@ -410,6 +410,7 @@ jobs:
           set -euo pipefail
           go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
           go test ./internal/e2e/ -run '^TestDifferential_SelfHostSemanticX86_64$' -v -timeout 43m
+          go test ./internal/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
       - name: arm64 — AST lowering, then the semantic lowering
         if: matrix.target == 'arm64'
         env:

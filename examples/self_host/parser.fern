@@ -1358,9 +1358,9 @@ function (p: Par) with_depth(v: i32): Par {
 
 // too_deep reports whether entering one more recursive-descent level would
 // cross the bound.
-function (p: Par) too_deep(): boolean { return p.depth > MAX_NEST_DEPTH; }
+function (p: Par) too_deep(): boolean { return p.too_deep_by(1); }
 // too_deep_by is too_deep for a construct that costs `units` rather than one.
-function (p: Par) too_deep_by(units: i32): boolean { return p.depth + units - 1 > MAX_NEST_DEPTH; }
+function (p: Par) too_deep_by(units: i32): boolean { return p.depth + units > MAX_NEST_DEPTH; }
 
 // bail parks the cursor on the final token so every `while (!q.at_end())`
 // loop above the guard unwinds at once. Returning the cursor unmoved would
