@@ -173,14 +173,22 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 // self-host legs are four paths through one compiler, so this is the check a
 // miscompile they share cannot pass.
 func TestSelfHostTupleFieldShareNative(t *testing.T) {
+	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)
-	dir := t.TempDir()
 	for _, tc := range tupleFieldShareCases {
 		t.Run(tc.name, func(t *testing.T) {
-			v, exit := nativeLeakVerdict(t, cli, dir, tc.name, tupleFieldShareDecls+tc.src)
-			if v != verdictClean || exit != tc.want {
-				t.Fatalf("native: %s, exit = %d, want clean and %d", v, exit, tc.want)
+			src := writeTupleFieldShareSrc(t, tc.name, tc.src)
+			bin := filepath.Join(t.TempDir(), tc.name+".nat")
+			compile := exec.Command(cli, "-target", "x86-64-linux", "-o", bin, src)
+			compile.Env = childEnv("FERN_LEAKCHECK=1")
+			if out, err := compile.CombinedOutput(); err != nil {
+				t.Fatalf("native compile: %v\n%s", err, out)
 			}
+			stderr, exit := runWithStdin(t, runner, bin, nil)
+			if exit != tc.want {
+				t.Fatalf("native: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			assertBalancedCensus(t, stderr)
 		})
 	}
 }
