@@ -289,8 +289,9 @@ func runSelfHostSeed(t *testing.T, fernBin, stdlibRoot, src string, semantic boo
 	// The control leg spells the flag EMPTY rather than leaving it unset: an
 	// empty value is off (semlower.sem_ir_on), and writing it is what stops an
 	// ambient FERN_SEM_IR=1 in the environment turning both legs into the
-	// semantic one.
-	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_REPORT=1")
+	// semantic one. Strict is spelled off too: under it a refusal would be a
+	// compile gap, which skips, where requireSemWhole fails it.
+	compile.Env = append(os.Environ(), "FERN_SEM_IR=", "FERN_SEM_IR_STRICT=", "FERN_SEM_IR_REPORT=1")
 	if semantic {
 		compile.Env = append(compile.Env, "FERN_SEM_IR=1")
 	}
