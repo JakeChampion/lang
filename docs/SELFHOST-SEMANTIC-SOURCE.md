@@ -2199,10 +2199,10 @@ What is left, in order:
    (`fixtureCompile`), and the four scripts that measure the self-hosted
    compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
    `coreutils-bench`). The CLI is the only driver that builds a
-   substitution; the emit drivers never reach the typed path. The semantic
-   differential legs fail a seed that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
-   leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
-   purpose.
+   substitution; the emit drivers never reach the typed path (see below).
+   The semantic differential legs fail a seed that compiles as a mixed
+   module. The production rows' `FERN_SEM_IR_SKIP` leg and
+   `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
 
