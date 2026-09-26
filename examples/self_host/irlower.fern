@@ -33200,9 +33200,13 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // recycled the freed block). Recurse per element so the ident /
             // `.append` / enum-ctor / reclaimable-struct/-string shapes are all
             // kept from their sweeps, matching the single-value return paths.
+            // An array field read is the exception: the literal retains it
+            // (tuple_field_share_kind), so its struct is still swept (#10315).
             var tli: i32 = 0;
             while (tli < tl.elements.len()) {
-                out = returned_moved_arr_slots(tl.elements[tli], s, out);
+                if (tuple_field_share_kind(tl.elements[tli]).len() == 0) {
+                    out = returned_moved_arr_slots(tl.elements[tli], s, out);
+                }
                 tli = tli + 1;
             }
         },

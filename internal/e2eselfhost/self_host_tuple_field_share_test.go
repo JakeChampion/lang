@@ -14,7 +14,8 @@ import (
 // buffer the tuple still read (#10314). The literal now retains the field, the
 // tuple local's kinds and a returned tuple's ARRF: flags release it, and the
 // field keeps its element walk.
-const tupleFieldShareDecls = `struct Rec { n: i32, xs: string[] }
+const tupleFieldShareDecls = `import "std/i32";
+struct Rec { n: i32, xs: string[] }
 struct Ints { n: i32, ys: i32[] }
 `
 
@@ -111,6 +112,34 @@ function main(): i32 {
     return p.0 + p.1.len() + r.n + ys.len() + junk.len() + p.1[0].len();
 }
 `, 14, true},
+	// A callee-local record whose array field the returned tuple holds is swept
+	// at the return: the tuple's retain keeps the buffer for the caller (#10315).
+	{"callee_local_ints", `function mk(k: i32): (i32, i32[]) {
+    var r: Ints = Ints { n: k, ys: [k, 1, 2] };
+    return (r.n, r.ys);
+}
+function main(): i32 {
+    var t: (i32, i32[]) = mk(3);
+    mk(4);
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 8) { var junk: i32[] = [9, 9, 9]; acc = acc + junk[k % 3]; k = k + 1; }
+    return t.0 + t.1[0] + t.1.len() + acc - 72;
+}
+`, 9, true},
+	{"callee_local_strarr", `function mk(k: i32): (i32, string[]) {
+    var r: Rec = Rec { n: k, xs: ["ab", "cd" + k.to_string()] };
+    return (r.n, r.xs);
+}
+function main(): i32 {
+    var t: (i32, string[]) = mk(3);
+    mk(4);
+    var acc: i32 = 0;
+    var k: i32 = 0;
+    while (k < 8) { var junk: string[] = ["zzz", "zzz" + k.to_string()]; acc = acc + junk[1].len(); k = k + 1; }
+    return t.0 + t.1[1].len() + t.1.len() + acc - 32;
+}
+`, 8, true},
 	// Extracting the element to a new owner refuses the tuple's element release,
 	// so the AST leg keeps the tuple's reference: a leak, never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
@@ -128,7 +157,7 @@ var tupleFieldShareLowerings = []struct{ name, env string }{
 	{"semantic", "FERN_SEM_IR=1"},
 	{"ast", "FERN_SEM_IR="},
 	{"ast_main", "FERN_SEM_IR_SKIP=main"},
-	{"ast_callees", "FERN_SEM_IR_SKIP=pair,pick,first"},
+	{"ast_callees", "FERN_SEM_IR_SKIP=pair,pick,first,mk"},
 }
 
 // tupleFieldShareBalanced: whether the census must balance for this row and
