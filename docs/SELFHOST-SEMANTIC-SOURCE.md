@@ -2191,10 +2191,11 @@ What is left, in order:
    calls `__fern_utf8_valid`), so they fail when checked alone and check inside
    the bundle.
 2. Strict mode goes green over every suite. The fallback then becomes the
-   error, and `FERN_SEM_IR=` loses its off column. Gated so far: every
-   `internal/e2eselfhost` compile runs strict (its `TestMain`), and so do the
-   coreutils self-host builds and the fixture corpus on all three targets
-   (`fixtureCompile`). The semantic differential legs fail a seed
+   error, and `FERN_SEM_IR=` loses its off column. Gated: every
+   `internal/e2eselfhost` and `internal/e2e` compile runs strict (each
+   package's `TestMain`), and so do the coreutils self-host builds, the
+   fixture corpus on all three targets (`fixtureCompile`) and the self-host
+   perf benchmarks. The semantic differential legs fail a seed
    that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
    leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
    purpose.
