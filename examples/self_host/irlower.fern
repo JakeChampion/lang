@@ -64822,30 +64822,6 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         // path and dispatches on the real type; an annotated binding already
         // supplies the type.
         else if (enum_ret_recordable(rt, fn, structs)) { elig = true; }
-        // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
-        // ret_type from the desugar, not the struct it actually returns — so
-        // trust the BODY, not the declaration. Infer a leaf-safe struct return
-        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
-        // .. }).x` recover the struct type at the `__lam_N()` call site.
-        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
-            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
-            if (inf.len() > 0) { elig = true; elem_t = inf; }
-            else {
-                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
-                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
-                // literal, so record the ELEMENT struct type (the slot is is_arr
-                // via array_ret_fns, so struct_type_of_slot reads as the element
-                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
-                // fixes.
-                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
-                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
-                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
-                // is lifted the same way, and `cs[i].m()` needs the element type
-                // for the same reason. A variant box is leak-only, so — as in the
-                // scalar enum arm — there is no leak-safety test to apply.
-                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
-            }
-        }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
         // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
@@ -64890,6 +64866,31 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
                         api = fn.params.len();
                     } else { api = api + 1; }
                 }
+            }
+        }
+        // A lifted if-/match-EXPRESSION (`__lam_N`) the checker did not annotate
+        // carries the desugar's default `i32` ret_type, not the struct it
+        // actually returns — so trust the BODY. Last, so an annotated
+        // declaration answers first. Infer a leaf-safe struct return
+        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
+        // .. }).x` recover the struct type at the `__lam_N()` call site.
+        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
+            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
+            if (inf.len() > 0) { elig = true; elem_t = inf; }
+            else {
+                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
+                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
+                // literal, so record the ELEMENT struct type (the slot is is_arr
+                // via array_ret_fns, so struct_type_of_slot reads as the element
+                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
+                // fixes.
+                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
+                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
+                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
+                // is lifted the same way, and `cs[i].m()` needs the element type
+                // for the same reason. A variant box is leak-only, so — as in the
+                // scalar enum arm — there is no leak-safety test to apply.
+                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
             }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
