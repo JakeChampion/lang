@@ -384,6 +384,18 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
                 }
                 return "";
             }
+            // A literal match over a computed scrutinee: the block declaring its
+            // cached local, then the match itself, which carries the scrutinee
+            // as written.
+            if (lm.body.len() == 2) {
+                if let ast.StmtVar(sv) = lm.body[0] {
+                    if (!parser.is_literal_scrut_local(sv.name)) { return ""; }
+                    if let ast.StmtReturn(sr) = lm.body[1] {
+                        if let ast.ExprCall(ic) = sr.value { return print_expr_iife(ic, depth); }
+                    }
+                }
+                return "";
+            }
             if (lm.body.len() != 1) { return ""; }
             match (lm.body[0]) {
                 ast.StmtMatch(m) => {

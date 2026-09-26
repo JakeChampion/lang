@@ -18273,8 +18273,9 @@ function vb_leaves_fresh_str(init: ast.Expr, lits: boolean): boolean {
 // — e.g. a NESTED if-expression `if (a) { if (b) { P{..} } else { .. } } else
 // { .. }` resolves to the `P{..}` literal. Returns `e` unchanged when it isn't an
 // IIFE. Lets the StmtVar value-type inference (opt / struct / array) see through a
-// nested IIFE binding to the leaf struct/Some/array literal. Bounded to avoid a
-// pathological loop.
+// nested IIFE binding to the leaf struct/Some/array literal. A block's value is
+// its LAST statement, so `{ var k = …; match (k) { … } }` reads the match.
+// Bounded to avoid a pathological loop.
 function iife_leaf_value(e: ast.Expr): ast.Expr {
     var cur: ast.Expr = e;
     var guard: i32 = 0;
@@ -18284,7 +18285,7 @@ function iife_leaf_value(e: ast.Expr): ast.Expr {
             ast.ExprCall(c) => {
                 match (c.callee) {
                     ast.ExprLambda(lam) => {
-                        if (lam.body.len() > 0) { cur = iife_first_return_expr(lam.body[0]); stop = false; }
+                        if (lam.body.len() > 0) { cur = iife_first_return_expr(lam.body[lam.body.len() - 1]); stop = false; }
                     },
                     _ => {}
                 }
@@ -41308,6 +41309,35 @@ function struct_counted_share_expr(e: ast.Expr, name: string, structs: StructTab
     return false;
 }
 
+// struct_lent_to_retaining_call: `name` is a bare call argument at a position
+// not proven a plain borrow, so the callee may retain the box — a borrowed
+// parameter stored into a struct literal is inc'd there. The call leaves the
+// caller's claim intact, which is why the plan credits it, but the callee's
+// result can then hold a second counted claim, so the source's field walk has
+// to be rc-gated like any other counted share.
+function struct_lent_to_retaining_call(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
+    function at_stmt(st: ast.Stmt, own hit: boolean): boolean { return hit; }
+    function at_expr(e: ast.Expr, own hit: boolean): boolean {
+        if (hit) { return true; }
+        if let ast.ExprCall(c) = e {
+            var callee: string = "";
+            if let ast.ExprIdent(cid) = c.callee { callee = cid.name; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if let ast.ExprIdent(aid) = c.args[ai] {
+                    if (aid.name == name
+                        && (callee.len() == 0 || !param_is_borrowable(borrowable, callee, ai))) { return true; }
+                }
+                ai = ai + 1;
+            }
+        }
+        return false;
+    }
+    var hit: boolean = false;
+    for stmt in stmts { hit = astwalk.fold_stmt_nodes(stmt, hit, at_stmt, at_expr, astwalk.descend_all); }
+    return hit;
+}
+
 function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -61405,7 +61435,7 @@ function str_leaf_is_string(e: ast.Expr, funcs: parser.FuncDecl[], depth: i32): 
 pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return ""; }
@@ -61969,7 +61999,7 @@ pub function (s: LowerState) find_arr_method(field: string): string {
 pub function lam_leaf_opt_type(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -64747,7 +64777,7 @@ pub function resolve_argref_tuple_tags(tags: string, args: ast.Expr[], s: LowerS
 function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: StructTab, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprStructLit(sl) => {
             if (decl_is_struct(structs, sl.type_name) && decl_is_leaksafe(structs, sl.type_name)) { return sl.type_name; }
@@ -73504,12 +73534,12 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
             match (c.callee) {
                 ast.ExprLambda(il) => {
                     if (c.args.len() != 0 || il.params.len() != 0) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
-                    // What the arms are SELECTED BY is walked first and
+                    // The body apart from the arm values is walked first and
                     // unconditionally (#6571) — it is independent of whether the
                     // arm VALUES are boxable, so an IIFE with a capturing lambda
                     // in its condition and plain scalar arms (the shape that
                     // bailed) is rewritten even though the boxing below declines.
-                    var (cnds, cnda) = lift_iife_conditions(il.body, fd, funcs, counter, gfns, mfuncs, structs);
+                    var (cnds, cnda) = lift_iife_body(il.body, fd, funcs, counter, gfns, mfuncs, structs);
                     if (cnda.counter > counter) {
                         var cl2: ast.Expr = ast.ExprLambda { ...il, body: cnds };
                         var ce2: ast.Expr = ast.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
@@ -73667,23 +73697,23 @@ function iife_arms_all_marked(stmts: ast.Stmt[]): boolean {
     return true;
 }
 
-// lift_iife_conditions walks what an IIFE's arms are SELECTED BY (#6571).
+// lift_iife_body lifts the lambdas in an IIFE's body except its arms' returned
+// values (#6571).
 //
-// A value-position `if`/`match` is an IIFE, and its body is STATEMENTS inside an
-// expression. Every lift path that reaches into one — the #6256 arm-value boxing
-// below, box_iife_arm_array_elems — walks the arms' returned VALUES; nothing
-// walked the CONDITION. A capturing lambda there therefore reached lower_expr
-// bare and asked for a `$clo` nothing built, bailing the module.
+// A value-position `if`/`match` or `{ … }` is an IIFE, and its body is
+// STATEMENTS inside an expression, so the expression walk stops at it. The
+// returned values belong to the #6256 arm-value boxing and
+// box_iife_arm_array_elems, and running two lifts over one node would box it
+// twice. Everything else goes through the ordinary expression lift: a
+// condition, a scrutinee, a declaration's initialiser, an assignment, an
+// expression statement. A capturing lambda left there reached lower_expr bare
+// and asked for a `$clo` nothing built, bailing the module.
 //
-// Only the condition / scrutinee is walked, and only through the ordinary
-// expression lift: the returns belong to the paths that own them, and running
-// both over the same node would box an arm value twice. On the spine that
-// reads as: StmtIf declines, so the spine hands its condition to the full lift
-// visitor and recurses the bodies through this one; StmtMatch is claimed and
-// rebuilt by hand, because declining it would put the arm GUARDS through the
-// lift too, which this walk has never done; every statement that owns a value
-// slot is claimed unchanged so those slots stay unwalked.
-function lift_iife_conditions(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
+// On the spine: a statement that declines hands its expressions to the full
+// lift visitor and recurses its bodies through this one. StmtMatch is claimed
+// and rebuilt by hand, because declining it would put the arm GUARDS through
+// the lift too, which this walk has never done.
+function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
     function ve(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) { return ilc_expr_at(x, a, fd, gfns, structs, mfuncs); }
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
@@ -73694,16 +73724,16 @@ function lift_iife_conditions(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: par
                 var ct: i32 = sr.counter;
                 var narms: ast.MatchArm[] = [];
                 for arm in mm.arms {
-                    var (abs, aba) = lift_iife_conditions(arm.body, fd, fs, ct, gfns, mfuncs, structs);
+                    var (abs, aba) = lift_iife_body(arm.body, fd, fs, ct, gfns, mfuncs, structs);
                     fs = aba.funcs; ct = aba.counter;
                     narms = narms.append(ast.MatchArm { ...arm, body: abs });
                 }
                 return (ast.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms }, InlineCloAcc { funcs: fs, counter: ct }, true);
             },
-            ast.StmtVar(_) => { return (s, a, true); },
+            ast.StmtVar(_) => { return (s, a, false); },
             ast.StmtReturn(_) => { return (s, a, true); },
-            ast.StmtExpr(_) => { return (s, a, true); },
-            ast.StmtAssign(_) => { return (s, a, true); },
+            ast.StmtExpr(_) => { return (s, a, false); },
+            ast.StmtAssign(_) => { return (s, a, false); },
             ast.StmtWhile(_) => { return (s, a, true); },
             ast.StmtFor(_) => { return (s, a, true); },
             ast.StmtDefer(_) => { return (s, a, true); },
@@ -73734,7 +73764,7 @@ function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, b
 //
 // Returns only, and the caller gates it on the fn-value paths not having claimed
 // the arms — running two of these over one node would box a value twice. The
-// condition is lift_iife_conditions'.
+// condition is lift_iife_body's.
 function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
@@ -75061,7 +75091,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     if (call.args.len() == 0 && ielam.params.len() == 0) {
                         var iebody: ast.Stmt[] = ielam.body;
                         if let ast.ExprLambda(nl) = ncallee { iebody = nl.body; }
-                        var (icrs, icra) = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
+                        var (icrs, icra) = lift_iife_body(iebody, fd, fs, ct, gfns, mfuncs, structs);
                         if (icra.counter > ct) {
                             fs = icra.funcs; ct = icra.counter;
                             ncallee = ast.ExprLambda { ...ielam, body: icrs };
@@ -79885,7 +79915,7 @@ while (i < fresh.len()) {
         // the NODEEP alias in place nothing walks the fields (a leak on
         // struct_alias_in_a_conditional), and without it two owners walk them
         // (exit 99 on the same shape).
-        if (struct_counted_share_stmts(body, fnm, structs)) {
+        if (struct_counted_share_stmts(body, fnm, structs) || struct_lent_to_retaining_call(body, fnm, borrowable)) {
             out = out.append("SINKSHARE:" + fresh[i]);
         }
         // A forgiven bare-assign SOURCE hands its box on as a COUNTED share, so

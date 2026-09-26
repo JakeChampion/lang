@@ -12252,11 +12252,11 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // (number / string / bool). Tuple and struct scrutinees
             // take their own native paths and are left alone here.
             //
-            // Only the boolean arm is reachable today: a numeric or
-            // string arm pattern is a LITERAL, and this parser drops
-            // those arms, so such a match never arrives here at all
-            // (it surfaces as a spurious E052 instead — #6683). The
-            // other three arms are the same rule for when it does.
+            // A match whose first arm is a literal (`true` / `false`
+            // included) is desugared by build_literal_match, which
+            // hands back a StmtMatch for exactly the shapes this rule
+            // and E026 refuse; a boolean match reaches here raw only
+            // when a non-literal arm comes first.
             out = scalar_match_exhaustive_diags(m, out);
           },
           typeinfo.TypeI32(_) => {
@@ -19434,11 +19434,12 @@ function vb_local_tag(t: typeinfo.Type): string {
 
 // vb_annotation_of spells a value local's type the way a declaration would,
 // for the types vb_local_tag declines: a struct or enum, an array of one, a
-// tuple. A `str` view stays unspelled — nothing writable declares one.
+// tuple, a function. A `str` view stays unspelled — nothing writable declares one.
 function vb_annotation_of(t: typeinfo.Type): string {
   match (t) {
     typeinfo.TypeStruct(_) => { return type_label(t); },
     typeinfo.TypeTuple(_) => { return type_label(t); },
+    typeinfo.TypeFunc(_) => { return typeinfo.spelling(t); },
     typeinfo.TypeArray(a) => {
       if (type_label(a.elem) == "str") { return ""; }
       // A spelling, not a message: lowering reads a view as the owned array.

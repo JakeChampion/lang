@@ -26,20 +26,20 @@ var boolMatchIRCases = []struct {
 }{
 	// match on a computed boolean (comparison). classify(8)=1, classify(2)=0 -> 10.
 	{"bool-match-computed",
-		`struct Point { x: i32, y: i32 } function classify(n: i32): i32 { match (n > 5) { true => { return 1; }, false => { return 0; } } return 9; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return classify(8) * 10 + classify(2) + pad; }`,
+		`struct Point { x: i32, y: i32 } function classify(n: i32): i32 { match (n > 5) { true => { return 1; }, false => { return 0; }, _ => { return 9; } } return 9; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return classify(8) * 10 + classify(2) + pad; }`,
 		10},
 	// match on a boolean parameter. pick(true)=7, pick(false)=3 -> 10.
 	{"bool-match-param",
-		`struct Point { x: i32, y: i32 } function pick(b: boolean): i32 { match (b) { true => { return 7; }, false => { return 3; } } return 9; } function main(): i32 { var t: Point = Point { x: 2, y: 2 }; var pad: i32 = t.x - t.y; return pick(true) + pick(false) + pad; }`,
+		`struct Point { x: i32, y: i32 } function pick(b: boolean): i32 { match (b) { true => { return 7; }, false => { return 3; }, _ => { return 9; } } return 9; } function main(): i32 { var t: Point = Point { x: 2, y: 2 }; var pad: i32 = t.x - t.y; return pick(true) + pick(false) + pad; }`,
 		10},
 	// false-arm first (ordering independence). h(false)=4, h(true)=8 -> 12.
 	{"bool-match-false-first",
-		`struct Point { x: i32, y: i32 } function h(b: boolean): i32 { match (b) { false => { return 4; }, true => { return 8; } } return 0; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return h(false) + h(true) + pad; }`,
+		`struct Point { x: i32, y: i32 } function h(b: boolean): i32 { match (b) { false => { return 4; }, true => { return 8; }, _ => { return 0; } } return 0; } function main(): i32 { var t: Point = Point { x: 1, y: 1 }; var pad: i32 = t.x - t.y; return h(false) + h(true) + pad; }`,
 		12},
 	// guard on a boolean arm (bind-before-guard shape, no binding). g(20)=2, g(5)=1,
 	// g(0)=0 -> 2*100 + 1*10 + 0 = 210.
 	{"bool-match-guard",
-		`struct Point { x: i32, y: i32 } function g(n: i32): i32 { match (n > 0) { true when n > 10 => { return 2; }, true => { return 1; }, false => { return 0; } } return 9; } function main(): i32 { var t: Point = Point { x: 3, y: 3 }; var pad: i32 = t.x - t.y; return g(20) * 100 + g(5) * 10 + g(0) + pad; }`,
+		`struct Point { x: i32, y: i32 } function g(n: i32): i32 { match (n > 0) { true when n > 10 => { return 2; }, true => { return 1; }, false => { return 0; }, _ => { return 9; } } return 9; } function main(): i32 { var t: Point = Point { x: 3, y: 3 }; var pad: i32 = t.x - t.y; return g(20) * 100 + g(5) * 10 + g(0) + pad; }`,
 		210},
 }
 

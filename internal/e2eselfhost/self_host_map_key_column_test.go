@@ -378,3 +378,19 @@ func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
 			"so lowering it puts the key's VALUE through the string column as an address", got)
 	}
 }
+
+// TestSelfHostPathProbePrintsRefused is the path probe's own refusal: every
+// other probe assertion wants "ir", so this is the one that reads the other
+// verdict. A map keyed by i64 has no column, so the module refuses to lower.
+// The probe reads stdin and resolves no import, and `map_new` is a builtin,
+// so the program carries none.
+func TestSelfHostPathProbePrintsRefused(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "asm_pathprobe_run.fern")
+	probe := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	src := "function main(): i32 {\n    var m: Map[i64, i32] = map_new(2);\n    return 7;\n}\n"
+	if got := strings.TrimSpace(string(runCapture(t, gcc, runner, probe, []byte(src)))); got != "refused" {
+		t.Fatalf("path probe = %q, want \"refused\"", got)
+	}
+}
