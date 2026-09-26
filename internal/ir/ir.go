@@ -5369,7 +5369,7 @@ type builder struct {
 	// every push site. appendOrderFn is the fn the cache was built for.
 	// appendInPlaceOK (built in the same refresh) is the set of push calls
 	// exempt from the reused-after forced copy — see inPlacePushes.
-	appendOrder     identOrder
+	appendOrder     checker.IdentOrder
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
 	// fieldMutCopy is the field-receiver half of the same question, for both
@@ -5385,11 +5385,11 @@ type builder struct {
 	// strStoresCounted memoises stringStoresCounted per local, for strStoresFn.
 	strStoresCounted map[string]bool
 	strStoresFn      *ast.FuncDecl
-	// identOrder is the same order under its own key, for the analyses that
+	// identOrderCache is the same order under its own key, for the analyses that
 	// want only it. Separate from appendOrderFn so asking for the order does
 	// not also build inPlacePushes and fieldPlaceMutationCopies, which are far
 	// more expensive and which those analyses never read (#8175).
-	identOrderCache identOrder
+	identOrderCache checker.IdentOrder
 	identOrderFn    *ast.FuncDecl
 	// callArgDies marks the ident args that die at each call via the strict
 	// self-reassign shape — see callArgDeaths. Read by the #4873 caller-side
@@ -22655,7 +22655,7 @@ func isCellStringGetExpr(e ast.Expr) bool {
 // currently being lowered, rebuilding it only when the function changes.
 // emitArrayPush uses it for a last-use test on ident append operands
 // (#4827) without paying an O(body) rebuild at every push site.
-func (b *builder) curAppendOrder() identOrder {
+func (b *builder) curAppendOrder() checker.IdentOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = b.curIdentOrder()
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
@@ -22676,13 +22676,13 @@ func (b *builder) fieldMutationCopies() map[*ast.Call]bool {
 	return b.fieldMutCopy
 }
 
-// curIdentOrder is identOrderOf for the function being lowered, built once.
+// curIdentOrder is checker.IdentOrderOf for the function being lowered, built once.
 // Four analyses want it — computeMovedLocals, computeArraySetIncs,
 // computeConsumingOwnedMatches and the append order — and each was walking the
 // whole body for its own copy (#8175).
-func (b *builder) curIdentOrder() identOrder {
+func (b *builder) curIdentOrder() checker.IdentOrder {
 	if b.identOrderFn != b.fn {
-		b.identOrderCache = identOrderOf(b.fn.Body)
+		b.identOrderCache = checker.IdentOrderOf(b.fn.Body)
 		b.identOrderFn = b.fn
 	}
 	return b.identOrderCache
@@ -22782,7 +22782,7 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 	if b.rc.borrowedBindings[id.Name] {
 		return true, "receiver \"" + id.Name + "\" is bound by a non-consuming match: the buffer belongs to the scrutinee's box"
 	}
-	if b.curAppendOrder().isLast(id) {
+	if b.curAppendOrder().IsLast(id) {
 		return false, "receiver's last occurrence: no later read can observe the grow"
 	}
 	if b.appendInPlaceOK[n] {
@@ -22894,7 +22894,7 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 	// copy path (fresh buffer, operand untouched), then restore it.
 	//
 	// Two operand shapes qualify: a bare ident whose occurrence here is NOT
-	// its last in the function body (identOrder), and a FIELD place the
+	// its last in the function body (checker.IdentOrder), and a FIELD place the
 	// container can still be read through (fieldPlaceMutationCopies, #6665).
 	// This leaves sound in-place cases on the fast path:
 	//   - the ident's LAST use — nothing reads it after, so the mutation
