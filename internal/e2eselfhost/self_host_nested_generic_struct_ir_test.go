@@ -8,9 +8,10 @@ import (
 	"testing"
 )
 
-// nestedGenericStructIRCase is a self-host generic-struct program whose type
-// argument is ITSELF a generic struct (`Box[Box[i32]]`) — a COMPOSITE
-// instantiation key. The generic-struct monomorphiser (parser.fern) rewrites a
+// nestedGenericStructIRCase is a self-host generic-struct program whose
+// instantiation the struct monomorphiser has to infer: a type argument that is
+// ITSELF a generic struct (`Box[Box[i32]]`, a COMPOSITE instantiation key), or
+// one read off a local whose own type was inferred. The generic-struct monomorphiser (parser.fern) rewrites a
 // nested struct literal's inner instantiation first, so `infer_lit_key` already
 // sees the mangled inner type (`Box__i32`) and keys the outer clone
 // `Box__Box__i32`; the bug was phase-2 (and the method clone) splitting that
@@ -89,6 +90,31 @@ function main(): i32 {
     var p = P { a: ["q"], b: "xy" };
     p = P { a: p.a.append("z"), b: p.b };
     return p.a.len();
+}`, 2},
+	// a local bound from a call returning an instantiation types the same way.
+	{"field_of_call_bound_local", `struct P[T] { b: T }
+function mk(): P[string] { return P { b: "xy" }; }
+function main(): i32 {
+    var p = mk();
+    var q = P { b: p.b };
+    return q.b.len();
+}`, 2},
+	// so do a `for` variable over an array of instantiations and an Option
+	// payload.
+	{"field_of_for_var", `struct P[T] { b: T }
+function main(): i32 {
+    var ps: P[string][] = [P { b: "xy" }, P { b: "abc" }];
+    var n: i32 = 0;
+    for p in ps { var q = P { b: p.b }; n = n + q.b.len(); }
+    return n;
+}`, 5},
+	{"field_of_option_payload", `struct P[T] { b: T }
+function main(): i32 {
+    var o: Option[P[string]] = Some(P { b: "xy" });
+    match (o) {
+        Some(p) => { var q = P { b: p.b }; return q.b.len(); },
+        None => { return 9; }
+    }
 }`, 2},
 	// a nested instantiation and a flat instantiation of the same struct
 	// coexisting (each clones independently).

@@ -12481,28 +12481,96 @@ function retype_struct_lit(init: ast.Expr, concrete: string, gstructs: StructDec
     return init;
 }
 
-// ms_stmt rewrites one statement: generic-struct annotations on a `var`
-// go through mg_ty, struct literals through ms_expr, threading env+ins.
-// ms_var_ty is the type a `var` binds in the monomorphiser's env: its
-// annotation, else the instantiation its generic struct literal was given, so
-// a later literal can infer its own type arguments from the local's fields.
-function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, gstructs: StructDecl[]): string {
+// ms_var_ty is the type a `var` binds in the monomorphiser's env, so a later
+// literal can infer its own type arguments from the local's fields: its
+// annotation, else the instantiation its generic struct literal was given, else
+// the generic-struct instantiation any other init produces (a call returning
+// `P[string]`).
+function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns): string {
     if (ann.len() > 0) { return ann; }
     match (init) {
         ast.ExprStructLit(sl) => {
             if (gstruct_index(gstructs, sl.type_name) < 0) { return ""; }
             match (ninit) {
+                // A literal whose key could not be inferred keeps the bare generic
+                // name, which is a type variable's spelling rather than a type.
                 ast.ExprStructLit(nsl) => {
                     if (nsl.type_name != sl.type_name) { return nsl.type_name; }
                 },
                 _ => {}
             }
+            return "";
         },
         _ => {}
     }
+    var t: string = mono_infer(ninit, env, funcs);
+    if (generic_struct_inst(t, gstructs)) { return t; }
     return "";
 }
 
+// generic_struct_inst: `t` is a concrete instantiation of a generic struct,
+// spelled with its arguments (`P[string]`) or as the clone (`P__string`).
+function generic_struct_inst(t: string, gstructs: StructDecl[]): boolean {
+    if (t.len() == 0) { return false; }
+    if (first_bracket(t) > 0) { return gstruct_index(gstructs, strip_struct_base(t)) >= 0 && type_str_vars(t, []).len() == 0; }
+    for g in gstructs {
+        var pfx: string = g.name + "__";
+        if (t.len() > pfx.len() && slice_unchecked(t, 0, pfx.len()) == pfx) { return true; }
+    }
+    return false;
+}
+
+// ms_elem_ty: the element type an array of type `t` binds a `for` variable to,
+// when it is a generic-struct instantiation; "" otherwise.
+function ms_elem_ty(t: string, gstructs: StructDecl[]): string {
+    if (t.len() < 3 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return ""; }
+    var el: string = slice_unchecked(t, 0, t.len() - 2) + "";
+    if (generic_struct_inst(el, gstructs)) { return el; }
+    return "";
+}
+
+// ms_arm_env: the env a match arm's body sees. Every name the pattern binds
+// shadows an outer local of that name; the payload of `Some` / `Ok` / `Err`
+// over an Option / Result scrutinee of type `sty` is typed when it is a
+// generic-struct instantiation.
+function ms_arm_env(env: MEnv, pat: ast.Pattern, sty: string, gstructs: StructDecl[]): MEnv {
+    var e: MEnv = env;
+    for nm in pattern_bound_names(pat, []) { e = e.ebind(nm, ""); }
+    if let ast.PatVariant(pv) = pat {
+        if (pv.binding.len() == 0 || pv.extra_bindings.len() > 0) { return e; }
+        var vn: string = pv.type_name;
+        var dot: i32 = vn.len() - 1;
+        while (dot >= 0 && vn[dot] != b'.') { dot = dot - 1; }
+        if (dot >= 0) { vn = slice_unchecked(vn, dot + 1, vn.len()) + ""; }
+        var base: string = strip_struct_base(sty);
+        var args: string[] = type_args_of(sty);
+        var pt: string = "";
+        if (base == "Option" && vn == "Some" && args.len() == 1) { pt = args[0]; }
+        if (base == "Result" && args.len() == 2) {
+            if (vn == "Ok") { pt = args[0]; }
+            if (vn == "Err") { pt = args[1]; }
+        }
+        if (generic_struct_inst(pt, gstructs)) { e = e.ebind(pv.binding, pt); }
+    }
+    return e;
+}
+
+// pattern_bound_names: every local a match pattern binds.
+function pattern_bound_names(pat: ast.Pattern, acc: string[]): string[] {
+    var out: string[] = acc;
+    if let ast.PatVariant(pv) = pat {
+        if (pv.binding.len() > 0) { out = out.append(pv.binding); }
+        if (pv.at_binding.len() > 0) { out = out.append(pv.at_binding); }
+        for b in pv.extra_bindings { if (b.len() > 0) { out = out.append(b); } }
+        for tb in pv.tup_binds { if (tb.len() > 0) { out = out.append(tb); } }
+        for np in pv.nested { out = pattern_bound_names(np, out); }
+        for tp in pv.tup_pats { out = pattern_bound_names(tp, out); }
+    }
+    return out;
+}
+
+// ms_stmt rewrites one statement: generic-struct annotations on a `var`
+// go through mg_ty, struct literals through ms_expr, threading env+ins.
 function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         ast.StmtVar(v) => {
@@ -12514,7 +12582,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
             var ninit: ast.Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
             var vr: TyIns = mg_ty(v.fn_ret, gstructs, ta.mins);
             var vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, gstructs)), rins2: vl.mins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -12548,7 +12616,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
         },
         ast.StmtFor(fr) => {
             var it: RExpr = ms_expr(fr.iter, env, gstructs, funcs, ins);
-            var benv: MEnv = env.ebind(fr.var_name, "");
+            var benv: MEnv = env.ebind(fr.var_name, ms_elem_ty(mono_infer(it.rexpr, env, funcs), gstructs));
             var fb: RStmts = ms_stmts(fr.body, benv, gstructs, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: ast.StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line }, renv: env, rins2: fb.rins3 };
         },
@@ -12557,8 +12625,9 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
             var arms: ast.MatchArm[] = [];
             var cur: Insts = sv.rins;
             var i: i32 = 0;
+            var sty: string = mono_infer(sv.rexpr, env, funcs);
             while (i < m.arms.len()) {
-                var ab: RStmts = ms_stmts(m.arms[i].body, env, gstructs, funcs, cur, ret_ty);
+                var ab: RStmts = ms_stmts(m.arms[i].body, ms_arm_env(env, m.arms[i].pattern, sty, gstructs), gstructs, funcs, cur, ret_ty);
                 cur = ab.rins3;
                 arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: ab.rstmts, line: m.arms[i].line, col: m.arms[i].col, guard: m.arms[i].guard, has_guard: m.arms[i].has_guard, alt_cont: false });
                 i = i + 1;
