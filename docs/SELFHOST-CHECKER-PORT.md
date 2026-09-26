@@ -650,7 +650,11 @@ same code(s) the Go checker does — restricted to
   LAST statement matters — `return` exits; an `if` exits iff both arms do
   (a one-armed `if` falls through); a `while (true)` / `loop` is divergent
   unless a `break` targets it (`loop_can_break`, #8447 / #8562); a `match`
-  exits iff every arm body does.
+  exits iff every arm body does. A bare `{ … }` statement, which the
+  self-host parses as `if (true)` with no else, exits iff its body does.
+  `block_exits` and `block_diverges` share one walker, `block_leaves`; the
+  second also counts `break` and `continue`, for the let-else E022 check and
+  the moved-value join (#10307).
   `switch` / `if let` are already desugared to if/else by the parser, so
   no special case is needed. A non-void function whose body doesn't
   `block_exits` is E052 at the function declaration. Validated by probe

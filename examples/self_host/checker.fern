@@ -13926,6 +13926,11 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return rv;
     },
     ast.StmtIf(f) => {
+      // A bare `{ … }` statement is not a branch: its consumes stand, as
+      // native's walker reads an *ast.Block's statements in line.
+      if (f.origin == "block") {
+        return ow_stmts(f.then_body, moved, ctx);
+      }
       var rc: OwnWalk = ru_expr(f.cond, moved, ctx);
       var rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
       var re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
