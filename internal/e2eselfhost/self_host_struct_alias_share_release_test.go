@@ -21,13 +21,14 @@ import (
 //     is not p's.
 //
 // Every program answers 99 if a release ran past zero; the `hostile` rows are
-// shapes the credit must not over-release, checked for the answer and the
-// sanitizer rather than a balanced census.
+// shapes the credit must not over-release, checked for the answer, the
+// sanitizer, and the AST leg's alloc and free counts: more frees there means a
+// widening reached a shape this credit refuses.
 var structAliasShareCases = []struct {
-	name     string
-	src      string
-	want     int
-	balanced bool
+	name    string
+	src     string
+	want    int
+	refused [2]int64 // allocs, frees on the AST leg; zero for a balanced row
 }{
 	{"prev_reassigned_in_loop", `struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
@@ -47,7 +48,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
-`, 40, true},
+`, 40, [2]int64{}},
 	{"hostile_prev_from_other", `struct S { ops: i32[], n: i32 }
 function run(x: i32): i32 {
     var s: S = S { ops: [1, 2, 3], n: 0 };
@@ -68,7 +69,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
-`, 0, false},
+`, 0, [2]int64{598, 0}},
 	{"param_alias_rebound", `struct St { ops: i32[], n: i32 }
 function take(p: St): i32 {
     var a: St = p;
@@ -85,7 +86,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 50, true},
+`, 50, [2]int64{}},
 	{"hostile_conditional_rebind", `struct St { ops: i32[], n: i32 }
 function take(p: St, k: i32): i32 {
     var a: St = p;
@@ -102,7 +103,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{}},
 	{"hostile_handback_rebind", `struct St { ops: i32[], n: i32 }
 function same(x: St): St { return x; }
 function take(p: St): i32 {
@@ -122,7 +123,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{150, 100}},
 	{"hostile_returned", `struct St { ops: i32[], n: i32 }
 function grow(p: St): St {
     var a: St = p;
@@ -140,7 +141,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{250, 150}},
 	{"hostile_returned_in_tuple", `struct St { ops: i32[], n: i32 }
 function grow(p: St, k: i32): (i32, St) {
     var a: St = p;
@@ -159,7 +160,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{400, 300}},
 	{"hostile_field_returned", `struct St { ops: i32[], n: i32 }
 function grown_ops(p: St, k: i32): i32[] {
     var a: St = p;
@@ -178,7 +179,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{300, 200}},
 	{"hostile_early_return", `struct St { ops: i32[], n: i32 }
 function take(p: St, k: i32): i32 {
     var a: St = p;
@@ -197,7 +198,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 100;
 }
-`, 0, false},
+`, 0, [2]int64{}},
 }
 
 func TestSelfHostStructAliasShareReleaseX86_64(t *testing.T) {
@@ -215,11 +216,14 @@ func TestSelfHostStructAliasShareReleaseX86_64(t *testing.T) {
 					if want == 0 && sem == "FERN_SEM_IR=1" {
 						want = exit
 					}
-					if exit == 99 || exit != want || structAliasSanitizerFault(stderr, tc.balanced) {
+					balanced := tc.refused == [2]int64{}
+					if exit == 99 || exit != want || structAliasSanitizerFault(stderr, balanced) {
 						t.Fatalf("%s %s: exit = %d, want %d (99 = rc underflow), and no sanitizer fault\n%s", sem, mode, exit, want, stderr)
 					}
-					if mode == "FERN_LEAKCHECK=1" && (tc.balanced || sem == "FERN_SEM_IR=1") {
+					if mode == "FERN_LEAKCHECK=1" && (balanced || sem == "FERN_SEM_IR=1") {
 						assertBalancedCensus(t, stderr)
+					} else if mode == "FERN_LEAKCHECK=1" {
+						assertRefusedCensus(t, stderr, tc.refused)
 					}
 				}
 			}
@@ -247,8 +251,10 @@ func TestSelfHostStructAliasShareReleaseWasm(t *testing.T) {
 				if exit == 99 || exit != want {
 					t.Fatalf("%s: exit = %d, want %d (99 = rc underflow)\n%s", sem, exit, want, stderr)
 				}
-				if tc.balanced || sem == "FERN_SEM_IR=1" {
+				if tc.refused == [2]int64{} || sem == "FERN_SEM_IR=1" {
 					assertBalancedCensus(t, stderr)
+				} else {
+					assertRefusedCensus(t, stderr, tc.refused)
 				}
 			}
 		})
