@@ -223,7 +223,7 @@ TestSelfHostErasedElemReturnX86_64 2
 TestSelfHostErasedWideArrayFixedWasm 7
 TestSelfHostErasedWideArrayGateBlindWasm 2
 TestSelfHostErasedWideArrayGateNarrowWasm 4
-TestSelfHostErrorTraitIRX86_64 2
+TestSelfHostErrorTraitIR 2
 TestSelfHostF32ElemTagArm64 4
 TestSelfHostF32ElemTagWasm 4
 TestSelfHostF32ElemTagX86_64 4
@@ -640,7 +640,7 @@ TestSelfHostTreeshakeStdlibIR 5
 TestSelfHostTryDeferIRX86_64 2
 TestSelfHostTryF64IR 2
 TestSelfHostTryFailCleanupIRX86_64 2
-TestSelfHostTryFromIRX86_64 2
+TestSelfHostTryFromIR 2
 TestSelfHostTryStrEnumIR 2
 TestSelfHostTryStructIR 2
 TestSelfHostTryTupleIR 2

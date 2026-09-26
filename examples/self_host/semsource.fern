@@ -1217,8 +1217,10 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     if (gone_shape.types.len() > 1 || gone_shape.types.len() != out_shape.types.len()) {
         return refused(s, "try failure does not match the body's result");
     }
+    var convert: string = "";
     if (gone_shape.types.len() == 1 && !semtypes.equal(gone_shape.types[0], out_shape.types[0])) {
-        return refused(s, "try failure does not match the body's result");
+        convert = try_conversion(gone_shape.types[0], out_shape.types[0], s);
+        if (convert == "") { return refused(s, "try failure does not match the body's result"); }
     }
 
     var pred: i32 = s.cur.id;
@@ -1233,13 +1235,29 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     var args: i32[] = [];
     if (gone_shape.types.len() == 1) {
         var carried: Value = define(gone, ssasem.variant_get(), [v.id], 0, fnames[1], gone_shape.types[0]);
+        if (convert == "dyn") { carried = widen(carried, out_shape.types[0]); }
+        if (convert != "" && convert != "dyn") { carried = operator_method(carried, [], convert, carried.s); }
         gone = carried.s;
+        if (!gone.ok) { return carried; }
+        if (!semtypes.equal(gone.values[carried.id], out_shape.types[0])) { return refused(gone, "try failure does not match the body's result"); }
         args = [carried.id];
     }
     var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
     s = terminate(out.s, t_ret(out.id));
 
     return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
+}
+
+// How a failure payload becomes the body's: a dyn result widens it, and any
+// other takes the target's `from` (`Err(E2.from(e))`, docs/TRY.md). The answer
+// is "dyn", the `from` contract's key, or "" when neither applies.
+function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): string {
+    if (ssasem.is_dyn(to)) { return "dyn"; }
+    var key: string = nominal_method_key("from", to, s);
+    if (key == "") { return ""; }
+    var c: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
+    if (c.params.len() != 1 || !semtypes.equal(c.params[0], from)) { return ""; }
+    return key;
 }
 
 function try_layout(layout: i32): boolean {
