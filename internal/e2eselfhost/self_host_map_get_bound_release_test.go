@@ -11,7 +11,7 @@ import (
 // An Option bound from a builtin `m.get(k)` and consumed by one match gives
 // its box back after that match, in the AST lowering (FERN_SEM_IR=), as the
 // direct `match (m.get(k))` form already did (#10195, and the hoisted half of
-// #10083 on wasm).
+// #10083 on wasm), whatever the map's value type (#10306).
 var mapGetBoundCases = []struct {
 	name string
 	src  string
@@ -71,6 +71,54 @@ function main(): i32 {
     return n;
 }
 `, 60},
+	// An array-valued map's `get` hands back an Option box of its own; the
+	// binding used to be retained as if it were the array, so the box-only
+	// release left it at rc 1 (#10306).
+	{"array_value", `import "core/map";
+function main(): i32 {
+    var m: Map[string, i32[]] = map_new(8);
+    m = m.insert("a", [1, 2]);
+    m = m.insert("b", [3, 4, 5]);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var g = m.get("b");
+        match (g) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
+        i = i + 1;
+    }
+    return n;
+}
+`, 60},
+	{"array_value_payload_kept", `import "core/map";
+function main(): i32 {
+    var m: Map[string, i32[]] = map_new(8);
+    m = m.insert("a", [1, 2]);
+    m = m.insert("b", [3, 4, 5]);
+    var n: i32 = 0;
+    var keep: i32[] = [];
+    var i: i32 = 0;
+    while (i < 20) {
+        var g = m.get("b");
+        match (g) { Some(v) => { keep = v; n = n + v.len(); }, None => { n = n + 100; } }
+        i = i + 1;
+    }
+    return n + keep.len();
+}
+`, 63},
+	{"array_value_payload_unbound", `import "core/map";
+function main(): i32 {
+    var m: Map[string, i32[]] = map_new(8);
+    m = m.insert("b", [3, 4, 5]);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var g = m.get("b");
+        match (g) { Some(_) => { n = n + 1; }, None => { n = n + 100; } }
+        i = i + 1;
+    }
+    return n;
+}
+`, 20},
 	{"unused", `import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);

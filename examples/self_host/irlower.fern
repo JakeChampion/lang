@@ -4373,15 +4373,14 @@ function insert_value_is_ptr(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// map_read_aliases_arr_value: `<recv>.get(k)` / `<recv>.get_or(k, d)` where the
-// receiver is a map whose VALUE column is an array type — the read the comment at
-// the alias_inc site describes. `get_or`'s DEFAULT operand is irrelevant here: the
-// slot is retained either way, and a fresh default literal handed back instead
-// simply carries one extra count (a leak at worst, never a dangle).
+// map_read_aliases_arr_value: `<recv>.get_or(k, d)` where the receiver is a map
+// whose VALUE column is an array type — the read the comment at the alias_inc
+// site describes. The DEFAULT operand is irrelevant here: the slot is retained
+// either way, and a fresh default literal handed back instead simply carries one
+// extra count (a leak at worst, never a dangle). `get` is not such a read: it
+// hands back an Option box of its own, which the payload never escapes.
 function map_read_aliases_arr_value(fa: ast.ExprFieldAccess, nargs: i32, s: LowerState): boolean {
-    if (fa.field == "get" && nargs != 1) { return false; }
-    if (fa.field == "get_or" && nargs != 2) { return false; }
-    if (fa.field != "get" && fa.field != "get_or") { return false; }
+    if (fa.field != "get_or" || nargs != 2) { return false; }
     return map_value_type_is_arr(map_value_of(expr_map_type_tag(fa.obj, s)));
 }
 
@@ -23517,7 +23516,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // is_f64arr) flow from the same map_kv_elem_tag gate via the
                     // predicates below, so the slot's width stays consistent.
                     else if (map_kv_elem_tag(cfa.obj, cfa.field, cc.args.len(), se) != "") { is_arr = true; }
-                    // `var v: i32[] = m.get_or(k, d)` / `= m.get(k)` on an
+                    // `var v: i32[] = m.get_or(k, d)` on an
                     // ARRAY-valued map: the register map read hands back the
                     // column's raw pointer, an UNCOUNTED alias of a buffer the map
                     // still owns. Binding it to an array slot makes it a COUNTED
