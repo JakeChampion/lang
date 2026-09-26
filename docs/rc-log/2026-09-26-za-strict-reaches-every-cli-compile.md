@@ -16,8 +16,12 @@ reads `FERN_SEM_IR_STRICT`:
 Strict alone is not enough to pin the typed path. `FERN_SEM_IR=` (empty)
 turns the typed path off before strict is read, and a non-empty
 `FERN_SEM_IR_ONLY` or `FERN_SEM_IR_SKIP` bypasses the refusal branch. So
-each of these sites pins four settings: `FERN_SEM_IR=1`, the two lists
-empty, and strict on. The coreutils package shares them as `typedPathEnv`.
+the scripts, the release step and the coreutils self-host compiles pin
+four settings: `FERN_SEM_IR=1`, the two lists empty, and strict on. The
+coreutils package shares them as `typedPathEnv`. The two package
+`TestMain`s set strict alone, and only when the environment leaves it
+unset: an ambient value is deliberately left to override them, since
+that is how a developer runs the suite against the AST lowering.
 
 The multicall test's cache key had been one file. The build-cache import
 walker treated `../cat` as an external import, so all 107 of the
