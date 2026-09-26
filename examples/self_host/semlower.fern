@@ -475,9 +475,10 @@ function kept_count(r: Rows): i32 {
 }
 
 // The symbol a call to declaration `i` names: the receiver-qualified spelling
-// for a method, the bare name otherwise.
+// for a method, the bare name otherwise. A `str` receiver is named as the
+// AST lowering names it, erased.
 function call_key(fd: parser.FuncDecl): string {
-    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    if (fd.receiver_type.len() > 0) { return util.base_type_name(parser.erase_str_spelling(fd.receiver_type)) + "." + fd.name; }
     return fd.name;
 }
 
@@ -632,7 +633,8 @@ function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inferenc
     return inferred_pass(mod, built, r, structs);
 }
 
-pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
+// lowered is mod.funcs as the AST lowering reads them, with each `str` erased.
+pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], structs: irlower.StructTab, base: irlower.FnSigs): ircore.Sub {
     if (!sem_ir_on()) { return ircore.no_sub(); }
     var inf: Inference = produced_rows(mod, structs);
     var built: semsource.Built = inf.built;
@@ -682,8 +684,8 @@ pub function substitution(mod: parser.Module, structs: irlower.StructTab, base: 
         }
         at = at + 1;
     }
-    if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, mod.funcs, structs, seeds); }
-    if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, mod.funcs, consumed); }
+    if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, lowered, structs, seeds); }
+    if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, lowered, consumed); }
     util.arr_push_cliff_report("sem:substituted", 0);
     // Production is all or nothing: a module with a refused declaration keeps
     // the AST lowering whole, since a produced body beside an AST-lowered one
@@ -736,7 +738,7 @@ pub function runtime_bodies(src: string): irlower.LowerResult[] {
     var diags: util.Diag[] = checker.build_gate_diags(mod);
     if (diags.len() > 0) { return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message); }
     var im: parser.Module = gated_module(checker.annotate_module(mod));
-    var inf: Inference = produced_rows(im, irlower.struct_tab(im.structs));
+    var inf: Inference = produced_rows(im, irlower.struct_tab(parser.erase_str_structs(im.structs)));
     if (inf.built.instances.len() > 0) { return runtime_refused(first_name(im), "instantiates a generic"); }
     var out: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];

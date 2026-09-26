@@ -398,10 +398,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// call path is pinned by the self_host_cli_test exit-code test.
 		{"generic-call-mismatch", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { var x: string = ident(3); return 0; }\n", []string{"E003"}},
 		{"generic-call-clean", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n", nil},
-		// `str`, the borrowed-string view (#7293). The parser erases the
-		// spelling to "string", so view-ness re-enters the type system through
-		// the sidecars (StmtVar.is_str, FuncDecl.ret_str) and the
-		// slice_unchecked builtin; every owning sink then refuses the view
+		// `str`, the borrowed-string view (#7293). The spelling reaches the
+		// checker unerased (#9915), and slice_unchecked yields one; every
+		// owning sink then refuses the view
 		// exactly as native does — E003 on a var init and an assignment, E002
 		// on a return, E043 on a struct-literal field — while a `str`
 		// destination, an argument position (params are borrowed), and a
@@ -415,6 +414,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
 		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
+		// A `str` struct field and tuple element are views too (#9915): each
+		// takes a view, and hands one to a `str` binding but not a `string`
+		// one. A `str` receiver shares the `string` method namespace.
+		{"str-view-into-str-field-clean", "struct H { s: str, n: i32 }\nfunction mk(t: string): H { return H { s: slice_unchecked(t, 0, 3), n: 1 }; }\nfunction main(): i32 { return mk(\"abcde\").n; }\n", nil},
+		{"str-field-into-string-var-e003", "struct H { s: str }\nfunction get(h: H): i32 { var v: string = h.s; return v.len(); }\nfunction main(): i32 { return get(H { s: \"abc\" }); }\n", []string{"E003"}},
+		{"str-field-into-str-var-clean", "struct H { s: str }\nfunction get(h: H): i32 { var v: str = h.s; return v.len(); }\nfunction main(): i32 { return get(H { s: \"abc\" }); }\n", nil},
+		{"str-tuple-elem-into-string-var-e003", "function main(): i32 { var p: (str, i32) = (\"abc\", 4); var v: string = p.0; return v.len(); }\n", []string{"E003"}},
+		{"str-tuple-elem-into-str-var-clean", "function main(): i32 { var p: (str, i32) = (\"abc\", 4); var v: str = p.0; return v.len() + p.1; }\n", nil},
+		{"str-tuple-result-elem-into-string-e003", "function mk(t: string): (str, i32) { return (slice_unchecked(t, 0, 2), 1); }\nfunction main(): i32 { var v: string = mk(\"abc\").0; return v.len(); }\n", []string{"E003"}},
+		{"str-receiver-method-clean", "function (s: str) first(): u8 { return s[0]; }\nfunction main(): i32 { var v: str = \"hey\"; return v.first() as i32; }\n", nil},
 		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
 		// and an owned `T[]` convert in neither direction — var init, assignment,
 		// return, field, argument — except an owned argument lent to a `[T]`
@@ -1909,10 +1918,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// supports). Map programs need `import "core/map";` (Go reports E001
 		// otherwise — a Go-only rule the self-host doesn't model, so kept out
 		// of the corpus). Cross-checked against the Go checker.
-		// A declared `str[]` keeps its view elements (#10201): the parser erases
-		// the spelling to `string[]`, and the str_elem sidecar puts them back, so
-		// an element read into a `string` is E003 as it is natively. Local,
-		// parameter and function result each have their own sidecar.
+		// A declared `str[]` keeps its view elements (#10201), so an element
+		// read into a `string` is E003 as it is natively: from a local, a
+		// parameter and a function result.
 		{"e003-str-array-local-element-into-string", "function main(): i32 { var s: string = \"ab\"; var xs: str[] = [slice_unchecked(s, 0, 1)]; var t: string = xs[0]; return t.len(); }\n", []string{"E003"}},
 		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
@@ -2048,10 +2056,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		// `str` inside a generic ARGUMENT keeps its verbatim spelling in the
-		// self-host (a bare `str` is erased to string at the parse
-		// boundary) — a real native type, so no E064 (regression pin for
-		// the generic-arg-widening false positive fixed alongside item 2).
+		// `str` inside a generic ARGUMENT is a real native type, so no E064
+		// (regression pin for the generic-arg-widening false positive fixed
+		// alongside item 2).
 		{"generic-arg-str-ok", "function f(o: Option[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E063: returning a `[T]` slice that views function-local storage is a
 		// use-after-free (the backing array dies with the frame). The check is
@@ -3086,7 +3093,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
 		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
 		// `str` through an IMPORTED method's declared return (#7293): std/string's
-		// trim family returns the borrowed view, recorded on FuncDecl.ret_str and
+		// trim family returns the borrowed view, declared `str` and
 		// carried through flatten into the method-sig table, so an owning sink
 		// refuses the view (E003 / E002) while a `str` binding, `.to_owned()`,
 		// and an argument position (params are borrowed) stay clean. The

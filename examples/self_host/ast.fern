@@ -105,7 +105,7 @@ pub struct TypedBinding { name: string, ty: typeinfo.Type }
 // pair, and the semantic lowering refused the module for an unresolved result
 // type. That refusal was 238 of the 1,054 the fuzzer corpus produced
 // (docs/rc-log/2026-09-19-what-the-typed-path-still-refuses-is-lambdas.md).
-pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string, ret_str: boolean, ret_str_elem: boolean }
+pub struct ExprLambda { params: ParamDecl[], ret_type: string, body: Stmt[], use_infer: boolean, origin: string, line: i32, col: i32, captures: TypedBinding[], captures_known: boolean, ret_fn_ret: string, ret_fn_param_types: string }
 
 // ExprTuple holds a parenthesised comma-separated list:
 // `(a, b, c)`. Distinct from arrays because tuple shape is
@@ -339,7 +339,7 @@ pub function expr_col(e: Expr): i32 {
 // only names half the signature; wasm needs all of it, because a funcref
 // type is structural and dispatching a `(f64) => f64` element through an
 // all-i32 `$fn1` is a runtime `indirect call type mismatch`.
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, is_view: boolean, str_elem: boolean, fn_ret: string, fn_param_types: string }
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_view: boolean, fn_ret: string, fn_param_types: string }
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
@@ -521,7 +521,7 @@ pub type Stmt = StmtVar | StmtReturn | StmtExpr | StmtIf | StmtWhile
 // spellings are kept RAW rather than mapped to widths here, because deciding
 // whether `T` is a type variable or a struct named T needs the enclosing
 // function's type_params, which parse_param does not have.
-pub struct ParamDecl { name: string, type_name: string, is_str: boolean, is_view: boolean, str_elem: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
+pub struct ParamDecl { name: string, type_name: string, is_view: boolean, own: boolean, has_default: boolean, default_value: Expr, ret_arr: boolean, fn_ret: string, fn_param_dyn: string, fn_param_types: string }
 
 // LitArm is one arm of a match on a non-enum (i32 / string) scrutinee:
 // a literal to compare against (`lit`, dispatched via `==`) or the `_`

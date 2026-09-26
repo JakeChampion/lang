@@ -3651,7 +3651,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
     // actions eagerly at their source position (native 2 / eager 101 on the
     // timing-sensitive repro). lower_defers_module is idempotent on a
     // defer-free module, so callers that already lowered stay correct.
-    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(raw_mod)));
+    var mod: parser.Module = parser.fill_default_args_module(parser.desugar_ranges_module(parser.lower_defers_module(parser.erase_str_module(raw_mod))));
     // Fold each enum into the alias table as a synthetic union so a method
     // declared on the enum type dispatches on its variant values.
     var all_aliases: parser.TypeAlias[] = aliases_with_enums(mod.aliases, mod.enums);

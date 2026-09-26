@@ -7,8 +7,8 @@ import (
 )
 
 // strViewSelfHostProgram uses the `str` borrowed-string view type (#4813) in
-// every position the self-host parse-boundary erasure must cover: param,
-// var annotation, array-of-views (`str[]`), and return type.
+// every position the self-host erasure must cover: param, var annotation,
+// array-of-views (`str[]`), and return type.
 const strViewSelfHostProgram = `function view_len(v: str): i32 {
     return v.len();
 }
@@ -49,8 +49,8 @@ function main(): i32 {
 
 // TestSelfHostStrViewErasure pins the self-host acceptance of the `str` view
 // type (#4813, the self-host leg of the native ir/erase_str.go erasure): the
-// self-host parser normalizes `str` → "string" at the parse boundary
-// (parser.fern parse_type_name), so a str-spelled program must emit
+// AST lowering reads `str` as "string" (parser.erase_str_module, applied by
+// module_with_builtins), so a str-spelled program must emit
 // BYTE-IDENTICAL output to its string-spelled twin through the whole
 // self-host wasm-IR pipeline. View-discipline enforcement (E065, the borrow
 // rules) is the native checker's job; the self-host's contract is faithful
