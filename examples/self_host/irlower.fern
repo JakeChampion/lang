@@ -28764,7 +28764,7 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         else if (kinds[ki] != b'.') {
             var helper: string = "__fern_rc_dec";
             if (kinds[ki] == b's') { helper = "__fern_str_free"; }
-            if (kinds[ki] == b'S') { helper = "__fern_str_arr_free"; }
+            else if (kinds[ki] == b'S') { helper = "__fern_str_arr_free"; }
             st = emit_load_tuple_path(st, slot, [ki]);
             st = st.emit(ir.op_call_direct(helper, 1));
             st = st.emit(ir.op_drop());
@@ -47878,8 +47878,10 @@ function fieldmove_expr(e: ast.Expr, name: string, sty: string, structs: StructT
         },
         ast.ExprTuple(t) => {
             for el in t.elements {
-                // An array field read the literal retains is a counted share,
-                // as for the struct literal below.
+                // An array field read is a counted share: the tuple literal
+                // retains it unconditionally (tuple_field_share_kind), unlike
+                // the struct literal below, whose string and string[] retains
+                // are gated and so stay marked.
                 if (tuple_field_share_kind(el).len() == 0
                     && fieldmove_is_move_value(el, name, sty, structs, borrowable)) { return true; }
                 if (fieldmove_expr(el, name, sty, structs, borrowable)) { return true; }
