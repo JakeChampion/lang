@@ -1979,7 +1979,7 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
         var v: Value = expr(r.value, s, ty);
         if (!v.s.ok) { return v; }
         if (!semtypes.equal(v.s.values[v.id], ty)) { return refused(v.s, "value block arm type"); }
-        return v;
+        return unaliased_view(v);
     }
     return refused(s, "value block arm has no value");
 }
@@ -2515,11 +2515,11 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return State { ...bind(init.s, v.name, init.id), scope: after };
 }
 
-// A view bound under a second name is a fresh view of the same bytes, so the
-// two names share no box. Otherwise a loop that rebinds one name merges the
-// view the other still holds into its phi, and supplying that phi would
-// retain a view (#9802). A literal and a retagged string are counted, and
-// retaining them is sound.
+// A view bound under a second name, or yielded by a value block's arm, is a
+// fresh view of the same bytes, so the two names share no box. Otherwise a
+// loop that rebinds one name merges the view the other still holds into its
+// phi, and supplying that phi would retain a view (#9802). A literal and a
+// retagged string are counted, and retaining them is sound.
 function unaliased_view(v: Value): Value {
     var s: State = v.s;
     if (!ssasem.is_view(s.values[v.id]) || util.index_of_i32(s.vals, v.id) < 0) { return v; }
