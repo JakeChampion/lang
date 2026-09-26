@@ -222,7 +222,7 @@ func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	run := func(t *testing.T, args ...string) (string, int) {
+	run := func(t *testing.T, args ...string) (string, string, int) {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -231,26 +231,29 @@ func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(fipUnpairedFbipSrc))
-		out, _ := cmd.CombinedOutput()
-		return string(out), cmd.ProcessState.ExitCode()
+		var ob, eb bytes.Buffer
+		cmd.Stdout = &ob
+		cmd.Stderr = &eb
+		_ = cmd.Run()
+		return ob.String(), eb.String(), cmd.ProcessState.ExitCode()
 	}
 
-	out, code := run(t, "-decide")
+	out, errs, code := run(t, "-decide")
 	if code != 0 {
-		t.Errorf("the routing probe exited %d instead of answering:\n%s", code, out)
+		t.Errorf("the routing probe exited %d instead of answering:\n%s%s", code, out, errs)
 	}
-	if strings.Contains(out, "E068") {
-		t.Errorf("the routing probe refused instead of answering:\n%s", out)
+	if strings.Contains(out+errs, "E068") {
+		t.Errorf("the routing probe refused instead of answering:\n%s%s", out, errs)
 	}
 	if v := strings.TrimSpace(out); v != "ir" && v != "refused" {
-		t.Errorf("the routing probe printed no verdict:\n%s", out)
+		t.Errorf("the routing probe printed %q, not a verdict", v)
 	}
 
-	out, code = run(t)
+	out, errs, code = run(t)
 	if code == 0 {
 		t.Errorf("the wasm emit path compiled an un-paired `fbip` claim:\n%s", out)
 	}
-	if !strings.Contains(out, "E068") {
-		t.Errorf("the wasm emit path's refusal is not E068:\n%s", out)
+	if !strings.Contains(out+errs, "E068") {
+		t.Errorf("the wasm emit path's refusal is not E068:\n%s%s", out, errs)
 	}
 }
