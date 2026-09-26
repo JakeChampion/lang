@@ -14344,22 +14344,43 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
   return out;
 }
 
+// ow_result_borrows settles the least fixed point described at
+// ow_fresh_owners. After the first round only a function calling one the
+// previous round marked can change its answer, so only those are examined again.
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
   var borrows: string[] = [];
-  var changed: boolean = true;
-  while (changed) {
-    changed = false;
-    for fn in mod.funcs {
-      if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
-      if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
-      if (util.has_str(borrows, fn.name)) { continue; }
-      if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+  var pending: parser.FuncDecl[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
+    if (ow_type_is_pointer(fn.ret_type, mod)) { pending = pending.append(fn); }
+  }
+  var first: boolean = true;
+  var marked: string[] = [];
+  while (first || marked.len() > 0) {
+    var now_marked: string[] = [];
+    var unmarked: parser.FuncDecl[] = [];
+    for fn in pending {
+      if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
         borrows = borrows.append(fn.name);
-        changed = true;
+        now_marked = now_marked.append(fn.name);
+      } else {
+        unmarked = unmarked.append(fn);
       }
     }
+    first = false;
+    marked = now_marked;
+    pending = unmarked;
   }
   return borrows;
+}
+
+function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
+  var hits: astwalk.CallSite[] = [];
+  for st in fn.body {
+    hits = astwalk.collect_calls_stmt(st, names, hits);
+    if (hits.len() > 0) { return true; }
+  }
+  return false;
 }
 
 // ow_fresh_owners is the complement: every pointer-returning function the
@@ -14404,8 +14425,9 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: strin
 // could exercise it: those with owned params (the E050 walk) and — once
 // any owned-param function exists — every function (the E051 call-site
 // guard). No-op when the module declares no `own` parameter anywhere, so
-// ordinary programs are untouched.
-pub function own_diags(mod: parser.Module): util.Diag[] {
+// ordinary programs are untouched. The result-borrow fixpoint always spans the
+// module; only the bodies `focus` admits (in_focus) are walked.
+pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
   var builtins: string[] = ow_fresh_builtins();
   var borrows: string[] = ow_result_borrows(mod, ofuncs, builtins);
@@ -14414,6 +14436,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var owned: string[] = [];
     var borrowed: string[] = [];
     var scalars: string[] = [];
@@ -14721,9 +14744,10 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module): util.Diag[] {
+pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var encl: NameTy[] = [];
     for param in fn.params {
       encl = encl.append(NameTy { nm: param.name, ty: param.type_name });
@@ -16990,9 +17014,10 @@ function e021_dyn_locals_of(stmts: ast.Stmt[]): string[] {
 // silent where native draws E021 — the same trait in a parameter or return type
 // was caught all along, which is what made the gap look like the whole check
 // being absent rather than one site of three (#7974).
-function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
+function e021_object_safety_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     for param in fn.params {
       var pt: string = e021_dyn_target(param.type_name);
       if (pt.len() > 0) {
@@ -17286,9 +17311,10 @@ function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
 
 // e060_e062_diags: per function, collect the dyn-annotated params/locals then
 // walk the body for the two expression-level checks.
-function e060_e062_diags(mod: parser.Module): util.Diag[] {
+function e060_e062_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var dyns: string[] = [];
     for param in fn.params {
       dyns = dyns.append(param.name + "|" + e060_dyn_set_of(param.type_name));
@@ -17990,8 +18016,11 @@ function check_module_pass(raw_mod: parser.Module, focus: string[]): ModuleTypes
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
-  // for move / capture analysis.
-  var dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod)));
+  // for move / capture analysis. The declarations and impls are a re-check's
+  // template module's, which the first pass found clean.
+  var decl_diags: util.Diag[] = [];
+  if (focus.len() == 0) { decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), e021_diags(mod)), derive_diags); }
+  var dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, focus)), e049_diags(mod, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
     well_typed = false;
   }
