@@ -18273,8 +18273,9 @@ function vb_leaves_fresh_str(init: ast.Expr, lits: boolean): boolean {
 // — e.g. a NESTED if-expression `if (a) { if (b) { P{..} } else { .. } } else
 // { .. }` resolves to the `P{..}` literal. Returns `e` unchanged when it isn't an
 // IIFE. Lets the StmtVar value-type inference (opt / struct / array) see through a
-// nested IIFE binding to the leaf struct/Some/array literal. Bounded to avoid a
-// pathological loop.
+// nested IIFE binding to the leaf struct/Some/array literal. A block's value is
+// its LAST statement, so `{ var k = …; match (k) { … } }` reads the match.
+// Bounded to avoid a pathological loop.
 function iife_leaf_value(e: ast.Expr): ast.Expr {
     var cur: ast.Expr = e;
     var guard: i32 = 0;
@@ -18284,7 +18285,7 @@ function iife_leaf_value(e: ast.Expr): ast.Expr {
             ast.ExprCall(c) => {
                 match (c.callee) {
                     ast.ExprLambda(lam) => {
-                        if (lam.body.len() > 0) { cur = iife_first_return_expr(lam.body[0]); stop = false; }
+                        if (lam.body.len() > 0) { cur = iife_first_return_expr(lam.body[lam.body.len() - 1]); stop = false; }
                     },
                     _ => {}
                 }
@@ -41308,6 +41309,35 @@ function struct_counted_share_expr(e: ast.Expr, name: string, structs: StructTab
     return false;
 }
 
+// struct_lent_to_retaining_call: `name` is a bare call argument at a position
+// not proven a plain borrow, so the callee may retain the box — a borrowed
+// parameter stored into a struct literal is inc'd there. The call leaves the
+// caller's claim intact, which is why the plan credits it, but the callee's
+// result can then hold a second counted claim, so the source's field walk has
+// to be rc-gated like any other counted share.
+function struct_lent_to_retaining_call(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
+    function at_stmt(st: ast.Stmt, own hit: boolean): boolean { return hit; }
+    function at_expr(e: ast.Expr, own hit: boolean): boolean {
+        if (hit) { return true; }
+        if let ast.ExprCall(c) = e {
+            var callee: string = "";
+            if let ast.ExprIdent(cid) = c.callee { callee = cid.name; }
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if let ast.ExprIdent(aid) = c.args[ai] {
+                    if (aid.name == name
+                        && (callee.len() == 0 || !param_is_borrowable(borrowable, callee, ai))) { return true; }
+                }
+                ai = ai + 1;
+            }
+        }
+        return false;
+    }
+    var hit: boolean = false;
+    for stmt in stmts { hit = astwalk.fold_stmt_nodes(stmt, hit, at_stmt, at_expr, astwalk.descend_all); }
+    return hit;
+}
+
 function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: StructTab): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -61405,7 +61435,7 @@ function str_leaf_is_string(e: ast.Expr, funcs: parser.FuncDecl[], depth: i32): 
 pub function lam_leaf_array_elem(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return ""; }
@@ -61969,7 +61999,7 @@ pub function (s: LowerState) find_arr_method(field: string): string {
 pub function lam_leaf_opt_type(fn: parser.FuncDecl, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -64747,7 +64777,7 @@ pub function resolve_argref_tuple_tags(tags: string, args: ast.Expr[], s: LowerS
 function fn_inferred_struct_ret(fn: parser.FuncDecl, structs: StructTab, funcs: parser.FuncDecl[], depth: i32): string {
     if (depth > 8) { return ""; }
     if (fn.body.len() == 0) { return ""; }
-    var re: ast.Expr = iife_first_return_expr(fn.body[fn.body.len() - 1]);
+    var re: ast.Expr = iife_leaf_value(iife_first_return_expr(fn.body[fn.body.len() - 1]));
     match (re) {
         ast.ExprStructLit(sl) => {
             if (decl_is_struct(structs, sl.type_name) && decl_is_leaksafe(structs, sl.type_name)) { return sl.type_name; }
@@ -79885,7 +79915,7 @@ while (i < fresh.len()) {
         // the NODEEP alias in place nothing walks the fields (a leak on
         // struct_alias_in_a_conditional), and without it two owners walk them
         // (exit 99 on the same shape).
-        if (struct_counted_share_stmts(body, fnm, structs)) {
+        if (struct_counted_share_stmts(body, fnm, structs) || struct_lent_to_retaining_call(body, fnm, borrowable)) {
             out = out.append("SINKSHARE:" + fresh[i]);
         }
         // A forgiven bare-assign SOURCE hands its box on as a COUNTED share, so
