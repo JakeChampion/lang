@@ -1,35 +1,22 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // tostringFreshRetCases pin a helper whose return is a scalar `.to_string()` —
 // `function util_num(i: i32): string { return i.to_string(); }` — entering the
 // whole-program fresh-ret registry, so `var sv = util_num(i)` reclaims the box
 // the callee moved out.
 //
-// str_return_is_fresh delegated to str_local_binding_is_fresh, whose method arm
-// admits only the fresh-allocating builtins on a STRING receiver. A scalar
-// `.to_string()` is a different shape: is_fresh_str_temp has credited it since
-// #4353 and its comment names str_local_binding_is_fresh as the predicate that
-// missed it, but the registry consults exactly that predicate, so the helper
-// never registered and every caller's binding leaked 32 B/round. Isolated by
-// varying only the callee body, on x86-64:
+// Isolated by varying only the callee body; the AST lowering leaked on the
+// first two before the fix:
 //
 //	return i.to_string();                32 B/round
 //	var t = i.to_string(); return t;     32
 //	return "x" + i.to_string();           0
 //	return "abc";                         0
 //
-// The receiver test is state-free (tostring_recv_is_scalar_param): the registry
-// pass walks FuncDecls with no LowerState, so a receiver ident resolves against
-// the callee's DECLARED params. Only a provably scalar receiver admits — a
-// struct `to_string` may hand back an alias of a live field.
+// Only a provably scalar receiver admits: a struct `to_string` may hand back
+// an alias of a live field.
 var tostringFreshRetCases = []struct {
 	name string
 	src  string
@@ -187,89 +174,19 @@ function main(): i32 {
 }`, 45},
 }
 
+const tostringFreshRetImports = "import \"std/i32\";\nimport \"std/string\";\n"
+
 const tostringFreshRetFailFmt = "%s = %d, want %d (a small non-zero on a byte case is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
 
-func TestSelfHostTostringFreshRetIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range tostringFreshRetCases {
-		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf(tostringFreshRetFailFmt, tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-func TestSelfHostTostringFreshRetIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range tostringFreshRetCases {
-		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf(tostringFreshRetFailFmt, tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-func TestSelfHostTostringFreshRetWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping to_string fresh-ret wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range tostringFreshRetCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", watFile)
-			_ = run.Run()
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf(tostringFreshRetFailFmt, tc.name, code, tc.want)
-			}
-		})
+func TestSelfHostTostringFreshRet(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		for _, tc := range tostringFreshRetCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tostringFreshRetImports+tc.src+"\n", target); code != tc.want {
+					t.Errorf(tostringFreshRetFailFmt+"\n%s", tc.name, code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }
