@@ -68,6 +68,28 @@ function main(): i32 {
     var inner = b.get();
     return inner.get();
 }`, 7},
+	// A literal whose type argument comes only from a field of an unannotated
+	// local: the local binds the instantiation its own literal was given
+	// (#10275).
+	{"field_of_unannotated_local", `struct P[T] { b: T }
+function main(): i32 {
+    var p = P { b: "xy" };
+    var q = P { b: p.b };
+    return q.b.len();
+}`, 2},
+	{"rebind_from_unannotated_fields", `struct P[T] { a: T[], b: T }
+function main(): i32 {
+    var p = P { a: ["q"], b: "xy" };
+    var q = P { a: p.a, b: p.b };
+    return q.a.len();
+}`, 1},
+	// the reassignment in #10275: the new literal reads the local it replaces.
+	{"reassign_over_own_field", `struct P[T] { a: T[], b: T }
+function main(): i32 {
+    var p = P { a: ["q"], b: "xy" };
+    p = P { a: p.a.append("z"), b: p.b };
+    return p.a.len();
+}`, 2},
 	// a nested instantiation and a flat instantiation of the same struct
 	// coexisting (each clones independently).
 	{"coexist_with_flat", `struct Box[T] { v: T }

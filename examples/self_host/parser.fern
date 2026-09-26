@@ -12483,6 +12483,26 @@ function retype_struct_lit(init: ast.Expr, concrete: string, gstructs: StructDec
 
 // ms_stmt rewrites one statement: generic-struct annotations on a `var`
 // go through mg_ty, struct literals through ms_expr, threading env+ins.
+// ms_var_ty is the type a `var` binds in the monomorphiser's env: its
+// annotation, else the instantiation its generic struct literal was given, so
+// a later literal can infer its own type arguments from the local's fields.
+function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, gstructs: StructDecl[]): string {
+    if (ann.len() > 0) { return ann; }
+    match (init) {
+        ast.ExprStructLit(sl) => {
+            if (gstruct_index(gstructs, sl.type_name) < 0) { return ""; }
+            match (ninit) {
+                ast.ExprStructLit(nsl) => {
+                    if (nsl.type_name != sl.type_name) { return nsl.type_name; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
 function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         ast.StmtVar(v) => {
@@ -12494,7 +12514,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
             var ninit: ast.Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
             var vr: TyIns = mg_ty(v.fn_ret, gstructs, ta.mins);
             var vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ta.ty), rins2: vl.mins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, gstructs)), rins2: vl.mins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
