@@ -217,7 +217,7 @@ TestSelfHostEnumFreshMethodIRX86_64 2
 TestSelfHostEnumQualifiedCtorReclaimIRX86_64 3
 TestSelfHostEnumStructPayloadDropIRX86_64 2
 TestSelfHostEnvArm64 13
-TestSelfHostEqualIRX86_64 2
+TestSelfHostEqualIR 2
 TestSelfHostErasedElemReturnWasm 20
 TestSelfHostErasedElemReturnX86_64 2
 TestSelfHostErasedWideArrayFixedWasm 7
@@ -641,7 +641,7 @@ TestSelfHostTryDeferIRX86_64 2
 TestSelfHostTryF64IRX86_64 2
 TestSelfHostTryFailCleanupIRX86_64 2
 TestSelfHostTryFromIRX86_64 2
-TestSelfHostTryStrEnumIRX86_64 2
+TestSelfHostTryStrEnumIR 2
 TestSelfHostTryStructIRX86_64 2
 TestSelfHostTryTupleIRX86_64 2
 TestSelfHostTupleDestructureIndexWasm 2

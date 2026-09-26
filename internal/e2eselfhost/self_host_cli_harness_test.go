@@ -71,3 +71,24 @@ func runWasmCensus(t *testing.T, wat string, args ...string) (string, int) {
 	}
 	return eb.String(), cmd.ProcessState.ExitCode()
 }
+
+// exitOf compiles the program text source for target (x86-64-linux or
+// wasm32-wasi), runs it, and returns its stderr and exit code.
+func (c *selfHostCLI) exitOf(t *testing.T, source, target string, env ...string) (string, int) {
+	t.Helper()
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	switch target {
+	case "x86-64-linux":
+		return runWithStdin(t, c.runner, c.x86Binary(t, src, env...), nil)
+	case "wasm32-wasi":
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Fatal("wasmtime not on PATH")
+		}
+		return runWasmCensus(t, c.emit(t, src, target, env...))
+	}
+	t.Fatalf("exitOf: unsupported target %s", target)
+	return "", 0
+}
