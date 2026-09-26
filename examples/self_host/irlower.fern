@@ -28747,8 +28747,11 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32, alias_inc: boolea
 // {rc@base, data@base+8, len@base+16} with the VALUE at base+8, so rc is at
 // value-8 for both layouts (which is why one __fern_rc_inc retains either) but
 // the block starts at value-8, not value-16. An rc_dec of a string element frees
-// eight bytes below the block — heap corruption, not a leak. `.` is a position
-// the construction did not retain.
+// eight bytes below the block — heap corruption, not a leak. `S` (a string[]
+// field the literal retained) is an arr-box too, but its elements are string
+// boxes, so it takes __fern_str_arr_free: the element walk when the buffer is
+// unique, the buffer dec otherwise. `t` is a struct box (the field drop, then the
+// box). `.` is a position the construction did not retain.
 function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
     if (kinds.len() == 0) { return se; }
     var st: LowerState = se;
