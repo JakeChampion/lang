@@ -7,6 +7,9 @@ option in one step. The typed path now lowers it as a test and a branch:
 - `ssasem.dyn_is` tests the box's shape against `T`. ssarc emits it as the
   member test, `op_variant_is(T)`: a dyn box carries its concrete's shape at
   offset 0 exactly where a member box carries its variant's.
+  An enum's box carries the shape of the variant it holds rather than the
+  enum's, so an enum target is an or of the member test over its variants.
+  An enum layout whose box carries no shape refuses.
 - `ssasem.dyn_as` is the same box typed as `T`, an identity projection like a
   variant narrowing, and valid only where a `dyn_is` has settled it.
 - The branch joins `Some(narrowed)` and `None`. `Some` holds a unit of the
@@ -23,4 +26,6 @@ Two more refusals in the same test file were separate gaps:
   width, as an integer literal already did.
 
 `TestSelfHostDynTraitIR` moves to the CLI with this change, and every case
-now requires a balanced leak census on x86-64 and wasm.
+now requires a balanced leak census on x86-64 and wasm. Two cases join it:
+an enum target, which the AST lowering's `op_dyn_downcast` also misses
+(#10346), and a miss on a concrete that owns a string.

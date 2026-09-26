@@ -93,6 +93,16 @@ var dynTraitIRCases = []struct {
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Rect) { Some(re) => { return re.w * re.h; }, None => { return 0; } } } function main(): i32 { var r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, 10},
 	// HETEROGENEOUS `dyn Shape[]`: downcast each element to Circle and count the
 	// hits. [Circle, Rect, Circle] → 2 circles.
+	// An ENUM target: its box carries the shape of the variant it holds, so
+	// the downcast tests every variant. circle(5) and square(2) hit, a Dot
+	// misses: 5 + 4*10 + 0*100.
+	{"downcast-enum-target",
+		`enum Form { circle(i32), square(i32) } struct Dot { n: i32 } trait Shape { function area(self: Self): i32; } impl Shape for Form { function area(self: Self): i32 { match (self) { circle(r) => { return r; }, square(w) => { return w * w; } } } } impl Shape for Dot { function area(self: Self): i32 { return self.n; } } function to_form(s: dyn Shape): i32 { match (s as? Form) { Some(f) => { return f.area(); }, None => { return 0; } } } function main(): i32 { return to_form(Form.circle(5)) + to_form(Form.square(2)) * 10 + to_form(Dot { n: 4 }) * 100; }`, 45},
+	// A MISS on a concrete that owns a string: the None arm reads the dyn value
+	// again and the census must still balance. 4 + 7*10.
+	{"downcast-string-owner-miss",
+		`import "std/string";
+struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: Self): i32; } impl Tag for Named { function t(self: Self): i32 { return self.s.len(); } } impl Tag for Plain { function t(self: Self): i32 { return self.n; } } function probe(d: dyn Tag): i32 { match (d as? Plain) { Some(p) => { return p.n; }, None => { return 100 + d.t(); } } } function main(): i32 { var a: i32 = probe(Named { s: "ab" + "cd" }); var b: i32 = probe(Plain { n: 7 }); return a - 100 + b * 10; }`, 74},
 	{"downcast-array-count",
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { var n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
 

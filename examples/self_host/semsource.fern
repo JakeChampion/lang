@@ -1296,6 +1296,9 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     var target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
     var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.scope, s.binding);
     if (struct_name(concrete) != target && union_name(concrete) != target) { return refused(s, "downcast target: " + target); }
+    if (union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
+        return refused(s, "downcast to an enum whose box carries no shape: " + target);
+    }
     var whole: typeinfo.Type = ssasem.option_of(concrete);
     var layout: i32 = semrecords.layout_option();
     var names: string[] = variant_names(s, whole, layout);
@@ -3877,7 +3880,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
         var n: string = util.base_type_name(imp.impl_type);
         if (util.base_type_name(imp.trait_name) != util.base_type_name(traits[0]) || util.index_of_str(seen, n) >= 0) { continue; }
         seen = seen.append(n);
-        if (!implements_all(s, n, traits)) { continue; }
+        if (!implements_traits(s.impls, n, traits)) { continue; }
         if (n == "string") { out = out.append(t_string()); }
         else if (record_schema(n, s).name.len() > 0) { out = out.append(typeinfo.TypeStruct { name: n, args: [] }); }
         else if (union_layout(s, n) == semrecords.layout_variant()) { out = out.append(typeinfo.TypeUnion { name: n, args: [] }); }
@@ -3909,10 +3912,6 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
         if (util.str_has_prefix(u.name, prefix) && union_layout(s, u.name) == semrecords.layout_variant() && !has_type(out, t)) { out = out.append(t); }
     }
     return out;
-}
-
-function implements_all(s: State, n: string, traits: string[]): boolean {
-    return implements_traits(s.impls, n, traits);
 }
 
 function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
