@@ -3724,7 +3724,13 @@ function main(): i32 {
     }
     base = irlower.regrow_sigs(base, mod.funcs, tab, seeds);
     base = irlower.consume_sigs(base, mod.funcs, consumed);
-    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi", ircore.no_sub());
+    // Only what was not produced is AST-lowered, as under the CLI's
+    // substitution: the AST lowering refuses some bodies the semantic one
+    // takes, such as a struct local handed to an own parameter at its last use.
+    var extra: irlower.LowerResult[] = instances;
+    for h in helpers { extra = extra.append(h); }
+    var sub = ircore.Sub { ...ircore.no_sub(), on: true, bodies: bodies, extra: extra, sigs: base };
+    var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi", sub);
     if (!g.ok) { eprint("ast lowering failed"); return 3; }
     var cache: irlower.LowerResult[] = [];
     at = 0;
