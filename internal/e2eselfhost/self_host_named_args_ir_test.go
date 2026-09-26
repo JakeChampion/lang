@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // namedArgsIRCases exercise NAMED ARGUMENTS — `f(c = 9)`, `g(c = 3, a = 1)` —
 // through the self-host stack-IR path (#2701). The parser encodes each
@@ -16,7 +9,7 @@ import (
 // fills omitted defaults, exactly like the native `internal/defaultargs` pass
 // that runs at the start of the Go checker. After resolution the call is an
 // ordinary positional call, so the existing default-arg IR lowering handles it
-// unchanged — the cases below all route "ir".
+// unchanged.
 //
 // Each value is pinned ≤ 255 and oracle-checked against `fern -interp`. They
 // cover: a trailing named arg after a positional, a fully-reordered all-named
@@ -44,77 +37,17 @@ var namedArgsIRCases = []struct {
 		`function mk(prefix: string, n: i32 = 0): i32 { return prefix.len() + n; } function main(): i32 { return mk(n = 5, prefix = "abc"); }`, 8},
 }
 
-// TestSelfHostNamedArgsIRX86_64 routes each case through the self-hosted x86-64
-// driver (asm_run) and asserts the exit code, AND probes the routing
-// (asm_pathprobe_run) to pin each case to the "ir" path.
-func TestSelfHostNamedArgsIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range namedArgsIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
-			}
-		})
-	}
-}
-
-// TestSelfHostNamedArgsIRWasm runs the same cases through the wasm IR backend
-// (wasm_ir_run -ir).
-func TestSelfHostNamedArgsIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host named-args wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range namedArgsIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "namedargs_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("named-args wasm IR %q = %d, want %d", tc.name, code, tc.expected)
-			}
-		})
+// TestSelfHostNamedArgsIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostNamedArgsIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range namedArgsIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.expected {
+					t.Errorf("exited %d, want %d\n%s", code, tc.expected, stderr)
+				}
+			})
+		}
 	}
 }

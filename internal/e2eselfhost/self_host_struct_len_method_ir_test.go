@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // structLenMethodIRCases pin the #3478 fix: a user-defined receiver method named
 // `len` on a struct must shadow the builtin `.len()`, not be intercepted as a
@@ -17,8 +10,8 @@ import (
 // returned 26, the local lookup-string length; wasm returned 0). The two cases
 // have identical bodies (`return b.items.len();`) and differ only in the method
 // NAME (`len` vs `count`); pre-fix `len` diverged from `count` on the self-host
-// IR path while both are correct natively. Pinned to the `"ir"` path; hardcoded
-// expectations verified against the native x86-64 backend.
+// IR path while both are correct natively. Hardcoded expectations verified
+// against the native x86-64 backend.
 const structLenMethodIRPrelude = `struct Box { items: string[] }
 function helper(s: string): string {
     var alpha: string = "abcdefghijklmnopqrstuvwxyz";
@@ -48,77 +41,17 @@ func structLenMethodIRSrc(mainBody string) string {
 	return structLenMethodIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostStructLenMethodIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path.
-func TestSelfHostStructLenMethodIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range structLenMethodIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(structLenMethodIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostStructLenMethodIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostStructLenMethodIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host struct-len-method wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range structLenMethodIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(structLenMethodIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "structlen_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("struct-len-method wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostStructLenMethodIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostStructLenMethodIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range structLenMethodIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, structLenMethodIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

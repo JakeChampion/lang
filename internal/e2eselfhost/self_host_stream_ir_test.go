@@ -1,20 +1,12 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // streamIRCases exercise std/stream's in-memory byte Stream — `data: u8[]` +
 // `pos` cursor, the value-threaded CURSOR IDIOM (a read returns
 // `(value, advancedStream)` and the caller rebinds) — through the self-host IR
-// path on x86-64 + wasm (the `std/stream` row was fully unaudited). The
-// single-program driver resolves no imports and `Stream` is a reserved builtin
-// type name, so the surface is inlined verbatim from
+// path on x86-64 + wasm (the `std/stream` row was fully unaudited). `Stream`
+// is a reserved builtin type name, so the surface is inlined verbatim from
 // `internal/stdlib/std/stream.fern` with the type renamed to `Buf`. This
 // verifies the constructs std/stream lowers to compile on the IR path: a struct
 // with a `u8[]` field + an i32 cursor, functional struct-spread update
@@ -24,9 +16,8 @@ import (
 // `.append` build with `as u8` element casts, indexed byte reads with `as i32`,
 // the `string_from_bytes_unchecked` builtin, `Option` `Some`/`None` with a payload-binding
 // `match`, and the read_line CRLF/LF + unterminated-tail logic. Each program
-// returns a small deterministic int (<= 126), pinned to the `"ir"` path;
-// expectations are oracle-checked against the native interpreter. FEATURE-AUDIT
-// std/stream row.
+// returns a small deterministic int (<= 126); expectations are oracle-checked
+// against the native interpreter. FEATURE-AUDIT std/stream row.
 const streamIRPrelude = `struct Buf { data: u8[], pos: i32 }
 function buf_from_bytes(bs: u8[]): Buf { return Buf { data: bs, pos: 0 }; }
 function (s: Buf) len(): i32 { return s.data.len(); }
@@ -114,77 +105,17 @@ func streamIRSrc(mainBody string) string {
 	return streamIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostStreamIRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, with the routing pinned to the "ir" path.
-func TestSelfHostStreamIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range streamIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(streamIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostStreamIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostStreamIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host stream wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range streamIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(streamIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "stream_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("stream wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostStreamIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostStreamIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range streamIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, streamIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

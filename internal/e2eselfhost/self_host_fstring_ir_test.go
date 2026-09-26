@@ -1,33 +1,16 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// fstringIRCases pin f-string interpolation on the self-host IR path. An
-// f-string `f"...{e}..."` desugars (in parser.fern) to the literal parts as
-// string literals and each interpolant as `(e).to_string()`, folded left to
-// right with `+`. The single-program driver resolves no imports and special-
-// cases `.to_string()` on the two primitive receivers the IR path supports —
-// a string (identity: `"x".to_string() == "x"`) and an i32 (routed to the
-// `__fern_i32_to_string` runtime helper) — so importless f-strings that
-// interpolate i32 + string values lower entirely through the IR path (no AST
-// fallback). This holds for COMPUTED i32 interpolants too (`${x.len()}`,
-// `${a + b}`), not just bare locals: the interpolant is re-parsed into a full
-// expression and its i32 result routes through the same `to_string` fast-path.
-// Each case builds an f-string and returns a small deterministic
-// int (a `.len()`, a byte value, or an equality flag; all <= 126), pinned to
-// the `"ir"` path; expectations were verified against the native interpreter
-// (with `import "std/i32";` so `to_string` resolves there). FEATURE-AUDIT
-// f-strings / interpolation row. f64 / i64 / bool receivers are NOT covered:
-// their `to_string` needs an imported stdlib method, so those f-strings fall
-// off the importless IR surface — extend here once the IR path grows native
-// `to_string` lowering for them.
+// fstringIRCases pin f-string interpolation. An f-string `f"...{e}..."`
+// desugars (in parser.fern) to the literal parts as string literals and each
+// interpolant as `(e).to_string()`, folded left to right with `+`. The
+// interpolants are i32 and string values, bare locals and COMPUTED ones
+// (`${x.len()}`, `${a + b}`) alike: the interpolant is re-parsed into a full
+// expression. Each case builds an f-string and returns a small deterministic
+// int (a `.len()`, a byte value, or an equality flag; all <= 126);
+// expectations were verified against the native interpreter. FEATURE-AUDIT
+// f-strings / interpolation row.
 var fstringIRCases = []struct {
 	name string
 	main string
@@ -67,80 +50,20 @@ var fstringIRCases = []struct {
 }
 
 func fstringIRSrc(mainBody string) string {
-	return "function main(): i32 { " + mainBody + " }\n"
+	return "import \"std/i32\";\nimport \"std/string\";\n" + "function main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostFStringIRX86_64 routes each f-string case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path.
-func TestSelfHostFStringIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range fstringIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(fstringIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostFStringIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostFStringIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host f-string wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range fstringIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(fstringIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "fstring_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("f-string wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostFStringIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostFStringIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range fstringIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, fstringIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

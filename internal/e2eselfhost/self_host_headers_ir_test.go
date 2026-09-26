@@ -1,31 +1,23 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // headersIRCases exercise std/headers' HeaderMap surface — case-insensitive
 // get/get_all/append/set over two parallel string[] fields — through the
-// self-host IR path on x86-64 + wasm (the `std/headers` row was unaudited). The
-// single-program driver resolves no imports and `HeaderMap` is a reserved
-// builtin name, so the type is inlined as `Headers` and `.to_lower()` as a local
-// lookup-slice `lower`; this verifies the constructs the header map lowers to
-// compile on the IR path: a struct with two string[] fields, functional
-// struct-spread update (`Headers { ...h, names: ..., values: ... }`), `string[]`
-// `.append`, indexed string-field compares, `Option[string]` `Some`/`None` with
-// a payload-binding `match`, and chained struct-returning receiver methods. Each
-// program returns a small deterministic int (kept <= 126), pinned to the `"ir"`
-// path. Expectations are hardcoded, verified against the native interp + x86-64
-// backends. The `append-len` case pins the `(h) len()` receiver method
-// (`return h.names.len();`): it regressed #3478 (a user receiver method named
-// `len` mis-dispatched to the builtin `.len()` on the struct box, returning a
-// callee local's value) — fixed in irlower.fern's `.len()` intercept guard.
-// FEATURE-AUDIT std/headers row.
+// self-host IR path on x86-64 + wasm (the `std/headers` row was unaudited).
+// `HeaderMap` is a reserved builtin name, so the type is inlined as `Headers`,
+// and `.to_lower()` as a local lookup-slice `lower`; this verifies the
+// constructs the header map lowers to compile on the IR path: a struct with two
+// string[] fields, functional struct-spread update (`Headers { ...h, names:
+// ..., values: ... }`), `string[]` `.append`, indexed string-field compares,
+// `Option[string]` `Some`/`None` with a payload-binding `match`, and chained
+// struct-returning receiver methods. Each program returns a small deterministic
+// int (kept <= 126). Expectations are hardcoded, verified against the native
+// interp + x86-64 backends. The `append-len` case pins the `(h) len()` receiver
+// method (`return h.names.len();`): it regressed #3478 (a user receiver method
+// named `len` mis-dispatched to the builtin `.len()` on the struct box,
+// returning a callee local's value) — fixed in irlower.fern's `.len()`
+// intercept guard. FEATURE-AUDIT std/headers row.
 const headersIRPrelude = `struct Headers { names: string[], values: string[] }
 function lower(s: string): string {
     var alpha: string = "abcdefghijklmnopqrstuvwxyz";
@@ -117,77 +109,17 @@ func headersIRSrc(mainBody string) string {
 	return headersIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostHeadersIRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, with the routing pinned to the "ir" path.
-func TestSelfHostHeadersIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range headersIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(headersIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostHeadersIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostHeadersIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host headers wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range headersIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(headersIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "headers_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("headers wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostHeadersIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostHeadersIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range headersIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, headersIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

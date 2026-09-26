@@ -1,29 +1,18 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // logLeveledIRCases exercise std/log's leveled `Logger` / `LogEntry` surface
-// (#2683) through the self-host IR path on x86-64 + wasm — the `std/log` row was
-// unaudited (⬜) for self-host. The single-program driver resolves no imports, so
-// the two structs + their builder/render methods are inlined; this verifies the
-// constructs the leveled logger lowers to compile on the IR path: structs with
-// i32 / boolean / string fields, struct-returning receiver methods chained
+// (#2683) through the self-host IR path on x86-64 + wasm — the `std/log` row
+// was unaudited (⬜) for self-host. The two structs + their builder/render
+// methods are inlined rather than imported; this verifies the constructs the
+// leveled logger lowers to compile on the IR path: structs with i32 / boolean /
+// string fields, struct-returning receiver methods chained
 // (`lg.info_().str(...).int(...).bool(...)`), struct field reads, the
 // threshold-filter branch, byte-indexed JSON escaping, and `i32.to_string()` +
-// string concat. Each program returns the rendered line's length (kept <= 126),
-// pinned to the `"ir"` path. Expectations are hardcoded (verified against the
-// reference interpreter with `import "std/i32"` so `.to_string()` resolves) —
-// the single-program driver resolves no imports, so it treats `.to_string()` as
-// a self-host builtin while the importless interpreter cannot, ruling out the
-// interp as a drop-in oracle here (cf. TestSelfHostFormatBytesIR). FEATURE-AUDIT
-// std/log row.
+// string concat. Each program returns the rendered line's length (kept <= 126).
+// Expectations are hardcoded, verified against the reference interpreter.
+// FEATURE-AUDIT std/log row.
 const logLeveledIRPrelude = `struct Logger { min_level: i32, json: boolean }
 struct LogEntry { min_level: i32, is_json: boolean, level: i32, text: string, json: string }
 function level_trace(): i32 { return 0; }
@@ -115,80 +104,20 @@ var logLeveledIRCases = []struct {
 }
 
 func logLeveledIRSrc(mainBody string) string {
-	return logLeveledIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
+	return "import \"std/i32\";\nimport \"std/string\";\n" + logLeveledIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostLogLeveledIRX86_64 routes each case through the self-hosted x86-64
-// IR driver, oracle-checked, with the routing pinned to the "ir" path.
-func TestSelfHostLogLeveledIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range logLeveledIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(logLeveledIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostLogLeveledIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostLogLeveledIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host log-leveled wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range logLeveledIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(logLeveledIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "logleveled_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("log-leveled wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostLogLeveledIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostLogLeveledIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range logLeveledIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, logLeveledIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

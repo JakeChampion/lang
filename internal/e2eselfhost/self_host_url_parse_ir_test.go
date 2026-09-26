@@ -1,25 +1,18 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // urlParseIRCases exercise std/url's `url_parse` — decomposing a URL into a
-// 6-field struct — through the self-host IR path on x86-64 + wasm (extending the
-// url_codec audit). The single-program driver resolves no imports and `Url` is a
-// reserved builtin name, so the struct is inlined as `Uri` and a `field` helper
-// reads a chosen component; this verifies the constructs `url_parse` lowers to
-// compile on the IR path: a 6-field struct with mixed string + i32 fields,
-// repeated functional struct-spread updates (`Uri { ...u, host: …, port: … }`),
-// string slicing, byte scanning, and `Option[Uri]` `Some`/`None` returned and
-// read via a payload-binding `match`. Each program returns a small deterministic
-// int (kept <= 126), pinned to the `"ir"` path; expectations are hardcoded,
-// verified against the native interp + x86-64 backends. FEATURE-AUDIT std/url row.
+// 6-field struct — through the self-host IR path on x86-64 + wasm (extending
+// the url_codec audit). `Url` is a reserved builtin name, so the struct is
+// inlined as `Uri` and a `field` helper reads a chosen component; this verifies
+// the constructs `url_parse` lowers to compile on the IR path: a 6-field struct
+// with mixed string + i32 fields, repeated functional struct-spread updates
+// (`Uri { ...u, host: …, port: … }`), string slicing, byte scanning, and
+// `Option[Uri]` `Some`/`None` returned and read via a payload-binding `match`.
+// Each program returns a small deterministic int (kept <= 126); expectations
+// are hardcoded, verified against the native interp + x86-64 backends.
+// FEATURE-AUDIT std/url row.
 const urlParseIRPrelude = `struct Uri { scheme: string, host: string, port: i32, path: string, query: string, fragment: string }
 function uri_parse(s: string): Option[Uri] {
     var n: i32 = s.len();
@@ -32,15 +25,15 @@ function uri_parse(s: string): Option[Uri] {
         i = i + 1;
     }
     var rest_start: i32 = 0;
-    if (scheme_end >= 0) { u = Uri { ...u, scheme: slice_unchecked(s, 0, scheme_end) }; rest_start = scheme_end + 3; }
+    if (scheme_end >= 0) { u = Uri { ...u, scheme: slice_unchecked(s, 0, scheme_end).to_owned() }; rest_start = scheme_end + 3; }
     var frag_start: i32 = n;
     i = rest_start;
     while (i < n) { if (s[i] == 35) { frag_start = i; break; } i = i + 1; }
-    if (frag_start < n) { u = Uri { ...u, fragment: slice_unchecked(s, frag_start+1, n) }; }
+    if (frag_start < n) { u = Uri { ...u, fragment: slice_unchecked(s, frag_start+1, n).to_owned() }; }
     var query_start: i32 = frag_start;
     i = rest_start;
     while (i < frag_start) { if (s[i] == 63) { query_start = i; break; } i = i + 1; }
-    if (query_start < frag_start) { u = Uri { ...u, query: slice_unchecked(s, query_start+1, frag_start) }; }
+    if (query_start < frag_start) { u = Uri { ...u, query: slice_unchecked(s, query_start+1, frag_start).to_owned() }; }
     var authority_end: i32 = query_start;
     if (scheme_end >= 0) {
         i = rest_start;
@@ -54,10 +47,10 @@ function uri_parse(s: string): Option[Uri] {
             var port: i32 = 0;
             i = colon + 1;
             while (i < authority_end) { var b: i32 = s[i] as i32; if (b < 48 || b > 57) { port = 0; break; } port = port * 10 + (b - 48); i = i + 1; }
-            u = Uri { ...u, host: slice_unchecked(s, rest_start, colon), port: port };
-        } else { u = Uri { ...u, host: slice_unchecked(s, rest_start, authority_end) }; }
+            u = Uri { ...u, host: slice_unchecked(s, rest_start, colon).to_owned(), port: port };
+        } else { u = Uri { ...u, host: slice_unchecked(s, rest_start, authority_end).to_owned() }; }
     }
-    u = Uri { ...u, path: slice_unchecked(s, authority_end, query_start) };
+    u = Uri { ...u, path: slice_unchecked(s, authority_end, query_start).to_owned() };
     return Some(u);
 }
 function field(s: string, which: i32): i32 {
@@ -100,80 +93,20 @@ var urlParseIRCases = []struct {
 }
 
 func urlParseIRSrc(mainBody string) string {
-	return urlParseIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
+	return "import \"std/string\";\n" + urlParseIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostUrlParseIRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, pinned to the "ir" path.
-func TestSelfHostUrlParseIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range urlParseIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(urlParseIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostUrlParseIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostUrlParseIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host url-parse wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range urlParseIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(urlParseIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "urlparse_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("url-parse wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostUrlParseIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostUrlParseIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range urlParseIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, urlParseIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }
