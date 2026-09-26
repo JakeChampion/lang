@@ -2093,7 +2093,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     // loaded; its result is the unit the callee returns. A runtime builtin
     // is its own op, pushing the value its contract names or the dummy a
     // statement op pushes, so the store below takes either.
-    if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
+    if (ins.kind_tag == ssasem.call()) { r = call_site(r, f, ins); }
     // A verified copy already has its single operand on the stack.
     r = emit(r, ir.op_store_local(ins.result));
     r = took(r, p, ins);
@@ -2618,7 +2618,8 @@ function dyn_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str), ins.args[0], ins.args.len()));
 }
 
-function call_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function call_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (util.index_of_str(f.shadows, ins.str) >= 0) { return emit(r, ir.op_call_direct(ins.str, ins.args.len())); }
     if (ins.str == "print") {
         // The payload, then the newline, as the AST lowering writes it.
         r = emit(r, ir.op_print_str());
