@@ -1,1 +1,1 @@
-argument to owned parameter must be an owned value (a fresh construction or another `own` parameter), not a borrowed one
+argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one

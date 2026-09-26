@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
 )
 
 // This file implements the DROP-GUIDED reuse source selection evaluated
@@ -82,7 +83,7 @@ func (b *builder) dropGuidedSameList(h reusePairingHooks) {
 			}
 			born := di + 1
 			for i := di + 1; i < len(stmts); i++ {
-				if stmtReferencesName(stmts[i], name) {
+				if checker.StmtReferencesName(stmts[i], name) {
 					born = i + 1
 				}
 			}

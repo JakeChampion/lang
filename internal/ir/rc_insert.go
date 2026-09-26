@@ -4417,9 +4417,10 @@ func rcTrackedForFlatDec(t ast.Type) bool {
 // frame's own. Where the move IS marked, nothing changes (no inc, sweep
 // skipped), so already-correct code keeps its exact rc traffic.
 //
-// Plain locals are excluded: E051 only admits one in an `own` position as a
-// self-reassign `x = f(…, x, …)`, whose old binding is dropped by the callee
-// and whose overwrite-dec callConsumesIdent already suppresses.
+// A `var` local reaches an `own` position as the self-reassign `x = f(…, x,
+// …)`, whose overwrite-dec callConsumesIdent suppresses (ownCallMoveArgs), or
+// at a last use E051 admits (#9541), which computeOwnedArgMoves moves where it
+// can and marks for this retain where it cannot (ownArgRetains).
 func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 	if !ast.RcFreeEnabled {
 		return false
@@ -4436,7 +4437,7 @@ func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 		// borrowed or owned-by-default one is covered by its own rules.
 		return p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name]
 	}
-	return false
+	return b.rc.ownArgRetains[id]
 }
 
 // emitBorrowedArrayOwnArgRetain buys the reference an explicit own callee
