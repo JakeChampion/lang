@@ -56,6 +56,21 @@ function main(): i32 {
     return find(m, "b") + find(m, "z") + find(m, "q");
 }
 `, 54},
+	{"string_value", `import "core/map";
+function main(): i32 {
+    var m: Map[string, string] = map_new(8);
+    m = m.insert("a", "x" + "y");
+    m = m.insert("b", "p" + "qr");
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var g: Option[string] = m.get("b");
+        match (g) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
+        i = i + 1;
+    }
+    return n;
+}
+`, 60},
 	{"unused", `import "core/map";
 function main(): i32 {
     var m: Map[string, i32] = map_new(8);
