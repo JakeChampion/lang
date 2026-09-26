@@ -214,3 +214,21 @@ func TestSelfHostCoreutilsParity(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostMulticallCompilesWhole compiles the multicall dispatcher, the
+// binary a release ships, as the release does: with the self-host compiler,
+// -O, and the typed path pinned on and strict. A utility that stops lowering
+// whole fails here instead of shipping as a mixed module.
+func TestSelfHostMulticallCompilesWhole(t *testing.T) {
+	root := repoRoot(t)
+	srcDir := filepath.Join(root, "coreutils", "multicall")
+	e2eharness.TrackFernSources(t, srcDir, "fern-coreutils.fern")
+	argv := crossArgv(selfHostCompiler(t), "-O", "-target", fernTarget(t),
+		filepath.Join(srcDir, "fern-coreutils.fern"),
+		filepath.Join(root, "internal", "stdlib"), "-o", filepath.Join(t.TempDir(), "fern-coreutils"))
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SEM_IR_STRICT=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile of the multicall binary: %v\n%s", err, out)
+	}
+}

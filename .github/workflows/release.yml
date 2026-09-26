@@ -140,6 +140,13 @@ jobs:
         run: ./bin/fern -target "${{ matrix.target }}" -o bin/fern-selfhost examples/self_host/fern.fern
 
       - name: Build the multicall binary with both compilers
+        # The self-host build takes the typed path whole or fails; only the
+        # self-host compiler reads these.
+        env:
+          FERN_SEM_IR: "1"
+          FERN_SEM_IR_ONLY: ""
+          FERN_SEM_IR_SKIP: ""
+          FERN_SEM_IR_STRICT: "1"
         run: |
           set -euo pipefail
           mkdir -p dist/native dist/selfhost

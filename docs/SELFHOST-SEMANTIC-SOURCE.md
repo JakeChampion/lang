@@ -2191,14 +2191,16 @@ What is left, in order:
    calls `__fern_utf8_valid`), so they fail when checked alone and check inside
    the bundle.
 2. Strict mode goes green over every suite. The fallback then becomes the
-   error, and `FERN_SEM_IR=` loses its off column. Gated: every
-   `internal/e2eselfhost` and `internal/e2e` compile runs strict (each
+   error, and `FERN_SEM_IR=` loses its off column. Gated: every `fern.fern`
+   CLI compile in `internal/e2eselfhost` and `internal/e2e` runs strict (each
    package's `TestMain`), and so do the coreutils self-host builds, the
-   fixture corpus on all three targets (`fixtureCompile`) and the three
-   perf scripts that measure the self-hosted compiler (`perf-bench-selfhost`,
-   `cliff-bench`, `selfhost-alloc-bench`). All of these are `fern.fern` CLI
-   compiles, the only driver that builds a substitution. The semantic differential legs fail a seed
-   that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
+   multicall binary a release ships (`TestSelfHostMulticallCompilesWhole`
+   and the release step), the fixture corpus on all three targets
+   (`fixtureCompile`), and the four scripts that measure the self-hosted
+   compiler (`perf-bench-selfhost`, `cliff-bench`, `selfhost-alloc-bench`,
+   `coreutils-bench`). The CLI is the only driver that builds a
+   substitution; the emit drivers never reach the typed path. The semantic
+   differential legs fail a seed that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
    leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
    purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
