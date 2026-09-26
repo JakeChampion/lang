@@ -913,6 +913,56 @@ function main(): i32 {
 	// The mirror: the source is rebound, in a loop too, while the alias
 	// survives and is read afterwards. The alias's fresh view is anchored to
 	// the same bytes, so the source's rebinding releases nothing it reads.
+	// An if-expression or match-expression arm that yields a live view binds
+	// it under the result's name. The arm yields a fresh view of the same
+	// bytes, as a second name does, so the loop rebinding the source merges
+	// no view the result still holds.
+	{name: "a-view-yielded-by-an-if-arm-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+function pick(t: string, k: i32): i32 {
+    var a: str = slice_unchecked(t, 0, 3);
+    var n: i32 = 0;
+    var b: str = if (k > 1) { a } else { slice_unchecked(t, 1, 2) };
+    while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
+    return b.len() * 10 + a.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 25) { var t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
+    return total % 256;
+}`},
+	{name: "a-view-yielded-by-a-match-arm-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
+function pick(t: string, k: i32): i32 {
+    var a: str = slice_unchecked(t, 0, 3);
+    var n: i32 = 0;
+    var b: str = match (k) { 0 => a, 1 => slice_unchecked(t, 1, 2), _ => a };
+    while (n < k) { a = slice_unchecked(t, n, n + 1); n = n + 1; }
+    return b.len() * 10 + a.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 25) { var t: string = "abcdefg" + "hij"; total = total + pick(t, i % 4); i = i + 1; }
+    return total % 256;
+}`},
+	// A loop variable over a view array rebinds a view declared outside it.
+	{name: "a-for-over-views-rebinds-an-outer-view", atLeast: 2, noLeak: true, src: `
+function longest(ws: str[]): i32 {
+    var best: str = "";
+    for w in ws { if (w.len() > best.len()) { best = w; } }
+    return best.len();
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 25) {
+        var t: string = "abcdefg" + "hij";
+        var ws: str[] = [slice_unchecked(t, 0, 2), slice_unchecked(t, 2, 7), slice_unchecked(t, 1, 4)];
+        total = total + longest(ws);
+        i = i + 1;
+    }
+    return total % 256;
+}`},
 	{name: "a-view-alias-outlives-its-rebound-source", atLeast: 2, noLeak: true, src: `
 function pick(t: string, k: i32): i32 {
     var a: str = slice_unchecked(t, 0, 3);
