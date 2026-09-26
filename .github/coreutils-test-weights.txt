@@ -19,6 +19,7 @@
 # Top-level tests (all but the sharded giant).
 TestPrintfParity 169
 TestMulticallParity 96
+TestSelfHostMulticallCompilesWhole 105
 TestNumfmtParity 26
 TestSelfHostUniqLongOptionWithSameFieldCountStructs 24
 TestTimeout 19

@@ -122,13 +122,18 @@ func selfHostCompiler(t *testing.T) string {
 	return selfHostPath
 }
 
+// typedPathEnv holds a self-host compile to the typed path, whole: strict makes
+// a refusal fail the compile, and the other three are pinned because an ambient
+// FERN_SEM_IR= or skip list switches the typed path off before strict is read.
+var typedPathEnv = []string{"FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SEM_IR_STRICT=1"}
+
 // selfHostBin compiles coreutils/<util>.fern with the self-host compiler.
 //
 // FERN_STRICT_IR=1 is the point of the exercise: it names the function that
 // failed to lower instead of leaving a whole-module refusal to be read off a
 // downstream symptom, and it is what turns "the self-host cannot compile this
-// tree" into a message a reader can act on. FERN_SEM_IR_STRICT=1 does the same
-// for a module the typed path does not produce whole.
+// tree" into a message a reader can act on. typedPathEnv does the same for a
+// module the typed path does not produce whole.
 func selfHostBin(t *testing.T, util string) string {
 	t.Helper()
 	selfHostBinsMu.Lock()
@@ -151,7 +156,7 @@ func selfHostBin(t *testing.T, util string) string {
 		filepath.Join(root, "coreutils", util+".fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", bin)
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1", "FERN_SEM_IR_STRICT=1")
+	cmd.Env = append(append(os.Environ(), "FERN_STRICT_IR=1"), typedPathEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)
 	}
@@ -227,7 +232,7 @@ func TestSelfHostMulticallCompilesWhole(t *testing.T) {
 		filepath.Join(srcDir, "fern-coreutils.fern"),
 		filepath.Join(root, "internal", "stdlib"), "-o", filepath.Join(t.TempDir(), "fern-coreutils"))
 	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Env = append(os.Environ(), "FERN_SEM_IR=1", "FERN_SEM_IR_ONLY=", "FERN_SEM_IR_SKIP=", "FERN_SEM_IR_STRICT=1")
+	cmd.Env = append(os.Environ(), typedPathEnv...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("self-host compile of the multicall binary: %v\n%s", err, out)
 	}
