@@ -9712,31 +9712,16 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
 // variable only the payload names.
 function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
     if let ast.ExprCall(c) = arg {
-        if let ast.ExprIdent(cid) = c.callee {
-            var owner: i32 = genum_owner_of_variant(funcs.enums, cid.name);
+        var vname: string = ctor_variant_name(c.callee, funcs.enums);
+        if (vname.len() > 0) {
+            var owner: i32 = genum_owner_of_variant(funcs.enums, vname);
             if (owner < 0) { return binds; }
             var ed: EnumDecl = funcs.enums[owner];
-            var vidx: i32 = variant_struct_index(funcs.structs, cid.name, ed.name);
-            if (vidx < 0) { return binds; }
-            var fields: StructFieldDecl[] = funcs.structs[vidx].fields;
-            var own: MEnv = MEnv { mnames: [], mtypes: [] };
-            var fi: i32 = 0;
-            while (fi < fields.len() && fi < c.args.len()) {
-                var at: string = mono_infer(c.args[fi], env, funcs);
-                if (at.len() > 0) { own = bind_unify(fields[fi].type_name, at, ed.type_params, own); }
-                fi = fi + 1;
-            }
+            var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
             if (str_list_contains(vars, pattern)) {
-                var whole: string = ed.name + "[";
-                var k: i32 = 0;
-                while (k < ed.type_params.len()) {
-                    var kb: string = own.elook(ed.type_params[k]);
-                    if (kb.len() == 0) { return binds; }
-                    if (k > 0) { whole = whole + ", "; }
-                    whole = whole + kb;
-                    k = k + 1;
-                }
-                return bind_unify(pattern, whole + "]", vars, binds);
+                var whole: string = variant_binds_spelling(ed, own);
+                if (whole.len() == 0) { return binds; }
+                return bind_unify(pattern, whole, vars, binds);
             }
             var pb: i32 = first_bracket(pattern);
             if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
@@ -12464,7 +12449,8 @@ function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, env: MEnv, gstr
     // a later use), so it binds nothing here.
     if (number_literal_tree(init)) { return ""; }
     var t: string = mono_infer(ninit, env, funcs);
-    // `Some(x)` names no declaration mono_infer can read a type from.
+    // A variant construction (`Some(x)`, a generic enum's `Leaf(x)`) names no
+    // declaration mono_infer can read a type from.
     if (t.len() == 0) {
         if let ast.ExprCall(sc) = ninit {
             var scn: string = "";
@@ -12476,11 +12462,22 @@ function ms_var_ty(ann: string, init: ast.Expr, ninit: ast.Expr, env: MEnv, gstr
             if (sc.args.len() == 1 && scn == "Some") {
                 var pt: string = mono_infer(sc.args[0], env, funcs);
                 if (pt.len() > 0 && !number_literal_tree(sc.args[0])) { t = "Option[" + pt + "]"; }
+            } else if (!any_number_literal(sc.args)) {
+                t = variant_ctor_spelling(sc.callee, sc.args, env, funcs);
             }
         }
     }
     if (ms_concrete_ty(t, gstructs, funcs)) { return t; }
     return "";
+}
+
+function any_number_literal(es: ast.Expr[]): boolean {
+    var i: i32 = 0;
+    while (i < es.len()) {
+        if (number_literal_tree(es[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // ms_concrete_ty: `t` names a type with no type variable in it and no generic
@@ -13157,6 +13154,48 @@ function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: ME
     return binds;
 }
 
+// ctor_variant_name: the variant a call's callee constructs when it names one
+// bare (`Leaf`) or qualified by its generic enum (`Tree.Leaf`); "" otherwise.
+function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
+    match (callee) {
+        ast.ExprIdent(cid) => { return cid.name; },
+        ast.ExprFieldAccess(cfa) => {
+            if let ast.ExprIdent(oid) = cfa.obj {
+                if (genum_index(enums, oid.name) >= 0) { return cfa.field; }
+            }
+        },
+        _ => { }
+    }
+    return "";
+}
+
+// variant_binds_spelling: `Enum[a, b]` from bindings of every one of the
+// enum's type parameters; "" when any is unbound.
+function variant_binds_spelling(ed: EnumDecl, binds: MEnv): string {
+    var out: string = ed.name + "[";
+    var j: i32 = 0;
+    while (j < ed.type_params.len()) {
+        var b: string = binds.elook(ed.type_params[j]);
+        if (b.len() == 0) { return ""; }
+        if (j > 0) { out = out + ", "; }
+        out = out + b;
+        j = j + 1;
+    }
+    return out + "]";
+}
+
+// variant_ctor_spelling: the `Enum[..]` type of a generic enum's variant
+// construction `callee(args)`, its parameters bound from the payload types;
+// "" when the callee is not a variant or a parameter stays unbound.
+function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: MEnv, funcs: MFns): string {
+    var vname: string = ctor_variant_name(callee, funcs.enums);
+    if (vname.len() == 0) { return ""; }
+    var owner: i32 = genum_owner_of_variant(funcs.enums, vname);
+    if (owner < 0) { return ""; }
+    var ed: EnumDecl = funcs.enums[owner];
+    return variant_binds_spelling(ed, me_variant_binds(ed, vname, args, env, funcs.structs, funcs));
+}
+
 // The spelling a single-param enum's inferred construction binds its type
 // parameter to, from whichever field names it; "" for any other enum.
 function me_variant_bound(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): string {
@@ -13232,19 +13271,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
             // object names a generic enum — otherwise `s.len()` (a method call,
             // structurally identical: ExprCall over ExprFieldAccess) would be
             // mis-read as constructing a variant named `len`.
-            var vname: string = "";
-            match (c.callee) {
-                ast.ExprIdent(cid) => { vname = cid.name; },
-                ast.ExprFieldAccess(cfa) => {
-                    match (cfa.obj) {
-                        ast.ExprIdent(oid) => {
-                            if (genum_index(enums, oid.name) >= 0) { vname = cfa.field; }
-                        },
-                        _ => { }
-                    }
-                },
-                _ => { }
-            }
+            var vname: string = ctor_variant_name(c.callee, enums);
             // A variant construction whose instantiation resolves (from the
             // annotation or the payload args) flows each payload's DECLARED
             // field type, instantiated, into the corresponding arg — so a
@@ -13528,24 +13555,19 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
         ast.ExprIdent(id) => { return env.elook(id.name); },
         ast.ExprStructLit(s) => { return s.type_name; },
         ast.ExprCall(c) => {
+            // A variant construction (`match (Has(f))`, `var t = Tree.Leaf(s)`):
+            // infer its instantiation from the payload args and return the
+            // original-spelling type (`Opt[(i32) => i32]`, `Pair[string, i32]`),
+            // so ge_inst_of derives the same key the construction rewrite used
+            // and the arms rewrite to the mangled variants (#5298 follow-up).
+            var vgn: string = ctor_variant_name(c.callee, enums);
+            var vgo: i32 = 0 - 1;
+            if (vgn.len() > 0) { vgo = genum_owner_of_variant(enums, vgn); }
+            if (vgo >= 0 && me_infer_variant_key(enums[vgo], vgn, c.args, "", env, enums, structs, funcs).len() > 0) {
+                return variant_binds_spelling(enums[vgo], me_variant_binds(enums[vgo], vgn, c.args, env, structs, funcs));
+            }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    // An INLINE variant construction as the scrutinee
-                    // (`match (Has(f))`): infer its instantiation from the
-                    // payload args and return the original-spelling type
-                    // (`Opt[(i32) => i32]`), so ge_inst_of derives the same
-                    // mangled key the construction rewrite used and the arms
-                    // rewrite to the mangled variants (#5298 follow-up).
-                    var vgo: i32 = genum_owner_of_variant(enums, cid.name);
-                    if (vgo >= 0) {
-                        var vgk: string = me_infer_variant_key(enums[vgo], cid.name, c.args, "", env, enums, structs, funcs);
-                        if (vgk.len() > 0) {
-                            var vga: string = vgk;
-                            var vgr: string = me_variant_bound(enums[vgo], cid.name, c.args, env, structs, funcs);
-                            if (keyed_by_mangle(vgr)) { vga = vgr; }
-                            return enums[vgo].name + "[" + vga + "]";
-                        }
-                    }
                     // A match-bound fn payload (`cont`, bound by me_bind_pat_vars
                     // to `fn => Fut[i32]`): calling it yields that return type, so
                     // a nested `match (cont(tok))` over a recursive generic enum
