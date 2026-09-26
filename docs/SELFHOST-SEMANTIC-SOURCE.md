@@ -2205,3 +2205,65 @@ What is left, in order:
    purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.
+
+### What deleting the AST lowering touches, 2026-09-26
+
+Strict mode reaches only the `fern.fern` CLI: `cli_substitution` is the one
+place that builds a substitution. Every other driver calls the backends'
+plain entry points (`asm_ir.emit_module_or_error`, `wasm_ir.emit_module_mode_or_error`
+and the rest), which pass `ircore.no_sub()`. Their compiles take the AST
+lowering whatever the environment says. That
+covers `asm_ir_run`, `asm_run`, `asm_load_run`, `asm_modload_run`,
+`asm_pathprobe_run`, `asm_ir_elig_run`, `wasm_ir_run`, `wasm_run`,
+`wasm_runio_run`, `wasm_modload_run`, `wasm_units_probe` and
+`playground_run`. The Go tests name those drivers thousands of times, and
+the per-module and modload whole-compiler fixpoints (`asm_modload_run`,
+`asm_load_run`, `wasm_modload_run`) build the compiler through them. So
+before the lowering can go, each driver has to take the substitution, and
+each test built on one has to pass through the typed path.
+
+The AST body lowering sits in `irlower.fern`: about 44,600 of its 80,000
+lines are reachable only from `lower_func`, `lower_func_for` and
+`lower_module`. That covers `LowerState` and its methods, `lower_expr` /
+`lower_stmt` and their arms, and the reuse passes. The rest is shared and
+stays, or moves into a module of its own:
+
+- The core types and tables: `LowerResult`, `SigReg`, `FnSigs`,
+  `StructTab`, the declaration and field-type lookups.
+- The op builders `ssarc` calls: `sat_binary_ops`, `chk_binary_ops`,
+  `map_fbinop` and similar.
+- The layout and RC-body helpers the backends read.
+- The two `FnSigs` fields the emit reads (`borrowable_params`,
+  `strfld_ok_types`) and the admissions behind them.
+- The AST-to-AST lambda lift (`lift_lambdas`), which the typed path runs
+  first.
+- The dumps the driver programs print.
+
+Other code exists only for the mix and goes with the AST lowering:
+`regrow_sigs`, `consume_sigs` and `ssarc.caller_sigs` let an AST-lowered
+caller call a produced callee.
+
+The other places that still lower a body from the AST:
+
+- `ircore.produced_or_lowered`, the per-declaration fallback.
+- `ircore.claim_lowering` (FIP and E068 claim checks).
+- The eligibility probes in `ircore` (`func_eligible` and the reports).
+- `runtime_ast_bodies` in `asm_ir` and `asm_arm64_ir`, for a runtime helper
+  the typed path refuses or a driver without `rt_lower`.
+- `emit_function_via_ir` when the cache is empty.
+- `wasm_ir.lower_all_for_base`.
+
+`interp.fern` and `irexec.fern` do not depend on it.
+
+The tests that exercise the AST lowering on purpose go with it:
+- the three AST differential legs;
+- the production test's base, skip and `semRefusedByAST` legs;
+- `TestSelfHostSemIRStrict`'s off leg;
+- the whole-compiler test's AST self-build;
+- about twenty release tests with an `ast` or `FERN_SEM_IR_SKIP` leg;
+- the `irlower_run` suites (IR round trip, IR verify, rc-plan and ownership
+  dumps).
+
+A test such as `TestSelfHostSSALoopTailBlockEmittedOnce` checks something
+only the AST lowering does (self-tail calls), so its behaviour needs a
+typed-path equivalent first.
