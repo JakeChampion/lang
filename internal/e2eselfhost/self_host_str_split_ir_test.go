@@ -59,7 +59,7 @@ var strSplitIRCases = []struct {
 // TestSelfHostStrSplitIRPathX86_64 asserts each split program routes through the
 // "ir" path via the asm_pathprobe_run driver (the same observability gate the
 // trait IR-path test uses — runs the production module_with_builtins →
-// lift_lambdas → all_eligible pipeline and prints "ir"/"ast", no assembly).
+// lift_lambdas → all_eligible pipeline and prints "ir"/"refused", no assembly).
 func TestSelfHostStrSplitIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

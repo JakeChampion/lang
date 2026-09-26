@@ -60,7 +60,7 @@ func TestSelfHostTryOpX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 
-	// Path-probe driver: prints "ir"/"ast" for a program on stdin.
+	// Path-probe driver: prints "ir"/"refused" for a program on stdin.
 	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_pathprobe_run.fern: %v", err)

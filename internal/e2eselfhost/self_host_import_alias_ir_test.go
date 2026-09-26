@@ -72,7 +72,7 @@ function main(): i32 {
 }
 
 // runDriverDecide runs the asm_load_run driver with -decide and returns its
-// stdout ("ir" / "ast").
+// stdout ("ir" / "refused").
 func runDriverDecide(t *testing.T, mmc, prog, stdlibRoot string) string {
 	t.Helper()
 	out, err := exec.Command(mmc, prog, stdlibRoot, "-decide").Output()

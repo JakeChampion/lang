@@ -26,7 +26,7 @@ import (
 // The route assertion is essential twice over. It pins that these programs
 // take the IR path at all, and it pins the `-decide` fix that shipped with them:
 // the gate judged the RAW module, whose `main` the emit had not synthesised yet,
-// so `-decide` printed "ast" for a script that emit_module_ir_gated then lowered
+// so `-decide` printed "refused" for a script that emit_module_ir_gated then lowered
 // through IR. Both now normalise through asm_ir.script_normalized.
 var annotateTopLevelCases = []struct {
 	name string

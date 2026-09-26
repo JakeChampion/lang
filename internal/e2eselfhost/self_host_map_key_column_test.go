@@ -153,8 +153,8 @@ func TestSelfHostMapKeyWithNoColumnRefusesEverySurface(t *testing.T) {
 				}
 				return
 			}
-			if got != "ast" {
-				t.Errorf("-decide = %q, want \"ast\": this key does not fit the integer column, and "+
+			if got != "refused" {
+				t.Errorf("-decide = %q, want \"refused\": this key does not fit the integer column, and "+
 					"lowering it anyway is the silent wrong answer the refusal exists to prevent", got)
 			}
 			// The route alone is only half of it. A refusal a reader cannot
@@ -373,8 +373,8 @@ func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
 
 	// Half two: the self-host lowering refuses it with no diagnostic behind it.
 	route, _ := exec.Command(driver, entry, root, "-decide").Output()
-	if got := strings.TrimSpace(string(route)); got != "ast" {
-		t.Errorf("-decide = %q, want \"ast\": the self-host checker does not see this f64 key (#10018), "+
+	if got := strings.TrimSpace(string(route)); got != "refused" {
+		t.Errorf("-decide = %q, want \"refused\": the self-host checker does not see this f64 key (#10018), "+
 			"so lowering it puts the key's VALUE through the string column as an address", got)
 	}
 }

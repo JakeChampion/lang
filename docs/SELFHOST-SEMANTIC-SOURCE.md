@@ -2223,9 +2223,8 @@ drivers fall into four groups:
   directly for its provided-symbol check. Each of these has to take a
   substitution.
 - Gate probes: `asm_pathprobe_run` and `asm_ir_elig_run`. They run
-  `ircore.all_eligible` and emit nothing; their `ast` verdict already means
-  "the drivers refuse the module". They need no substitution, but their
-  verdict needs a decision (below).
+  `ircore.all_eligible` and emit nothing, so they need no substitution. The
+  verdict the probes and `-decide` print is `ir` or `refused`.
 - `wasm_units_probe`, which lowers through `wasm_ir.lower_all_for_view` /
   `lower_all_for_base`. Those take no substitution at all, so it is AST-lowered
   unconditionally.
@@ -2233,6 +2232,15 @@ drivers fall into four groups:
   with `no_sub()`, rewrites the constants in the result, and hands that back
   as a `Sub`. It needs rewriting against a typed-path substitution, not
   threading.
+
+**The plan for the drivers.** They do not take the substitution: linking
+the typed path into them would grow each by 6.7–10.2% (the reason
+`cli_substitution` lives in `fern.fern`). Instead:
+- a test that checks what the language does moves to the CLI;
+- a test that exists to inspect the AST lowering's own output goes with it.
+
+The drivers keep the AST lowering until the lowering is deleted. Then the
+ones whose tests have all moved or gone go too.
 
 **`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
 `lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
@@ -2275,12 +2283,9 @@ AST-lowered caller can call a produced callee, and they go with the lowering.
 - the `irlower_run` suites: IR round trip, IR verify, and the rc-plan and
   ownership dumps.
 
-About thirty `internal/e2eselfhost` files pin the gate's `ir` / `ast`
-verdict per case: the path-probe tables and the `eligBits` probes. They do
-not run the AST lowering, but each `ast` row promises that an ineligible
-function still compiles, and step 3 withdraws that promise. Either those
-rows go, or the verdict is renamed to the refusal it becomes; that needs
-deciding before the deletion.
+The gate's verdict was spelled `ast`, from when a bail routed to the AST
+emitter. It already meant the drivers refuse the module, and it is now
+spelled `refused`; step 3 does not change the gate.
 
 `TestSelfHostSSALoopTailBlockEmittedOnce` checks self-tail calls, which
 only the AST lowering performs, so the typed path needs that first.

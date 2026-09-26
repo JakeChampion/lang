@@ -1,11 +1,9 @@
 // examples/self_host/asm_pathprobe_run.fern — observability driver for the
 // IR-eligibility decision. Reads Fern source from stdin, parses + lifts
 // lambdas, and prints "ir" if the module is fully IR-eligible
-// (ircore.all_eligible), or "ast" if any function bails it. "ast" is the
-// verdict's historical name from when a bail meant a route to the AST emitter;
-// the emitters are gone (#3457 / #5972), so it now means the drivers refuse the
-// module. Every caller pins one of the two strings, which is why the wording
-// stands. This is a pure decision probe: it emits NO assembly, so the Go-side
+// (ircore.all_eligible), or "refused" if any function bails it, since the
+// drivers then refuse the module. This is a pure decision probe: it emits NO
+// assembly, so the Go-side
 // gates can assert the verdict without assembling + running.
 
 import "./lexer";
@@ -22,13 +20,13 @@ function main(): i32 {
     // generics and under-reports IR eligibility.
     // ircore.script_normalized is part of that pipeline: a SCRIPT-shaped source
     // has its `main` synthesised inside emit_module_ir_gated, so judging the raw
-    // module here reported "ast" for a program the emitter does route through IR.
+    // module here reported "refused" for a program the emitter does route through IR.
     var bm: parser.Module = parser.module_with_builtins(mod);
     var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(bm));
     if (ircore.all_eligible(lm)) {
         print("ir\n");
     } else {
-        print("ast\n");
+        print("refused\n");
     }
     return 0;
 }

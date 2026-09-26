@@ -938,10 +938,10 @@ Worth knowing so you do not assume coverage you do not have:
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 
 Route a probe program through the single-program path-probe driver
-(`asm_pathprobe_run.fern`) and it prints `ir` or `ast`. Two ways that misleads.
+(`asm_pathprobe_run.fern`) and it prints `ir` or `refused`. Two ways that misleads.
 
-**A bare `ast` verdict is not proof of a gap.** The driver routes *invalid*
-programs to `ast` too. Always confirm the probe is **native-valid first**
+**A bare `refused` verdict is not proof of a gap.** The driver refuses *invalid*
+programs too. Always confirm the probe is **native-valid first**
 (`go build -o /tmp/fern ./cmd/fern && /tmp/fern -interp prog.fern`) before
 treating a bail as a real gap. Three filed issues were wrong for exactly this
 reason. The single-program drivers now WARN on stderr when a program has imports
@@ -962,7 +962,7 @@ Most apparent "gaps" are invalid programs:
   (`(x: i32) => { x + 1 }`, and `(x: i32): i32 => { return x; }` since #6858) —
   so a block body is not itself the parse error this note used to call it.
 - **Missing imports** — the path-probe driver resolves no stdlib, so anything
-  needing `std/iter` / `std/map` / … falsely reads `ast`.
+  needing `std/iter` / `std/map` / … falsely reads `refused`.
 
 **And a green `ir` verdict says nothing about runtime correctness.** Differential
 probing (native `-interp` exit code vs the self-host-IR-compiled binary's) found

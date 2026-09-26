@@ -19,7 +19,7 @@ import "./wasm_ir";
 import "./asmcore";
 
 function main(): i32 {
-    // `-decide`: print the routing verdict ("ir" / "ast") instead of emitting —
+    // `-decide`: print the routing verdict ("ir" / "refused") instead of emitting —
     // the COMPONENT-mode sibling of wasm_run's probe. Mode 0 has been swept over
     // the harvested corpus since #5977; component mode never had a probe at all,
     // so its decline set was unmeasured, and those declines are exactly what an
@@ -39,7 +39,7 @@ function main(): i32 {
         // from wasm_ir rather than restated so the probe cannot drift from the
         // emitter it describes.
         var plm: parser.Module = wasm_ir.route_normalized(mwb);
-        if (wasm_ir.ir_route_ok(plm, true, true)) { print("ir\n"); } else { print("ast\n"); }
+        if (wasm_ir.ir_route_ok(plm, true, true)) { print("ir\n"); } else { print("refused\n"); }
         return 0;
     }
     // Still the AST entry: rerouting the wasm drivers IR-or-error is a separate

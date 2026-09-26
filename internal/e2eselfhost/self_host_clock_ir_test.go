@@ -26,7 +26,7 @@ var clockIRCases = []struct {
 }
 
 // TestSelfHostClockIRX86_64 proves each case (a) routes through the IR path
-// (asm_pathprobe_run prints "ir", not "ast") and (b) compiles + runs to exit 7
+// (asm_pathprobe_run prints "ir", not "refused") and (b) compiles + runs to exit 7
 // through the production x86-64 driver (asm_run, IR default-on), with the
 // emitted asm calling the clock helper.
 func TestSelfHostClockIRX86_64(t *testing.T) {
