@@ -1478,6 +1478,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"loop-lambda-break-ok", "function f(): i32 { loop { var g: () => i32 = (): i32 => { while (true) { break; } return 1; }; var x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// A bare `{ … }` statement exits when its body does; the self-host
+		// parses it as a scoping `if (true)` with no else.
+		{"return-nested-block-ok", "function f(): i32 { { { return 1; } } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"missing-return-nested-block", "function f(c: boolean): i32 { { if (c) { return 1; } } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		// void return type: an empty body is fine (no E052 — falling off the
 		// end is the normal exit), a bare `return;` is fine, and returning a
 		// value is E002. Mirrors the Go checker's special handling of void.
@@ -1965,6 +1969,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"letelse-source-nonenum", "function main(): i32 { var n: i32 = 5; let Has(v) = n else { return 0; }; return 0; }\n", []string{"E022"}},
 		{"letelse-source-struct", "struct P { x: i32 }\nfunction main(): i32 { var p: P = P { x: 1 }; let Has(v) = p else { return 0; }; return 0; }\n", []string{"E022"}},
 		{"letelse-else-nondiverge", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { var x: i32 = 1; }; return 0; }\n", []string{"E022"}},
+		// A `break` or `continue` diverges as well as a `return` does.
+		{"letelse-else-break-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var os: O[] = [Has(1), Nil]; var t: i32 = 0; for o in os { let Has(v) = o else { break; }; t = t + v; } return t; }\n", nil},
+		{"letelse-else-continue-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var os: O[] = [Has(1), Nil]; var t: i32 = 0; for o in os { let Has(v) = o else { continue; }; t = t + v; } return t; }\n", nil},
+		{"letelse-else-nested-block-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { { return 0; } }; return v; }\n", nil},
 		{"letelse-else-loop-diverge-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { loop { } }; return v; }\n", nil},
 		{"iflet-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; if let Has(v) = o { return v; } return 0; }\n", nil},
 		{"letelse-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { var o: O = Nil; let Has(v) = o else { return 0; }; return v; }\n", nil},
