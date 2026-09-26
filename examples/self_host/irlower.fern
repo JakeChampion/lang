@@ -16129,6 +16129,7 @@ function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState, returning: boolean)
         if (tek == "i64") { ts = lower_i64(tup.elements[tj], ts); }
         else { ts = lower_expr(tup.elements[tj], ts); }
         if (!ts.ok) { return ts; }
+        if (tuple_field_share_kind(tup.elements[tj]).len() > 0) { ts = ts.retain_tos("tuplit-field-elem"); }
         // Construction-store retain, the tuple sibling of the struct
         // literal's fav_alias_inc: an element that is a bare ident naming
         // an rc-tracked ARRAY or STRING local is a SECOND owner once
@@ -16161,6 +16162,25 @@ function lower_expr_tuple(tup: ast.ExprTuple, s: LowerState, returning: boolean)
         tj = tj + 1;
     }
     return ts.emit(ir.op_tuple_make_k(tn, tkinds));
+}
+
+// tuple_field_share_kind: the release a tuple literal's element owes when it is
+// a struct ARRAY field read (#10203, #10314) — "S" for a string[] field (the
+// rc-guarded __fern_str_arr_free), "a" for any other array (one buffer dec), ""
+// otherwise. The literal retains exactly these elements, so the tuple holds a
+// counted reference rather than aliasing the struct's buffer. A function of the
+// node and its checker stamp alone, so the literal's retain, the tuple local's
+// kinds and a returned tuple's ARRF: flags cannot disagree.
+function tuple_field_share_kind(e: ast.Expr): string {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field) || !is_array_type_name(fa.ty)) { return ""; }
+            if (fa.ty == "string[]") { return "S"; }
+            return "a";
+        },
+        _ => {}
+    }
+    return "";
 }
 
 // lower_expr_array lowers an array literal, choosing the element width from the tracked type.
@@ -21163,10 +21183,10 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                 // A discarded call to a TUPLE-fresh-ret free function
                                 // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
                                 // tuple temps): every return is a direct tuple literal,
-                                // so the result is a fresh sole-owner box. Deep-drop
-                                // the '1'-flagged positions (a fresh scalar-element
-                                // array buffer in EVERY return — tuple_ret_arrfree_
-                                // flags) then free the box; '0' positions (scalars,
+                                // so the result is a fresh sole-owner box. Release
+                                // the flagged positions (a counted buffer in EVERY
+                                // return — tuple_ret_arrfree_flags; '2' a string[])
+                                // then free the box; '0' positions (scalars,
                                 // aliased idents, pointer elements) are left to their
                                 // owners / the safe-leak floor.
                                 var dtrf: string = discarded_tuple_ret_flags(s, dcid.name);
@@ -21177,10 +21197,12 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                     se = se.emit(ir.op_store_local(tcslot));                     // stash box
                                     var tck: i32 = 0;
                                     while (tck < dtrf.len()) {
-                                        if (dtrf[tck] == b'1') {
+                                        if (dtrf[tck] == b'1' || dtrf[tck] == b'2') {
+                                            var dth: string = "__fern_rc_dec";
+                                            if (dtrf[tck] == b'2') { dth = "__fern_str_arr_free"; }
                                             se = se.emit(ir.op_load_local(tcslot));              // box
                                             se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
-                                            se = se.release_tos("__fern_rc_dec", "discard-tupret-elem"); // free the fresh buffer
+                                            se = se.release_tos(dth, "discard-tupret-elem");     // release the counted buffer
                                             se = se.emit(ir.op_drop());
                                         }
                                         tck = tck + 1;
@@ -21727,11 +21749,11 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     sb = mark_enum_arr_share(v, se, sb);
     // A tuple-fresh-ret CALL binding whose callee carries "ARRF:" flags:
     // record the flagged positions as element kinds, so the "TUP:" sweep's
-    // give-back (and the loop-rebind reclaim store) frees the arrays the
-    // returned box sole-owns before the box dec — the bound-result half of
-    // the #4365 discarded-call deep drop. Flag '1' is a fresh scalar-element
-    // array on every return path, the arr-box __fern_rc_dec shape ('a');
-    // everything else stays '.' (leak-mode floor).
+    // give-back (and the loop-rebind reclaim store) releases the counted buffers
+    // the returned box holds before the box dec — the bound-result half of
+    // the #4365 discarded-call deep drop. Flag '1' is the arr-box __fern_rc_dec
+    // shape ('a'), flag '2' a string[] field read ('S'); everything else stays
+    // '.' (leak-mode floor).
     //
     // Gated on "TUPELEMOK:" exactly like the literal-init kinds below: an
     // element extracted to a NEW owner in THIS body (`return r.1`,
@@ -21984,6 +22006,8 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                         },
                         _ => {}
                     }
+                    var fk: string = tuple_field_share_kind(tinit.elements[tki]);
+                    if (fk.len() > 0) { kc = fk; tkany = true; }
                     tk = tk + kc;
                     tki = tki + 1;
                 }
@@ -22299,12 +22323,14 @@ match (v.init) {
         match (tfc.callee) {
             ast.ExprIdent(tfcid) => {
                 var tff: string = tuple_ret_flags_of(sb.frame.sigs.tuple_fresh_ret_fns, tfcid.name);
-                if (util.contains(tff, "1")
+                if ((util.contains(tff, "1") || util.contains(tff, "2"))
                     && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
                     var tfk: string = "";
                     var tfi: i32 = 0;
                     while (tfi < tff.len()) {
-                        if (tff[tfi] == b'1') { tfk = tfk + "a"; } else { tfk = tfk + "."; }
+                        if (tff[tfi] == b'1') { tfk = tfk + "a"; }
+                        else if (tff[tfi] == b'2') { tfk = tfk + "S"; }
+                        else { tfk = tfk + "."; }
                         tfi = tfi + 1;
                     }
                     sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + tfk);
@@ -28738,6 +28764,7 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         else if (kinds[ki] != b'.') {
             var helper: string = "__fern_rc_dec";
             if (kinds[ki] == b's') { helper = "__fern_str_free"; }
+            if (kinds[ki] == b'S') { helper = "__fern_str_arr_free"; }
             st = emit_load_tuple_path(st, slot, [ki]);
             st = st.emit(ir.op_call_direct(helper, 1));
             st = st.emit(ir.op_drop());
@@ -28770,8 +28797,8 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
 // ASSIGN-form rebind may replay against a box a DIFFERENT writer filled, with at
 // least one such position.
 //
-// 'a' qualifies unconditionally — an array element's release is one type-fixed
-// rc_dec whichever writer stored it. 's' qualifies because it is only ever
+// 'a' and 'S' qualify unconditionally — an array element's release is one
+// type-fixed rc-guarded call whichever writer stored it. 's' qualifies because it is only ever
 // recorded under the "TUPSTRW:" writer agreement (assigns_str_pos_owned), which
 // is exactly the proof that every writer left a counted owned string there. 't'
 // does not: a struct position's release is a deep field drop keyed on the var
@@ -28780,7 +28807,7 @@ function tup_kinds_rebind_safe(kinds: string): boolean {
     var any: boolean = false;
     var i: i32 = 0;
     while (i < kinds.len()) {
-        if (kinds[i] == b'a' || kinds[i] == b's') { any = true; }
+        if (kinds[i] == b'a' || kinds[i] == b'S' || kinds[i] == b's') { any = true; }
         else if (kinds[i] != b'.') { return false; }
         i = i + 1;
     }
@@ -35375,8 +35402,9 @@ function tuple_type_is_all_scalar(t: string): boolean {
 // admissible to the fresh-scalar-tuple ("TUP:") class under the binding's tuple
 // TYPE annotation `t`: a SCALAR-annotated position may hold ANY expression (the
 // type proves the element references nothing), and every non-scalar position
-// must hold a bare IDENT — the shape whose construction retain the
-// element-kinds walk gives back. A non-ident rc element (an array literal, a
+// must hold a bare IDENT or a retained array field read (tuple_field_share_kind)
+// — the shapes whose construction retain the element-kinds walk gives back.
+// Any other rc element (an array literal, a
 // fresh concat, a union-typed call) belongs to the deep "TUPRC:"/"TUPRCS:"
 // classes, and admitting it here would put one slot in BOTH classes — the
 // double box dec the recorded #7226 negative result measured — so that refusal
@@ -35395,7 +35423,7 @@ function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr): boolean {
                 if (!is_scalar_type_name(tag)) {
                     var okid: boolean = false;
                     match (tl.elements[n]) { ast.ExprIdent(_) => { okid = true; }, _ => {} }
-                    if (!okid) { return false; }
+                    if (!okid && tuple_field_share_kind(tl.elements[n]).len() == 0) { return false; }
                 }
                 n = n + 1;
             }
@@ -38527,10 +38555,24 @@ pub function tuple_ret_flags_of(entries: string[], name: string): string {
     return "";
 }
 
+// tuple_ret_elem_shape: one returned tuple element's shape character — 'a' for
+// a direct array literal (a fresh buffer the box sole-owns), 'f' / 'S' for an
+// array / string[] field read the literal retained (tuple_field_share_kind), 's'
+// for anything else.
+function tuple_ret_elem_shape(e: ast.Expr): string {
+    match (e) {
+        ast.ExprArray(_) => { return "a"; },
+        _ => {}
+    }
+    var fk: string = tuple_field_share_kind(e);
+    if (fk == "a") { return "f"; }
+    if (fk == "S") { return "S"; }
+    return "s";
+}
+
 // tuple_ret_local_init_shape: the collect_tuple_ret_shapes-style shape string
-// of `name`'s declaration literal ('a' for a direct array element, 's'
-// otherwise) — "" when the declaration is missing or not a direct tuple
-// literal. Feeds both the frame-fresh admission and the ARRF: flags for a
+// of `name`'s declaration literal (tuple_ret_elem_shape per element) — "" when
+// the declaration is missing or not a direct tuple literal. Feeds both the frame-fresh admission and the ARRF: flags for a
 // `return t` path.
 function tuple_ret_local_init_shape(stmts: ast.Stmt[], name: string): string {
     for stmt in stmts {
@@ -38542,10 +38584,7 @@ function tuple_ret_local_init_shape(stmts: ast.Stmt[], name: string): string {
                             var sh: string = "";
                             var k: i32 = 0;
                             while (k < tl.elements.len()) {
-                                match (tl.elements[k]) {
-                                    ast.ExprArray(_) => { sh = sh + "a"; },
-                                    _ => { sh = sh + "s"; }
-                                }
+                                sh = sh + tuple_ret_elem_shape(tl.elements[k]);
                                 k = k + 1;
                             }
                             return sh;
@@ -38736,9 +38775,8 @@ function map_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
-// collect_tuple_ret_shapes: one shape string per admitted return in the body
-// — 'a' at position k for a direct ExprArray element (a fresh buffer the
-// returned box sole-owns), 's' for anything else. A bare `return t` of a
+// collect_tuple_ret_shapes: one shape string per admitted return in the body,
+// tuple_ret_elem_shape per position. A bare `return t` of a
 // frame-fresh local contributes the shape of t's DECLARATION literal (the
 // same freshness proof, one binding removed). Feeds the ARRF: flags.
 function collect_tuple_ret_shapes(stmts: ast.Stmt[], body: ast.Stmt[], acc: string[]): string[] {
@@ -38751,10 +38789,7 @@ function collect_tuple_ret_shapes(stmts: ast.Stmt[], body: ast.Stmt[], acc: stri
                         var sh: string = "";
                         var k: i32 = 0;
                         while (k < tl.elements.len()) {
-                            match (tl.elements[k]) {
-                                ast.ExprArray(_) => { sh = sh + "a"; },
-                                _ => { sh = sh + "s"; }
-                            }
+                            sh = sh + tuple_ret_elem_shape(tl.elements[k]);
                             k = k + 1;
                         }
                         a = a.append(sh);
@@ -38790,10 +38825,12 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 }
 
 // tuple_ret_arrfree_flags: the ARRF: per-position flags for a tuple-fresh-ret
-// function — flag k is '1' iff EVERY return literal has a direct array literal
-// at k (fresh, so the discarded box sole-owns it — an IDENT there in any
-// return aliases a live local and keeps the position '0') AND the return-type
-// annotation types k a scalar-element array. Any 8-byte SCALAR element (i64 /
+// function. Flag k is '1' when EVERY return holds a counted buffer at k that
+// one rc dec releases: a direct array literal (fresh, so the box sole-owns it)
+// where the return-type annotation types k a scalar-element array, or an array
+// field read the literal retained. It is '2' when every return holds a retained
+// string[] field read, released by __fern_str_arr_free. An IDENT there in any
+// return aliases a live local and keeps the position '0'. Any 8-byte SCALAR element (i64 /
 // u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
 // wide scalar would shift the later positions on wasm's 4-byte slots. Pointer
 // elements (string / struct / nested tuple / Option) occupy uniform slots, so
@@ -38811,10 +38848,18 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
     while (k < n) {
         var tag: string = tuple_type_elem_tag(fn.ret_type, k);
         if (tag == "" || tag == "i64" || tag == "u64" || tag == "f64" || tag == "f32") { return ""; }
-        var all_arr: boolean = true;
+        var n_lit: i32 = 0;
+        var n_fld: i32 = 0;
+        var n_sfld: i32 = 0;
         var sj: i32 = 0;
-        while (sj < shapes.len()) { if (shapes[sj][k] != b'a') { all_arr = false; } sj = sj + 1; }
-        if (all_arr && tag_is_scalar_elem_array(tag)) { flags = flags + "1"; }
+        while (sj < shapes.len()) {
+            if (shapes[sj][k] == b'a') { n_lit = n_lit + 1; }
+            if (shapes[sj][k] == b'f') { n_fld = n_fld + 1; }
+            if (shapes[sj][k] == b'S') { n_sfld = n_sfld + 1; }
+            sj = sj + 1;
+        }
+        if (n_sfld == shapes.len()) { flags = flags + "2"; }
+        else if (n_lit + n_fld == shapes.len() && (n_lit == 0 || tag_is_scalar_elem_array(tag))) { flags = flags + "1"; }
         else { flags = flags + "0"; }
         k = k + 1;
     }
@@ -47833,7 +47878,10 @@ function fieldmove_expr(e: ast.Expr, name: string, sty: string, structs: StructT
         },
         ast.ExprTuple(t) => {
             for el in t.elements {
-                if (fieldmove_is_move_value(el, name, sty, structs, borrowable)) { return true; }
+                // An array field read the literal retains is a counted share,
+                // as for the struct literal below.
+                if (tuple_field_share_kind(el).len() == 0
+                    && fieldmove_is_move_value(el, name, sty, structs, borrowable)) { return true; }
                 if (fieldmove_expr(el, name, sty, structs, borrowable)) { return true; }
             }
             return false;
@@ -64127,7 +64175,20 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
             return a;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { a = strarrfld_scan(el, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+            for el in t.elements {
+                // A string[] field read the literal retains is a counted
+                // reference, not an alias: the field keeps its element walk.
+                match (el) {
+                    ast.ExprFieldAccess(tfa) => {
+                        if (tuple_field_share_kind(el) == "S") {
+                            a = strarrfld_scan(tfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
+                            continue;
+                        }
+                    },
+                    _ => {}
+                }
+                a = strarrfld_scan(el, structs, binds, str_fresh, strarr_producers, forwarders, a);
+            }
             return a;
         },
         // A map literal and an f-string carry ordinary sub-expressions, which
