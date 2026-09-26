@@ -331,6 +331,12 @@
 # pass; drivers that do not link that backend moved by the same 1.3-3.5% of
 # drift in the same run, so about half of each refreshed delta is drift and
 # the rest is the backend. Numbers pasted from driver-sizes' own report.
+# 2026-09-26 — checker_modload_run alone, 2663732 -> 2802364 (+5.2%). The
+# front end already linked +4.9% on #10321's head; #10328's literal-match
+# desugar (the cached scrutinee, boolean arms, the value-position block) and
+# the checker's function-typed value local add the last ~8 KB. The other
+# eleven rows moved +1.9-4.2% of drift in the same run and keep their rows.
+# Number pasted from driver-sizes' own report.
 fern.fern 12968425
 asm_load_run.fern 9264457
 asm_modload_run.fern 8836577
@@ -342,4 +348,4 @@ wasm_runio_run.fern 7811744
 asm_pathprobe_run.fern 7026808
 asm_ir_elig_run.fern 5882776
 irlower_run.fern 6810800
-checker_modload_run.fern 2663732
+checker_modload_run.fern 2802364

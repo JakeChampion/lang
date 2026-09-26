@@ -38,12 +38,12 @@ without re-deriving the analysis.
 ## Progress (post-monomorphisation `-ir-probe` on `iter.sum(iter.of(xs))`)
 
 Baseline (no fixes): `iter__ArrayIter__T.next: BAIL` (bogus `[T]` clone),
-`module: AST`. After the layers below, the probe reads:
+`module: refused`. After the layers below, the probe reads:
 
 ```
 iter__sum__iter__ArrayIter[i32]: ir        <- FIXED (was BAIL / bogus [T])
 iter__ArrayIter__i32.next: BAIL lower       <- the one remaining blocker
-module: AST
+module: refused
 ```
 
 i.e. the whole `[T]`→`[i32]` cascade is gone and `sum`'s clone lowers; only the

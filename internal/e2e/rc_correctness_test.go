@@ -7516,6 +7516,277 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8719: a `?` inside a construction leaves through the exit sweep,
+		// which sees named locals only, so the operands the literal had
+		// already staged — a fresh temp, a moved local, an array, tuple or
+		// payload element — were abandoned on Err. The field placed AFTER
+		// the `?` is the analysis half: its move was claimed for the whole
+		// statement, so the sweep skipped a local nothing had consumed.
+		// Every shape runs down both paths. Before: 2240 bytes live on
+		// arm64 and wasm, clean on each Ok path.
+		name: "try_failure_edge_releases_staged_operands",
+		src: `
+struct Pair { a: i32[], b: i32 }
+enum Two { Both(i32[], i32), Neither }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function mk(c: i32): i32[] { return [c, c + 1, c + 2]; }
+
+@noinline
+function field_temp(c: i32): Result[i32, i32] {
+    var p: Pair = Pair { a: [1, 2, 3], b: g(c)? };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function field_moved_before(c: i32): Result[i32, i32] {
+    var x: i32[] = mk(c);
+    var p: Pair = Pair { a: x, b: g(c)? };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function field_moved_after(c: i32): Result[i32, i32] {
+    var x: i32[] = mk(c);
+    var p: Pair = Pair { b: g(c)?, a: x };
+    return Ok(p.a[0] + p.b);
+}
+
+@noinline
+function array_elem(c: i32): Result[i32, i32] {
+    var xs: i32[][] = [mk(c), [g(c)?]];
+    return Ok(xs[0][0] + xs[1][0]);
+}
+
+@noinline
+function tuple_elem(c: i32): Result[i32, i32] {
+    var t: (i32[], i32) = (mk(c), g(c)?);
+    return Ok(t.0[0] + t.1);
+}
+
+@noinline
+function enum_payload(c: i32): Result[i32, i32] {
+    var e: Two = Both(mk(c), g(c)?);
+    match (e) {
+        Both(a, b) => { return Ok(a[0] + b); },
+        Neither => { return Ok(0); }
+    }
+}
+
+@noinline
+function in_loop(c: i32): Result[i32, i32] {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var p: Pair = Pair { a: mk(i), b: g(c)? };
+        acc = acc + p.a[0] + p.b;
+        i = i + 1;
+    }
+    return Ok(acc);
+}
+
+function run(k: i32, c: i32): i32 {
+    var r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = field_temp(c); }
+    if (k == 1) { r = field_moved_before(c); }
+    if (k == 2) { r = field_moved_after(c); }
+    if (k == 3) { r = array_elem(c); }
+    if (k == 4) { r = tuple_elem(c); }
+    if (k == 5) { r = enum_payload(c); }
+    if (k == 6) { r = in_loop(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var k: i32 = 0;
+        while (k < 7) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 760) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8719: the argument half. An argument evaluated ahead of a later
+		// `?` — a temp for an `own` or a borrowed parameter, an `own`
+		// parameter passed on, a closure call's temp — is released when the
+		// `?` leaves. An `own` parameter passed AFTER the `?` is the
+		// walkDominatingExprs half: its move is not claimed past the exit.
+		// Before: 2240 bytes live on arm64 and wasm.
+		name: "try_failure_edge_releases_pending_arguments",
+		src: `
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function mk(c: i32): i32[] { return [c, c + 1, c + 2]; }
+
+@noinline
+function take(own a: i32[], r: i32): i32 { return a[0] + r; }
+
+@noinline
+function take_last(r: i32, own a: i32[]): i32 { return a[0] + r; }
+
+@noinline
+function peek(a: i32[], r: i32): i32 { return a[0] + r; }
+
+@noinline
+function own_temp(c: i32): Result[i32, i32] {
+    return Ok(take(mk(c), g(c)?));
+}
+
+@noinline
+function own_param_before(own x: i32[], c: i32): Result[i32, i32] {
+    return Ok(take(x, g(c)?));
+}
+
+@noinline
+function own_param_after(own x: i32[], c: i32): Result[i32, i32] {
+    return Ok(take_last(g(c)?, x));
+}
+
+@noinline
+function borrowed_temp(c: i32): Result[i32, i32] {
+    return Ok(peek(mk(c), g(c)?));
+}
+
+@noinline
+function closure_temp(c: i32): Result[i32, i32] {
+    var f: (i32[], i32) => i32 = (a: i32[], r: i32): i32 => { return a[0] + r; };
+    return Ok(f(mk(c), g(c)?));
+}
+
+@noinline
+function nested(c: i32): Result[i32, i32] {
+    var xs: i32[][] = [mk(c), [take(mk(c), g(c)?)]];
+    return Ok(xs[0][0] + xs[1][0]);
+}
+
+function run(k: i32, c: i32): i32 {
+    var r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = own_temp(c); }
+    if (k == 1) { r = own_param_before(mk(c), c); }
+    if (k == 2) { r = own_param_after(mk(c), c); }
+    if (k == 3) { r = borrowed_temp(c); }
+    if (k == 4) { r = closure_temp(c); }
+    if (k == 5) { r = nested(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var k: i32 = 0;
+        while (k < 6) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 610) + __rc_underflow_count();
+}`,
+	},
+	{
+		// #8719: string operands. A string field staged ahead of a `?`,
+		// and the left operand a concat or comparison stashed, are released
+		// on Err; the extracted string payload a borrowing string op reads is
+		// released on Ok (isOwnedStringTemp's TryOp case). Before: 3360
+		// bytes live on arm64 and wasm, from both paths.
+		name: "try_failure_edge_releases_string_operands",
+		src: `
+import "core/int";
+import "std/i32";
+import "std/string";
+
+struct Named { s: string, b: i32 }
+
+@noinline
+function g(c: i32): Result[i32, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c * 2);
+}
+
+@noinline
+function gs(c: i32): Result[string, i32] {
+    if (c == 0) { return Err(7); }
+    return Ok(c.to_string() + " is past the inline-string threshold");
+}
+
+@noinline
+function mks(c: i32): string { return c.to_string() + " is also past the inline threshold"; }
+
+@noinline
+function string_field(c: i32): Result[i32, i32] {
+    var n: Named = Named { s: mks(c), b: g(c)? };
+    return Ok(n.s.len() + n.b);
+}
+
+@noinline
+function concat_left(c: i32): Result[i32, i32] {
+    var s: string = mks(c) + gs(c)?;
+    return Ok(s.len());
+}
+
+@noinline
+function concat_chain(c: i32): Result[i32, i32] {
+    var s: string = mks(c) + "-" + gs(c)?;
+    return Ok(s.len());
+}
+
+@noinline
+function compare(c: i32): Result[i32, i32] {
+    if (mks(c) == gs(c)?) { return Ok(1); }
+    return Ok(2);
+}
+
+function run(k: i32, c: i32): i32 {
+    var r: Result[i32, i32] = Err(0);
+    if (k == 0) { r = string_field(c); }
+    if (k == 1) { r = concat_left(c); }
+    if (k == 2) { r = concat_chain(c); }
+    if (k == 3) { r = compare(c); }
+    match (r) {
+        Ok(v) => { return v; },
+        Err(e) => { return e; }
+    }
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var k: i32 = 0;
+        while (k < 4) {
+            acc = acc + run(k, i % 2);
+            k = k + 1;
+        }
+        i = i + 1;
+    }
+    return (acc - 2120) + __rc_underflow_count();
+}`,
+	},
+	{
 		// #8441: every outer rebind of a captured reference stranded the
 		// value it superseded. BoxMutatedCaptures rewrites `s` into a
 		// shared one-element cell and the store went through it raw — no

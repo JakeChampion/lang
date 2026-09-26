@@ -8,13 +8,12 @@ import "testing"
 // element type so the call dispatches the concrete type's `.to_string()`
 // (string identity, a struct field read), NOT the i32 runtime helper.
 //
-// The x86-64 IR driver already monomorphised via module_with_builtins; the
-// wasm IR driver skipped that prep, so `.to_string()` on a string element
-// defaulted to `__fern_i32_to_str` and returned a corrupt string. The fix
-// monomorphises on the wasm IR path too. These cases cover both element
-// types (string identity + a `Tag` struct field) and both backends; each
-// returns a small deterministic int (<= 125, wasm exit-code safe),
-// oracle-checked against the interpreter.
+// The wasm backend skipped the monomorphisation x86-64 already ran, so
+// `.to_string()` on a string element defaulted to `__fern_i32_to_str` and
+// returned a corrupt string. These cases cover both element types (string
+// identity + a `Tag` struct field) and both backends; each returns a small
+// deterministic int (<= 125, wasm exit-code safe), oracle-checked against the
+// interpreter.
 const genericDisplayMethodIRPrelude = `trait Display { function to_string(self: Self): string; }
 impl Display for string { function to_string(self: Self): string { return self; } }
 struct Tag { name: string }
