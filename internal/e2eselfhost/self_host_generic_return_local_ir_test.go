@@ -5,9 +5,10 @@ import "testing"
 // genericReturnLocalCases match a generic enum value that came back through a
 // generic function whose return type names its type parameters. The enum pass
 // has to bind those parameters from the call's arguments to type the match,
-// whether the call is the scrutinee itself, the initialiser of a local, nested,
-// or reached through a tuple element (#10330). Each exit code is the native
-// interpreter's.
+// whether the call is the scrutinee itself, the initialiser of a local, a
+// for-loop iterable, nested, or reached through a tuple element (#10330). Each
+// exit code is the native interpreter's. TestMain sets FERN_SEM_IR_STRICT, so a
+// regression is reported first by the typed lowering (`unknown variant`).
 var genericReturnLocalCases = []struct {
 	name     string
 	src      string
@@ -42,6 +43,19 @@ function main(): i32 {
         Neither => { return 50; }
     }
 }`, 4},
+	{"for_over_identity_call", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
+function whole[C](c: C): C { return c; }
+function main(): i32 {
+    var ts: Tree[string][] = [Leaf("ab"), Leaf("cde")];
+    var n: i32 = 0;
+    for t in whole(ts) {
+        match (t) {
+            Leaf(v) => { n = n + v.len(); },
+            Node(l, r) => { n = n + 50; }
+        }
+    }
+    return n;
+}`, 5},
 	{"nested_identity_then_inner_match", `enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 function whole[C](c: C): C { return c; }
 function main(): i32 {
