@@ -1,27 +1,19 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // coreIntParseIRCases exercise core/int's radix parse direction
 // (parse_int_radix + __radix_digit) through the self-host IR path on x86-64 +
-// wasm (the `core/int` row was fully unaudited). The single-program driver
-// resolves no imports, so the two functions are inlined verbatim from
-// `internal/stdlib/core/int.fern` (no reserved type names involved). This
-// verifies the constructs the parse direction lowers to compile on the IR path:
-// `Option[i32]` `Some`/`None` returns with a payload-binding `match`, string
-// indexing (`s[i]`) with char-class comparisons, a multiply-accumulate `while`
-// loop, sign handling, and negation. Each program returns a small deterministic
-// int (<= 126), pinned to the `"ir"` path; expectations are oracle-checked
-// against the native interpreter. The `to_string` direction stays on the AST
-// path (it pokes raw memory via `__alloc_u8` / `__memcpy` / `usize`), mirroring
-// the std/u64 `to_string` caveat. FEATURE-AUDIT core/int row (parse direction).
+// wasm (the `core/int` row was fully unaudited). The two functions are inlined
+// verbatim from `internal/stdlib/core/int.fern` rather than imported (no
+// reserved type names involved). This verifies the constructs the parse
+// direction lowers to compile on the IR path: `Option[i32]` `Some`/`None`
+// returns with a payload-binding `match`, string indexing (`s[i]`) with
+// char-class comparisons, a multiply-accumulate `while` loop, sign handling, and
+// negation. Each program returns a small deterministic int (<= 126);
+// expectations are oracle-checked against the native interpreter. The
+// `to_string` direction is not covered (it pokes raw memory via `__alloc_u8` /
+// `__memcpy` / `usize`), mirroring the std/u64 `to_string` caveat. FEATURE-AUDIT core/int row (parse direction).
 const coreIntParseIRPrelude = `function __radix_digit(c: i32): i32 {
     if (c >= 48 && c <= 57)  { return c - 48; }
     if (c >= 97 && c <= 122) { return c - 87; }
@@ -84,77 +76,17 @@ func coreIntParseIRSrc(mainBody string) string {
 	return coreIntParseIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostCoreIntParseIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, with the routing pinned to the "ir" path.
-func TestSelfHostCoreIntParseIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range coreIntParseIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(coreIntParseIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostCoreIntParseIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostCoreIntParseIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host core/int parse wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range coreIntParseIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(coreIntParseIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "core_int_parse_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("core/int parse wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostCoreIntParseIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostCoreIntParseIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range coreIntParseIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, coreIntParseIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

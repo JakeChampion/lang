@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // coreIntRadixIRCases pin core/int's int_to_string_radix (i32 -> base-N string)
 // on the self-host IR path (x86-64 + wasm). This is the to-string direction the
@@ -15,14 +8,13 @@ import (
 // NOT use __memcpy / usize (unlike int_to_string / __int_to_string_u64): it
 // builds its result with __alloc_u8 + .with + string_from_bytes_unchecked, the same
 // IR-eligible builder std/hex / std/base64 use. So it lowers through IR, and
-// these cases prove it (routing-pinned to "ir", oracle-checked against the
-// interpreter). A round-trip case threads the result back through
-// parse_int_radix (already IR-audited) to confirm the bytes are correct.
+// these cases prove it (oracle-checked against the interpreter). A round-trip
+// case threads the result back through parse_int_radix (already IR-audited) to
+// confirm the bytes are correct.
 //
-// __radix_digit / __radix_char are core/int helpers, inlined (renamed) since the
-// single-program driver resolves no imports. Each program returns a small
-// deterministic int (<= 120 for the wasm exit-code clamp, #2908). No compiler
-// change. FEATURE-AUDIT core/int row.
+// __radix_digit / __radix_char are core/int helpers, inlined (renamed) rather
+// than imported. Each program returns a small deterministic int (<= 120 for the
+// wasm exit-code clamp, #2908). No compiler change. FEATURE-AUDIT core/int row.
 const coreIntRadixIRPrelude = `function radix_digit(c: i32): i32 {
     if (c >= 48 && c <= 57)  { return c - 48; }
     if (c >= 97 && c <= 122) { return c - 87; }
@@ -106,77 +98,17 @@ func coreIntRadixIRSrc(mainBody string) string {
 	return coreIntRadixIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostCoreIntRadixIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, with the routing pinned to the "ir" path.
-func TestSelfHostCoreIntRadixIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range coreIntRadixIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(coreIntRadixIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostCoreIntRadixIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostCoreIntRadixIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host core/int radix wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range coreIntRadixIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(coreIntRadixIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "core_int_radix_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("core/int radix wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostCoreIntRadixIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostCoreIntRadixIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range coreIntRadixIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, coreIntRadixIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

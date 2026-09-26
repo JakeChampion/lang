@@ -1,31 +1,23 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
-// urlQueryIRCases exercise std/url's `query_parse` — parsing a query string into
-// a `Map[string, string[]]` (duplicate keys accumulate) — through the self-host
-// IR path on x86-64 + wasm, completing the std/url audit (after url_codec +
-// url_parse). The single-program driver resolves no imports and treats `Map { }`
-// + `string_from_bytes_unchecked` as self-host builtins, so `query_parse` + `url_decode`
-// are inlined; this verifies the constructs it lowers to compile on the IR path:
-// a `Map[string, string[]]` (string keys, string-ARRAY values) built via
-// `Map {}` / `.get` / `.insert`, the append-or-create idiom over the map's
-// `string[]` value, `Option[string[]]` `Some`/`None` `match`, `url_decode`'s
-// `u8[]` + `string_from_bytes_unchecked`, and byte scanning. Each program returns a small
-// deterministic int (kept <= 126), pinned to the `"ir"` path; expectations are
-// hardcoded, verified against the native interp + x86-64 backends. The
-// `dup-keys` case (append to an existing `string[]` map value) is the #3495
-// regression guard: it corrupts a sibling key's array on the wasm IR backend
-// (returning 22 not 21) if `op_map_set` leaves the wasm `vis`
-// RC-retain flag at 0 for a pointer value; fixed by threading value-pointerness
-// through `op_map_set`. FEATURE-AUDIT std/url row.
+// urlQueryIRCases exercise std/url's `query_parse` — parsing a query string
+// into a `Map[string, string[]]` (duplicate keys accumulate) — through the
+// self-host IR path on x86-64 + wasm, completing the std/url audit (after
+// url_codec + url_parse). `query_parse` + `url_decode` are inlined rather than
+// imported; this verifies the constructs it lowers to compile on the IR path: a
+// `Map[string, string[]]` (string keys, string-ARRAY values) built via `Map {}`
+// / `.get` / `.insert`, the append-or-create idiom over the map's `string[]`
+// value, `Option[string[]]` `Some`/`None` `match`, `url_decode`'s `u8[]` +
+// `string_from_bytes_unchecked`, and byte scanning. Each program returns a
+// small deterministic int (kept <= 126); expectations are hardcoded, verified
+// against the native interp + x86-64 backends. The `dup-keys` case (append to
+// an existing `string[]` map value) is the #3495 regression guard: it corrupts
+// a sibling key's array on the wasm IR backend (returning 22 not 21) if
+// `op_map_set` leaves the wasm `vis` RC-retain flag at 0 for a pointer value;
+// fixed by threading value-pointerness through `op_map_set`. FEATURE-AUDIT
+// std/url row.
 const urlQueryIRPrelude = `function url_hex_val(c: i32): i32 {
     if (c >= 48 && c <= 57) { return c - 48; }
     if (c >= 97 && c <= 102) { return c - 87; }
@@ -38,7 +30,7 @@ function url_decode(s: string): string {
     var i: i32 = 0;
     while (i < n) {
         var b: i32 = s[i] as i32;
-        var emit: string = slice_unchecked(s, i, i+1);
+        var emit: string = slice_unchecked(s, i, i+1).to_owned();
         var consumed: i32 = 1;
         if (b == 37 && i + 2 < n) {
             var h1: i32 = url_hex_val(s[i+1] as i32);
@@ -71,8 +63,8 @@ function query_parse(s: string): Map[string, string[]] {
                 var eq: i32 = -1;
                 var j: i32 = pair_start;
                 while (j < i) { if (s[j] == 61) { eq = j; break; } j = j + 1; }
-                if (eq >= 0) { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, eq)), url_decode(slice_unchecked(s, eq+1, i))); }
-                else { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, i)), ""); }
+                if (eq >= 0) { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, eq).to_owned()), url_decode(slice_unchecked(s, eq+1, i).to_owned())); }
+                else { m = append_pair(m, url_decode(slice_unchecked(s, pair_start, i).to_owned()), ""); }
             }
             pair_start = i + 1;
         }
@@ -115,80 +107,20 @@ var urlQueryIRCases = []struct {
 }
 
 func urlQueryIRSrc(mainBody string) string {
-	return urlQueryIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
+	return "import \"core/map\";\nimport \"std/string\";\n" + urlQueryIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostUrlQueryIRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, pinned to the "ir" path.
-func TestSelfHostUrlQueryIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range urlQueryIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(urlQueryIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostUrlQueryIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostUrlQueryIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host url-query wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range urlQueryIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(urlQueryIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "urlquery_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("url-query wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostUrlQueryIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostUrlQueryIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range urlQueryIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, urlQueryIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

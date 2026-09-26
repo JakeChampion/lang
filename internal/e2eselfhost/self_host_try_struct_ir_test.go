@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // tryStructIRCases pin the `?` (try) operator on a STRUCT-payload Result/Option
 // on the self-host IR path (#3802). `?` was IR-eligible only for scalar payloads
@@ -15,8 +8,8 @@ import (
 // AST path. lower_try now admits a leaf-safe struct payload — op_opt_payload
 // reads the pointer-width struct box exactly as the match-arm Some/Ok binding
 // does, and the `var p: P = inner?` binding types p's slot from its annotation,
-// so `p.field` resolves. Each case is routing-pinned to "ir" and value-pinned
-// against the native interpreter oracle (interp == native).
+// so `p.field` resolves. Each case is value-pinned against the native
+// interpreter oracle (interp == native).
 var tryStructIRCases = []struct {
 	name string
 	src  string
@@ -51,76 +44,17 @@ function run(n: i32): Result[i32, string] { var p: P = a(n)?; var q: P = b(n)?; 
 function main(): i32 { match (run(5)) { Ok(v) => { return v; }, Err(_) => { return 0; } } }`, 110},
 }
 
-// TestSelfHostTryStructIRX86_64 routes each case through the self-host x86-64 IR
-// driver (pinned to "ir") and asserts the native-oracle exit code.
-func TestSelfHostTryStructIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range tryStructIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src + "\n")
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "try_struct_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("try-struct %q exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostTryStructWasmIR runs the same cases through the wasm IR backend.
-func TestSelfHostTryStructWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host try-struct wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range tryStructIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "try_struct_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("try-struct wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostTryStructIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostTryStructIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range tryStructIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.src+"\n", target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }

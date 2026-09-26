@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // recEnumListIRCases pin a RECURSIVE enum used as a multi-node heap data
 // structure — a cons-list `enum List { Cons(i32, List), Nil }` whose `Cons`
@@ -21,9 +14,8 @@ import (
 // function exit. All of it already lowers, so no compiler change — this is an
 // observability pin against a regression off the IR path.
 //
-// Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
-// against the interpreter; every result stays <= 120 (the wasm exit-code clamp,
-// #2908).
+// Each case is oracle-checked against the interpreter; every result stays
+// <= 120 (the wasm exit-code clamp, #2908).
 const recEnumListIRPrelude = `enum List { Cons(i32, List), Nil }
 function sum(l: List): i32 {
     match (l) {
@@ -68,77 +60,17 @@ func recEnumListIRSrc(mainBody string) string {
 	return recEnumListIRPrelude + "\nfunction main(): i32 { " + mainBody + " }\n"
 }
 
-// TestSelfHostRecEnumListIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, with the routing pinned to the "ir" path.
-func TestSelfHostRecEnumListIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range recEnumListIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(recEnumListIRSrc(tc.main))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostRecEnumListIRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostRecEnumListIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host recursive-enum-list wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range recEnumListIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(recEnumListIRSrc(tc.main))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "rec_enum_list_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("rec-enum-list wasm IR %q = %d, want %d", tc.name, code, tc.want)
-			}
-		})
+// TestSelfHostRecEnumListIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostRecEnumListIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range recEnumListIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, recEnumListIRSrc(tc.main), target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }
