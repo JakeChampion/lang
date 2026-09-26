@@ -45879,16 +45879,16 @@ function method_get_init(v: ast.StmtVar): boolean {
     return false;
 }
 
-// map_get_box_init_ok: the receiver of a method_get_init is a Map whose value
-// type a box-only free may leave behind (optbox_shallow_payload_ok).
+// map_get_box_init_ok: the receiver of a method_get_init is a Map. The read
+// hands out a box of its own for any value type; the payload is the map's (or
+// a retain the arm binding carries), never the box's, so a box-only free is
+// the whole release.
 function map_get_box_init_ok(v: ast.StmtVar, s: LowerState): boolean {
     match (v.init) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
-                    var mt: string = get_or_recv_map_type(fa.obj, s);
-                    if (mt == "") { return false; }
-                    return optbox_shallow_payload_ok(map_value_of(mt), s.frame.structs);
+                    return is_map_type_name(get_or_recv_map_type(fa.obj, s));
                 },
                 _ => {}
             }
