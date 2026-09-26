@@ -1514,6 +1514,7 @@ function (p: Par) peek_is_literal(): boolean {
 // no change to the arms themselves.
 function (p: Par) peek_is_pat_literal(): boolean {
     if (p.peek_is_literal()) { return true; }
+    if (p.peek_keyword() == "true" || p.peek_keyword() == "false") { return true; }
     if (p.peek_punct() != "-") { return false; }
     if (p.pos + 1 < p.toks.len()) {
         var t: lexer.Token = p.toks[p.pos + 1];
@@ -3081,6 +3082,14 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
         }
         return s_match_at(scrut, marms, mkline, mkcol);
     }
+    // Every arm's test reads the scrutinee, so anything but a name is
+    // evaluated once into a local first.
+    var written: ast.Expr = scrut;
+    var lm: string = "";
+    if let ast.ExprIdent(_) = scrut {} else {
+        lm = "__lm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
+        scrut = e_ident(lm);
+    }
     var else_body: ast.Stmt[] = [];
     var i: i32 = arms.len() - 1;
     while (i >= 0) {
@@ -3109,8 +3118,12 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
     }
     if (else_body.len() == 0) { return s_unknown_at("empty literal match", mkline, mkcol); }
     // The chain replaces the match outright — there is no StmtMatch left — so
-    // hang the arms as written off its outermost `if` for `-fmt` (#7072).
-    return with_match_sugar(else_body[0], ast.MatchSugar { ...no_match_sugar(), scrut: scrut, lits: arms, line: mkline, col: mkcol });
+    // hang the arms as written off its outermost statement for `-fmt` (#7072).
+    var sugar: ast.MatchSugar = ast.MatchSugar { ...no_match_sugar(), scrut: written, lits: arms, line: mkline, col: mkcol };
+    if (lm != "") {
+        return s_if_match([s_var_at(lm, "", written, mkline, mkcol), else_body[0]], sugar);
+    }
+    return with_match_sugar(else_body[0], sugar);
 }
 
 // with_match_sugar records the match a desugar stands in for on the `if` that
@@ -4170,6 +4183,15 @@ function parse_match_expr(p: Par): IfChain {
             break;
         }
         if (p.peek_punct() == "}") { p = p.advance(); }
+        // A scrutinee build_literal_match caches puts the chain after a
+        // declaration, so the arm values go through a LOCAL as the tuple
+        // desugar's do.
+        if let ast.ExprIdent(_) = sr_expr {} else {
+            var lmval: string = "__lm" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
+            var lmvarms: ast.LitArm[] = [];
+            for la in lit_arms { lmvarms = lmvarms.append(ast.LitArm { ...la, body: value_arm_body(la.body, lmval) }); }
+            return IfChain { par: p, stmt: build_literal_match(sr_expr, lmvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: lmval };
+        }
         return IfChain { par: p, stmt: build_literal_match(sr_expr, lit_arms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: "" };
     }
     var arms: ast.MatchArm[] = [];
@@ -14232,7 +14254,7 @@ pub function is_value_local_name(name: string): boolean {
     var n: i32 = name.len();
     if (n < 6 || slice_unchecked(name, n - 2, n) != "_r") { return false; }
     var head: str = slice_unchecked(name, 0, 4);
-    return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na";
+    return head == "__tm" || head == "__sm" || head == "__nt" || head == "__na" || head == "__lm";
 }
 
 // is_value_block reports whether `e` is a value-position `{ … }` block.

@@ -73496,12 +73496,12 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
             match (c.callee) {
                 ast.ExprLambda(il) => {
                     if (c.args.len() != 0 || il.params.len() != 0) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
-                    // What the arms are SELECTED BY is walked first and
+                    // The body apart from the arm values is walked first and
                     // unconditionally (#6571) — it is independent of whether the
                     // arm VALUES are boxable, so an IIFE with a capturing lambda
                     // in its condition and plain scalar arms (the shape that
                     // bailed) is rewritten even though the boxing below declines.
-                    var (cnds, cnda) = lift_iife_conditions(il.body, fd, funcs, counter, gfns, mfuncs, structs);
+                    var (cnds, cnda) = lift_iife_body(il.body, fd, funcs, counter, gfns, mfuncs, structs);
                     if (cnda.counter > counter) {
                         var cl2: ast.Expr = ast.ExprLambda { ...il, body: cnds };
                         var ce2: ast.Expr = ast.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
@@ -73659,23 +73659,23 @@ function iife_arms_all_marked(stmts: ast.Stmt[]): boolean {
     return true;
 }
 
-// lift_iife_conditions walks what an IIFE's arms are SELECTED BY (#6571).
+// lift_iife_body lifts the lambdas in an IIFE's body except its arms' returned
+// values (#6571).
 //
-// A value-position `if`/`match` is an IIFE, and its body is STATEMENTS inside an
-// expression. Every lift path that reaches into one — the #6256 arm-value boxing
-// below, box_iife_arm_array_elems — walks the arms' returned VALUES; nothing
-// walked the CONDITION. A capturing lambda there therefore reached lower_expr
-// bare and asked for a `$clo` nothing built, bailing the module.
+// A value-position `if`/`match` or `{ … }` is an IIFE, and its body is
+// STATEMENTS inside an expression, so the expression walk stops at it. The
+// returned values belong to the #6256 arm-value boxing and
+// box_iife_arm_array_elems, and running two lifts over one node would box it
+// twice. Everything else goes through the ordinary expression lift: a
+// condition, a scrutinee, a declaration's initialiser, an assignment, an
+// expression statement. A capturing lambda left there reached lower_expr bare
+// and asked for a `$clo` nothing built, bailing the module.
 //
-// Only the condition / scrutinee is walked, and only through the ordinary
-// expression lift: the returns belong to the paths that own them, and running
-// both over the same node would box an arm value twice. On the spine that
-// reads as: StmtIf declines, so the spine hands its condition to the full lift
-// visitor and recurses the bodies through this one; StmtMatch is claimed and
-// rebuilt by hand, because declining it would put the arm GUARDS through the
-// lift too, which this walk has never done; every statement that owns a value
-// slot is claimed unchanged so those slots stay unwalked.
-function lift_iife_conditions(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
+// On the spine: a statement that declines hands its expressions to the full
+// lift visitor and recurses its bodies through this one. StmtMatch is claimed
+// and rebuilt by hand, because declining it would put the arm GUARDS through
+// the lift too, which this walk has never done.
+function lift_iife_body(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
     function ve(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) { return ilc_expr_at(x, a, fd, gfns, structs, mfuncs); }
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
@@ -73686,16 +73686,16 @@ function lift_iife_conditions(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: par
                 var ct: i32 = sr.counter;
                 var narms: ast.MatchArm[] = [];
                 for arm in mm.arms {
-                    var (abs, aba) = lift_iife_conditions(arm.body, fd, fs, ct, gfns, mfuncs, structs);
+                    var (abs, aba) = lift_iife_body(arm.body, fd, fs, ct, gfns, mfuncs, structs);
                     fs = aba.funcs; ct = aba.counter;
                     narms = narms.append(ast.MatchArm { ...arm, body: abs });
                 }
                 return (ast.StmtMatch { ...mm, scrutinee: sr.expr, arms: narms }, InlineCloAcc { funcs: fs, counter: ct }, true);
             },
-            ast.StmtVar(_) => { return (s, a, true); },
+            ast.StmtVar(_) => { return (s, a, false); },
             ast.StmtReturn(_) => { return (s, a, true); },
-            ast.StmtExpr(_) => { return (s, a, true); },
-            ast.StmtAssign(_) => { return (s, a, true); },
+            ast.StmtExpr(_) => { return (s, a, false); },
+            ast.StmtAssign(_) => { return (s, a, false); },
             ast.StmtWhile(_) => { return (s, a, true); },
             ast.StmtFor(_) => { return (s, a, true); },
             ast.StmtDefer(_) => { return (s, a, true); },
@@ -73726,7 +73726,7 @@ function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, b
 //
 // Returns only, and the caller gates it on the fn-value paths not having claimed
 // the arms — running two of these over one node would box a value twice. The
-// condition is lift_iife_conditions'.
+// condition is lift_iife_body's.
 function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: StructTab): (ast.Stmt[], InlineCloAcc) {
     function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
         match (s) {
@@ -75053,7 +75053,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     if (call.args.len() == 0 && ielam.params.len() == 0) {
                         var iebody: ast.Stmt[] = ielam.body;
                         if let ast.ExprLambda(nl) = ncallee { iebody = nl.body; }
-                        var (icrs, icra) = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
+                        var (icrs, icra) = lift_iife_body(iebody, fd, fs, ct, gfns, mfuncs, structs);
                         if (icra.counter > ct) {
                             fs = icra.funcs; ct = icra.counter;
                             ncallee = ast.ExprLambda { ...ielam, body: icrs };

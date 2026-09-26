@@ -140,8 +140,7 @@ TestSelfHostCheckerX86_64 5
 TestSelfHostClockArm64 13
 TestSelfHostClockIRX86_64 2
 TestSelfHostClosureAliasIRX86_64 2
-TestSelfHostClosureArrayIRWasm 2
-TestSelfHostClosureArrayIRX86_64 2
+TestSelfHostClosureArrayIR 2
 TestSelfHostClosureCallCensusPopulation 5
 TestSelfHostClosurePtrCaptureIRX86_64 2
 TestSelfHostCmpBranchFusion 2
