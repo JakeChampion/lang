@@ -74572,6 +74572,9 @@ function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
             ast.StmtReturn(r) => {
                 if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
             },
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && passthrough_arg_has_lambda(a.value, mfuncs)) { return true; }
+            },
             ast.StmtIf(iff) => {
                 if (iife_arms_have_lambda(iff.then_body, mfuncs)) { return true; }
                 if (iife_arms_have_lambda(iff.else_body, mfuncs)) { return true; }
@@ -74622,9 +74625,19 @@ function passthrough_arg_has_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
     return false;
 }
 
+// is_arm_value_store reports whether `a` is an arm yielding its value the way
+// the tuple / struct / nested-pattern match desugars do: by storing it into the
+// expression's value local (IfChain.value_local) rather than returning it.
+function is_arm_value_store(a: ast.StmtAssign): boolean {
+    return parser.is_value_local_name(lexical.source_name(a.target));
+}
+
 function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && lift_arg_is_fn_value(a.value, mfuncs)) { return true; }
+            },
             ast.StmtReturn(r) => {
                 if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
                 // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
