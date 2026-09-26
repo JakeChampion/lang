@@ -13511,7 +13511,10 @@ struct LuOcc { name: string, line: i32, col: i32 }
 
 struct LuVar { name: string, init: ast.Expr }
 
-struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[] }
+// LuSel is one `obj.field` selection on a bare identifier.
+struct LuSel { obj: string, field: string }
+
+struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] }
 
 // LuFn is what every verdict reads: the body's facts, its parameter names and
 // the own-func table.
@@ -13528,18 +13531,20 @@ function lu_key(line: i32, col: i32): string {
   return util.i32_to_string(line) + ":" + util.i32_to_string(col);
 }
 
+function lu_name_stmt(s: ast.Stmt, own a: string[]): string[] {
+  if let ast.StmtAssign(asg) = s { return a.append(asg.target); }
+  return a;
+}
+
+function lu_name_expr(e: ast.Expr, own a: string[]): string[] {
+  if let ast.ExprIdent(id) = e { return a.append(id.name); }
+  return a;
+}
+
 // lu_all_names is every name `st` mentions: each identifier, anywhere, and each
 // assignment target.
 function lu_all_names(st: ast.Stmt, own acc: string[]): string[] {
-  function at_stmt(s: ast.Stmt, own a: string[]): string[] {
-    if let ast.StmtAssign(asg) = s { return a.append(asg.target); }
-    return a;
-  }
-  function at_expr(e: ast.Expr, own a: string[]): string[] {
-    if let ast.ExprIdent(id) = e { return a.append(id.name); }
-    return a;
-  }
-  return astwalk.fold_stmt_nodes(st, acc, at_stmt, at_expr, astwalk.descend_all);
+  return astwalk.fold_stmt_nodes(st, acc, lu_name_stmt, lu_name_expr, astwalk.descend_all);
 }
 
 function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
@@ -13570,6 +13575,11 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
       var esc: string[] = f.escaping;
       for st in lm.body { esc = lu_all_names(st, esc); }
       return LuFacts { ...f, escaping: esc };
+    },
+    ast.ExprFieldAccess(fa) => {
+      var obj: string = ow_ident_name(fa.obj);
+      if (obj.len() == 0) { return f; }
+      return LuFacts { ...f, sels: f.sels.append(LuSel { obj: obj, field: fa.field }) };
     },
     _ => { return f; }
   }
@@ -13626,7 +13636,7 @@ function lu_call_init(fx: LuFn, name: string): boolean {
 
 // lu_unpack_init: declared once as `h.f` of a call-initialised `h`, where that is
 // the only read of `h.f` and every mention of `h` selects a field.
-function lu_unpack_init(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
+function lu_unpack_init(fx: LuFn, name: string): boolean {
   var li: LuInit = lu_init_of(fx, name);
   if (!li.ok) { return false; }
   if let ast.ExprFieldAccess(fa) = li.init {
@@ -13634,25 +13644,15 @@ function lu_unpack_init(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
     if (h.len() == 0 || !lu_call_init(fx, h)) { return false; }
     var reads: i32 = 0;
     var selections: i32 = 0;
-    for st in body {
-      reads = reads + lu_field_reads(st, h, fa.field);
-      selections = selections + lu_field_reads(st, h, "");
+    for sel in fx.facts.sels {
+      if (sel.obj == h) {
+        selections = selections + 1;
+        if (sel.field == fa.field) { reads = reads + 1; }
+      }
     }
     return reads == 1 && selections == lu_occ_count(fx, h);
   }
   return false;
-}
-
-// lu_field_reads counts the `h.field` selections in `st`, or every selection
-// on `h` when `field` is "".
-function lu_field_reads(st: ast.Stmt, h: string, field: string): i32 {
-  function at_expr(e: ast.Expr, own n: i32): i32 {
-    if let ast.ExprFieldAccess(fa) = e {
-      if (ow_ident_name(fa.obj) == h && (field.len() == 0 || fa.field == field)) { return n + 1; }
-    }
-    return n;
-  }
-  return astwalk.fold_stmt_nodes(st, 0i32, (s: ast.Stmt, own n: i32) => n, at_expr, astwalk.descend_all);
 }
 
 // lu_rename_source is the name `var name = src;` renames, when `src` is named
@@ -13667,8 +13667,8 @@ function lu_rename_source(fx: LuFn, name: string): string {
 
 // lu_admitted is the binding the last-occurrence shapes admit: one bound from a
 // call, unpacked from one, or a rename of such a binding or of a parameter.
-function lu_admitted(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
-  if (lu_call_init(fx, name) || lu_unpack_init(fx, name, body)) { return true; }
+function lu_admitted(fx: LuFn, name: string): boolean {
+  if (lu_call_init(fx, name) || lu_unpack_init(fx, name)) { return true; }
   var root: string = lu_rename_source(fx, name);
   if (root.len() == 0) { return false; }
   var seen: string[] = [name, root];
@@ -13678,7 +13678,7 @@ function lu_admitted(fx: LuFn, name: string, body: ast.Stmt[]): boolean {
     seen = seen.append(next);
     next = lu_rename_source(fx, root);
   }
-  return util.has_str(fx.params, root) || lu_call_init(fx, root) || lu_unpack_init(fx, root, body);
+  return util.has_str(fx.params, root) || lu_call_init(fx, root) || lu_unpack_init(fx, root);
 }
 
 // lu_is_last: no occurrence of the name sits after this one.
@@ -13752,7 +13752,7 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
 // lu_dies reports whether the argument `aid` (position `i` of `call`) is dead at
 // the call. `outer` is the outermost call enclosing it, when `has_outer`;
 // `is_root` says `call` is the statement's whole expression.
-function lu_dies(fx: LuFn, body: ast.Stmt[], call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite): boolean {
+function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite): boolean {
   var name: string = aid.name;
   if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) { return false; }
   var once: boolean = astwalk.count_ident_expr(call, name) == 1;
@@ -13780,7 +13780,7 @@ function lu_dies(fx: LuFn, body: ast.Stmt[], call: ast.Expr, callee: string, i: 
     },
     _ => {}
   }
-  if (site.in_loop || !once || !lu_admitted(fx, name, body)) { return false; }
+  if (site.in_loop || !once || !lu_admitted(fx, name)) { return false; }
   if (lu_is_last(fx, aid)) {
     // An enclosing call that also names x already holds it (#9879).
     return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
@@ -13790,7 +13790,7 @@ function lu_dies(fx: LuFn, body: ast.Stmt[], call: ast.Expr, callee: string, i: 
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
-function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var cname: string = ow_ident_name(c.callee);
   if (cname.len() == 0 || util.has_str(fx.params, cname) || !ow_is_own_func(fx.ofuncs, cname)) { return acc; }
   var flags: boolean[] = ow_func_flags(fx.ofuncs, cname);
@@ -13798,7 +13798,7 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
       if let ast.ExprIdent(aid) = c.args[i] {
-        if (lu_dies(fx, body, e, cname, i, aid, outer, has_outer, is_root, site)) {
+        if (lu_dies(fx, e, cname, i, aid, outer, has_outer, is_root, site)) {
           acc = acc.append(lu_key(aid.line, aid.col));
         }
       }
@@ -13841,7 +13841,7 @@ function lu_children(e: ast.Expr): ast.Expr[] {
   return out;
 }
 
-function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: boolean, site: LuSite, fx: LuFn, own acc: string[]): string[] {
   var o: ast.Expr = outer;
   var ho: boolean = has_outer;
   if let ast.ExprCall(c) = e {
@@ -13849,51 +13849,51 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, is_root: bool
     // out; a synthesised one runs in place.
     if let ast.ExprLambda(lm) = c.callee {
       if (lm.origin.len() == 0 || c.args.len() > 0) { return acc; }
-      return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, body, acc);
+      return lu_stmts(lm.body, site.in_loop, true, outer, has_outer, fx, acc);
     }
-    acc = lu_call(c, e, outer, has_outer, is_root, site, fx, body, acc);
+    acc = lu_call(c, e, outer, has_outer, is_root, site, fx, acc);
     if (!ho) { o = e; ho = true; }
   }
   for child in lu_children(e) {
-    acc = lu_expr(child, o, ho, false, site, fx, body, acc);
+    acc = lu_expr(child, o, ho, false, site, fx, acc);
   }
   return acc;
 }
 
 // lu_root walks a statement's own expression. `outer` carries an enclosing call
 // into the body of a synthesised IIFE, which native sees as one expression.
-function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
-  if (has_outer) { return lu_expr(e, outer, true, true, site, fx, body, acc); }
-  return lu_expr(e, e, false, true, site, fx, body, acc);
+function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
+  if (has_outer) { return lu_expr(e, outer, true, true, site, fx, acc); }
+  return lu_expr(e, e, false, true, site, fx, acc);
 }
 
-function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, body: ast.Stmt[], own acc: string[]): string[] {
+function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   var i: i32 = 0;
   while (i < stmts.len()) {
     var site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, in_iife: in_iife };
     match (stmts[i]) {
-      ast.StmtVar(v) => { acc = lu_root(v.init, site, outer, has_outer, fx, body, acc); },
-      ast.StmtAssign(a) => { acc = lu_root(a.value, site, outer, has_outer, fx, body, acc); },
-      ast.StmtReturn(r) => { acc = lu_root(r.value, site, outer, has_outer, fx, body, acc); },
-      ast.StmtExpr(x) => { acc = lu_root(x.value, site, outer, has_outer, fx, body, acc); },
+      ast.StmtVar(v) => { acc = lu_root(v.init, site, outer, has_outer, fx, acc); },
+      ast.StmtAssign(a) => { acc = lu_root(a.value, site, outer, has_outer, fx, acc); },
+      ast.StmtReturn(r) => { acc = lu_root(r.value, site, outer, has_outer, fx, acc); },
+      ast.StmtExpr(x) => { acc = lu_root(x.value, site, outer, has_outer, fx, acc); },
       ast.StmtIf(f) => {
-        acc = lu_root(f.cond, site, outer, has_outer, fx, body, acc);
-        acc = lu_stmts(f.then_body, in_loop, in_iife, outer, has_outer, fx, body, acc);
-        acc = lu_stmts(f.else_body, in_loop, in_iife, outer, has_outer, fx, body, acc);
+        acc = lu_root(f.cond, site, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.then_body, in_loop, in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.else_body, in_loop, in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtWhile(w) => {
-        acc = lu_root(w.cond, LuSite { ...site, in_loop: true }, outer, has_outer, fx, body, acc);
-        acc = lu_stmts(w.body, true, in_iife, outer, has_outer, fx, body, acc);
+        acc = lu_root(w.cond, LuSite { ...site, in_loop: true }, outer, has_outer, fx, acc);
+        acc = lu_stmts(w.body, true, in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtFor(fo) => {
-        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true }, outer, has_outer, fx, body, acc);
-        acc = lu_stmts(fo.body, true, in_iife, outer, has_outer, fx, body, acc);
+        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true }, outer, has_outer, fx, acc);
+        acc = lu_stmts(fo.body, true, in_iife, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
-        acc = lu_root(m.scrutinee, site, outer, has_outer, fx, body, acc);
+        acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
         for arm in m.arms {
-          if (arm.has_guard) { acc = lu_root(arm.guard, site, outer, has_outer, fx, body, acc); }
-          acc = lu_stmts(arm.body, in_loop, in_iife, outer, has_outer, fx, body, acc);
+          if (arm.has_guard) { acc = lu_root(arm.guard, site, outer, has_outer, fx, acc); }
+          acc = lu_stmts(arm.body, in_loop, in_iife, outer, has_outer, fx, acc);
         }
       },
       _ => {}
@@ -13906,13 +13906,13 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, in_iife: boolean, outer: 
 // lu_last_use_args is the E051 admission for `fn`: the keys of the local
 // arguments handed to an `own` parameter where they die.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFunc[]): string[] {
-  var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [] };
+  var facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   }
   var fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), ofuncs: ofuncs };
   var none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  return lu_stmts(fn.body, false, false, none, false, fx, fn.body, []);
+  return lu_stmts(fn.body, false, false, none, false, fx, []);
 }
 
 // ow_count_ident counts occurrences of `name` as a bare ident anywhere

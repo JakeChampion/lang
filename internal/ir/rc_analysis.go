@@ -248,6 +248,11 @@ type rcPlan struct {
 	// argument's slot once the value is on the operand stack. Filled by
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
+	// ownArgRetains marks the `var` locals handed to an explicit `own`
+	// parameter that computeOwnedArgMoves could not move — a borrowed alias,
+	// a call through a function value — so the call site retains them for the
+	// callee instead (ownArgNeedsRetain).
+	ownArgRetains map[*ast.Ident]bool
 	// fieldOwnMoves marks the `x.f` nodes this frame hands to an explicit
 	// `own` parameter or to `.with` as a MOVE out of x's box: the enclosing
 	// statement is `x = S { ...x, f: g(.., x.f, ..) }` / `x = S { ...x, f:
@@ -8964,10 +8969,19 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	}
 	deaths := b.curCallArgDies()
 	esc := checker.DeferOrLambdaNames(b.fn.Body)
+	// The `var` locals: what E051's last-use admission covers.
 	isParam := map[string]bool{}
 	for _, p := range b.fn.Params {
 		isParam[p.Name] = true
 	}
+	varLocal := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if v, ok := n.(*ast.Var); ok && !isParam[v.Name] {
+			varLocal[v.Name] = true
+		}
+		return true
+	})
+	b.rc.ownArgRetains = map[*ast.Ident]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.Call)
 		if !ok {
@@ -8977,25 +8991,25 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 		if !isID {
 			return true
 		}
-		if _, isLocal := b.locals[callee.Name]; isLocal {
-			return true // shadowed by a local — not a direct call
-		}
+		_, shadowed := b.locals[callee.Name]
 		sig, isFunc := b.info.FuncSigs[callee.Name]
-		if !isFunc {
-			return true
-		}
-		ownFlags := b.info.OwnFuncs[callee.Name]
+		ownFlags := b.calleeOwnFlags(callee.Name)
 		for i, a := range call.Args {
 			arg, isArgID := a.(*ast.Ident)
-			if !isArgID || i >= len(sig.Params) || !deaths[call][arg.Name] || esc[arg.Name] {
+			if !isArgID {
 				continue
 			}
-			explicitLocal := i < len(ownFlags) && ownFlags[i] && !isParam[arg.Name]
-			if !(explicitLocal || b.calleeParamOwnedByDefault(callee.Name, sig.Params[i], i)) || !b.frameOwnsIdent(arg.Name) {
-				continue
+			// The self-reassign occurrence is paid for by the store instead
+			// (callConsumesIdent).
+			explicitLocal := i < len(ownFlags) && ownFlags[i] && varLocal[arg.Name] && !b.rc.ownCallMoveArgs[arg]
+			movable := !shadowed && isFunc && i < len(sig.Params) && deaths[call][arg.Name] && !esc[arg.Name] &&
+				(explicitLocal || b.calleeParamOwnedByDefault(callee.Name, sig.Params[i], i)) && b.frameOwnsIdent(arg.Name)
+			if movable {
+				out[arg] = true
+				b.rc.moveSites[arg] = true
+			} else if explicitLocal {
+				b.rc.ownArgRetains[arg] = true
 			}
-			out[arg] = true
-			b.rc.moveSites[arg] = true
 		}
 		return true
 	})

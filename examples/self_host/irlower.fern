@@ -20442,10 +20442,6 @@ function own_local_transfer_in(st: ast.Stmt, s: LowerState): boolean {
     if let ast.StmtAssign(a) = st {
         if (call_owns_arg(a.value, a.target, s)) { rebind = a.target; }
     }
-    function no_lambda(e: ast.Expr): boolean {
-        if let ast.ExprLambda(_) = e { return false; }
-        return true;
-    }
     function at_expr(e: ast.Expr, own found: boolean): boolean {
         if (found) { return true; }
         if let ast.ExprCall(c) = e {
@@ -20466,7 +20462,13 @@ function own_local_transfer_in(st: ast.Stmt, s: LowerState): boolean {
         }
         return false;
     }
-    return astwalk.fold_stmt_own_pruned(st, false, at_expr, no_lambda);
+    return astwalk.fold_stmt_own_pruned(st, false, at_expr, own_transfer_descends);
+}
+
+// A lambda is lowered as a function of its own.
+function own_transfer_descends(e: ast.Expr): boolean {
+    if let ast.ExprLambda(_) = e { return false; }
+    return true;
 }
 
 function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {

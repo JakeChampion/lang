@@ -4417,11 +4417,10 @@ func rcTrackedForFlatDec(t ast.Type) bool {
 // frame's own. Where the move IS marked, nothing changes (no inc, sweep
 // skipped), so already-correct code keeps its exact rc traffic.
 //
-// A local reaches an `own` position as the self-reassign `x = f(…, x, …)`,
-// whose overwrite-dec callConsumesIdent suppresses (ownCallMoveArgs), or at a
-// last use E051 admits (#9541), which computeOwnedArgMoves moves. A local
-// neither claimed still holds this frame's reference — a borrowed alias, say —
-// so it is retained like the param case.
+// A `var` local reaches an `own` position as the self-reassign `x = f(…, x,
+// …)`, whose overwrite-dec callConsumesIdent suppresses (ownCallMoveArgs), or
+// at a last use E051 admits (#9541), which computeOwnedArgMoves moves where it
+// can and marks for this retain where it cannot (ownArgRetains).
 func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 	if !ast.RcFreeEnabled {
 		return false
@@ -4438,10 +4437,7 @@ func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 		// borrowed or owned-by-default one is covered by its own rules.
 		return p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name]
 	}
-	if _, isLocal := b.locals[id.Name]; !isLocal {
-		return false
-	}
-	return !b.rc.ownedArgMoves[id] && needsRcIncOnAlias(a, b)
+	return b.rc.ownArgRetains[id]
 }
 
 // emitBorrowedArrayOwnArgRetain buys the reference an explicit own callee
