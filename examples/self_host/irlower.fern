@@ -42269,7 +42269,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // "ARRSTRUCT:" so slot_is_reclaimable_arrstruct routes the loop-rebind + exit sweep
     // through emit_arrstruct_deep_free (counted element walk: per element the struct-field
     // deep-drop __struct_drop_<P> + struct box dec, then the outer buffer). Same gates as
-    // ARRTUP: no escape of ps itself, not reassigned, no ELEMENT alias (arrarr_row_escapes),
+    // ARRTUP: no escape of ps itself, not reassigned, no ELEMENT alias (arrstruct_row_escapes),
     // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
@@ -42281,10 +42281,13 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         // self-lookup below stays key-to-key and gets sharper for it — two
         // same-named bindings no longer share an append-built verdict.
         var asnm: string = reclaim_site_name(asts[asti]);
-        if (!(asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|')
+        var asty: string = "";
+        var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
+        if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
+        if (!marker
             && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok)
-            && !arrstruct_row_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, borrowable)
-            && !arrstruct_elem_payload_escapes(body, asnm, arrstruct_elem_type_of_decl(body, asnm, structs), structs, msites, borrowable, sfok)) {
+            && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
+            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -53489,7 +53492,7 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
 // rebind, and one sanctioned escape — the counted struct-literal field share.
 // Only the assign and var cases differ; everything else delegates, which is
 // sound because this class's own element hazards (an element alias, an element
-// field-payload extraction) are checked separately by arrarr_row_escapes and
+// field-payload extraction) are checked separately by arrstruct_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
 function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[]): boolean {
     for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok)) { return true; } }
