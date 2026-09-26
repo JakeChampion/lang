@@ -155,7 +155,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 		//	wasm trap: wasm `unreachable` instruction executed  → a real failure
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			watPath := filepath.Join(t.TempDir(), "prog.wat")
-			cmd := exec.Command(fernBin, "-target", "wasm32-wasi", "-emit", "asm", f.mainPath, stdlibRoot, "-o", watPath)
+			cmd := fixtureCompile(fernBin, "-target", "wasm32-wasi", "-emit", "asm", f.mainPath, stdlibRoot, "-o", watPath)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				failf("self-host compile failed: %v\n%s", err, out)
 				return
@@ -224,7 +224,7 @@ func TestFernFixturesSelfHostX86_64(t *testing.T) {
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("could not
@@ -270,7 +270,7 @@ func TestFernFixturesSelfHostArm64(t *testing.T) {
 		knownFile: "selfhost-arm64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := exec.Command(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
+			cmd := fixtureCompile(fernBin, "-target", "arm64-linux", f.mainPath, stdlibRoot, "-o", binPath)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				// Includes the in-process assembler's own refusal ("hit an
@@ -399,6 +399,15 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 	}
 	t.Logf("self-host %s leg: %d fixtures run (%d of them known divergences), %d skipped (%s)",
 		leg.backend, ran, expectedFail, skipped, skipReasons)
+}
+
+// fixtureCompile runs the self-host compiler under FERN_SEM_IR_STRICT, so a
+// fixture the typed path does not produce whole fails rather than keeping the
+// AST lowering.
+func fixtureCompile(fernBin string, args ...string) *exec.Cmd {
+	cmd := exec.Command(fernBin, args...)
+	cmd.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=1")
+	return cmd
 }
 
 // strictIRBailSite re-runs a FAILED compile under FERN_STRICT_IR=1 and returns

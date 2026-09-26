@@ -2179,7 +2179,8 @@ What is left, in order:
 2. Strict mode goes green over every suite. The fallback then becomes the
    error, and `FERN_SEM_IR=` loses its off column. Gated so far: every
    `internal/e2eselfhost` compile runs strict (its `TestMain`), and so do the
-   coreutils self-host builds. The semantic differential legs fail a seed
+   coreutils self-host builds and the fixture corpus on all three targets
+   (`fixtureCompile`). The semantic differential legs fail a seed
    that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
    leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
    purpose.
