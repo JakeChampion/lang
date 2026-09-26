@@ -1752,6 +1752,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-double-in-stmt", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs) + sink(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-match-then-use", "enum Lst { Cons(i32), Nil }\nfunction lsink(l: Lst): i32 { return 0; }\nfunction f(own l: Lst): i32 { var r: i32 = match (l) { Cons(h) => h, Nil => 0 }; return r + lsink(l); }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-consume-in-loop", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var i: i32 = 0; while (i < 3) { var a: i32 = sink(xs); i = i + 1; } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		// A bare block is not a branch: a consume inside one stands, however
+		// the block ends.
+		{"own-consume-in-block-then-continue", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[], c: boolean): i32 { var i: i32 = 0; while (i < 3) { i = i + 1; { var a: i32 = sink(xs); if (c) { return 1; } else { continue; } } } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"own-consume-in-block-then-return", "function sink(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[], c: boolean): i32 { var i: i32 = 0; while (i < 3) { i = i + 1; { var a: i32 = sink(xs); if (c) { return 1; } else { return 2; } } } return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
 		{"own-borrow-only-ok", "function f(own xs: i32[]): i32 { return xs[0] + xs[1]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-borrow-arg-ok", "function peek(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { var a: i32 = peek(xs); return a + peek(xs); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-single-consume-ok", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs); }\nfunction main(): i32 { return 0; }\n", nil},

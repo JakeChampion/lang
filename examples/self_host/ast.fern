@@ -361,7 +361,7 @@ pub struct StmtExpr { value: Expr, line: i32 }
 // if/else-if chain — and leave no StmtMatch behind, so without this the printer
 // had only the chain to render: `-fmt -w` wrote `var __sm4_5_d = false; …`
 // (#7065) or the bare `if (n == 0) … else …` (#7072) over the user's match.
-// Read by the printer and by the checker's block_exits, which needs the arms as
+// Read by the printer and by the checker's block_leaves, which needs the arms as
 // written to tell whether the construct can fall through (#8461); every
 // lowering pass ignores it. Empty (all three arm lists empty) on every other
 // StmtIf, which is all of them.
