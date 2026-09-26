@@ -20,10 +20,6 @@ import (
 const selfHostWasmDiffKnownFile = "selfhost-diff-wasm-known-divergences.txt"
 const selfHostSemWasmDiffKnownFile = "selfhost-diff-semantic-wasm-known-divergences.txt"
 
-// selfHostSemWasmDiffMinWholeRatio is the floor on seeds whose module produced
-// every declaration, the wasm twin of selfHostSemDiffMinWholeRatio.
-const selfHostSemWasmDiffMinWholeRatio = 0.75
-
 // selfHostWasmDiffMinRunRatio is this leg's own floor on seeds that compiled
 // and produced a COMPARABLE answer, lower than selfHostDiffMinRunRatio because
 // two endpoints reduce it here rather than one. A seed can be dropped by a
@@ -95,7 +91,7 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 	}
 	known := loadKnownDivergences(t, knownFile)
 
-	var sampled, compared, clamped, whole int64
+	var sampled, compared, clamped int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
@@ -117,9 +113,6 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 			}
 
 			out, exit, gap, report := runSelfHostWasmSeed(t, fernBin, stdlibRoot, src, semantic)
-			if semantic && semReportWhole(report) {
-				atomic.AddInt64(&whole, 1)
-			}
 			if gap != "" {
 				// Same contract as the other legs: a compile bail is a
 				// documented endpoint for an unlisted seed, but a LISTED one
@@ -132,6 +125,9 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
 					seed, knownFile, reason, gap)
 				return
+			}
+			if semantic {
+				requireSemWhole(t, report)
 			}
 
 			// A rejected module and a trap are failures whatever the oracle
@@ -175,15 +171,6 @@ func testDifferentialSelfHostWasm(t *testing.T, semantic bool) {
 			t.Errorf("only %d of %d sampled seeds were COMPARED (%.2f) — below the %.2f floor. "+
 				"Compile gaps and the exit clamp are documented endpoints, but at this rate the leg is "+
 				"not testing the compiler", got, sampled, ratio, selfHostWasmDiffMinRunRatio)
-		}
-		if !semantic {
-			return
-		}
-		w := atomic.LoadInt64(&whole)
-		if ratio := float64(w) / float64(sampled); ratio < selfHostSemWasmDiffMinWholeRatio {
-			t.Errorf("only %d of %d sampled seeds produced WHOLE (%.2f) — below the %.2f floor. "+
-				"A refused declaration keeps the AST lowering for the module, which is the mixed shape this "+
-				"leg exists to keep rare", w, sampled, ratio, selfHostSemWasmDiffMinWholeRatio)
 		}
 	})
 }

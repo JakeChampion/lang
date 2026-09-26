@@ -22,13 +22,6 @@ const selfHostArm64DiffKnownFile = "selfhost-diff-arm64-known-divergences.txt"
 // this target and the semantic one does not belongs here and nowhere else.
 const selfHostSemArm64DiffKnownFile = "selfhost-diff-semantic-arm64-known-divergences.txt"
 
-// selfHostSemArm64DiffMinWholeRatio is the floor on seeds whose module
-// produced every declaration, the arm64 twin of selfHostSemDiffMinWholeRatio
-// and a ratchet in the same way. It is read off the same generator and the
-// same lowering, so the two track each other; the target only decides which
-// backend emits what the lowering produced.
-const selfHostSemArm64DiffMinWholeRatio = 0.75
-
 // TestDifferential_SelfHostArm64 is the x86-64 oracle's sibling against the
 // self-host ARM64 backend (#7967).
 //
@@ -99,7 +92,7 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 	}
 	known := loadKnownDivergences(t, knownFile)
 
-	var sampled, ran, whole int64
+	var sampled, ran int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
@@ -121,9 +114,6 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 			}
 
 			r, gap, report := runSelfHostArm64Seed(t, fernBin, stdlibRoot, qemu, src, semantic)
-			if semantic && semReportWhole(report) {
-				atomic.AddInt64(&whole, 1)
-			}
 			if gap != "" {
 				// Same contract as the x86-64 leg: a compile bail is a
 				// documented endpoint for an unlisted seed, but a LISTED one
@@ -136,6 +126,9 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
 					seed, knownFile, reason, gap)
 				return
+			}
+			if semantic {
+				requireSemWhole(t, report)
 			}
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
@@ -157,15 +150,6 @@ func testDifferentialSelfHostArm64(t *testing.T, semantic bool) {
 			t.Errorf("only %d of %d sampled seeds compiled and ran (%.2f) — below the %.2f floor. "+
 				"Compile gaps are a documented endpoint, but at this rate the leg is not testing the compiler",
 				got, sampled, ratio, selfHostDiffMinRunRatio)
-		}
-		if !semantic {
-			return
-		}
-		w := atomic.LoadInt64(&whole)
-		if ratio := float64(w) / float64(sampled); ratio < selfHostSemArm64DiffMinWholeRatio {
-			t.Errorf("only %d of %d sampled seeds produced WHOLE (%.2f) — below the %.2f floor. "+
-				"A refused declaration keeps the AST lowering for the module, which is the mixed shape this "+
-				"leg exists to keep rare", w, sampled, ratio, selfHostSemArm64DiffMinWholeRatio)
 		}
 	})
 }

@@ -2107,7 +2107,7 @@ What the typed path produced whole, 2026-09-24:
 | the compiler compiling itself | every declaration |
 | `examples/` outside the compiler | every program, once `word_freq` copies what it stores (`rc-log/2026-09-24-g-…`) |
 | `coreutils/` | all 106 programs |
-| e2eselfhost under strict, shards 0–1 of 12 | 438 of 440 tests |
+| e2eselfhost under strict | every test, 2026-09-25 |
 
 `TestSelfHostOverReleaseReportArm64`'s `__rc_dec` produces now
 (`rc-log/2026-09-24-i-…`), and so does `TestSelfHostStrEqSymbolTypeChecks`
@@ -2177,6 +2177,11 @@ What is left, in order:
    calls `__fern_utf8_valid`), so they fail when checked alone and check inside
    the bundle.
 2. Strict mode goes green over every suite. The fallback then becomes the
-   error, and `FERN_SEM_IR=` loses its off column.
+   error, and `FERN_SEM_IR=` loses its off column. Gated so far: every
+   `internal/e2eselfhost` compile runs strict (its `TestMain`), and so do the
+   coreutils self-host builds. The semantic differential legs fail a seed
+   that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
+   leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
+   purpose.
 3. The AST lowering is deleted, along with the differential legs that compare
    against it.

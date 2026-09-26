@@ -131,15 +131,11 @@ func TestDifferential_SelfHostX86_64(t *testing.T) {
 }
 
 // TestDifferential_SelfHostSemanticX86_64 is the same corpus through the
-// self-host CLI with FERN_SEM_IR=1: every body semsource admits is produced
-// through the semantic lowering and the rest keep the AST one, so this is the
-// fuzz leg for the produced lowering AND for the mixed module the fallback
-// makes (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415). The interpreter is the
-// oracle as above, and the report's tally is read per seed: the fraction of
-// seeds whose module produced WHOLE is logged and held to a floor, since a
-// refusal is what turns a seed into a mixed module rather than into a
-// compile gap, and a generator change that widened the refusals would
-// otherwise hollow the leg out unseen.
+// self-host CLI with FERN_SEM_IR=1, the fuzz leg for the semantic lowering
+// (docs/SELFHOST-SEMANTIC-SOURCE.md, #9415). The interpreter is the oracle as
+// above, and the report's tally is read per seed: a seed that compiles must
+// produce every declaration, since a refusal would otherwise run it as a
+// mixed module with the AST lowering beside the produced bodies.
 func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
 	testDifferentialSelfHostX86_64(t, true)
 }
@@ -148,16 +144,6 @@ func TestDifferential_SelfHostSemanticX86_64(t *testing.T) {
 // lowering gets right and the semantic one does not belongs here and nowhere
 // else.
 const selfHostSemDiffKnownFile = "selfhost-diff-semantic-x86_64-known-divergences.txt"
-
-// selfHostSemDiffMinWholeRatio is the floor on seeds whose module produced
-// every declaration. Measured 2026-09-22 over seeds 0..63: 62 of 64 (0.97),
-// and over seeds 1000..1063: 63 of 64 (0.98); every miss is a seed that does
-// not compile at all (E042 on a generated `?`), which the ratio counts against
-// the lowering as the 2026-09-16 figure of 8 of 64 (0.12) did. The floor is a
-// ratchet to raise as the leaves in docs/SELFHOST-SEMANTIC-SOURCE.md close,
-// and it stands well under the measurement because a window is 64 seeds and
-// the non-compiling share moves with the generator.
-const selfHostSemDiffMinWholeRatio = 0.75
 
 func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	requireSelfHostDiffLeg(t)
@@ -182,7 +168,7 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 	}
 	known := loadKnownDivergences(t, knownFile)
 
-	var sampled, ran, whole int64
+	var sampled, ran int64
 	for _, seed := range diffOracleWindow(t, selfHostDiffSeeds(t)) {
 		seed := seed
 		sampled++
@@ -203,9 +189,6 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 				t.Errorf(format, args...)
 			}
 			r, gap, report := runSelfHostSeed(t, fernBin, stdlibRoot, src, semantic, failf)
-			if semantic && semReportWhole(report) {
-				atomic.AddInt64(&whole, 1)
-			}
 			if gap != "" {
 				// A compile bail is a documented endpoint, so an unlisted seed
 				// SKIPS. A listed one does not: the row says this seed produces
@@ -220,6 +203,9 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 					"cannot be verified — re-check it and either update the reason or delete it:\n%s",
 					seed, knownFile, reason, gap)
 				return
+			}
+			if semantic {
+				requireSemWhole(t, report)
 			}
 			if r != nil {
 				atomic.AddInt64(&ran, 1)
@@ -243,15 +229,6 @@ func testDifferentialSelfHostX86_64(t *testing.T, semantic bool) {
 				"this rate the leg is not testing the compiler",
 				got, sampled, ratio, selfHostDiffMinRunRatio)
 		}
-		if semantic {
-			w := atomic.LoadInt64(&whole)
-			t.Logf("semantic lowering produced every declaration for %d of %d sampled seeds (%.2f)", w, sampled, float64(w)/float64(sampled))
-			if ratio := float64(w) / float64(sampled); ratio < selfHostSemDiffMinWholeRatio {
-				t.Errorf("the semantic lowering produced every declaration for only %d of %d sampled seeds (%.2f) — "+
-					"below the %.2f floor; the rest ran as mixed modules, which is the configuration this "+
-					"leg exists to keep rare", w, sampled, ratio, selfHostSemDiffMinWholeRatio)
-			}
-		}
 	})
 }
 
@@ -268,6 +245,15 @@ func semReportWhole(report string) bool {
 		return false
 	}
 	return n == m
+}
+
+// requireSemWhole fails a seed that compiled as a mixed module: a refused
+// declaration kept the AST lowering beside the produced ones.
+func requireSemWhole(t *testing.T, report string) {
+	t.Helper()
+	if !semReportWhole(report) {
+		t.Errorf("the semantic lowering did not produce this seed whole, so it compiled as a mixed module:\n%s", report)
+	}
 }
 
 // runSelfHostSeed compiles src with the self-host CLI, links it, and runs it.
