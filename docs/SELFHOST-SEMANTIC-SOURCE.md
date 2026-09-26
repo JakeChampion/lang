@@ -2194,8 +2194,10 @@ What is left, in order:
    error, and `FERN_SEM_IR=` loses its off column. Gated: every
    `internal/e2eselfhost` and `internal/e2e` compile runs strict (each
    package's `TestMain`), and so do the coreutils self-host builds, the
-   fixture corpus on all three targets (`fixtureCompile`) and the self-host
-   perf benchmarks. The semantic differential legs fail a seed
+   fixture corpus on all three targets (`fixtureCompile`) and the three
+   perf scripts that measure the self-hosted compiler (`perf-bench-selfhost`,
+   `cliff-bench`, `selfhost-alloc-bench`). All of these are `fern.fern` CLI
+   compiles, the only driver that builds a substitution. The semantic differential legs fail a seed
    that compiles as a mixed module. The production rows' `FERN_SEM_IR_SKIP`
    leg and `TestSelfHostSemIRStrict`'s off leg keep the AST lowering on
    purpose.

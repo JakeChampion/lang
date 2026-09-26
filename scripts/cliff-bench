@@ -28,6 +28,11 @@
 
 set -euo pipefail
 
+# The self-hosted compiler measured here takes the typed path, whole: strict
+# turns a refusal into a failed run rather than a mixed module, and the other
+# three are pinned so an ambient setting cannot switch the typed path off.
+export FERN_SEM_IR=1 FERN_SEM_IR_ONLY= FERN_SEM_IR_SKIP= FERN_SEM_IR_STRICT=1
+
 cd "$(dirname "$0")/.."
 
 REPORT="${1:-/dev/stdout}"
