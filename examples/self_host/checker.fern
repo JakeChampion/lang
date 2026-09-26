@@ -8860,16 +8860,33 @@ function sugar_arm_bodies(sugar: ast.MatchSugar): ast.Stmt[][] {
 // `loop` no `break` targets (loop_can_break), or a `match` whose every arm
 // body exits. `if let` is already desugared to an if/else chain by the
 // parser, so it needs no special case here.
-function block_exits(stmts: ast.Stmt[]): boolean {
+function block_exits(stmts: ast.Stmt[]): boolean { return block_leaves(stmts, false); }
+
+// block_diverges is block_exits where a `break` or `continue` also leaves,
+// mirroring the Go checker's blockDiverges: what a `let … else` else arm
+// must do (E022), and what drops a branch from the moved-value join.
+function block_diverges(stmts: ast.Stmt[]): boolean { return block_leaves(stmts, true); }
+
+function block_leaves(stmts: ast.Stmt[], jumps: boolean): boolean {
   if (stmts.len() == 0) {
     return false;
   }
   var last: ast.Stmt = stmts[stmts.len() - 1];
   match (last) {
+    ast.StmtBreak(_) => {
+      return jumps;
+    },
+    ast.StmtContinue(_) => {
+      return jumps;
+    },
     ast.StmtReturn(_) => {
       return true;
     },
     ast.StmtIf(f) => {
+      // A bare `{ … }` statement parses as `if (true)` with no else.
+      if (f.origin == "block") {
+        return block_leaves(f.then_body, jumps);
+      }
       // A tuple / struct / literal / nested-variant match is replaced at parse
       // time by a done-flag or if/else chain (build_tuple_match and friends),
       // which falls through by construction — so reading the chain says every
@@ -8881,19 +8898,19 @@ function block_exits(stmts: ast.Stmt[]): boolean {
         // success arm; the else arm is required to diverge (E022), so the
         // construct's only fall-through path is the success arm.
         if (f.sugar.origin == "let_else") {
-          return block_exits(bodies[0]);
+          return block_leaves(bodies[0], jumps);
         }
         // An `if let` always carries a trailing wildcard arm holding the else
         // block — empty when the source wrote none, which does not exit, so
         // the one-armed form falls through the way native's `If` does.
         for body in bodies {
-          if (!block_exits(body)) {
+          if (!block_leaves(body, jumps)) {
             return false;
           }
         }
         return true;
       }
-      return block_exits(f.then_body) && block_exits(f.else_body);
+      return block_leaves(f.then_body, jumps) && block_leaves(f.else_body, jumps);
     },
     ast.StmtWhile(w) => {
       match (w.cond) {
@@ -8916,10 +8933,10 @@ function block_exits(stmts: ast.Stmt[]): boolean {
       // arm — exits iff that arm exits, regardless of the else arm. (A
       // non-diverging else is E022, not a missing-return E052.)
       if (m.origin == "let_else") {
-        return block_exits(m.arms[0].body);
+        return block_leaves(m.arms[0].body, jumps);
       }
       for arm in m.arms {
-        if (!block_exits(arm.body)) {
+        if (!block_leaves(arm.body, jumps)) {
           return false;
         }
       }
@@ -12132,7 +12149,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // must diverge (return / break / continue) so the
             // bindings are live for the fall-through path.
             var le_last: i32 = m.arms.len() - 1;
-            if (le_last >= 0 && !block_exits(m.arms[le_last].body)) {
+            if (le_last >= 0 && !block_diverges(m.arms[le_last].body)) {
               out = out.append(dg_at("E022", "let-else: else branch must diverge (return / break / continue)", m.line, m.col));
             }
           }
@@ -13912,8 +13929,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var rc: OwnWalk = ru_expr(f.cond, moved, ctx);
       var rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
       var re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
-      var m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_exits(f.then_body));
-      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_exits(f.else_body));
+      var m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_diverges(f.then_body));
+      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_diverges(f.else_body));
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
     ast.StmtWhile(w) => {
@@ -13944,7 +13961,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         }
         var ra: OwnWalk = ow_stmts(arm.body, rs.moved, actx);
         d = util.append_diags(d, ra.diags);
-        mv = ow_moved_join(mv, ra.moved, block_exits(arm.body));
+        mv = ow_moved_join(mv, ra.moved, block_diverges(arm.body));
       }
       return OwnWalk { moved: mv, diags: d };
     },
