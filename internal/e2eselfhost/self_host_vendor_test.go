@@ -242,9 +242,9 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 				// then compares. That failure is loud and says so, which is the
 				// diagnostic mode working rather than something to route around.
 				if c.cache != "" {
-					cmd.Env = childEnv("FERN_CACHE_DIR=" + filepath.Join(pkg, c.cache))
+					cmd.Env = childEnv("FERN_SEM_IR_STRICT=1", "FERN_CACHE_DIR="+filepath.Join(pkg, c.cache))
 				} else {
-					cmd.Env = childEnv()
+					cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
 				}
 				out, _ := cmd.CombinedOutput()
 				return string(out), cmd.ProcessState.ExitCode() == 0
