@@ -33509,6 +33509,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     var i: i32 = 0;
     while (i < stmts.len()) {
         var sbase: i32 = st.locals.len();
+        obfrees = confirm_map_get_frees(obfrees, stmts, i, st);
         // Statement i is inside a block-level candidate's LIVE RANGE — after its
         // `var`, up to and including its consuming match — so set the pending
         // return-drop entries (#4353 p1/p3, #7742). A `return` from any of those
@@ -45822,14 +45823,15 @@ function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: 
                 // after the declaration, where the slot is bound and already
                 // dead, and the payload kind is irrelevant because the release is
                 // box-only.
-                if (fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0
+                var map_get: boolean = method_get_init(v);
+                if ((map_get || fresh_opt_box_init(v, opt_fresh_reg, fn_names, structs)) && util.index_of_str(reassigned, v.name) < 0
                         && !name_used_after(body, v.name, vi) && !name_escapes_outside_stmt(body, v.name, vi)) {
                     idxs = idxs.append(vi);
                     vidxs = vidxs.append(vi);
                     names = names.append(v.name);
                     sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
                 }
-                else if (fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs) && util.index_of_str(reassigned, v.name) < 0) {
+                else if ((map_get || fresh_optbox_only_init(v, opt_fresh_reg, fn_names, structs)) && util.index_of_str(reassigned, v.name) < 0) {
                     var match_idx: i32 = 0 - 1;
                     var msv: ast.Stmt[] = [];
                     if (nested_ok) {
@@ -45857,6 +45859,65 @@ function consumed_optbox_frees(body: ast.Stmt[], reassigned: string[], structs: 
         vi = vi + 1;
     }
     return EnumFrees { idxs: idxs, vidxs: vidxs, names: names, sites: sites };
+}
+
+// method_get_init: `var g = x.get(k)`. A builtin Map `get` hands back a fresh
+// Option box, but only the receiver's type says whether this is one, so
+// consumed_optbox_frees admits it provisionally and confirm_map_get_frees drops
+// it at the declaration unless the receiver is a Map (#10195).
+function method_get_init(v: ast.StmtVar): boolean {
+    match (v.init) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => { return fa.field == "get"; },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// map_get_box_init_ok: the receiver of a method_get_init is a Map whose value
+// type a box-only free may leave behind (optbox_shallow_payload_ok).
+function map_get_box_init_ok(v: ast.StmtVar, s: LowerState): boolean {
+    match (v.init) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    var mt: string = get_or_recv_map_type(fa.obj, s);
+                    if (mt == "") { return false; }
+                    return optbox_shallow_payload_ok(map_value_of(mt), s.frame.structs);
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// confirm_map_get_frees: called as statement i of `body` is about to lower, with
+// the receiver in scope. Drops a candidate declared there by a method_get_init
+// that is not a builtin Map read.
+function confirm_map_get_frees(fr: EnumFrees, body: ast.Stmt[], i: i32, s: LowerState): EnumFrees {
+    match (body[i]) {
+        ast.StmtVar(v) => {
+            if (!method_get_init(v) || map_get_box_init_ok(v, s)) { return fr; }
+            var out: EnumFrees = EnumFrees { idxs: [], vidxs: [], names: [], sites: [] };
+            var k: i32 = 0;
+            while (k < fr.idxs.len()) {
+                if (fr.vidxs[k] != i) {
+                    out = EnumFrees { idxs: out.idxs.append(fr.idxs[k]), vidxs: out.vidxs.append(fr.vidxs[k]), names: out.names.append(fr.names[k]), sites: out.sites.append(fr.sites[k]) };
+                }
+                k = k + 1;
+            }
+            return out;
+        },
+        _ => {}
+    }
+    return fr;
 }
 
 // --- consumed RC-PAYLOAD enum free (deep-drop at the free site) -------------
@@ -60618,6 +60679,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     }
     var j: i32 = 0;
     while (j < fn.body.len()) {
+        optboxfrees = confirm_map_get_frees(optboxfrees, fn.body, j, s);
         // Slot count before this statement, so a `for` / `match` at function-body
         // top level (the body loop here doesn't go through lower_block) can retire
         // its scoped loop var / arm bindings afterward — otherwise they leak past
