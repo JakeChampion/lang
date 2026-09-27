@@ -176,6 +176,20 @@ function main(): i32 {
     if (u1.neg() > u2.neg()) { return 42; }
     return 1;
 }`},
+	// Both records are static boxes; they differed only in a u32 word that
+	// read as zero, so both named one box (#10501).
+	{"u32_neg_overload_compare_static", `struct U { v: u32 }
+
+function (a: U) neg(): u32 {
+    return a.v;
+}
+
+function main(): i32 {
+    var u1: U = U { v: 7u32 };
+    var u2: U = U { v: 5u32 };
+    if ((-u1) > (-u2)) { return 42; }
+    return 1;
+}`},
 	// gap g08 — was: bail (struct-composite)
 	{"struct_elem_of_sliced_array", `struct P { x: i32 }
 function (p: P) get(): i32 { return p.x; }
