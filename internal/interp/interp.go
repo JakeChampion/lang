@@ -1385,6 +1385,7 @@ func New() *Interp {
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
@@ -1598,6 +1599,17 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 // builtinTcpConnect is the interpreter's `tcp_connect(host_be, port)`: the
 // packed network-order IPv4 address the native helpers take, dialled
 // through Go's net package. A connection handle, or -1.
+// builtinTcpConnectWith is `tcp_connect_with(host_be, port, nonblocking)`.
+// The interpreter has no non-blocking dial: it connects before answering,
+// so control op 5 reports the result at once and a refused dial is
+// reported here rather than there.
+func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_connect_with: expected 3 args, got %d", len(args))
+	}
+	return builtinTcpConnect(i, args[:2])
+}
+
 func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("tcp_connect: expected 2 args, got %d", len(args))
@@ -1645,7 +1657,7 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 4 {
+	if op < 1 || op > 5 {
 		return Number(-22), nil
 	}
 	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
@@ -1657,6 +1669,9 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	}
 	var err error
 	switch op {
+	case 5:
+		// A connection here is always complete: tcp_connect_with dials
+		// through the net package, which blocks until it is.
 	case 1:
 		err = conn.SetNoDelay(arg != 0)
 	case 2:

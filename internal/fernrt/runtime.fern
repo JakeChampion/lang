@@ -126,6 +126,16 @@ function __sys_getsockname(): i32 {
     if (target_os() == "darwin") { return 32; }
     return 204;
 }
+function __sys_getpeername(): i32 {
+    if (target_arch() == "x86-64") { return 52; }
+    if (target_os() == "darwin") { return 31; }
+    return 205;
+}
+function __sys_getsockopt(): i32 {
+    if (target_arch() == "x86-64") { return 55; }
+    if (target_os() == "darwin") { return 118; }
+    return 209;
+}
 function __sys_close(): i32 {
     if (target_arch() == "x86-64") { return 3; }
     if (target_os() == "darwin") { return 6; }
@@ -177,6 +187,15 @@ function __so_keepalive(): i64 {
 function __o_nonblock(): i64 {
     if (target_os() == "darwin") { return 4; }
     return 2048;
+}
+function __so_error(): i64 {
+    if (target_os() == "darwin") { return 4103; }
+    return 4;
+}
+// EINPROGRESS: what a non-blocking connect answers while it is under way.
+function __einprogress(): i64 {
+    if (target_os() == "darwin") { return 36; }
+    return 115;
 }
 // MSG_NOSIGNAL: a send on a peer-closed socket answers -EPIPE instead of
 // raising SIGPIPE at the process.
@@ -248,10 +267,14 @@ function __fern_tcp_listen(port: i32): i32 {
 
 // __fern_tcp_socket_ctl(fd, op, arg) is one control call on a socket: op
 // 1 TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK take arg 0 or 1; op 4 is
-// shutdown(2) with arg 0 read, 1 write or 2 both. 0, -errno, or -EINVAL for
-// an op that names no control.
+// shutdown(2) with arg 0 read, 1 write or 2 both; op 5 is the result of a
+// connect under way: 0 once a peer is attached, -EINPROGRESS while none is
+// and no error is pending, else the -errno the connect failed with (read
+// through SO_ERROR, which clears it). 0, -errno, or -EINVAL for an op that
+// names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     var f: i64 = fd as i64;
+    if (op == 5) { return __connect_result(f); }
     if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
     if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
     if (op == 3) {
@@ -265,6 +288,26 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     return 0 - 22;
 }
 
+// A peer name in the block means the connect completed; otherwise the
+// pending SO_ERROR says whether it failed, and its absence that it is
+// still under way.
+function __connect_result(f: i64): i32 {
+    var sa: usize = __alloc(20);
+    __store_i32(sa + 16, 16);
+    var peer: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 16) as i64);
+    var r: i32 = 0;
+    if (peer < 0) {
+        __store_i32(sa + 16, 4);
+        var g: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_error(), sa as i64, (sa + 16) as i64);
+        var pending: i32 = __load_i32(sa);
+        if (g < 0) { r = g as i32; }
+        else if (pending != 0) { r = 0 - pending; }
+        else { r = 0 - (__einprogress() as i32); }
+    }
+    __free(sa, 20);
+    return r;
+}
+
 // connect(2) to the IPv4 address packed in network order: 0 or -errno.
 function __connect_v4(fd: i64, host_be: i32, port: i32): i64 {
     var sa: usize = __sockaddr_in(port, host_be);
@@ -273,17 +316,30 @@ function __connect_v4(fd: i64, host_be: i32, port: i32): i64 {
     return r;
 }
 
-// __fern_tcp_connect(host_be, port) is a socket connected to the IPv4
-// address packed in network order, or -errno with the socket closed again.
-function __fern_tcp_connect(host_be: i32, port: i32): i32 {
+// __fern_tcp_connect_with(host_be, port, nonblocking) is a socket
+// connected to the IPv4 address packed in network order, or -errno with the
+// socket closed again. With `nonblocking` (the builtin's boolean, an i32
+// here) the socket is non-blocking and the connect is only started: the
+// descriptor comes back while it is under way, and control op 5 reports
+// how it ended.
+function __fern_tcp_connect_with(host_be: i32, port: i32, nonblocking: i32): i32 {
     var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
     if (fd < 0) { return fd as i32; }
-    var r: i64 = __connect_v4(fd, host_be, port);
+    var r: i64 = 0;
+    if (nonblocking != 0) { r = __fern_tcp_socket_ctl(fd as i32, 3, 1) as i64; }
+    if (r >= 0) {
+        r = __connect_v4(fd, host_be, port);
+        if (nonblocking != 0 && r == 0 - __einprogress()) { r = 0; }
+    }
     if (r < 0) {
         __syscall3(__sys_close(), fd, 0, 0);
         return r as i32;
     }
     return fd as i32;
+}
+
+function __fern_tcp_connect(host_be: i32, port: i32): i32 {
+    return __fern_tcp_connect_with(host_be, port, 0);
 }
 
 function __fern_tcp_accept(fd: i32): i32 {

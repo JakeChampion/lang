@@ -895,13 +895,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_accept")
 				case "__fern_tcp_connect":
-					needs.add("__free")
 					// (host_be, port) → i32 — outbound client; same
-					// 16-byte connection struct as accept. Needs the
-					// network accessor (like tcp_listen).
-					needs.add("__fern_alloc")
-					needs.add("__network_handle")
+					// 16-byte connection struct as accept. Its body is
+					// __fern_tcp_connect_with, which its edge pulls in.
 					needs.add("__fern_tcp_connect")
+				case "__fern_tcp_connect_with":
+					// (host_be, port, nonblocking) → i32 — the
+					// connection record, or one whose connect is under
+					// way. Needs the network accessor (like tcp_listen).
+					needs.add("__fern_tcp_connect_with")
 				case "__fern_tcp_local_port":
 					needs.add("__free")
 					// (sock) → i32 — the bound port, or -errno.
@@ -1237,13 +1239,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // unbreakable rather than merely written down. Every edge here is
 // read off the callee lookup at the top of the caller's build*Body.
 var unconditionalHelperCalls = map[string][]string{
-	"__fern_tcp_listen":      {"__fern_wasi_socket_errno"},
-	"__fern_tcp_accept":      {"__fern_wasi_socket_errno"},
-	"__fern_tcp_connect":     {"__fern_wasi_socket_errno"},
-	"__fern_tcp_local_port":  {"__fern_wasi_socket_errno"},
-	"__fern_tcp_listen_with": {"__fern_wasi_socket_errno"},
-	"__fern_tcp_socket_ctl":  {"__fern_wasi_socket_errno"},
-	"__fern_udp_send":        {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
+	"__fern_tcp_listen":       {"__fern_wasi_socket_errno"},
+	"__fern_tcp_accept":       {"__fern_wasi_socket_errno"},
+	"__fern_tcp_connect":      {"__fern_tcp_connect_with"},
+	"__fern_tcp_connect_with": {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle"},
+	"__fern_tcp_local_port":   {"__fern_wasi_socket_errno"},
+	"__fern_tcp_listen_with":  {"__fern_wasi_socket_errno"},
+	"__fern_tcp_socket_ctl":   {"__fern_wasi_socket_errno"},
+	"__fern_udp_send":         {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
 	// A bound datagram socket is closed through udp_close, so it comes
 	// with the socket and tcp_close gains its datagram arm.
 	"__fern_udp_bind":     {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close"},
@@ -2882,6 +2885,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpConnectBody,
+	},
+	"__fern_tcp_connect_with": {
+		// (host_be, port, nonblocking) → i32 — tcp_connect's record,
+		// or with nonblocking one marked connecting that control op 5
+		// finishes. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpConnectWithBody,
 	},
 	"__fern_tcp_local_port": {
 		// (sock: i32) → i32 — the port the socket struct's

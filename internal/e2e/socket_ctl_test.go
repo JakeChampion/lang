@@ -22,6 +22,8 @@ var socketProbes = []struct {
 	{"std_net", e2eharness.NetSocketOptsProbe},
 	{"udp", e2eharness.UdpSocketProbe},
 	{"std_net_udp", e2eharness.NetUdpProbe},
+	{"connect", e2eharness.ConnectProbe},
+	{"std_net_connect", e2eharness.NetConnectProbe},
 }
 
 func TestSocketCtlInterp(t *testing.T) {

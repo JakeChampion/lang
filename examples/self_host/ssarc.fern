@@ -3326,6 +3326,7 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
     if (ins.str == "udp_connect") { return Lowered { found: true, r: emit(r, ir.op_udp_connect()) }; }
     if (ins.str == "udp_sendto") { return Lowered { found: true, r: emit(r, ir.op_udp_sendto()) }; }
     if (ins.str == "udp_recvfrom") { return Lowered { found: true, r: emit(r, ir.op_udp_recvfrom()) }; }
+    if (ins.str == "tcp_connect_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect_with()) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
     if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }

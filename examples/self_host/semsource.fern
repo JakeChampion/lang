@@ -4489,6 +4489,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "udp_connect", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
         ssasem.Contract { name: "udp_sendto", params: [t_i32(), t_i32(), t_i32(), t_string()], modes: [v, v, v, b], result: t_i32() },
         ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
+        ssasem.Contract { name: "tcp_connect_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
         ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },

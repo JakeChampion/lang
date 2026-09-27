@@ -2450,6 +2450,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_tcp_socket_ctl"] {
 		in.add("wasi_sockets_tcp_set_keep_alive_enabled")
 		in.add("wasi_sockets_tcp_shutdown")
+		in.add("wasi_sockets_tcp_finish_connect")
 	}
 	if helpers.set["__fern_tcp_accept"] {
 		in.add("wasi_sockets_tcp_accept")
@@ -2457,7 +2458,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 	}
-	if helpers.set["__fern_tcp_connect"] {
+	if helpers.set["__fern_tcp_connect_with"] {
 		in.add("wasi_sockets_instance_network")
 		in.add("wasi_sockets_create_tcp_socket")
 		in.add("wasi_sockets_tcp_start_connect")
@@ -2480,7 +2481,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_blocking_write_and_flush_p2")
 		in.add("wasi_io_error_drop")
 	}
-	if helpers.set["__fern_tcp_listen"] || helpers.set["__fern_tcp_connect"] || helpers.set["__fern_tcp_close"] {
+	if helpers.set["__fern_tcp_listen"] || helpers.set["__fern_tcp_connect_with"] || helpers.set["__fern_tcp_close"] {
 		in.add("wasi_sockets_tcp_socket_drop")
 	}
 	if helpers.set["__fern_tcp_close"] {

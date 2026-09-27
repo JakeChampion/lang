@@ -3806,6 +3806,7 @@ function builtin_sigs(): string[] {
     "tcp_accept(i32): i32",
     "tcp_close(i32): i32",
     "tcp_connect(i32, i32): i32",
+    "tcp_connect_with(i32, i32, boolean): i32",
     "tcp_listen(i32): i32",
     "tcp_listen_with(i32, i32, boolean): i32",
     "tcp_local_port(i32): i32",

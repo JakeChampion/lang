@@ -2452,7 +2452,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need(ctl_need);
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl " + ctl_fn + "\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag >= 334 && o.kind_tag <= 337) {  // udp_bind, udp_connect, udp_sendto, udp_recvfrom
+    } else if (o.kind_tag >= 334 && o.kind_tag <= 338) {  // udp_bind, udp_connect, udp_sendto, udp_recvfrom, tcp_connect_with
         // [args] with the last on top; pop and re-push reversed, as udp_send
         // does. recvfrom spreads the datagram into the caller's array from a
         // raw buffer, so it needs the heap.
@@ -4502,7 +4502,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
-        "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom",
+        "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with",
         "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
@@ -8769,6 +8769,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("udp_recvfrom")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom(tgt), s.struct_decls, s);
+    }
+    if (s.has_need("tcp_connect_with")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with(tgt), s.struct_decls, s);
     }
     if (s.has_need("tcp_connect")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect(tgt), s.struct_decls, s);

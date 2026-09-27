@@ -185,3 +185,158 @@ function main(): i32 {
 }
 `
 }
+
+// ConnectProbe exercises `tcp_connect_with` and control op 5 (#9853): a
+// non-blocking connect to a listener on a host-picked port, settled by
+// asking op 5 until it stops answering -EINPROGRESS, then accepted and
+// used both ways; a completed connect answering 0 on every later ask; and
+// the connect to the port once nothing listens, refused either as the
+// connect starts or once it settles. The interpreter connects before
+// answering, so both legs accept either shape. Exit 42 and "ok" on stdout
+// iff every check holds, else the number of the first failing check.
+func ConnectProbe() string {
+	return `import "core/int";
+
+function fail(n: i32): i32 {
+    print(int.int_to_string(n));
+    return n;
+}
+
+function einprogress(): i32 {
+    if (target_os() == "darwin") { return 36; }
+    if (target_os() == "wasi") { return 26; }
+    return 115;
+}
+
+function econnrefused(): i32 {
+    if (target_os() == "darwin") { return 61; }
+    if (target_os() == "wasi") { return 14; }
+    return 111;
+}
+
+// The connect's result once it is no longer under way.
+function settle(c: i32): i32 {
+    var tries: i32 = 0;
+    while (tries < 5000) {
+        var r: i32 = tcp_socket_ctl(c, 5, 0);
+        if (r != 0 - einprogress()) { return r; }
+        sleep_ms(1);
+        tries = tries + 1;
+    }
+    return 0 - einprogress();
+}
+
+function main(): i32 {
+    // 127.0.0.1 packed in network order: 127 | 1 << 24.
+    var lo: i32 = 16777343;
+    var ln: i32 = tcp_listen_with(0, 4, false);
+    if (ln < 0) { return fail(1); }
+    var port: i32 = tcp_local_port(ln);
+    if (port <= 0) { return fail(2); }
+    var c: i32 = tcp_connect_with(lo, port, true);
+    if (c < 0) { return fail(3); }
+    if (settle(c) != 0) { return fail(4); }
+    var a: i32 = tcp_accept(ln);
+    if (a < 0) { return fail(5); }
+    if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
+    if (tcp_send(c, "hi") != 2) { return fail(7); }
+    var got: u8[] = tcp_recv(a, 16);
+    if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(8); }
+    if (tcp_send(a, "yo") != 2) { return fail(9); }
+    var back: u8[] = tcp_recv(c, 16);
+    if (back.len() != 2 || back[0] != 121u8) { return fail(10); }
+    tcp_close(a);
+    tcp_close(c);
+    tcp_close(ln);
+    var c2: i32 = tcp_connect_with(lo, port, true);
+    if (c2 >= 0) {
+        var r: i32 = settle(c2);
+        tcp_close(c2);
+        if (r != 0 - econnrefused()) { return fail(11); }
+    } else if (c2 != 0 - econnrefused()) {
+        return fail(12);
+    }
+    print("ok");
+    return 42;
+}
+`
+}
+
+// NetConnectProbe is ConnectProbe through std/net: `connect_start`,
+// `connect_result` (`InProgress` while under way, then `Ok`), the accepted
+// side used both ways, the `ConnectionRefused` a settled or a starting
+// connect to a closed port reports, and the same from a blocking
+// `connect`. Same verdict channel.
+func NetConnectProbe() string {
+	return `import "core/int";
+import "std/net";
+
+function fail(n: i32): i32 {
+    print(int.int_to_string(n));
+    return n;
+}
+
+function loopback(port: i32): net.SocketAddr {
+    return net.socket_addr(net.ipv4_loopback(), port);
+}
+
+// The connect's result once it is no longer under way: 0, or its errno.
+function settle(c: i32): i32 {
+    var tries: i32 = 0;
+    while (tries < 5000) {
+        match (net.connect_result(c)) {
+            Ok(u) => { return 0; },
+            Err(e) => { if (!e.eq(net.InProgress)) { return e.errno(); } },
+        }
+        sleep_ms(1);
+        tries = tries + 1;
+    }
+    return 0 - 1;
+}
+
+function refused(errno: i32): boolean {
+    return net.error_from_errno(errno).eq(net.ConnectionRefused);
+}
+
+function main(): i32 {
+    var ln: i32 = 0;
+    match (net.listen_with(0, net.listen_options())) {
+        Ok(fd) => { ln = fd; },
+        Err(e) => { return fail(1); },
+    }
+    var port: i32 = 0;
+    match (net.local_port(ln)) {
+        Ok(p) => { port = p; },
+        Err(e) => { return fail(2); },
+    }
+    var c: i32 = 0;
+    match (net.connect_start(loopback(port))) {
+        Ok(fd) => { c = fd; },
+        Err(e) => { return fail(3); },
+    }
+    if (settle(c) != 0) { return fail(4); }
+    var a: i32 = tcp_accept(ln);
+    if (a < 0) { return fail(5); }
+    if (tcp_send(c, "hi") != 2) { return fail(6); }
+    var got: u8[] = tcp_recv(a, 16);
+    if (got.len() != 2 || got[0] != 104u8) { return fail(7); }
+    tcp_close(a);
+    tcp_close(c);
+    tcp_close(ln);
+    match (net.connect_start(loopback(port))) {
+        Ok(fd) => {
+            var r: i32 = settle(fd);
+            tcp_close(fd);
+            if (!refused(r)) { return fail(8); }
+        },
+        Err(e) => { if (!e.eq(net.ConnectionRefused)) { return fail(9); } },
+    }
+    match (net.connect(loopback(port))) {
+        Ok(fd) => { return fail(10); },
+        Err(e) => { if (!e.eq(net.ConnectionRefused)) { return fail(11); } },
+    }
+    print("ok");
+    return 42;
+}
+`
+}

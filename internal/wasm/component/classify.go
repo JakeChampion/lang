@@ -132,7 +132,7 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.Args = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-environment":
 			req.Env = true
-		case m == "wasi:sockets/tcp@0.2.0" && n == "[method]tcp-socket.start-connect":
+		case m == "wasi:sockets/tcp@0.2.0" && (n == "[method]tcp-socket.start-connect" || n == "[method]tcp-socket.finish-connect"):
 			// Outbound client: pulls in the connect variant of the tcp
 			// instance type (start-connect / finish-connect appended).
 			req.Tcp = true

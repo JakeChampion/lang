@@ -69,6 +69,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "udp_connect", capability: "net" },
         BuiltinCap { builtin: "udp_sendto", capability: "net" },
         BuiltinCap { builtin: "udp_recvfrom", capability: "net" },
+        BuiltinCap { builtin: "tcp_connect_with", capability: "net" },
 
         BuiltinCap { builtin: "read_file", capability: "fs" },
         BuiltinCap { builtin: "read_file_bytes", capability: "fs" },
