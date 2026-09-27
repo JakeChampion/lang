@@ -83,6 +83,29 @@ function main(): i32 {
     return (t.a * 10 + t.b + count_eq(ts, T { a: 1, b: 2 }) * 100 + pick(names, 2).len() + bx.get().a + f) % 113;
 }
 `, 20},
+	// A value named like a type variable is a value: the respelling of `T` in
+	// `T.default()` must not reach a parameter, a local or a bounded clone's
+	// parameter of the same name.
+	{"param-named-like-type-param", `function pick[T](T: T[]): i32 { return T.len(); }
+function main(): i32 { return pick([4, 5, 6]) + pick(["a"]) * 10; }
+`, 13},
+	{"local-named-like-type-param", `function first[T](xs: T[]): T { var T: T = xs[0]; return T; }
+function count[T](xs: T[]): i32 { var T: i32 = xs.len(); return T; }
+function main(): i32 { return first([7, 8]) + count(["a", "b", "c"]) * 10; }
+`, 37},
+	{"bounded-param-named-like-type-param", `import "core/cmp";
+function pick3[T: cmp.Eq](T: T): T { return T; }
+function main(): i32 { return pick3(40) + pick3("abc").len(); }
+`, 43},
+	// Out of the value's scope, `T.default()` names the type variable again.
+	{"type-param-object-after-shadow-scope", `import "core/cmp";
+function mk[T: cmp.Default](x: T): T {
+    if (true) { var T: i32 = 3; }
+    for T in [1, 2] { }
+    return T.default();
+}
+function main(): i32 { return mk(7) + mk("zz").len() + 4; }
+`, 4},
 }
 
 // TestSelfHostTypeParamSpelling compiles each case with the self-host CLI for

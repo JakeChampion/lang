@@ -17949,12 +17949,20 @@ function rename_param_type_vars(pd: ast.ParamDecl, vars: string[], cts: string[]
 function rename_fn_type_vars(fd: FuncDecl, vars: string[]): FuncDecl {
     if (vars.len() == 0) { return fd; }
     var cts: string[] = tvar_spellings(vars);
+    var values: string[] = [];
+    if (fd.receiver_name.len() > 0) { values = values.append(fd.receiver_name); }
+    for pd in fd.params { values = astwalk.append_bound_name(values, pd.name); }
+    var sc: TvScope = TvScope { vars: vars, cts: cts, values: values };
     var params: ast.ParamDecl[] = [];
-    for pd in fd.params { params = params.append(rename_param_type_vars(pd, vars, cts)); }
+    for pd in fd.params {
+        var rp: ast.ParamDecl = rename_param_type_vars(pd, vars, cts);
+        if (rp.has_default) { rp = ast.ParamDecl { ...rp, default_value: tv_obj_in(rp.default_value, sc) }; }
+        params = params.append(rp);
+    }
     return FuncDecl { ...fd, receiver_type: subst_ty(fd.receiver_type, vars, cts), type_params: rename_ty_list(fd.type_params, vars, cts),
         all_type_params: rename_ty_list(fd.all_type_params, vars, cts), bound_traits: rename_bounds(fd.bound_traits, vars, cts), params: params,
         ret_type: subst_ty(fd.ret_type, vars, cts), ret_fn_ret: subst_ty(fd.ret_fn_ret, vars, cts), ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, vars, cts),
-        body: rename_tv_stmts(fd.body, vars, cts) };
+        body: tv_obj_body(rename_tv_stmts(fd.body, vars, cts), sc) };
 }
 
 function rename_struct_type_vars(sd: StructDecl, vars: string[]): StructDecl {
@@ -17985,12 +17993,7 @@ function rename_tv_stmts(stmts: ast.Stmt[], vars: string[], cts: string[]): ast.
 // map_expr supplies the recursion.
 function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
     match (e) {
-        ast.ExprIdent(id) => {
-            var k: i32 = tp_index(id.name, vars);
-            var name: string = id.name;
-            if (k >= 0) { name = cts[k]; }
-            return ast.ExprIdent { ...id, name: name, ty: subst_ty(id.ty, vars, cts) };
-        },
+        ast.ExprIdent(id) => { return ast.ExprIdent { ...id, ty: subst_ty(id.ty, vars, cts) }; },
         ast.ExprCall(c) => { return ast.ExprCall { ...c, type_args: rename_ty_list(c.type_args, vars, cts), ty: subst_ty(c.ty, vars, cts) }; },
         ast.ExprBinary(b) => { return ast.ExprBinary { ...b, ty: subst_ty(b.ty, vars, cts) }; },
         ast.ExprUnary(u) => { return ast.ExprUnary { ...u, ty: subst_ty(u.ty, vars, cts) }; },
@@ -18009,6 +18012,82 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
         _ => { return e; }
     }
     return e;
+}
+
+// A type variable is also a value in one position, the object of `T.default()`.
+// A value binding of the same name shadows it there, as in native, so that
+// respelling walks the body with the value names in scope. TvScope is the
+// walk's accumulator: the declaration's variables, their respellings, and the
+// value names bound so far.
+struct TvScope { vars: string[], cts: string[], values: string[] }
+
+function tv_shadow(sc: TvScope, names: string[]): TvScope {
+    var values: string[] = sc.values;
+    for n in names { values = values.append(n); }
+    return TvScope { ...sc, values: values };
+}
+
+// A `var` binds from the next statement on; its own initializer still sees
+// the variable it shadows.
+function tv_obj_body(stmts: ast.Stmt[], sc: TvScope): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    var cur: TvScope = sc;
+    for st in stmts {
+        var (ns, na, nh) = astwalk.map_stmt_acc(st, cur, tv_obj_stmt, tv_obj_expr);
+        out = out.append(ns);
+        if let ast.StmtVar(v) = st { cur = tv_shadow(cur, astwalk.append_bound_name([], v.name)); }
+    }
+    return out;
+}
+
+function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
+    var (out, a, h) = astwalk.map_expr_acc(e, sc, tv_obj_stmt, tv_obj_expr);
+    return out;
+}
+
+// tv_obj_expr owns the respelled object and the lambda scope boundary; the
+// shared spine owns every other container.
+function tv_obj_expr(e: ast.Expr, sc: TvScope): (ast.Expr, TvScope, boolean) {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            if let ast.ExprIdent(id) = fa.obj {
+                var k: i32 = tp_index(id.name, sc.vars);
+                if (k >= 0 && !str_in(sc.values, id.name)) {
+                    return (ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { ...id, name: sc.cts[k] } }, sc, true);
+                }
+            }
+            return (e, sc, false);
+        },
+        ast.ExprLambda(lm) => {
+            var names: string[] = [];
+            for lp in lm.params { names = astwalk.append_bound_name(names, lp.name); }
+            return (ast.ExprLambda { ...lm, body: tv_obj_body(lm.body, tv_shadow(sc, names)) }, sc, true);
+        },
+        _ => { return (e, sc, false); }
+    }
+    return (e, sc, false);
+}
+
+// tv_obj_stmt owns the statements that open a scope, so a binder inside one
+// does not leak past it.
+function tv_obj_stmt(st: ast.Stmt, sc: TvScope): (ast.Stmt, TvScope, boolean) {
+    match (st) {
+        ast.StmtIf(f) => { return (ast.StmtIf { ...f, cond: tv_obj_in(f.cond, sc), then_body: tv_obj_body(f.then_body, sc), else_body: tv_obj_body(f.else_body, sc) }, sc, true); },
+        ast.StmtWhile(w) => { return (ast.StmtWhile { ...w, cond: tv_obj_in(w.cond, sc), body: tv_obj_body(w.body, sc) }, sc, true); },
+        ast.StmtFor(fo) => { return (ast.StmtFor { ...fo, iter: tv_obj_in(fo.iter, sc), body: tv_obj_body(fo.body, tv_shadow(sc, astwalk.append_bound_name([], fo.var_name))) }, sc, true); },
+        ast.StmtMatch(mt) => {
+            var arms: ast.MatchArm[] = [];
+            for arm in mt.arms {
+                var asc: TvScope = tv_shadow(sc, astwalk.pattern_binders(arm.pattern, []));
+                var g: ast.Expr = arm.guard;
+                if (arm.has_guard) { g = tv_obj_in(arm.guard, asc); }
+                arms = arms.append(ast.MatchArm { ...arm, guard: g, body: tv_obj_body(arm.body, asc) });
+            }
+            return (ast.StmtMatch { ...mt, scrutinee: tv_obj_in(mt.scrutinee, sc), arms: arms }, sc, true);
+        },
+        _ => { return (st, sc, false); }
+    }
+    return (st, sc, false);
 }
 
 // rename_tv_annots respells the `var x: T` annotations of a block and of the
