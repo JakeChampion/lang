@@ -7495,8 +7495,13 @@ type checker struct {
 	// negatedLits records, per integer literal, whether the source wrote it
 	// under an odd number of unary minuses — see markLiteralSign.
 	negatedLits map[*ast.NumberLit]bool
-	current     *ast.FuncDecl
-	loopDepth   int
+	// litLocals are the current function's unannotated integer locals whose
+	// width a later use decides — see literal_local.go.
+	litLocals  []*litLocal
+	litLocalOf map[*ast.Var]*litLocal
+	litIdents  map[*ast.Ident]*litLocal
+	current    *ast.FuncDecl
+	loopDepth  int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
 	// desugar (TryOp.Lowered). See #3234.
 	tryConvN int
@@ -11489,6 +11494,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 		root.names[p.Name] = p.Type
 	}
 	c.checkBlock(fn.Body, root)
+	c.settleLitLocals(fn.Body)
 	if infer {
 		c.inferReturnType(fn, rets)
 	}
@@ -13746,26 +13752,34 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 				return
 			}
 			// An unannotated binding whose init is still polymorphic
-			// takes the default width: i32, or i64 when a literal in the
-			// init has no i32 reading (#3676, #8668). Only the widening
-			// settles here — `var x = 5` stays polymorphic. Arithmetic ON
-			// an i32 value still wraps at 32 bits (#3581); it is the
-			// literal-only init whose width the literal decides.
+			// takes i64 here when a literal in the init has no i32 reading
+			// (#3676, #8668). Otherwise it is a literal local: its uses
+			// decide its one width, i32 when none does (#10123).
 			if call, ok := n.Init.(*ast.Call); ok {
 				if widened := c.widenGenericCallByLiterals(call); widened != nil {
 					got = widened
 				}
 			}
+			litLocal := false
 			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic {
 				if def := c.polymorphicIntDefault(n.Init); def.Width == 64 {
 					c.settleInt(n.Init, def)
 					got = def
+				} else {
+					litLocal = true
 				}
 			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
 				c.settleNumeric(n.Init, widened)
 				got = widened
 			}
 			n.Type = got
+			if litLocal {
+				s.bindVar(n.Name, n.Type, n)
+				c.info.VarTypes[n] = n.Type
+				c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+				c.beginLitLocal(n, s)
+				return
+			}
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
@@ -16009,6 +16023,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 	for _, name := range captureOrder {
 		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
 	}
+	c.restampLitCaptures(fn.Captures, outer)
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
@@ -16114,7 +16129,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// f64, instead of 7). Settle the inner toward its own float
 		// type so polymorphic float literals still commit to the
 		// f64 default, then lower as the float→int truncation.
-		if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
+		if c.holdsPendingLitLocal(n.Inner) {
+			// The cast converts the local's value; the local's own uses
+			// decide its width, and settleLitLocals re-stamps InnerType.
+		} else if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
 			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt {
 				floatHint := ast.FloatType(ft)
 				if ft.Polymorphic {
@@ -16341,6 +16359,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
+			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
 		// Inside a local function: a name not found in the local
@@ -16380,6 +16399,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// boxcapture cell, which is where a reference cycle can
 					// be closed (#8440, checkCaptureCycleStores).
 					if decl := ent.scope.lookupVarDecl(n.Name); decl != nil {
+						c.noteLitIdent(n, t, decl)
 						if c.capturedVars == nil {
 							c.capturedVars = map[*ast.Var]bool{}
 						}
@@ -16563,7 +16583,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.ArrayType{Elem: elemT}
 	case *ast.Index:
 		at := c.checkExpr(n.Array, s)
-		it := c.checkExpr(n.Idx, s)
+		it := c.settleIndexOperand(n.Idx, c.checkExpr(n.Idx, s))
 		if it != nil && !ast.Equal(it, ast.NumberType{}) {
 			c.errfCode(n.Idx.Pos(), "E034", "index must be i32, got %s", it)
 		}
@@ -16597,13 +16617,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.SliceExpr:
 		st := c.checkExpr(n.Source, s)
 		if n.Low != nil {
-			lt := c.checkExpr(n.Low, s)
+			lt := c.settleIndexOperand(n.Low, c.checkExpr(n.Low, s))
 			if lt != nil && !ast.Equal(lt, ast.NumberType{}) {
 				c.errfCode(n.Low.Pos(), "E037", "slice low bound must be i32, got %s", lt)
 			}
 		}
 		if n.High != nil {
-			ht := c.checkExpr(n.High, s)
+			ht := c.settleIndexOperand(n.High, c.checkExpr(n.High, s))
 			if ht != nil && !ast.Equal(ht, ast.NumberType{}) {
 				c.errfCode(n.High.Pos(), "E037", "slice high bound must be i32, got %s", ht)
 			}
@@ -18092,6 +18112,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.Assign:
 		lt := c.checkExpr(n.Target, s)
 		rt := c.checkExpr(n.Value, s)
+		// A literal local assigned a typed integer takes that type.
+		if id, ok := n.Target.(*ast.Ident); ok && c.litIdents[id] != nil {
+			if rn, ok := rt.(ast.NumberType); ok && !rn.Polymorphic {
+				c.fixLitLocal(c.litIdents[id], rn, n.P)
+				lt = c.litIdents[id].width
+			}
+		}
 		if lt != nil {
 			c.settleNumeric(n.Value, lt)
 			rt = c.postSettleType(n.Value, rt)
@@ -18242,6 +18269,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// Unify the body's return(s) into the lambda's return type
 			// (synth.ReturnType is updated in place; mirror it onto n).
 			c.inferReturnType(synth, lamRets)
+			c.settleLitReturns(synth)
 			n.ReturnType = synth.ReturnType
 		}
 		c.current = prev
@@ -18251,6 +18279,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		for _, name := range captureOrder {
 			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
 		}
+		c.restampLitCaptures(n.Captures, s)
 		return paramSig(n.Params, n.ReturnType)
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
@@ -19424,6 +19453,10 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 			x.Width = width
 			x.IsUnsigned = isUnsigned
 			c.checkLiteralFits(x, hn, negated)
+		}
+	case *ast.Ident:
+		if ll := c.litIdents[x]; ll != nil {
+			c.fixLitLocal(ll, hn, x.P)
 		}
 	case *ast.Unary:
 		if x.Op == "-" {
