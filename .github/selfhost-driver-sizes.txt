@@ -343,14 +343,14 @@
 # rows keep their numbers. Measured with FERN_WARM_DRIVER=fern.fern
 # FERN_DRIVER_SIZE_REPORT on the merged tree.
 fern.fern 13654985
-asm_load_run.fern 9264457
-asm_modload_run.fern 8836577
-asm_ir_run.fern 8584609
-asm_run.fern 8077568
-wasm_ir_run.fern 7857760
-wasm_run.fern 7845400
-wasm_runio_run.fern 7811744
-asm_pathprobe_run.fern 7026808
-asm_ir_elig_run.fern 5882776
-irlower_run.fern 6810800
-checker_modload_run.fern 2802364
+asm_load_run.fern 9924729
+asm_modload_run.fern 9400865
+asm_ir_run.fern 9111545
+asm_run.fern 8624344
+wasm_ir_run.fern 8387056
+wasm_run.fern 8378800
+wasm_runio_run.fern 8345408
+asm_pathprobe_run.fern 7524864
+asm_ir_elig_run.fern 6183304
+irlower_run.fern 7267824
+checker_modload_run.fern 3052684
