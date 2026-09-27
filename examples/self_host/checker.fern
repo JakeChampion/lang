@@ -13265,23 +13265,72 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
 //
-// `scalars` names the bindings declared at a scalar type: a scalar argument
-// carries no reference, so handing it to a consuming parameter transfers
-// nothing and needs no proof of ownership (native's scalarArgs).
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scalars: string[] }
+// `scalars` names the bindings declared at a scalar type, `scalar_arrs` those
+// declared at an array of one, and `scalar_fns` the functions returning one:
+// a scalar argument carries no reference, so handing it to a consuming
+// parameter transfers nothing and needs no proof of ownership (native's
+// scalarArgs). ow_expr_is_scalar reads all three.
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scalars: string[], scalar_arrs: string[], scalar_fns: string[] }
 
-// ow_scalar_binding records whether `name` is now bound at a scalar type.
-function ow_scalar_binding(ctx: OwnCtx, name: string, scalar: boolean): OwnCtx {
+// ow_scalar_binding records whether `name` is now bound at a scalar type, or
+// at an array of one.
+function ow_scalar_binding(ctx: OwnCtx, name: string, type_name: string, scalar: boolean): OwnCtx {
   var rest: string[] = ow_names_del(ctx.scalars, name);
   if (scalar) { rest = rest.append(name); }
-  return OwnCtx { ...ctx, scalars: rest };
+  var arrs: string[] = ow_names_del(ctx.scalar_arrs, name);
+  if (ow_scalar_arr_type(type_name)) { arrs = arrs.append(name); }
+  return OwnCtx { ...ctx, scalars: rest, scalar_arrs: arrs };
+}
+
+function ow_scalar_arr_type(t: string): boolean {
+  return t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]" && !ow_ownable_type(slice_unchecked(t, 0, t.len() - 2));
 }
 
 // ow_var_is_scalar: a `var` declared at a scalar type, or unannotated with a
-// scalar literal as its initialiser.
-function ow_var_is_scalar(v: ast.StmtVar): boolean {
+// scalar initialiser.
+function ow_var_is_scalar(v: ast.StmtVar, ctx: OwnCtx): boolean {
   if (v.type_name.len() > 0) { return !ow_ownable_type(v.type_name); }
-  return ow_scalar_literal(v.init);
+  return ow_expr_is_scalar(v.init, ctx);
+}
+
+// ow_scalar_fns names the free functions whose declared result is a scalar.
+function ow_scalar_fns(funcs: parser.FuncDecl[]): string[] {
+  var out: string[] = [];
+  for fd in funcs {
+    if (fd.receiver_type.len() == 0 && fd.ret_type.len() > 0 && !ow_ownable_type(fd.ret_type)) { out = out.append(fd.name); }
+  }
+  return out;
+}
+
+// ow_expr_is_scalar: an expression whose value is a scalar, whatever its
+// shape (native's definitelyScalar on the argument's checked type).
+function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_scalar_literal(e)) { return true; }
+  match (e) {
+    ast.ExprIdent(id) => {
+      return util.has_str(ctx.scalars, id.name);
+    },
+    ast.ExprBinary(b) => {
+      var cmp: string[] = ["==", "!=", "<", "<=", ">", ">=", "&&", "||"];
+      return util.has_str(cmp, b.op) || ow_expr_is_scalar(b.left, ctx);
+    },
+    ast.ExprUnary(u) => {
+      return u.op == "!" || ow_expr_is_scalar(u.operand, ctx);
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprIdent(cid) = c.callee {
+        return !util.has_str(ctx.bound, cid.name) && util.has_str(ctx.scalar_fns, cid.name);
+      }
+      return false;
+    },
+    ast.ExprIndex(ix) => {
+      if let ast.ExprIdent(aid) = ix.array { return util.has_str(ctx.scalar_arrs, aid.name); }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
@@ -13358,8 +13407,8 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   }
   var bound: string[] = ctx.bound;
   for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
-  var nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scalars: ctx.scalars };
-  for p in params { nested = ow_scalar_binding(nested, p.name, !ow_ownable_type(p.type_name)); }
+  var nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scalars: ctx.scalars, scalar_arrs: ctx.scalar_arrs, scalar_fns: ctx.scalar_fns };
+  for p in params { nested = ow_scalar_binding(nested, p.name, p.type_name, !ow_ownable_type(p.type_name)); }
   return nested;
 }
 
@@ -13463,7 +13512,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_scalar_literal(e)) { return true; }
+  if (ow_expr_is_scalar(e, ctx)) { return true; }
   match (e) {
     ast.ExprStructLit(_) => {
       return true;
@@ -13482,9 +13531,6 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     },
     ast.ExprIdent(id) => {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
-        return true;
-      }
-      if (util.has_str(ctx.scalars, id.name)) {
         return true;
       }
       if (ow_variant_known(ctx.structs, id.name, "")) {
@@ -14019,7 +14065,10 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     var r: OwnWalk = ow_stmt(stmt, m, c);
     m = r.moved;
     d = util.append_diags(d, r.diags);
-    if let ast.StmtVar(v) = stmt { c = ow_scalar_binding(ow_bind_ctx(c, v.name), v.name, ow_var_is_scalar(v)); }
+    if let ast.StmtVar(v) = stmt {
+      var scalar: boolean = ow_var_is_scalar(v, c);
+      c = ow_scalar_binding(ow_bind_ctx(c, v.name), v.name, v.type_name, scalar);
+    }
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -14060,7 +14109,7 @@ function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 // variable or a match arm's binder, each of which shadows for its body only.
 function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
   if (name.len() == 0) { return ctx; }
-  var c: OwnCtx = ow_scalar_binding(ctx, name, false);
+  var c: OwnCtx = ow_scalar_binding(ctx, name, "", false);
   if (util.has_str(c.bound, name)) { return c; }
   return OwnCtx { ...c, bound: c.bound.append(name) };
 }
@@ -14434,12 +14483,14 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
+  var scalar_fns: string[] = ow_scalar_fns(mod.funcs);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) { continue; }
     var owned: string[] = [];
     var borrowed: string[] = [];
     var scalars: string[] = [];
+    var scalar_arrs: string[] = [];
     for param in fn.params {
       if (param.own && ow_ownable_type(param.type_name)) {
         owned = owned.append(param.name);
@@ -14447,9 +14498,10 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
         borrowed = borrowed.append(param.name);
       }
       if (!ow_ownable_type(param.type_name)) { scalars = scalars.append(param.name); }
+      if (ow_scalar_arr_type(param.type_name)) { scalar_arrs = scalar_arrs.append(param.name); }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scalars: scalars };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scalars: scalars, scalar_arrs: scalar_arrs, scalar_fns: scalar_fns };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);
@@ -17532,18 +17584,25 @@ function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parse
 // run in, so an instantiation's diagnostics are reported only for a program
 // whose templates passed.
 pub function check_module(raw_mod: parser.Module): ModuleTypes {
-  var mt: ModuleTypes = check_module_pass(raw_mod, []);
+  // Native's checker resolves named arguments and fills omitted defaults
+  // before it types anything, and reports what does not resolve (E076 /
+  // E077 / E004) as its first diagnostics. Filling here rather than in each
+  // driver means a defaulted call arrives complete however this checker is
+  // reached, and a driver that already filled sees the same diagnostics again
+  // because a call that did not resolve was left as written.
+  var (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  var mod: parser.Module = prepared_module(filled);
+  var mt: ModuleTypes = check_module_pass(mod, fda_diags, []);
   if (mt.diags.len() > 0) { return mt; }
-  var mod: parser.Module = prepared_module(parser.fill_default_args_module(raw_mod));
   var clones: parser.FuncDecl[] = instantiated_clones(mod, module_env(mod));
   if (clones.len() == 0) { return mt; }
-  var funcs: parser.FuncDecl[] = raw_mod.funcs;
+  var funcs: parser.FuncDecl[] = mod.funcs;
   var names: string[] = [];
   for cl in clones {
     funcs = funcs.append(cl);
     names = names.append(cl.name);
   }
-  var rt: ModuleTypes = check_module_pass(parser.Module { ...raw_mod, funcs: funcs }, names);
+  var rt: ModuleTypes = check_module_pass(parser.Module { ...mod, funcs: funcs }, [], names);
   if (rt.diags.len() == 0) { return mt; }
   return ModuleTypes { ...mt, all_well_typed: false, diags: rt.diags };
 }
@@ -17573,15 +17632,9 @@ function prepared_module(filled: parser.Module): parser.Module {
   return parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
 }
 
-function check_module_pass(raw_mod: parser.Module, focus: string[]): ModuleTypes {
-  // Native's checker resolves named arguments and fills omitted defaults
-  // before it types anything, and reports what does not resolve (E076 /
-  // E077 / E004) as its first diagnostics. Filling here rather than in each
-  // driver means a defaulted call arrives complete however this checker is
-  // reached, and a driver that already filled sees the same diagnostics again
-  // because a call that did not resolve was left as written.
-  var (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
-  var mod: parser.Module = prepared_module(filled);
+// check_module_pass types a prepared module; `fda_diags` are the default
+// filling's diagnostics, reported first.
+function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
   // Collect struct decls first; func sigs + union aliases
   // both use them to resolve names. Union aliases come next
   // so func sigs can reference union-typed params / returns.

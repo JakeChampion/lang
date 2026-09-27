@@ -29,7 +29,7 @@ func goCheckerDiags(t *testing.T, dir, src string) []driverDiag {
 	}
 	prog, _, err := modload.Load(p)
 	if err != nil {
-		return nil
+		t.Fatalf("load gocheck input: %v", err)
 	}
 	_, err = checker.Check(prog)
 	return checkErrDiags(err)

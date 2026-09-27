@@ -26,7 +26,7 @@ func goPipelineDiags(t *testing.T, dir, src string) []driverDiag {
 	}
 	prog, _, err := modload.Load(p)
 	if err != nil {
-		return nil
+		t.Fatalf("load pipeline input: %v", err)
 	}
 	if err := constfold.Fold(prog, nil); err != nil {
 		return checkErrDiags(err)
@@ -143,6 +143,17 @@ function main(): i32 { return f(1); }
 	{"scalar-local-into-own", `function g(own y: i32): i32 { return y; }
 function main(): i32 { var n: i32 = 4; var m = 5; return g(n) + g(m); }
 `, 0},
+	// Scalar by the argument's type, whatever its shape.
+	{"scalar-expressions-into-own", `function g(own y: i32): i32 { return y; }
+function k(own b: boolean): i32 { if (b) { return 1; } return 0; }
+function f(): i32 { return 7; }
+function h(xs: i32[]): i32 { var m = 4 - 2; return g(4 - 2) + g(f()) + g(m) + g(xs[0]) + g(-m) + k(m < 3) + k(!(m > 3)); }
+function main(): i32 { return h([1]); }
+`, 0},
+	{"string-element-into-own", `function g(own y: string): string { return y; }
+function h(xs: string[]): string { return g(xs[0]); }
+function main(): i32 { return h(["a"]).len(); }
+`, 1},
 	// A borrowed reference still is not an owned argument.
 	{"borrowed-string-into-own", `function g(own y: string): string { return y; }
 function f(x: string): string { return g(x); }
