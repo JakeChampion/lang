@@ -164,7 +164,14 @@ control op 5 (a started connect settled by asking until it is no longer
 `-ECONNREFUSED` a connect to the closed port ends with, whether it fails
 as it starts or once it settles), and `e2eharness.NetConnectProbe` through
 `connect_start`, `connect_result` and `connect`. All six check the
-received bytes, not only their count. `TestUnixSocket{Interp,X86_64,Arm64}`,
+received bytes, not only their count. `TestSocketV6{Interp,X86_64,Arm64,Wasm}`,
+`TestArm64DarwinSocketV6`, `TestSelfHostSocketV6` (x86-64, arm64 and wasm)
+and its Darwin twin run `e2eharness.SocketV6Probe` and `NetV6Probe` over
+`::1`: a listener, a dial and the reply read back, two datagram sockets
+whose sender comes back as family 6 with its sixteen bytes, and a
+connected reply. The IPv6 leg is the one gate with a skip rule: where Go
+itself cannot listen on `::1` the probe must answer "nov6" and the test
+skips, and everywhere else it must pass. `TestUnixSocket{Interp,X86_64,Arm64}`,
 `TestArm64DarwinUnixSocket`, `TestSelfHostUnixSocket` and its Darwin twin
 run `e2eharness.UnixSocketProbe` and `NetUnixProbe` over a socket file
 under /tmp (a listener, a connect, both directions through the tcp verbs,
