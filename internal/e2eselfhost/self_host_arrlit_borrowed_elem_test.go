@@ -70,7 +70,7 @@ function main(): i32 {
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
-`, 6, map[string][2]int64{"ast": {21, 19}, "ast_main": {21, 19}, "ast_callees": {21, 19}}},
+`, 6, map[string][2]int64{"ast": {21, 19}, "ast_main": {20, 18}, "ast_callees": {21, 19}}},
 	{"enum_param_self_append", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
 function mk(f: Flag, k: i32): i32 {
@@ -89,7 +89,7 @@ function main(): i32 {
     match (f0) { Flag.On(q) => { g = q[1]; }, Flag.Off => {} }
     return g + acc - 72;
 }
-`, 6, map[string][2]int64{"ast": {22, 19}, "ast_main": {22, 20}, "ast_callees": {22, 19}}},
+`, 6, map[string][2]int64{"ast": {22, 19}, "ast_main": {21, 19}, "ast_callees": {22, 19}}},
 	{"indexed_elem_in_field_array", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }
 function mk(ps: Pt[], k: i32): i32 {

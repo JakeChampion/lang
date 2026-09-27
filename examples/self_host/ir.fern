@@ -1756,6 +1756,12 @@ pub function const_struct_values(packed: string): string[] {
 pub function op_const_closure(body: string): Op {
     return op_const_struct("&fn:" + body, 0, "");
 }
+// op_const_empty_array is const_struct's empty-array case: `[]` as one static
+// array box shared by every evaluation. Its length and capacity are both 0
+// under the immortal rc, so the first push onto it finds no room and grows into
+// a fresh capacity-4 box, the one allocation the literal would have made.
+pub function op_const_empty_array(): Op { return op_const_struct("&arr", 0, ""); }
+pub function const_struct_is_empty_array(packed: string): boolean { return const_struct_type(packed) == "&arr"; }
 
 // const_struct_fn_body names the body a const_closure box holds, or "" for an
 // ordinary record constant. The one reader of the sentinel, so the three
