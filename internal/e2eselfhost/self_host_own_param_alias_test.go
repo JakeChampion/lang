@@ -34,8 +34,8 @@ const ownAliasMain = `function main(): i32 {
 var ownAliasCases = []struct {
 	name string
 	src  string
-	// mixed is the FERN_SEM_IR_SKIP list that keeps fold and its callers on
-	// the AST lowering while the callees it reaches are produced.
+	// mixed is the FERN_SEM_IR_SKIP list: the listed functions and their
+	// callers keep the AST lowering, and every other callee is produced.
 	mixed string
 	// pinned: the AST-leg census, where the leg still leaks for a reason
 	// outside this rule (#10360). Absent means balanced.
@@ -137,6 +137,109 @@ function fold(own acc: string[], n: i32): string[] {
     return out;
 }
 ` + ownAliasMain, "fold", nil, true},
+	// A local that took the parameter over, passed in a dying position to a
+	// produced callee that consumes it: the AST frame's position consumes too
+	// (own_consumed_positions_of follows the local).
+	{"alias_into_produced_consumer", `@noinline
+function take(n: i32, own a: string[]): string[] {
+    if (n % 5 == 0) { return ["r" + ""]; }
+    if (n % 3 == 1) { return a; }
+    return a.append("g" + "");
+}
+function fold(own acc: string[], n: i32): string[] {
+    var a: string[] = acc;
+    a = take(n, a);
+    return a;
+}
+function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
+    return pending.len() % 256;
+}
+`, "fold", nil, true},
+	// The same through a call that hands the parameter back (keep stays AST).
+	{"call_handback_into_produced_consumer", `@noinline
+function take(n: i32, own a: string[]): string[] {
+    if (n % 5 == 0) { return ["r" + ""]; }
+    if (n % 3 == 1) { return a; }
+    return a.append("g" + "");
+}
+@noinline
+function keep(n: i32, own a: string[]): string[] {
+    if (n % 4 != 1) { return a.append("k" + ""); }
+    return a;
+}
+function fold(own acc: string[], n: i32): string[] {
+    var a: string[] = keep(n, acc);
+    a = take(n, a);
+    return a;
+}
+function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
+    return pending.len() % 256;
+}
+`, "fold,keep", nil, true},
+	// A call through a fn-typed parameter hands the parameter back.
+	{"fn_value_param_handback", `@noinline
+function at_node(n: i32, own a: string[]): string[] {
+    if (n % 3 != 1) { return a.append("g" + ""); }
+    return a;
+}
+function fold(own acc: string[], n: i32, f: (i32, own string[]) => string[]): string[] {
+    var a: string[] = f(n, acc);
+    a = f(n + 2, a);
+    return a;
+}
+function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = fold(pending, fd, at_node); fd = fd + 1; }
+    return pending.len() % 256;
+}
+`, "fold", nil, true},
+	// A call through a fn-typed local: the registry reads its `own` positions as
+	// the lowering stamps them, so both take `a` for `acc`.
+	{"fn_value_local_into_produced_consumer", `@noinline
+function at_node(n: i32, own a: string[]): string[] {
+    if (n % 3 != 1) { return a.append("g" + ""); }
+    return a;
+}
+@noinline
+function take(n: i32, own a: string[]): string[] {
+    if (n % 5 == 0) { return ["r" + ""]; }
+    if (n % 3 == 1) { return a; }
+    return a.append("g" + "");
+}
+function fold(own acc: string[], n: i32): string[] {
+    var f: (i32, own string[]) => string[] = at_node;
+    var a: string[] = f(n, acc);
+    a = take(n, a);
+    return a;
+}
+function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
+    return pending.len() % 256;
+}
+`, "fold,at_node", nil, true},
+	// A consuming position's parameter dropped by a return (#10361).
+	{"consuming_param_dropped", `@noinline
+function at_node(n: i32, own a: string[]): string[] {
+    if (n % 3 != 1) { return a.append("g" + ""); }
+    return a;
+}
+function fold(own acc: string[], n: i32): string[] { acc = at_node(n, acc); acc = at_node(n + 2, acc); if (n % 2 == 0) { return []; } return acc; }
+function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = fold(pending, fd); fd = fd + 1; }
+    return pending.len() % 256;
+}
+`, "fold", nil, true},
 	// #9409: a borrowed alias moved into an `own` callee whose body aliases
 	// the parameter in turn.
 	{"borrowed_outer", `function grow(x: string, own acc: string[]): string[] { return acc.append(x); }

@@ -34,7 +34,7 @@ So the fix makes the frame agree with the caller-releases rule everywhere:
   buffer, and flag 1 means it holds a replacement the frame minted. A rebind
   releases only a flag-1 value, and so does the exit.
 - A top-level `var a = p` where p is not named again
-  (`own_handback_sites_of`, `bind_own_handback`) binds `a` as a borrow that
+  (`own_handbacks_of`, `bind_own_handback`) binds `a` as a borrow that
   continues p's flag. A return of `a` with the flag clear hands the buffer
   back uncounted, as `return p` does. `var a = g(p)` with p at an `own`
   position that g does not consume is the same bind: while `a` holds p's
@@ -48,16 +48,22 @@ So the fix makes the frame agree with the caller-releases rule everywhere:
   in `grow_alias`, every call bracketed `a` and copied the whole buffer.
 - `own_consumed_positions_of` follows the alias. Otherwise an AST `fold` that
   passes `a` to a produced consuming callee kept a threaded position that the
-  callee then consumed.
+  callee then consumed. The lowering and the registry find these binds with
+  one function, `own_handbacks_of`, over the same "callee|idx" rows. A
+  function value's rows are read the way `stamp_fnval_decl` stamps them
+  (`fn_value_own_rows`).
+- A flagged parameter whose position consumes starts its flag set: the frame
+  owns that unit, so a bind that supersedes it releases it, and so does a
+  return that drops it (#10361).
 
 The first rule also fixes a leak on the direct spelling: with several grows in
 one frame, `acc = at_node(…, acc)` repeated leaked every intermediate buffer.
 
 ## Measured
 
-`TestSelfHostOwnParamAlias*`: 14 shapes × {semantic, AST, AST main, AST fold
+`TestSelfHostOwnParamAlias*`: 19 shapes × {semantic, AST, AST main, AST fold
 with produced callees} × {x86-64 leakcheck + sanitizer, arm64, wasm}. On main,
-24 of the 56 x86-64 legs failed. They are all green now, and #9409's
+24 of the first 14 shapes' 56 x86-64 legs failed. They are all green now, and #9409's
 reproducer (`borrowed_outer`) is among them.
 
 The AST-lowered driver built from #10338's sources compiled
@@ -74,5 +80,3 @@ branch.
 - #10367: a local aliasing a borrowed array parameter leaks when a branch
   appends to it. The checker's `inst_stmts` has this shape, so its AST build
   still leaks there.
-- #10361: in a mixed module, an AST frame whose `own` position consumes leaks
-  the parameter on a return that drops it.
