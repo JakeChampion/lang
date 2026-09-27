@@ -1992,7 +1992,7 @@ function main(): i32 {
 		// Map.keys() / .values() snapshot a column into a fresh array.
 		// That array must use the standard 16-byte rc-array header
 		// (capacity@data-12, rc=1@data-8, length@data-4, data@base+16)
-		// — the i32 path (__map_column in core/map.fern) and the wide
+		// — the i32 path (then __map_column in core/map.fern) and the wide
 		// i64/u64/f64 path (emitWideMapKeys/Values) both built a
 		// length-only header, so the snapshot's scope-exit drop read
 		// heap metadata at data-8 as the rc and underflowed (even when

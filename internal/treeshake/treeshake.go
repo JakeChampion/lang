@@ -193,8 +193,8 @@ var watHelperDeps = map[string][]string{
 	// the rest of the column machinery: a program that calls keys() or
 	// values() at all carries it, which is the price of shaking before the
 	// stride is known.
-	"__method_Map_keys":         {"__map_keys_impl", "__map_column", "__map_u8_column"},
-	"__method_Map_values":       {"__map_values_impl", "__map_column", "__map_u8_column"},
+	"__method_Map_keys":         {"__map_keys_impl", "__map_i32_column", "__map_bool_column", "__map_u8_column"},
+	"__method_Map_values":       {"__map_values_impl", "__map_i32_column", "__map_bool_column", "__map_u8_column"},
 	"__method_Map_iter":         {"__map_iter_impl"},
 	"__method_MapIter_has_next": {"__mapiter_has_next_impl"},
 	"__method_MapIter_key":      {"__mapiter_key_impl", "__mapiter_entry_addr"},
