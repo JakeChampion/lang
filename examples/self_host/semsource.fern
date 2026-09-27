@@ -77,7 +77,7 @@ struct State {
     // The module declarations whose body may hand one of their parameters out,
     // by contract name; `handers` computes it and `lend` consults it.
     handers: string[],
-    // The builtin names a module free function takes over (`shadowed_builtins`).
+    // The builtin names a module declaration takes over (`shadowed_builtins`).
     shadows: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
@@ -3947,12 +3947,19 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
     return out;
 }
 
-// The builtin names a module's free function takes over. Methods are not
-// counted: a receiver-keyed builtin lowers by name (#10363).
+// The builtin names a module declaration takes over: any free function, and a
+// string method only when std/string is not loaded. std/string's own methods
+// are what the runtime helpers stand in for, and native rejects a second
+// declaration of one beside them (E006).
 function shadowed_builtins(mod: parser.Module): string[] {
     var out: string[] = [];
     var keys: string[] = [];
-    for fd in mod.funcs { if (fd.receiver_type.len() == 0) { keys = keys.append(fd.name); } }
+    var std_string: boolean = false;
+    for im in mod.imports { if (im.path == "std/string") { std_string = true; } }
+    for fd in mod.funcs {
+        if (fd.receiver_type.len() == 0) { keys = keys.append(fd.name); }
+        else if (!std_string && util.base_type_name(fd.receiver_type) == "string") { keys = keys.append(decl_key(fd)); }
+    }
     for b in builtin_contracts() {
         if (util.index_of_str(keys, b.name) >= 0 && util.index_of_str(out, b.name) < 0) { out = out.append(b.name); }
     }
@@ -4444,9 +4451,8 @@ function builtin_contracts(): ssasem.Contract[] {
 // `is_str_builtin_method`'s seven. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
 // owner method_call already derives. contracts() keeps a declaration of one of
-// these over the builtin, but ssarc.string_method_site lowers the call by name
-// to the helper's op all the same — right for std/string's own declarations,
-// which the helpers stand in for, and wrong for a user's (#10363).
+// these over the builtin; a user's own is then an ordinary call
+// (`shadowed_builtins`), and std/string's lowers to the helper's op.
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
 // and the three that answer text hand back a fresh string of the caller's own,
@@ -4509,14 +4515,17 @@ function raw_floor_contracts(): ssasem.Contract[] {
 // needs a contract for each the way it does for `__memcpy`.
 //
 // Signatures are the call sites': `__fern_rc_inc` answers the pointer it was
-// given (map.fern:477, 747, 970), `__fern_str_dec` takes the string and gives
-// nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
+// given (map.fern:477, 747, 970), `__fern_str_dec` is lent the string and
+// gives nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
 // header (342), and the two array drops take a pointer and a stride (727, 730).
 function rc_contracts(): ssasem.Contract[] {
     var v: i32 = ssaunits.value_mode();
     return [
         ssasem.Contract { name: "__fern_rc_inc", params: [t_usize()], modes: [v], result: t_usize() },
-        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [v], result: t_void() },
+        // Lent, not consumed: core/map calls it on `k as string`, a raw column
+        // word the frame holds no counted unit for, and the helper releases
+        // the string itself.
+        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [ssaunits.borrow_mode()], result: t_void() },
         ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },

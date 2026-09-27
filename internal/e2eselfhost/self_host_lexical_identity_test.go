@@ -14,10 +14,11 @@ func TestSelfHostLexicalIdentityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	cases := []struct{ name, src, want string }{
 		{"initializer", `function f(x: i64): i64 { var x = x + 1; return x; }`, "x=0;x=1;|$binding$0$x;$binding$1$x;"},
-		{"nested capture", `function f(n: i32): i32 { var call = (): i32 => { var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`, "n=0;call=1;inner=2;n=3;|$binding$0$n;$binding$2$inner;$binding$1$call;"},
+		{"nested capture", `function f(n: i32): i32 { var call = (): i32 => { var inner = (): i32 => n; var n = 99; return inner(); }; return call(); }`, "n=0;inner=1;n=2;call=3;|$binding$0$n;$binding$1$inner;$binding$3$call;"},
 		{"sibling scopes", `function f(n: i32): i32 { if (true) { var n = 1; print(n); } else { var n = 2; print(n); } return n; }`, "n=0;n=1;n=2;|print;$binding$1$n;print;$binding$2$n;$binding$0$n;"},
 		{"loop scope", `function f(xs: i32[], x: i32): i32 { for x in xs { print(x); } return x; }`, "xs=0;x=1;x=2;|$binding$0$xs;print;$binding$2$x;$binding$1$x;"},
-		{"recursive lambda", `function f(): i32 { var recur = (n: i32): i32 => { if (n == 0) { return 7; } return recur(n - 1); }; return recur(2); }`, "recur=0;n=1;|$binding$1$n;$binding$0$recur;$binding$1$n;$binding$0$recur;"},
+		{"recursive nested function", `function f(): i32 { function recur(n: i32): i32 { if (n == 0) { return 7; } return recur(n - 1); } return recur(2); }`, "recur=0;n=1;|$binding$1$n;$binding$0$recur;$binding$1$n;$binding$0$recur;"},
+		{"arrow lambda does not see its var", `function f(): i32 { var recur = (n: i32): i32 => { if (n == 0) { return 7; } return recur(n - 1); }; return recur(2); }`, "n=0;recur=1;|$binding$0$n;recur;$binding$0$n;$binding$1$recur;"},
 		{"assignment identity", `function f(n: i32): i32 { n = n + 1; var n = 4; n = n + 2; return n; }`, "n=0;n=1;|=$binding$0$n;$binding$0$n;=$binding$1$n;$binding$1$n;$binding$1$n;"},
 		{"tuple binding", `function f(): i32 { var (x, y) = (3, 4); return x + y; }`, "x=0;y=1;|$binding$0$x;$binding$1$y;"},
 		{"pattern scope", `enum E { Full(i32), Empty } function f(e: E, x: i32): i32 { match(e) { Full(x) => { print(x); }, Empty => {} } return x; }`, "e=0;x=1;x=2;|$binding$0$e;print;$binding$2$x;$binding$1$x;"},

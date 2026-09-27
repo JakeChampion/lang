@@ -9731,8 +9731,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
     // BEFORE the registries are derived so they see the inferred ones.
     var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-    var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    base = ircore.sub_sigs(sub, base);
+    var base: irlower.FnSigs = ircore.sub_base(sub, im.funcs, imtab);
     var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false, sub);
     if (!g.ok) { return ""; }
     return emit_module_ir_flat(im, imtab, darwin, ircore.inline_tiny_leaves(im, ircore.sub_cache(sub, g.cache)), base, sub.rt_lower);

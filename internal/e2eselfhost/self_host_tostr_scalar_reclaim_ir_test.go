@@ -151,6 +151,35 @@ function main(): i32 {
     if (acc != 149) { return 97; }
     return 52;
 }`, 52},
+	// A scalar `to_string` local that is itself a `to_string` receiver: the
+	// string receiver's result is the receiver itself, so the pair shares one box
+	// and neither release may double-free it. The row pins the shape (bounded
+	// heap, no underflow, exact value), not which reclaim gate decided it;
+	// TestSelfHostStrarrFieldToString witnesses the scalar `.to_string()`
+	// admission. Stored in a struct field or reassigned into an alias, the same
+	// local still leaks (#10369). 980 from the first loop plus 18890 from the
+	// second, %251 = 41.
+	{"tostr-scalar-then-string-recv", `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var s: string = i.to_string();
+        var t: string = s.to_string();
+        if (s.len() != t.len()) { return 97; }
+        acc = (acc + s.len() + t.len()) % 251;
+        i = i + 1;
+    }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var u: string = j.to_string(); var v: string = u.to_string(); acc = (acc + v.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    if (acc != 41) { return 97; }
+    return 0;
+}`, 0},
 	// ESCAPE negative: the credited local is returned, so it must NOT be freed.
 	{"tostr-scalar-escape-return-safe", `import "std/i32";
 function mk(n: i32): string { var s: string = n.to_string(); return s; }
