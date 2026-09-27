@@ -415,8 +415,9 @@ LambdaParams
 # list needs no annotation because `()` is already unambiguous.
 LambdaParam = PatternParam | [ 'own' ] IDENT ':' Type ;
 
+# `()` is the unit value, the one inhabitant of the empty tuple type.
 ParenOrTuple
-            = '(' Expr { ',' Expr } [ ',' ] ')' ;
+            = '(' [ Expr { ',' Expr } [ ',' ] ] ')' ;
 ArrayLit    = '[' [ Expr { ',' Expr } [ ',' ] ] ']' ;
 MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
 MapEntry    = Expr ':' Expr ;

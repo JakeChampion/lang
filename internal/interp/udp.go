@@ -161,7 +161,7 @@ func (i *Interp) udpLocalPort(id int64) (Value, bool) {
 	if !ok {
 		return nil, false
 	}
-	sa, err := syscall.Getsockname(fd)
+	sa, err := getsockname(fd)
 	if err != nil {
 		return negErrno(err), true
 	}
@@ -180,9 +180,9 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 	var err error
 	switch op {
 	case 1:
-		err = syscall.SetsockoptInt(fd, syscall.IPPROTO_TCP, syscall.TCP_NODELAY, int(arg))
+		err = syscall.SetsockoptInt(fd, syscall.IPPROTO_TCP, tcpNodelay, int(arg))
 	case 2:
-		err = syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, int(arg))
+		err = syscall.SetsockoptInt(fd, solSocket, soKeepalive, int(arg))
 	case 3:
 		err = syscall.SetNonblock(fd, arg != 0)
 	case 4:
