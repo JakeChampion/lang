@@ -64303,18 +64303,11 @@ function strarrfld_transient_elem_recv(cfa: ast.ExprFieldAccess, structs: Struct
 // strarrfld_elem_read: `e` is `x.f[i]` for a `string[]` field `f` of a struct
 // whose type fnfld_obj_type resolves.
 function strarrfld_elem_read(e: ast.Expr, structs: StructTab, binds: string[]): boolean {
-    match (e) {
-        ast.ExprIndex(ix) => {
-            match (ix.array) {
-                ast.ExprFieldAccess(ffa) => {
-                    var oty: string = fnfld_obj_type(ffa.obj, structs, binds);
-                    if (oty.len() == 0) { return false; }
-                    return decl_field_type(structs, oty, ffa.field) == "string[]";
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
+    if let ast.ExprIndex(ix) = e {
+        if let ast.ExprFieldAccess(ffa) = ix.array {
+            var oty: string = fnfld_obj_type(ffa.obj, structs, binds);
+            return oty.len() > 0 && decl_field_type(structs, oty, ffa.field) == "string[]";
+        }
     }
     return false;
 }
@@ -64326,15 +64319,9 @@ function strarrfld_elem_read(e: ast.Expr, structs: StructTab, binds: string[]): 
 function strarrfld_scan_operand(e: ast.Expr, structs: StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
     if (!strarrfld_elem_read(e, structs, binds)) { return strarrfld_scan(e, structs, binds, str_fresh, strarr_producers, forwarders, acc); }
     var a: string[] = acc;
-    match (e) {
-        ast.ExprIndex(ix) => {
-            a = strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
-            match (ix.array) {
-                ast.ExprFieldAccess(ffa) => { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
-                _ => {}
-            }
-        },
-        _ => {}
+    if let ast.ExprIndex(ix) = e {
+        a = strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
+        if let ast.ExprFieldAccess(ffa) = ix.array { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); }
     }
     return a;
 }
