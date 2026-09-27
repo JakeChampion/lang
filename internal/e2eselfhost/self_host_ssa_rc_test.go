@@ -313,8 +313,9 @@ function main(): i32 {
     if (!enumPlan.ok) { eprint(enumPlan.why); return 15; }
     if (!ssarc.lower(enumFunc, [2], enumPlan, irlower.struct_tab_empty(), []).ok) { return 16; }
     // A type that reaches itself has no finite INLINE expansion, so its
-    // children are released by a per-type helper the walk calls. The call is
-    // what makes the descent finite, so the helper's own body must contain it.
+    // children are released by a per-type helper the walk calls, and a site
+    // releases the whole value through a second one. The pair calls each other,
+    // which is what makes the descent finite.
     var selfType: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] };
     var selfSchema = semrecords.Record { ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
     var selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
@@ -325,16 +326,21 @@ function main(): i32 {
     var selfLowered = ssarc.lower(selfFunc, [2], selfPlan, irlower.struct_tab_empty(), []);
     if (!selfLowered.ok) { eprint(selfLowered.why); return 18; }
     var selfHelpers = ssarc.drop_helpers(selfFunc);
-    if (selfHelpers.len() != 1) { return 19; }
+    if (selfHelpers.len() != 2) { return 19; }
     if (selfHelpers[0].name != "__sem_drop_Node") { eprint(selfHelpers[0].name); return 20; }
-    if (selfHelpers[0].n_params != 1) { return 21; }
+    if (selfHelpers[1].name != "__sem_release_Node") { eprint(selfHelpers[1].name); return 200; }
+    if (selfHelpers[0].n_params != 1 || selfHelpers[1].n_params != 1) { return 21; }
     // n_locals covers the parameter even before a child slot is reserved.
-    if (selfHelpers[0].n_locals < 1) { return 22; }
-    var sawSelfCall: boolean = false;
+    if (selfHelpers[0].n_locals < 1 || selfHelpers[1].n_locals < 1) { return 22; }
+    var dropCallsRelease: boolean = false;
     for o in selfHelpers[0].ops {
-        if (ir.render_op(o) == "call_direct __sem_drop_Node/1") { sawSelfCall = true; }
+        if (ir.render_op(o) == "call_direct __sem_release_Node/1") { dropCallsRelease = true; }
     }
-    if (!sawSelfCall) { return 23; }
+    var releaseCallsDrop: boolean = false;
+    for o in selfHelpers[1].ops {
+        if (ir.render_op(o) == "call_direct __sem_drop_Node/1") { releaseCallsDrop = true; }
+    }
+    if (!dropCallsRelease || !releaseCallsDrop) { return 23; }
     // A schema with no reference field needs no helper, so none is emitted:
     // a body exists exactly when a call to it does.
     var flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
@@ -343,8 +349,8 @@ function main(): i32 {
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
     // Two views of one type merge to a single tail entry rather than two.
     var merged = ssarc.merge_helpers([], ssarc.drop_helpers(selfFunc).append(ssarc.drop_helpers(selfFunc)[0]));
-    if (merged.len() != 1) { return 25; }
-    if (!merged[0].ok) { eprint(merged[0].why); return 26; }
+    if (merged.len() != 2) { return 25; }
+    if (!merged[0].ok || !merged[1].ok) { eprint(merged[0].why); return 26; }
     // Two bodies under one symbol refuse instead. The weak linkage that lets
     // duplicates co-link would otherwise pick one of them silently.
     var perturbed = irlower.LowerResult { ...selfHelpers[0], ops: selfHelpers[0].ops.append(ir.op_const_i32(1)) };
@@ -352,6 +358,22 @@ function main(): i32 {
     if (clashed.len() != 1) { return 27; }
     if (clashed[0].ok) { return 28; }
     if (clashed[0].why != "conflicting drop helper for __sem_drop_Node") { eprint(clashed[0].why); return 29; }
+    // A frame releasing a nominal box with children makes one call to the
+    // type's release helper; the uniqueness test and the child walk live there.
+    var sinkGraph = ssa.SFunc { name: "sink", nparams: 1, nvals: 2, entry: 7, takes_env: false,
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: 1, result: 1, args: [], imm: 0, str: "" }], term: ret(1) }] };
+    var sinkResult: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false };
+    var sinkFunc = ssasem.Func { ...selfFunc, graph: sinkGraph, values: [selfType, sinkResult], result: sinkResult };
+    var sinkPlan = ssaunits.plan(sinkFunc, [3]);
+    if (!sinkPlan.ok) { eprint(sinkPlan.why); return 196; }
+    var sinkLowered = ssarc.lower(sinkFunc, [3], sinkPlan, irlower.struct_tab_empty(), []);
+    if (!sinkLowered.ok) { eprint(sinkLowered.why); return 197; }
+    var releases: i32 = 0;
+    for o in sinkLowered.ops {
+        if (ir.render_op(o) == "call_direct __sem_release_Node/1") { releases = releases + 1; }
+        if (ir.render_op(o) == "call_direct __fern_rc_is_unique/1") { return 198; }
+    }
+    if (releases != 1) { return 199; }
     // The AST-caller row for a nominal result. The bare name asserts SOLE
     // ownership, which this boundary does not promise, and its exit sweep runs
     // the field walk unguarded — so it is granted only to a schema with no
