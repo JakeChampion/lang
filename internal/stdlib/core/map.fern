@@ -1064,6 +1064,7 @@ pub function __map_drop_values(m: usize): usize {
 // column walks (__map_drop_values and its siblings), which read the same
 // rc==1 test before this frees what they walk.
 pub function __map_drop_impl(m: usize): usize {
+    // A null test only, no address floor, for __map_drop_values' reason.
     if (m == 0) { return m; }
     if (__load_i32(m - 8) != 1) {
         __fern_rc_dec(m);

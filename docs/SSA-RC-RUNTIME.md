@@ -113,10 +113,12 @@ arrays through `__fern_arr_dec` at rc == 1 (base `data - max(16, stride)`,
 header plus `cap*stride`; the `__fern_drop_arr_*` wrappers release the elements
 first), closure cells through `__fern_closure_drop` (the payload size at
 `data-4`) and their environments through the IR's `__closure_drop_*` thunks,
-map buffers and handles through core/map's `__map_drop_impl`, and a mispaired reuse token
-through `__alloc_reuse`. `__fern_rc_dec` does not free at zero, like the flat
-backend's: the IR gates every release on rc == 1 and frees through the
-type-specific drop.
+map buffers and handles through core/map's `__map_drop_impl`, and a mispaired
+reuse token through `__alloc_reuse`. `__fern_rc_dec` does not free at zero,
+like the flat backend's: the IR gates every release on rc == 1 and frees
+through the type-specific drop. Unlike the flat backend's, neither helper here
+aborts on an over-release or quarantines a freed block; an over-release is
+only counted.
 
 Strings too, since 2026-09-16: every string producer on this backend is an
 `__alloc` of at least `len + 8` bytes with the data at `base + 8`
