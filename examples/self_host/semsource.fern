@@ -77,6 +77,8 @@ struct State {
     // The module declarations whose body may hand one of their parameters out,
     // by contract name; `handers` computes it and `lend` consults it.
     handers: string[],
+    // The builtin names a module free function takes over (`shadowed_builtins`).
+    shadows: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
     // Each parameter's declared mode, in order. A parameter's value id is its
@@ -1088,7 +1090,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     var left: Value = address_widen(expr(b.left, s, want), want);
     s = left.s;
     if (!s.ok) { return left; }
-    if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left.id])) { want = s.values[left.id]; }
+    if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left.id]) && !wide_literal(b.right)) { want = s.values[left.id]; }
     if (!operand_type(want) && parser.float_literal_tree(b.right) && ssasem.is_float(s.values[left.id])) { want = s.values[left.id]; }
     // The left operand decides whether this is a composite comparison, and the
     // decision is taken before the RIGHT one is produced: the method call
@@ -1107,9 +1109,34 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
 function arithmetic(b: ast.ExprBinary, left: Value, right: Value, s: State): Value {
     right = shift_count(b.op, right, s.values[left.id]);
     s = right.s;
+    // A 32-bit operand meets a 64-bit one of its own signedness at the wider
+    // width, as the checker settles it; every other mix is E009.
+    if (widens_to(s.values[left.id], s.values[right.id])) {
+        left = define(s, ssasem.cast(), [left.id], 0, "", s.values[right.id]);
+        s = left.s;
+    } else if (widens_to(s.values[right.id], s.values[left.id])) {
+        right = define(s, ssasem.cast(), [right.id], 0, "", s.values[left.id]);
+        s = right.s;
+    }
     var ty: typeinfo.Type = ssasem.binary_result(b.op, s.values[left.id], s.values[right.id]);
     if (!semtypes.concrete(ty, false)) { return refused(s, "operator contract: " + typeinfo.spelling(s.values[left.id]) + " " + b.op + " " + typeinfo.spelling(s.values[right.id])); }
     return define(s, 9, [left.id, right.id], 0, b.op, ty);
+}
+
+// A literal past the i32 range keeps its own i64 width rather than taking a
+// narrower operand's, which would truncate it.
+function wide_literal(e: ast.Expr): boolean {
+    if let ast.ExprNumber(n) = e { return !n.is_float && n.suffix == "" && parser.literal_is_i64(n.text); }
+    return false;
+}
+
+function widens_to(from: typeinfo.Type, to: typeinfo.Type): boolean {
+    if let typeinfo.TypeI32(a) = from {
+        if let typeinfo.TypeI32(b) = to {
+            return a.width == 32 && b.width == 64 && a.unsigned == b.unsigned && !a.is_char && !b.is_char;
+        }
+    }
+    return false;
 }
 
 // A struct or an enum compares STRUCTURALLY, through the method its `@derive`
@@ -3326,7 +3353,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -3598,14 +3625,14 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers,
+        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows,
         name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body) };
 }
 
@@ -3914,6 +3941,18 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
     return out;
 }
 
+// The builtin names a module's free function takes over. Methods are not
+// counted: a receiver-keyed builtin lowers by name (#10363).
+function shadowed_builtins(mod: parser.Module): string[] {
+    var out: string[] = [];
+    var keys: string[] = [];
+    for fd in mod.funcs { if (fd.receiver_type.len() == 0) { keys = keys.append(fd.name); } }
+    for b in builtin_contracts() {
+        if (util.index_of_str(keys, b.name) >= 0 && util.index_of_str(out, b.name) < 0) { out = out.append(b.name); }
+    }
+    return out;
+}
+
 function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
     for tr in traits {
         var found: boolean = false;
@@ -3985,7 +4024,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string): Produced {
     var table: Schemas = closed.table;
     if (!table.ok) { return refuse(table.why); }
     var graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns };
+    f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: table.records, enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows };
     // Before the verifier, so the rewritten graph is the one it checks, and
     // before anything downstream plans ownership over it (#9692).
     f = ssasem.tail_recursion(f, name);
@@ -4012,10 +4051,10 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
     var why: string = unsupported_declaration(fd, scope);
     if (why != "") { return refuse(why); }
-    var s: State = initial(fd, scope, contracts, binding, name, handers, funcs, impls);
+    var s: State = initial(fd, scope, contracts, binding, name, handers, shadows, funcs, impls);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
     // A cursor escapes the same way, and worse: it is anchored to a map this
     // frame may own, so a returned one outlives the columns it reads. The
@@ -4398,9 +4437,10 @@ function builtin_contracts(): ssasem.Contract[] {
 // The string methods the AST lowering emits an OP for rather than a call —
 // `is_str_builtin_method`'s seven. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
-// owner method_call already derives. A module that DECLARES one of these wins:
-// contracts() keeps the declaration and drops the builtin, which is the same
-// precedence the AST path gives a user's own definition.
+// owner method_call already derives. contracts() keeps a declaration of one of
+// these over the builtin, but ssarc.string_method_site lowers the call by name
+// to the helper's op all the same — right for std/string's own declarations,
+// which the helpers stand in for, and wrong for a user's (#10363).
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
 // and the three that answer text hand back a fresh string of the caller's own,
@@ -4997,6 +5037,7 @@ pub function build_module(mod: parser.Module): Built {
     var scopes: checker.Scope[] = checker.module_scopes(mod);
     var table: ssasem.Contract[] = contracts(mod, scopes);
     var handed_back: string[] = handers(mod);
+    var shadows: string[] = shadowed_builtins(mod);
     var decls: Produced[] = [];
     var names: string[] = [];
     var pending: Request[] = [];
@@ -5004,7 +5045,7 @@ pub function build_module(mod: parser.Module): Built {
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
-        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, mod.funcs, mod.impls); }
+        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, mod.funcs, mod.impls); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
         names = names.append(decl_key(fd));
@@ -5016,7 +5057,7 @@ pub function build_module(mod: parser.Module): Built {
         var r: Request = pending[at];
         var di: i32 = util.index_of_str(names, r.key);
         var p: Produced = refuse("unbounded instantiation");
-        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, mod.funcs, mod.impls); }
+        if (at < instance_limit()) { p = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, mod.funcs, mod.impls); }
         pending = queue(pending, p.requests);
         instances = instances.append(Produced { ...p, key: r.key });
         names = names.append(r.name);

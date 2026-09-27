@@ -5060,6 +5060,10 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       if (u.op == "try_") {
         return try_success_type(s, ot);
       }
+      // `x as? T` is `Option[T]`; E059 / E060 police the operand and target.
+      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+        return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
+      }
       return t_unknown("unknown unary op:" + u.op);
     },
     ast.ExprCall(c) => {
