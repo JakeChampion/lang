@@ -13115,19 +13115,6 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!xs.ok) { return xs; }
         return xs.emit(ir.op_exit());
     }
-    // Built-in `len(x)` — the free-function spelling of `.len()`:
-    // a string reads the box's length field (str_len), an array
-    // the header (arr_len). Mirrors the `.len()` method dispatch
-    // below; `len` is a reserved builtin (handled by name like
-    // map_new / Some / Ok), so this never shadows a user function.
-    if (cid.name == "len" && c.args.len() == 1) {
-        var lstr: boolean = expr_is_str(c.args[0], s);
-        var lvst: ArgStash = lower_view_borrowed_parked(c.args[0], s);
-        var ls: LowerState = lvst.state;
-        if (!ls.ok) { return ls; }
-        if (lstr) { return free_parked_view_after(ls.emit(ir.op_str_len()), lvst.slot); }
-        return ls.emit(ir.op_arr_len());
-    }
     // String builtin free calls — `str_split(s, sep)` and the transforms —
     // are the same ops as the `.split` / `.trim` / … method forms, so they
     // route through lower_str_method (field = the name minus its `str_`
@@ -31392,12 +31379,7 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                     },
                     _ => {}
                 }
-                // The `len(x)` builtin is the free spelling of `.len()` and
-                // lowers through lower_view_borrowed, so a slice argument there
-                // borrows its source too.
-                if (callee_name == "len" && c.args.len() == 1) {
-                    if (expr_unsafe_for_view_pos(c.args[ai], name, borrowable, recv_borrow)) { return true; }
-                } else if (!arg_is_borrow && expr_unsafe_for_vb(c.args[ai], name, borrowable, recv_borrow, vb_borrow)) { return true; }
+                if (!arg_is_borrow && expr_unsafe_for_vb(c.args[ai], name, borrowable, recv_borrow, vb_borrow)) { return true; }
                 ai = ai + 1;
             }
             return false;

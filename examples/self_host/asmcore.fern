@@ -4892,7 +4892,6 @@ function builtin_i32_names(): string[] {
         // proc_exec_as(path, argv, envp) → the same failure-only i32.
         "proc_exec_as",
         "f64_bits", "f32_bits",
-        "len",
         // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
         // machine words carried as i32; __raw_string is the one that
         // produces a typed string. The stores return i32 (the value
