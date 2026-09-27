@@ -70769,14 +70769,67 @@ function rc_ml_rc_type_name(t: string, structs: StructTab): boolean {
 }
 
 // rc_ml_owned_rc_local: `name` is a declared LOCAL (params excluded — native
-// isOwnedRcLocal reads info.Locals) whose type carries an rc box.
-function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: StructTab): boolean {
+// isOwnedRcLocal reads info.Locals) whose type carries an rc box, and whose
+// value reaching top-level statement k of `body` is a claim of its own: a
+// nested-struct field lift is not (rc_ml_lifted_at).
+function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, body: ast.Stmt[], k: i32, types_n: string[], types_t: string[], structs: StructTab): boolean {
     var pi: i32 = 0;
     while (pi < fn.params.len()) { if (fn.params[pi].name == name) { return false; } pi = pi + 1; }
     var i: i32 = 0;
     while (i < types_n.len()) {
-        if (types_n[i] == name) { return rc_ml_rc_type_name(types_t[i], structs); }
+        if (types_n[i] == name) {
+            if (!rc_ml_rc_type_name(types_t[i], structs)) { return false; }
+            return !decl_is_struct(structs, types_t[i]) || !rc_ml_lifted_at(name, body, k, types_n, types_t, structs, 0);
+        }
         i = i + 1;
+    }
+    return false;
+}
+
+// rc_ml_lifted_at: the value `name` holds on reaching top-level statement k of
+// `body` may be a nested-STRUCT field lift (`var fr = st.fr`), or an alias of
+// one. That bind takes no retain (own_lift_retain_sites_of), so moving the
+// local would hand on the claim `st` still releases. The nearest top-level
+// binding before k decides; a lift assigned inside a block between the two
+// counts too, since it may be the value that arrives.
+function rc_ml_lifted_at(name: string, body: ast.Stmt[], k: i32, types_n: string[], types_t: string[], structs: StructTab, depth: i32): boolean {
+    if (depth > 8) { return true; }
+    var j: i32 = k - 1;
+    while (j >= 0) {
+        var st: ast.Stmt = body[j];
+        if let ast.StmtVar(v) = st { if (v.name == name) { return rc_ml_lift_value(v.init, body, j, types_n, types_t, structs, depth); } }
+        if let ast.StmtAssign(a) = st { if (a.target == name) { return rc_ml_lift_value(a.value, body, j, types_n, types_t, structs, depth); } }
+        if (astwalk.fold_stmt_spine(st, false, (s: ast.Stmt, own h: boolean) => h || rc_ml_nested_lift(s, name, types_n, types_t, structs))) { return true; }
+        j = j - 1;
+    }
+    return false;
+}
+
+// rc_ml_lift_value: `e`, stored by top-level statement j, is a nested-struct
+// field read or names a local lifted at j.
+function rc_ml_lift_value(e: ast.Expr, body: ast.Stmt[], j: i32, types_n: string[], types_t: string[], structs: StructTab, depth: i32): boolean {
+    if (rc_ml_struct_field_read(e, types_n, types_t, structs)) { return true; }
+    if let ast.ExprIdent(id) = e { return rc_ml_lifted_at(id.name, body, j, types_n, types_t, structs, depth + 1); }
+    return false;
+}
+
+// rc_ml_nested_lift: `st` binds `name` to a nested-struct field read, or to
+// another name, which a block-local walk cannot vouch for.
+function rc_ml_nested_lift(st: ast.Stmt, name: string, types_n: string[], types_t: string[], structs: StructTab): boolean {
+    if let ast.StmtVar(v) = st { return v.name == name && rc_ml_nested_value(v.init, types_n, types_t, structs); }
+    if let ast.StmtAssign(a) = st { return a.target == name && rc_ml_nested_value(a.value, types_n, types_t, structs); }
+    return false;
+}
+
+function rc_ml_nested_value(e: ast.Expr, types_n: string[], types_t: string[], structs: StructTab): boolean {
+    if let ast.ExprIdent(_) = e { return true; }
+    return rc_ml_struct_field_read(e, types_n, types_t, structs);
+}
+
+function rc_ml_struct_field_read(e: ast.Expr, types_n: string[], types_t: string[], structs: StructTab): boolean {
+    if let ast.ExprFieldAccess(fa) = e {
+        var bty: string = rc_ml_local_type(ident_name_or_empty(fa.obj), types_n, types_t);
+        return decl_is_struct(structs, bty) && decl_is_struct(structs, decl_field_type(structs, bty, fa.field));
     }
     return false;
 }
@@ -71033,7 +71086,7 @@ function rc_ml_ctor_arg_moves(args: ast.Expr[], body: ast.Stmt[], k: i32, fn: pa
     while (ai < args.len()) {
         match (args[ai]) {
             ast.ExprIdent(aid) => {
-                if (rc_ml_move_ok(aid.name, allow, restrict) && rc_ml_owned_rc_local(aid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, aid.name, k) && util.index_of_str(out.names, aid.name) < 0) {
+                if (rc_ml_move_ok(aid.name, allow, restrict) && rc_ml_owned_rc_local(aid.name, fn, body, k, types_n, types_t, structs) && rc_ml_last_use(body, aid.name, k) && util.index_of_str(out.names, aid.name) < 0) {
                     out = MlOut { names: out.names.append(aid.name), sites: out.sites.append(util.i32_to_string(aid.line) + ":" + util.i32_to_string(aid.col)) };
                 }
             },
@@ -71070,7 +71123,7 @@ function rc_ml_construction_moves(val: ast.Expr, body: ast.Stmt[], k: i32, fn: p
                             }
                         }
                         var rc_field: boolean = is_array_type_name(ft) || ft == "string" || (ft.len() > 0 && ft[0] == b'(') || rc_struct_decl_index(structs, ft) >= 0 || rc_fe_is_enum_name(structs, ft);
-                        if (rc_field && rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_field && rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, body, k, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             // native keys the construction-move site on the
                             // consumed IDENT node.
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
@@ -71121,7 +71174,7 @@ function rc_ml_construction_moves(val: ast.Expr, body: ast.Stmt[], k: i32, fn: p
                         if (rc_ml_arr_elem_rc_tracked(rc_ml_recv_elem_type(fa.obj, types_n, types_t, structs), structs)) {
                             match (c.args[elem_idx]) {
                                 ast.ExprIdent(eid) => {
-                                    if (rc_ml_move_ok(eid.name, allow, restrict) && rc_ml_owned_rc_local(eid.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, eid.name, k) && util.index_of_str(out.names, eid.name) < 0) {
+                                    if (rc_ml_move_ok(eid.name, allow, restrict) && rc_ml_owned_rc_local(eid.name, fn, body, k, types_n, types_t, structs) && rc_ml_last_use(body, eid.name, k) && util.index_of_str(out.names, eid.name) < 0) {
                                         out = MlOut { names: out.names.append(eid.name), sites: out.sites.append(util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col)) };
                                     }
                                 },
@@ -71139,7 +71192,7 @@ function rc_ml_construction_moves(val: ast.Expr, body: ast.Stmt[], k: i32, fn: p
             while (i < ar.elements.len()) {
                 match (ar.elements[i]) {
                     ast.ExprIdent(id) => {
-                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, body, k, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
                         }
                     },
@@ -71154,7 +71207,7 @@ function rc_ml_construction_moves(val: ast.Expr, body: ast.Stmt[], k: i32, fn: p
             while (i < tu.elements.len()) {
                 match (tu.elements[i]) {
                     ast.ExprIdent(id) => {
-                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
+                        if (rc_ml_move_ok(id.name, allow, restrict) && rc_ml_owned_rc_local(id.name, fn, body, k, types_n, types_t, structs) && rc_ml_last_use(body, id.name, k) && util.index_of_str(out.names, id.name) < 0) {
                             out = MlOut { names: out.names.append(id.name), sites: out.sites.append(util.i32_to_string(id.line) + ":" + util.i32_to_string(id.col)) };
                         }
                     },
@@ -71286,7 +71339,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                             // move (`var (x, y) = a`) share the bare-ident-RHS
                             // site shape; native keys the STATEMENT node. An
                             // owned PARAM qualifies too (rc_ml_owned_rc_param).
-                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            if ((rc_ml_owned_rc_local(id.name, fn, fn.body, k, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) };
                             }
                         },
@@ -71297,7 +71350,7 @@ function rc_ml_compute_toplevel(fn: parser.FuncDecl, structs: StructTab): MlOut 
                 ast.StmtAssign(a) => {
                     match (a.value) {
                         ast.ExprIdent(id) => {
-                            if ((rc_ml_owned_rc_local(id.name, fn, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
+                            if ((rc_ml_owned_rc_local(id.name, fn, fn.body, k, st.types_n, st.types_t, structs) || rc_ml_owned_rc_param(id.name, fn, consumed, structs)) && rc_ml_last_use(fn.body, id.name, k) && util.index_of_str(moved.names, id.name) < 0) {
                                 moved = MlOut { names: moved.names.append(id.name), sites: moved.sites.append(util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)) };
                             }
                         },
