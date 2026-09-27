@@ -4077,6 +4077,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// Exposed so core/map can release its own handle (__map_drop_impl) with
+	// the runtime's guards: __fern_rc_dec counts and traps an over-release
+	// and ignores a static sentinel; __fern_box_free(data, size) frees the
+	// rc'd block at data-8 and quarantines it under FERN_RC_FREE_DEBUG.
+	c.info.FuncSigs["__fern_rc_dec"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__fern_box_free"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
 	// `__alloc_reuse(token, tokenSize, size)` is the Phase 5 drop-reuse
 	// (FBIP) primitive: when `token != 0` and its size class
 	// (`(tokenSize+15)&-16`) equals `size`'s class, it returns `token`

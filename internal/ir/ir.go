@@ -3660,33 +3660,28 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		})
 		out.Funcs = append(out.Funcs, fn)
 	}
-	// Dead map-reclamation cull. `__map_drop_values` (the core/map value-drop
-	// helper) is loaded only when a real Map value is created — `map_new` / a map
-	// literal pull core/map in. A program that uses a Map-typed struct field or
-	// enum payload only as a TYPE (e.g. a `JsonValue[]` holding only scalar
-	// `JString` variants — `JObject(Map[…])` is never constructed) never loads it,
-	// yet the generated `__drop_enum_`/`__drop_struct_` body still emits the
-	// map-reclamation call for that payload (genEnumDropFn / appendMapDrop). Since
-	// no Map value can exist, that call site is DEAD, but the static reference
-	// would fail as `unknown callee "__map_drop_values"` at wasm build (undefined
-	// symbol on the register backends). Drop the dead calls: `__map_drop_values`
-	// is `ptr -> ptr` (self-guards on rc==1), so removing the op is stack-neutral —
-	// the still-present `__fern_map_drop` (a backend runtime helper, always
-	// available) runs on the same unreachable pointer and is itself dead. When any
-	// live map exists `__map_drop_values` is loaded, so this pass is a no-op and no
-	// reachable reclamation is ever removed.
-	mapDropLoaded := false
+	// Dead map-reclamation cull. `__map_drop_values` and `__map_drop_impl` (the
+	// core/map drop helpers) are loaded only when a real Map value is created —
+	// `map_new` / a map literal pull core/map in. A program that uses a Map-typed
+	// struct field or enum payload only as a TYPE (e.g. a `JsonValue[]` holding
+	// only scalar `JString` variants — `JObject(Map[…])` is never constructed)
+	// never loads them, yet the generated `__drop_enum_`/`__drop_struct_` body
+	// still emits the map-reclamation chain for that payload (genEnumDropFn /
+	// appendMapDrop). Since no Map value can exist, those call sites are DEAD,
+	// but the static reference would fail as an unknown callee at wasm build
+	// (undefined symbol on the register backends). Drop the dead calls: both
+	// helpers are `ptr -> ptr`, so removing the op is stack-neutral. When any
+	// live map exists both are loaded, so this pass is a no-op and no reachable
+	// reclamation is ever removed.
+	mapDropHelpers := map[string]bool{"__map_drop_values": true, "__map_drop_impl": true}
 	for _, f := range out.Funcs {
-		if f.Name == "__map_drop_values" {
-			mapDropLoaded = true
-			break
-		}
+		delete(mapDropHelpers, f.Name)
 	}
-	if !mapDropLoaded {
+	if len(mapDropHelpers) > 0 {
 		for _, f := range out.Funcs {
 			filtered := f.Ops[:0]
 			for _, op := range f.Ops {
-				if op.Kind == OpCallDirect && op.Str == "__map_drop_values" {
+				if op.Kind == OpCallDirect && mapDropHelpers[op.Str] {
 					continue
 				}
 				filtered = append(filtered, op)
@@ -19284,7 +19279,7 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 // generated __drop_map_via_<perValueDrop>; array values via the generic
 // __map_drop_values; string values via __drop_map_str_values), then any
 // string-key column (__drop_map_str_keys), then the buf + handle
-// (__fern_map_drop). Every helper self-guards on the map's own rc==1, so a
+// (__map_drop_impl). Every helper self-guards on the map's own rc==1, so a
 // shared map only dec's. Net-zero on the operand stack, so a value sitting
 // underneath (a reinit RHS) is left untouched. Callers gate on
 // RcFreeEnabled + freeEligible.

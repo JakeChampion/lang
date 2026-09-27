@@ -22,7 +22,8 @@ import "testing"
 // the same way on both.
 
 func TestStructFieldMapDropWalksTheKeyColumn(t *testing.T) {
-	src := `struct Tbl { m: Map[string, i32], count: i32 }
+	src := `import "core/map";
+struct Tbl { m: Map[string, i32], count: i32 }
 function build(n: i32): Tbl {
     var mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k" + "ey", n);
@@ -31,9 +32,9 @@ function build(n: i32): Tbl {
 function main(): i32 { var t: Tbl = build(3); return t.count; }`
 
 	for _, ptrW := range []int{4, 8} {
-		p := lowerSourceWith(t, src, ptrW)
+		p := lowerImportsWith(t, src, ptrW)
 		keys := countDirectCalls(p, "__drop_struct_Tbl", "__drop_map_str_keys")
-		bufs := countDirectCalls(p, "__drop_struct_Tbl", "__fern_map_drop")
+		bufs := countDirectCalls(p, "__drop_struct_Tbl", "__map_drop_impl")
 		if bufs == 0 {
 			t.Fatalf("ptrW=%d: __drop_struct_Tbl frees no map at all — the probe stopped measuring the field drop:\n%s", ptrW, p)
 		}
@@ -87,7 +88,8 @@ function main(): i32 { var t: Tbl = build(3); return t.count; }`
 
 // The tuple element is the same child site through the same selector.
 func TestTupleElementMapDropWalksTheKeyColumn(t *testing.T) {
-	src := `function build(n: i32): (Map[string, i32], i32) {
+	src := `import "core/map";
+function build(n: i32): (Map[string, i32], i32) {
     var mm: Map[string, i32] = map_new(8);
     mm = mm.insert("k" + "ey", n);
     return (mm, n);
@@ -95,7 +97,7 @@ func TestTupleElementMapDropWalksTheKeyColumn(t *testing.T) {
 function main(): i32 { var t: (Map[string, i32], i32) = build(3); return t.1; }`
 
 	for _, ptrW := range []int{4, 8} {
-		p := lowerSourceWith(t, src, ptrW)
+		p := lowerImportsWith(t, src, ptrW)
 		keys, bufs := 0, 0
 		for _, fn := range p.Funcs {
 			for _, op := range fn.Ops {
@@ -105,7 +107,7 @@ function main(): i32 { var t: (Map[string, i32], i32) = build(3); return t.1; }`
 				switch op.Str {
 				case "__drop_map_str_keys":
 					keys++
-				case "__fern_map_drop":
+				case "__map_drop_impl":
 					bufs++
 				}
 			}

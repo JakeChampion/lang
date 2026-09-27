@@ -1361,7 +1361,6 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_drop_arr_str":       emitDropArrElemHelper("__fern_drop_arr_str", "__fern_str_dec", "das"),
 	"__fern_drop_arr_ptr":       emitDropArrElemHelper("__fern_drop_arr_ptr", "__fern_rc_dec", "dap"),
 	"__memcpy":                  emitMemcpyHelper,
-	"__fern_map_drop":           emitMapDropHelper,
 	"__fern_map_hash_seed":      emitMapHashSeedHelper,
 	"__alloc_reuse":             emitAllocReuseHelper,
 	"__str_idx":                 emitStrIdxHelper,
@@ -4539,7 +4538,6 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_dec":                  {"__free"},
 	"__fern_drop_arr_str":             {"__fern_str_dec", "__fern_arr_dec"},
 	"__fern_drop_arr_ptr":             {"__fern_rc_dec", "__fern_arr_dec"},
-	"__fern_map_drop":                 {"__free"},
 	"__fern_map_hash_seed":            {"random_i32"},
 	"proc_exec":                       {"__alloc"},
 	"proc_exec_as":                    {"__alloc"},
@@ -8582,59 +8580,6 @@ func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...an
 		w("\tldp x29, x30, [sp], #48")
 		w("\tret")
 	}
-}
-
-// emitMapDropHelper writes __fern_map_drop(m) -> m: the scope-exit drop for a
-// Map local. A Map handle keeps its rc at [m-8] and its kv-buffer pointer at
-// [m+0]. On the LAST reference (rc == 1) both allocations are released — the buf
-// (ast.MapHeaderBytes+8 + cap*(4 + entryStride + 1), cap at [buf+0], entryStride
-// = 2*ptrW = 16 here, the +1/+8 being core/map's ctrl bytes and their mirror —
-// __map_buf_bytes) and then the 16-byte handle cell at m-8; on a shared handle
-// (rc > 1) the count is decremented in place. Entry keys and values are NOT
-// walked: the IR emits a __map_drop_values call ahead of this one for the value
-// column. Mirrors the stack-machine backend's emitMapDropRuntime, including its
-// null / low-address / static-sentinel / non-positive-rc guards. m is held in
-// callee-saved x19 across the __free calls.
-func emitMapDropHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__fern_map_drop"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstr x19, [sp, #16]")
-	w("\tmov x19, x0") // m
-	w("\tcbz x19, .Lssa_mapdrop_ret")
-	w("\tcmp x19, #0x10000")
-	w("\tb.lo .Lssa_mapdrop_ret")
-	w("\tldur w1, [x19, #-8]") // rc
-	w("\ttbnz w1, #31, .Lssa_mapdrop_ret")
-	w("\tcmp w1, #0")
-	w("\tb.le .Lssa_mapdrop_ret") // non-positive rc: nothing to do
-	w("\tcmp w1, #1")
-	w("\tb.ne .Lssa_mapdrop_dec") // shared: just decrement
-	w("\tldr x4, [x19]")          // buf
-	w("\tcbz x4, .Lssa_mapdrop_freehandle")
-	w("\tcmp x4, #0x10000")
-	w("\tb.lo .Lssa_mapdrop_freehandle")
-	w("\tldr w5, [x4]")   // cap
-	w("\tmov x6, #21")    // 4 + entryStride(16) + 1 ctrl byte
-	w("\tmul x5, x5, x6") // cap * 21
-	w("\tadd x1, x5, #%d", ast.MapHeaderBytes+8)
-	w("\tmov x0, x4") // base = buf
-	w("\tbl %s", fnLabel("__free"))
-	w(".Lssa_mapdrop_freehandle:")
-	w("\tsub x0, x19, #8") // handle base
-	w("\tmov x1, #16")     // handle size
-	w("\tbl %s", fnLabel("__free"))
-	w("\tb .Lssa_mapdrop_ret")
-	w(".Lssa_mapdrop_dec:")
-	w("\tldur w1, [x19, #-8]")
-	w("\tsub w1, w1, #1")
-	w("\tstur w1, [x19, #-8]")
-	w(".Lssa_mapdrop_ret:")
-	w("\tmov x0, x19")
-	w("\tldr x19, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
 }
 
 // emitMapHashSeedHelper writes __fern_map_hash_seed() -> i32: core/map's
