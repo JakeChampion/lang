@@ -706,7 +706,10 @@ function main(): i32 {
     // register backends. Its type says so, and a slice typed as an owned
     // string is refused. The slice must DIE here, not be returned: a returned
     // value is handed to the caller, so it has no drop site and would emit no
-    // release at all.
+    // release at all. A slice that dies unread keeps its box in the frame, in
+    // the three slots above the four ordinary locals, and is still released:
+    // the register backends' view free skips a box outside the heap, and on
+    // wasm, where the slice copies, the release is what frees it.
     var viewTy: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
@@ -723,13 +726,27 @@ function main(): i32 {
     var sawViewFree: boolean = false;
     var sawPlainFree: boolean = false;
     for o in sliceLowered.ops {
-        if (ir.render_op(o) == "str_slice") { sawSlice = true; }
+        if (ir.render_op(o) == "str_slice frame:4") { sawSlice = true; }
         if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { sawViewFree = true; }
         if (ir.render_op(o) == "call_direct __fern_str_free/1") { sawPlainFree = true; }
     }
-    if (!sawSlice) { return 48; }
+    if (!sawSlice || sliceLowered.n_locals != 7) { return 48; }
     if (!sawViewFree) { return 49; }
     if (sawPlainFree) { return 50; }
+    // A returned slice outlives the frame, so its box stays on the heap, and
+    // the caller owns the release.
+    var escGraph = ssa.SFunc { ...sliceGraph, blocks: [ssa.SBlock { ...sliceGraph.blocks[0], term: ret(3) }] };
+    var escFunc = ssasem.Func { ...sliceFunc, graph: escGraph, result: viewTy };
+    var escPlan = ssaunits.plan(escFunc, [2, 1, 1]);
+    if (!escPlan.ok) { eprint(escPlan.why); return 201; }
+    var escLowered = ssarc.lower(escFunc, [2, 1, 1], escPlan, irlower.struct_tab_empty(), []);
+    if (!escLowered.ok) { eprint(escLowered.why); return 202; }
+    var sawHeapSlice: boolean = false;
+    for o in escLowered.ops {
+        if (ir.render_op(o) == "str_slice") { sawHeapSlice = true; }
+        if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { return 203; }
+    }
+    if (!sawHeapSlice || escLowered.n_locals != 4) { return 204; }
     // An ordinary string result keeps the plain free, so the view symbol is
     // selected per VALUE and not applied to every string.
     var plainGraph = ssa.SFunc { name: "plain", nparams: 1, nvals: 1, entry: 7, takes_env: false,
@@ -1036,8 +1053,8 @@ function main(): i32 {
     // An integer key column holds no unit, so the map is admitted and freed
     // whole through the plain member of the free family, or the _vs one
     // beside a string value column; its ops carry key kind 1 and hand no
-    // key unit over.
-    var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
+    // key unit over. A 64-bit value column keeps the map on the runtime.
+    var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i64ty };
     var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
     if (!ssaunits.plan(intMapFunc, [3]).ok) { eprint(ssaunits.plan(intMapFunc, [3]).why); return 143; }
     var dropMapGraph = ssa.SFunc { name: "drop_map", nparams: 1, nvals: 2, entry: 7, takes_env: false,
@@ -1050,6 +1067,18 @@ function main(): i32 {
     var sawIntFree: boolean = false;
     for o in dropIntLowered.ops { if (o.str == "__fern_map_free") { sawIntFree = true; } }
     if (!sawIntFree) { return 171; }
+    // A map whose key and value are both 32-bit runs on core/map instead, and
+    // is released through core/map's drop rather than the runtime's free.
+    var routedMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
+    var dropRouted = ssasem.Func { ...dropIntMap, values: [routedMapTy, i32ty], params: [routedMapTy] };
+    var dropRoutedLowered = ssarc.lower(dropRouted, [3], ssaunits.plan(dropRouted, [3]), irlower.struct_tab_empty(), []);
+    if (!dropRoutedLowered.ok) { eprint(dropRoutedLowered.why); return 205; }
+    var sawRoutedDrop: boolean = false;
+    for o in dropRoutedLowered.ops {
+        if (ir.render_op(o) == "call_direct __map_drop_impl/1") { sawRoutedDrop = true; }
+        if (o.str == "__fern_map_free") { return 206; }
+    }
+    if (!sawRoutedDrop) { return 207; }
     var intStrMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: strTy };
     var dropIntStr = ssasem.Func { ...dropIntMap, values: [intStrMapTy, i32ty], params: [intStrMapTy] };
     var dropIntStrLowered = ssarc.lower(dropIntStr, [3], ssaunits.plan(dropIntStr, [3]), irlower.struct_tab_empty(), []);
@@ -1091,7 +1120,7 @@ function main(): i32 {
     var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
-    var intInsert = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: intInsertGraph, values: [intMapTy, i32ty, i32ty, intMapTy], params: [intMapTy, i32ty, i32ty], result: intMapTy, records: [], enums: [], calls: [] };
+    var intInsert = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: intInsertGraph, values: [intMapTy, i32ty, i64ty, intMapTy], params: [intMapTy, i32ty, i64ty], result: intMapTy, records: [], enums: [], calls: [] };
     var intInsertPlan = ssaunits.plan(intInsert, [3, 1, 1]);
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
     var intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irlower.struct_tab_empty(), []);
@@ -1102,7 +1131,7 @@ function main(): i32 {
     var sawIntSet: boolean = false;
     var sawIntGate: boolean = false;
     for o in intInsertLowered.ops {
-        if (o.kind_tag == 125 && o.i32_imm == 1 && (o.width / 2) % 2 == 0) { sawIntSet = true; }
+        if (o.kind_tag == 125 && o.i32_imm == 1 && o.i64_imm == 1 && (o.width / 2) % 2 == 0) { sawIntSet = true; }
         if (o.str == "__fern_rc_is_unique") { sawIntGate = true; }
         if (o.str == "__fern_rc_inc") { return 176; }
     }
@@ -1143,16 +1172,16 @@ function main(): i32 {
         if (o.str == "__fern_str_free") { sawEndFree = true; }
     }
     if (!sawExit || !sawEndFree) { return 183; }
-    // A get answers an Option of a narrow value column in a fresh box of its
+    // A get answers an Option of a scalar value column in a fresh box of its
     // own, handed to the frame: the map and the key are borrowed by it, and
     // the owned map is still freed on the way out.
-    var optI32Ty: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i32ty] };
+    var optI64Ty: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i64ty] };
     var getGraph = ssa.SFunc { name: "map_get", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
-    var optEnum = semrecords.Enum { ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
+    var optEnum = semrecords.Enum { ty: optI64Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i64ty }] },
         semrecords.Variant { name: "None", fields: [] }], layout: semrecords.layout_option() };
-    var getMap = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: [], enums: [optEnum], calls: [] };
+    var getMap = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: getGraph, values: [intMapTy, i32ty, optI64Ty], params: [intMapTy, i32ty], result: optI64Ty, records: [], enums: [optEnum], calls: [] };
     var getPlan = ssaunits.plan(getMap, [3, 1]);
     if (!getPlan.ok) { eprint(getPlan.why); return 184; }
     var getLowered = ssarc.lower(getMap, [3, 1], getPlan, irlower.struct_tab_empty(), []);
