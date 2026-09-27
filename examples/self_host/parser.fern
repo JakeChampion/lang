@@ -506,7 +506,7 @@ function e_lambda_at(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[]
 // spelling at all, and a result with no parameter list would rebuild `() => R`
 // for a function that takes arguments.
 function e_lambda_fn(params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], fn_ret: string, fn_ptys: string, ret_str: boolean, ret_str_elem: boolean): ast.Expr {
-    return e_lambda_at(params, ret_type, body, ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys, ret_str, ret_str_elem);
+    return e_lambda_at(params, ret_type, body, ast.ORIGIN_NESTED_FN, 0, 0, fn_ret, fn_ptys, ret_str, ret_str_elem);
 }
 // e_lambda_origin builds a lambda the PARSER synthesised, labelled
 // with the source form it stands in for so `-fmt` reprints that form. "block"
@@ -682,11 +682,6 @@ pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 // the `use`; nothing else treats the lambda differently from a written one,
 // which is what is_written_lambda_origin admitting it keeps true.
 pub const ORIGIN_USE: string = "use";
-
-// ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
-// Like ORIGIN_USE it marks a lambda the PROGRAMMER wrote rather than one the
-// parser synthesised, so is_written_lambda_origin admits it.
-pub const ORIGIN_NESTED_FN: string = "nested_fn";
 
 // no_match_sugar is the empty MatchSugar every StmtIf but the two match
 // desugars carries.
@@ -5454,9 +5449,7 @@ function mentions_name(e: ast.Expr, name: string, hit: boolean): boolean {
 // expr_mentions / stmt_mentions / stmts_mention report whether `name` appears
 // as an identifier anywhere in an expression / statement / statement list. Used
 // to detect a self-recursive local function (whose body references its own
-// name) — the closure-valued-local desugar below can't bind the name before the
-// lambda captures it, so recursion needs top-level hoisting (closureconv),
-// which isn't ported yet. Conservative: any mention counts.
+// name), which hl_rewrite lifts to top level. Conservative: any mention counts.
 //
 // Folding these onto astwalk WIDENS them by one node: the hand-written walk's
 // `_ =>` tail had no StmtDefer arm, so a name mentioned only inside a defer
@@ -5881,9 +5874,8 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // local `var name = (params): ret => { body };`. Calls resolve
         // through the closure-call path, and references to enclosing locals
         // are captured by the lambda machinery. Mirrors the Go parser
-        // marking it IsLocal + the closureconv hoist. (Self-reference /
-        // recursion isn't captured — the name is bound after the lambda is
-        // built — matching a plain closure-valued local.)
+        // marking it IsLocal + the closureconv hoist; ast.var_binds_itself
+        // is what lets it call itself.
         var (fr_func, fr_p) = parse_func_decl(p);
         p = fr_p;
         // The FuncDecl is discarded below, so check_decl_names never sees it;
@@ -5895,13 +5887,6 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             if (prm.type_name.len() == 0) {
                 return (s_unknown_at("decl:parameter \"" + prm.name + "\" of \"" + fr_func.name + "\" has no type: expected \":\" after its name", fr_func.line, fr_func.col), p);
             }
-        }
-        if (stmts_mention(fr_func.body, fr_func.name)) {
-            // Self-recursive local function: the closure can't reference
-            // itself (the name binds after the lambda captures), so this
-            // needs top-level hoisting (closureconv), not yet ported.
-            // Surface it rather than miscompile silently.
-            return (s_var(fr_func.name, "", e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types, fr_func.ret_str, fr_func.ret_str_elem)), p);
         }
         var lam: ast.Expr = e_lambda_fn(fr_func.params, fr_func.ret_type, fr_func.body, fr_func.ret_fn_ret, fr_func.ret_fn_param_types, fr_func.ret_str, fr_func.ret_str_elem);
         // `-fmt` records which of the two spellings was written, the way a
@@ -14359,7 +14344,7 @@ pub function mkclo_body(name: string): string {
 // ORIGIN_IIFE_SCOPED belongs to neither group: the defer lowering stamps it
 // after the checker has run, so no checker rule ever sees it.
 pub function is_written_lambda_origin(origin: string): boolean {
-    return origin.len() == 0 || origin == ORIGIN_NESTED_FN || origin == ORIGIN_USE;
+    return origin.len() == 0 || origin == ast.ORIGIN_NESTED_FN || origin == ORIGIN_USE;
 }
 
 // is_value_block_origin reports whether `origin` names one of the desugars that
@@ -15132,7 +15117,7 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
 
 // hl_has_rec_local reports whether a statement list (descending into
 // nested blocks) contains a self-recursive local function — a `var f =
-// <lambda whose body mentions f>`. hl_rewrite uses this to leave bodies
+// <lambda whose body mentions f>` that ast.var_binds_itself admits. hl_rewrite uses this to leave bodies
 // with no recursive local completely untouched, so the rebuild path only
 // runs where it must — and the self-host's own sources (which use none)
 // pass through byte-for-byte, keeping the stage-2 fixpoint intact.
@@ -15142,7 +15127,7 @@ function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
         match (st) {
             ast.StmtVar(v) => {
                 match (v.init) {
-                    ast.ExprLambda(lam) => { return stmts_mention(lam.body, v.name); },
+                    ast.ExprLambda(lam) => { return ast.var_binds_itself(v) && stmts_mention(lam.body, v.name); },
                     _ => { return false; }
                 }
                 return false;
@@ -15253,7 +15238,7 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                 var did_lift: boolean = false;
                 match (v.init) {
                     ast.ExprLambda(lam) => {
-                        if (stmts_mention(lam.body, v.name)) {
+                        if (ast.var_binds_itself(v) && stmts_mention(lam.body, v.name)) {
                             did_lift = true;
                             // Captured enclosing names become trailing
                             // parameters (lambda-lifting); a capture-free

@@ -223,6 +223,19 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // compiler synthesised (no source position, so nothing can attach to it).
 // Statements carry `line` uniformly but only some carry `col`, so this is the
 // line alone; a caller wanting a column takes it from the statement it matched.
+// ORIGIN_NESTED_FN marks the lambda a nested `function` declaration desugars to.
+// Like ORIGIN_USE it marks a lambda the PROGRAMMER wrote rather than one the
+// parser synthesised, so is_written_lambda_origin admits it.
+pub const ORIGIN_NESTED_FN: string = "nested_fn";
+
+// var_binds_itself reports whether a `var`'s initialiser sees the name it
+// declares. Only a nested `function` declaration does, as native's IsLocal
+// FuncDecl does; an arrow lambda reads any enclosing binding of the name.
+pub function var_binds_itself(v: StmtVar): boolean {
+    if let ExprLambda(lm) = v.init { return lm.origin == ORIGIN_NESTED_FN; }
+    return false;
+}
+
 pub function stmt_line(st: Stmt): i32 {
     match (st) {
         StmtVar(v) => { return v.line; },
