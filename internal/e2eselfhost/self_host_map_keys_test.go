@@ -18,10 +18,10 @@ var mapKeysValuesCases = []struct {
 	src  string
 	exit int
 }{
-	{"keys-sum-literal", "function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
-	{"keys-sum-built", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
-	{"values-sum", "function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); var t: i32 = 0; for x in m.values() { t = t + x; } return t; }", 30},
-	{"keys-len-string", "function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
+	{"keys-sum-literal", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = Map { 10: 1, 20: 2, 12: 3 }; var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"keys-sum-built", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(7, 0); m = m.insert(35, 0); var t: i32 = 0; for x in m.keys() { t = t + x; } return t; }", 42},
+	{"values-sum", "import \"core/map\"; function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(1, 10); m = m.insert(2, 20); var t: i32 = 0; for x in m.values() { t = t + x; } return t; }", 30},
+	{"keys-len-string", "import \"core/map\"; function main(): i32 { var m: Map[string,i32] = map_new(4); m = m.insert(\"ab\", 1); m = m.insert(\"c\", 2); return m.keys().len() + 40; }", 42},
 }
 
 // TestSelfHostMapKeysX86_64 — m.keys()/m.values() with the self-hosted
@@ -61,23 +61,14 @@ func TestSelfHostMapKeysX86_64(t *testing.T) {
 
 // TestSelfHostMapKeysArm64 — CI-gated arm64 counterpart.
 func TestSelfHostMapKeysArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range mapKeysValuesCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}

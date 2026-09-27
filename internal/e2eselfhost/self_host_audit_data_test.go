@@ -31,10 +31,14 @@ var auditDataCases = []struct {
 	{"array-with", `function main(): i32 { var a: i32[] = [1, 2, 3]; a = a.with(1, 20); return a[0] + a[1] + a[2]; }`, 24},
 	{"array-foreach", `function main(): i32 { var a: i32[] = [2, 3, 4]; var s: i32 = 0; for x in a { s = s + x; } return s; }`, 9},
 	// maps
-	{"map-i32-insert-getor", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,0) + m.get_or(2,0); }`, 119},
-	{"map-has", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(5,1); if (m.has(5) && !m.has(9)) { return 7; } return 0; }`, 7},
-	{"map-string-keys", `function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",3); m = m.insert("b",4); return m.get_or("a",0) + m.get_or("b",0); }`, 7},
-	{"map-len", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,1); m = m.insert(2,2); m = m.insert(3,3); return m.len(); }`, 3},
+	{"map-i32-insert-getor", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,0) + m.get_or(2,0); }`, 119},
+	{"map-has", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(5,1); if (m.has(5) && !m.has(9)) { return 7; } return 0; }`, 7},
+	{"map-string-keys", `import "core/map";
+function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",3); m = m.insert("b",4); return m.get_or("a",0) + m.get_or("b",0); }`, 7},
+	{"map-len", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,1); m = m.insert(2,2); m = m.insert(3,3); return m.len(); }`, 3},
 }
 
 // TestSelfHostAuditDataX86_64 runs each string/array/map case through the
@@ -74,23 +78,14 @@ func TestSelfHostAuditDataX86_64(t *testing.T) {
 
 // TestSelfHostAuditDataArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditDataArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range auditDataCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}

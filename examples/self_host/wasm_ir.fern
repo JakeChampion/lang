@@ -248,6 +248,15 @@ pub function need(needs: string[], name: string): boolean {
     return util.index_of_str(needs, name) >= 0;
 }
 
+function need_any(needs: string[], names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (need(needs, names[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 // need_open_file is the gate the two open runtimes share: $__fern_open_with
 // opens through the same path_open import as $__fern_open_file.
 function need_open_file(needs: string[]): boolean {
@@ -563,6 +572,7 @@ pub function const_agg_block_bytes(packed: string): i32 {
     // record's is [type_id@0][f_i@8+i*8]. One 8-byte slot holds its single
     // element either way, so the block is one value long.
     if (ir.const_struct_fn_body(packed).len() > 0) { return 24; }
+    if (ir.const_struct_is_empty_array(packed)) { return 16; }
     return 16 + ir.const_struct_values(packed).len() * 8;
 }
 
@@ -9890,6 +9900,8 @@ function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab, 
             // add, and the merged table is in hand here.
             body = body + le32_escape(1) + le32_escape(1)
                 + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
+        } else if (ir.const_struct_is_empty_array(cv[i])) {
+            body = body + le32_escape(0) + le32_escape(0);
         } else {
             body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
             var vi: i32 = 0;
@@ -10342,7 +10354,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_maps") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "@uses_buf") || need(needs, "env") || need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs) || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "tcp_local_port") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
+        "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
+        "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
+        "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_send", "tcp_recv", "tcp_listen", "tcp_accept", "tcp_local_port", "udp_send", "poll"])) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }

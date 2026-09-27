@@ -1,11 +1,9 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -42,42 +40,22 @@ var heapBumpBytesIRCases = []struct {
 	{"i64-typed", `function main(): i32 { var before: i64 = __heap_bump_bytes(); var a: i32[] = [1, 2, 3]; var after: i64 = __heap_bump_bytes(); if (before != (0 as i64)) { return 1; } if (after <= before) { return 2; } return 9; }`, 9},
 }
 
-// TestSelfHostHeapBumpBytesIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver (asm_run), pins the routing to "ir" (asm_pathprobe_run), and
-// checks the exit code against the native backend's exit code (the oracle here,
-// since the interpreter has no bump-allocator model).
-func TestSelfHostHeapBumpBytesIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+// TestSelfHostHeapBumpBytesIR runs each case through the self-host CLI on
+// x86-64 and wasm (the `$heap − heap_base` lowering) and checks the exit code
+// against the native backend's. Native is the oracle here, since the
+// interpreter has no bump-allocator model.
+func TestSelfHostHeapBumpBytesIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	for _, tc := range heapBumpBytesIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			// Native cross-check: the Go x86-64 backend must give the same code.
+			src := tc.main + "\n"
 			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != tc.want {
 				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
 			}
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
+			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}
@@ -206,47 +184,6 @@ func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
 			}
 			if shS == 0 {
 				t.Errorf("%s: self-host growth is 0 — nothing allocated / measured", tc.name)
-			}
-		})
-	}
-}
-
-// TestSelfHostHeapBumpBytesIRWasm runs the same cases through the wasm IR
-// backend (the `$heap − heap_base` lowering).
-func TestSelfHostHeapBumpBytesIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host heap-bump-bytes wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range heapBumpBytesIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "heap_bump_bytes_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("heap-bump-bytes wasm IR %q = %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}

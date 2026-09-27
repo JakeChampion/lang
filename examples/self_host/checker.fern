@@ -15691,7 +15691,7 @@ function e064_annot_diags(an: Annot[], struct_names: string[], union_names: stri
 
 // e057_cell_elem_ok reports whether a TypeRef is a permitted `Cell[T]`
 // element — the self-host analog of the native isCellElemType
-// (checker.go): a cycle-free scalar (i32/i64/u32/u64/f64/boolean) or
+// (checker.go): a cycle-free scalar (any integer or float width, boolean) or
 // string. Everything else — struct / enum / array / tuple / another Cell /
 // generic instantiation / `str` view — could reconstruct a reference
 // cycle, which the immutable-data model forbids (docs/CELL-TYPE-PLAN.md).
@@ -15699,10 +15699,10 @@ function e057_cell_elem_ok(a: parser.TypeRef): boolean {
   if (a.array_depth > 0 || a.is_tuple || a.args.len() > 0) {
     return false;
   }
-  if (a.base == "i32" || a.base == "i64" || a.base == "u32" || a.base == "u64") {
+  if (a.base == "i32" || a.base == "i64" || a.base == "u8" || a.base == "u32" || a.base == "u64" || a.base == "usize") {
     return true;
   }
-  return a.base == "f64" || a.base == "boolean" || a.base == "string";
+  return a.base == "f32" || a.base == "f64" || a.base == "boolean" || a.base == "string";
 }
 
 // e057_annot_labels_tref walks a parsed annotation and collects the

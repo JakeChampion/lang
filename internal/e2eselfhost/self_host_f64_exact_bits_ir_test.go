@@ -64,26 +64,16 @@ func TestSelfHostF64ExactBitsIR(t *testing.T) {
 // cases through the self-host arm64 IR path's `.long` halves, assembled by
 // aarch64 GNU gcc and run under qemu against the interp oracle.
 func TestSelfHostF64ExactBitsIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
 	for _, tc := range f64ExactBitsCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src + "\n")
-			want := interpExit(t, interpBin, string(src))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, "exactbits_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			src := tc.src + "\n"
+			want := interpExit(t, interpBin, src)
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != want {
+					t.Errorf("%s on %s exited %d, want %d (interp oracle)\n%s", tc.name, target, code, want, stderr)
+				}
 			}
 		})
 	}

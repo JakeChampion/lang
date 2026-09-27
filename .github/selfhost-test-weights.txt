@@ -73,7 +73,7 @@ TestSelfHostArm64UnsignedDivIR 2
 TestSelfHostArrLenCallIR 2
 TestSelfHostArrOwnedRetReleaseIRArm64 2
 TestSelfHostArrOwnedRetReleaseWasmIR 2
-TestSelfHostArrPushCliffIRX86_64 2
+TestSelfHostArrPushCliffIR 3
 TestSelfHostArrPushIR 2
 TestSelfHostArrayArm64 2
 TestSelfHostArrayChunksWindowsIR 2
@@ -103,7 +103,7 @@ TestSelfHostAssocIdentityIRX86_64 2
 TestSelfHostAssocTypesDifferential 7
 TestSelfHostAssumeEligibleByteIdenticalX86_64 332
 TestSelfHostAuditStdArrayX86_64 5
-TestSelfHostBase64IRX86_64 2
+TestSelfHostBase64IR 3
 TestSelfHostBinaryBitwiseIRWasm 2
 TestSelfHostBinaryBitwiseIRX86_64 2
 TestSelfHostBindStmtScopeParity 4
@@ -167,7 +167,7 @@ TestSelfHostContainerSinkMatrixX86_64 2
 TestSelfHostCoreIntParseIR 2
 TestSelfHostCoreIntRadixIR 2
 TestSelfHostCountedStrArrReturnProofX86_64 4
-TestSelfHostCrossTypeReuseIRX86_64 2
+TestSelfHostCrossTypeReuseIR 3
 TestSelfHostCrossValidationX86_64 4
 TestSelfHostCryptoForkIRArm64 136
 TestSelfHostCryptoForkIRWasm 118
@@ -195,7 +195,7 @@ TestSelfHostDeriveStdlibIRArm64 8
 TestSelfHostDisplayArgGate 2
 TestSelfHostDynArrayArgIR 2
 TestSelfHostDynArrayLocalIR 2
-TestSelfHostDynArrayParamIRX86_64 2
+TestSelfHostDynArrayParamIR 3
 TestSelfHostDynEnumIRX86_64 2
 TestSelfHostDynFnIndirectCoerceIRX86_64 2
 TestSelfHostDynFnParamIR 2
@@ -209,7 +209,7 @@ TestSelfHostEnumCapturingPayloadIRX86_64 2
 TestSelfHostEnumContractIRArm64 263
 TestSelfHostEnumContractMissingRetainX86_64 14
 TestSelfHostEnumContractVerify 3
-TestSelfHostEnumCrossReuseIRX86_64 2
+TestSelfHostEnumCrossReuseIR 2
 TestSelfHostEnumFnPayloadIRX86_64 2
 TestSelfHostEnumFreshMethodIR 2
 TestSelfHostEnumQualifiedCtorReclaimIRX86_64 3
@@ -225,7 +225,7 @@ TestSelfHostErrorTraitIR 2
 TestSelfHostF32ElemTagArm64 4
 TestSelfHostF32ElemTagWasm 4
 TestSelfHostF32ElemTagX86_64 4
-TestSelfHostF32IRX86_64 2
+TestSelfHostF32IR 4
 TestSelfHostF64ArrayAppendIR 2
 TestSelfHostF64MethodIR_X86_64 5
 TestSelfHostF64RecvIR 2
@@ -291,9 +291,9 @@ TestSelfHostGenericNestedRetX86_64 2
 TestSelfHostGenericTraitBoundIRX86_64 2
 TestSelfHostHandlerStateX86_64 8
 TestSelfHostHeadersIR 2
-TestSelfHostHeapBumpBytesIRX86_64 2
+TestSelfHostHeapBumpBytesIR 3
 TestSelfHostHeapBumpFlatIRX86_64 2
-TestSelfHostHexIRX86_64 2
+TestSelfHostHexIR 3
 TestSelfHostHttpHandlerRoutesIRX86_64 2
 TestSelfHostHttpHandlerServesX86_64 2
 TestSelfHostI32OverflowIR 2
@@ -594,7 +594,7 @@ TestSelfHostStrSliceUncheckedArm64 2
 TestSelfHostStrbufGrowsPastOldCeilingArm64 2
 TestSelfHostStrbufTakeIsRcHeaded 2
 TestSelfHostStreamIR 2
-TestSelfHostStrengthIRX86_64 2
+TestSelfHostStrengthIR 3
 TestSelfHostStrictIRWasm 2
 TestSelfHostStringArm64 5
 TestSelfHostStringEscapesIR 2
@@ -633,7 +633,7 @@ TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64 2
 TestSelfHostTreeshakeStdlibIR 5
 TestSelfHostTryDeferIRX86_64 2
 TestSelfHostTryF64IR 2
-TestSelfHostTryFailCleanupIRX86_64 2
+TestSelfHostTryFailCleanupIR 3
 TestSelfHostTryFromIR 2
 TestSelfHostTryStrEnumIR 2
 TestSelfHostTryStructIR 2

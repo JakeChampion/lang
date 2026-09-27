@@ -390,6 +390,21 @@ everywhere. Without this a `Kind { Text }` anywhere in the program made every
 module's bare `Text` ambiguous, including stdlib source the author cannot edit
 (#6951).
 
+The qualified spelling depends on where the enum lives. An enum of the
+referring module and a built-in enum are qualified by the enum (`Kind.Text`,
+`IoError.Other(p, m)`). An imported module's enum is qualified by the MODULE
+(`net.Other(3)`, `net.Interrupted`, and `net.Other(n) =>` in a pattern, nested
+or not), the same form the union alternatives already took: `mod.Variant`
+resolves in modload (`qualifiedVariant`) to the variant with the mangled enum
+as its `EnumName`, and in a pattern to the module path the checker verifies
+against the enum's `SourceModule`. The enum name itself is not a qualifier a
+consumer can write (`net.NetError.Other` is refused), because a `mod.Type`
+reference is a type, not a namespace. A public function of the same name wins
+over the variant, as it does for a bare name. The self-host reaches the same
+spellings through its mangled variant names (`net.Other` mangles to
+`net__Other`, which is the variant's bundled name), so both compilers accept
+them (#10430).
+
 The self-host bundler (`examples/self_host/flatten.fern`) does mangle an
 imported module's variants (`Full` → `g3__Full`) and rewrites bare references to
 them, so only the ENTRY's variants stay bare. Its checker therefore needs one

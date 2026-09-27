@@ -3540,8 +3540,9 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
 // that look safe (slide reads as 0) without it being verifiable from here.
 //
 // The regions are walked rather than tabulated: string boxes are a fixed 24-byte
-// stride, and a const-aggregate block carries its own length in the `cap` word
-// the walk strides by. Only the whole-program pool is contiguous and complete,
+// stride, a record constant's block carries its own length in the `cap` word
+// the walk strides by, and a function value's block is a fixed 32 bytes. An
+// empty array holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
 // reloc_wanted decides, for BOTH the relocation loop and the data it walks,
@@ -3587,7 +3588,7 @@ function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = s.write("    add x12, x12, :lo12:.Lfern_cagg_end\n");
     s = s.write(".Lfern_cagg_loop:\n");
     s = s.write("    cmp x11, x12\n");
-    s = s.write("    b.hs .Lfern_reloc_done\n");
+    s = s.write("    b.hs .Lfern_cagg_done\n");
     s = s.write("    ldr x13, [x11, #16]\n");
     s = s.write("    add x13, x13, x9\n");
     s = s.write("    str x13, [x11, #16]\n");
@@ -3595,6 +3596,21 @@ function emit_ir_reloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     s = s.write("    add x11, x11, #16\n");
     s = s.write("    add x11, x11, x14, lsl #3\n");
     s = s.write("    b .Lfern_cagg_loop\n");
+    // Function-value blocks: [cap][rc][len][body], 32 bytes, the body's
+    // address at +24. Their first word is a length, not a pointer.
+    s = s.write(".Lfern_cagg_done:\n");
+    s = s.write("    adrp x11, .Lfern_cfn_begin\n");
+    s = s.write("    add x11, x11, :lo12:.Lfern_cfn_begin\n");
+    s = s.write("    adrp x12, .Lfern_cfn_end\n");
+    s = s.write("    add x12, x12, :lo12:.Lfern_cfn_end\n");
+    s = s.write(".Lfern_cfn_loop:\n");
+    s = s.write("    cmp x11, x12\n");
+    s = s.write("    b.hs .Lfern_reloc_done\n");
+    s = s.write("    ldr x13, [x11, #24]\n");
+    s = s.write("    add x13, x13, x9\n");
+    s = s.write("    str x13, [x11, #24]\n");
+    s = s.write("    add x11, x11, #32\n");
+    s = s.write("    b .Lfern_cfn_loop\n");
     s = s.write(".Lfern_reloc_done:\n");
     return s;
 }
@@ -4408,9 +4424,17 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
     if (reloc) { s = s.write("    .section .data\n.Lfern_sbox_end:\n"); }
     // .data: one block per static aggregate constant (#6149), after the string
     // pool because a block's first word is a shape POINTER into it.
-    if (reloc) { s = s.write("    .align 8\n.Lfern_cagg_begin:\n"); }
-    s = asmcore.emit_const_agg_data(s);
-    if (reloc) { s = s.write("    .section .data\n.Lfern_cagg_end:\n"); }
+    if (reloc) {
+        s = asmcore.emit_const_agg_blocks(s, 0, 1);
+        s = s.write("    .align 8\n.Lfern_cagg_begin:\n");
+        s = asmcore.emit_const_agg_blocks(s, 0, 2);
+        s = s.write("    .section .data\n.Lfern_cagg_end:\n");
+        s = s.write("    .align 8\n.Lfern_cfn_begin:\n");
+        s = asmcore.emit_const_agg_blocks(s, 0, 3);
+        s = s.write("    .section .data\n.Lfern_cfn_end:\n");
+    } else {
+        s = asmcore.emit_const_agg_data(s);
+    }
     s = asmcore.emit_shape_lits_from(s, 0);
     // Hand back `.text`, which every caller emitting code after this one needs
     // and the per-module pool site already restores by hand. It used to hold by

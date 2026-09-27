@@ -8550,18 +8550,27 @@ func (c *checker) variantEnumList(name string) string {
 // one declared in the module being checked when there is one, so the
 // suggestion is spellable where the reader is standing, rather than
 // whichever candidate the map happened to list first.
-func (c *checker) variantQualifierHint(name string) string {
+func (c *checker) variantQualifierHint(name, suffix string) string {
 	cands := c.visibleVariants(name)
-	if len(cands) == 0 {
-		return ""
-	}
+	var own, rest []string
 	for _, vr := range cands {
 		ed, ok := c.info.Enums[vr.enumName]
-		if ok && ed.SourceModule != "" && ed.SourceModule == c.currentModule() {
-			return c.enumHintName(vr.enumName)
+		spelled := c.enumHintName(vr.enumName) + "." + name
+		switch {
+		case ok && ed.SourceModule != "" && ed.SourceModule == c.currentModule():
+			own = append(own, "`"+spelled+suffix+"`")
+			continue
+		case ok && ed.SourceModule != "" && !ed.Monomorphized:
+			// Another module's enum is not a qualifier its consumers can
+			// write; the module is (`mod.Variant`), and the mangle prefix
+			// is the module's import name.
+			if i := strings.Index(vr.enumName, "__"); i > 0 {
+				spelled = vr.enumName[:i] + "." + name
+			}
 		}
+		rest = append(rest, "`"+spelled+suffix+"`")
 	}
-	return c.enumHintName(cands[0].enumName)
+	return strings.Join(append(own, rest...), " or ")
 }
 
 // substituteType returns t with every ParamType reference
@@ -16470,8 +16479,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, nil, c.expectedType)
 			return ast.EnumType{Name: vr.enumName}
 		} else if multi {
-			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s`",
-				n.Name, c.variantEnumList(n.Name), c.variantQualifierHint(n.Name), n.Name)
+			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. %s",
+				n.Name, c.variantEnumList(n.Name), c.variantQualifierHint(n.Name, ""))
 			return nil
 		} else if n.EnumName != "" {
 			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
@@ -16877,8 +16886,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// gets a follow-up "undefined identifier" diag if the
 			// name resolves to nothing else.
 			if !isVar && vrMulti && id.EnumName == "" && !c.isUserFuncOrLocal(id.Name, s) {
-				c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. `%s.%s(...)`",
-					id.Name, c.variantEnumList(id.Name), c.variantQualifierHint(id.Name), id.Name)
+				c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. %s",
+					id.Name, c.variantEnumList(id.Name), c.variantQualifierHint(id.Name, "(...)"))
 				return nil
 			}
 			if isVar {
@@ -18504,6 +18513,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			expected ast.Type
 		}
 		var deferred []deferredEmpty
+		// A field that contradicts the instantiation the others bound leaves
+		// the literal without one, as an unbound parameter does (E040).
+		clashed := false
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -18588,6 +18600,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
+					clashed = true
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -18646,7 +18659,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					complete = false
 				}
 			}
-			if complete {
+			if complete && !clashed {
 				for _, d := range deferred {
 					c.settleNumeric(d.value, substituteType(d.expected, sub))
 				}

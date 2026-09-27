@@ -5313,6 +5313,7 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
     if (body.len() > 0) {
         return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
     }
+    if (ir.const_struct_is_empty_array(packed)) { return ConstAggPack { state: s, text: "0|" }; }
     var shp: ShapeRefOut = shape_ref(s, ir.const_struct_type(packed));
     var text: string = shp.label + "|";
     var vals: string[] = ir.const_struct_values(packed);
@@ -6817,6 +6818,15 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
+// A packed block's kind: 1 an empty array, which holds no address; 2 a record,
+// whose first word is its shape pointer; 3 a function value, a one-element
+// array whose element is the body's address.
+pub function const_agg_kind(packed: string): i32 {
+    if (packed == "0|") { return 1; }
+    if (packed.len() > 2 && packed[0] == b'1' && packed[1] == b'|') { return 3; }
+    return 2;
+}
+
 pub function emit_const_agg_data(s: EmitState): EmitState {
     return emit_const_agg_data_from(s, 0);
 }
@@ -6825,16 +6835,28 @@ pub function emit_const_agg_data(s: EmitState): EmitState {
 // incremental form the runtime-helper emit needs, whose constants are interned
 // after the main pool has already been written.
 pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
+    return emit_const_agg_blocks(s, first, 0);
+}
+
+// A relocation walk needs to know which word of a block is an address, so a
+// caller that walks the pool emits each kind apart: `only` is 0 for every
+// block, or one of const_agg_kind's answers.
+pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitState {
     if (s.const_aggs.len() <= first) { return s; }
     var st: EmitState = s.write("    .section .data\n    .align 8\n");
     var i: i32 = first;
     while (i < st.const_aggs.len()) {
         var e: string = st.const_aggs[i];
+        var empty: boolean = const_agg_kind(e) == 1;
+        if (only != 0 && const_agg_kind(e) != only) { i = i + 1; continue; }
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
         var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
-        st = st.write("    .quad " + util.i32_to_string(vals.len() + 1) + "\n");   // cap @ data-16
+        // An empty array's capacity is 0, or a push would write into it.
+        var cap: i32 = vals.len() + 1;
+        if (empty) { cap = 0; }
+        st = st.write("    .quad " + util.i32_to_string(cap) + "\n");   // cap @ data-16
         st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
         st = st.write(const_agg_label(st, i) + ":\n");
         st = st.write("    .quad " + shp + "\n");

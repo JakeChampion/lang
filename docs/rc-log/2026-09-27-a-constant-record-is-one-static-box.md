@@ -50,6 +50,7 @@ Stage 2 → stage 3 is byte-identical.
 
 ## Still allocating
 
-A constant with a string field (`t_unknown("…")` makes 139,000 boxes in the same
-compile) and a wide or float field. Both need more than the one narrow word per
-field the backends place today.
+A constant with a string, wide or float field: each needs more than the one
+narrow word per field the backends place today. `t_unknown(reason)`, which makes
+139,000 boxes in the same compile, is not one of these: its field is a
+parameter, so the box is not constant in the function that builds it.

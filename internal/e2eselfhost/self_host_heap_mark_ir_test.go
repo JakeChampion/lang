@@ -69,7 +69,7 @@ var heapMarkCases = []struct {
     var m: i64 = __heap_mark();
     var before: i64 = __heap_bump_bytes();
     var i: i32 = 0;
-    while (i < 2000) { var p: i32 = __raw_alloc(64); i = i + 1; }
+    while (i < 2000) { var p: usize = __raw_alloc(64); i = i + 1; }
     var mid: i64 = __heap_bump_bytes();
     __heap_release_to(m);
     var after: i64 = __heap_bump_bytes();
@@ -85,11 +85,11 @@ var heapMarkCases = []struct {
     var m: i64 = __heap_mark();
     var before: i64 = __heap_bump_bytes();
     var i: i32 = 0;
-    while (i < 1000) { var p: i32 = __raw_alloc(64); i = i + 1; }
+    while (i < 1000) { var p: usize = __raw_alloc(64); i = i + 1; }
     __heap_release_to(m);
     var m2: i64 = __heap_mark();
     var j: i32 = 0;
-    while (j < 1000) { var q: i32 = __raw_alloc(64); j = j + 1; }
+    while (j < 1000) { var q: usize = __raw_alloc(64); j = j + 1; }
     __heap_release_to(m2);
     var after: i64 = __heap_bump_bytes();
     if (((after - before) / 1024) as i32 > 1) { return 98; }
@@ -145,28 +145,17 @@ func TestSelfHostHeapMarkIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostHeapMarkIRArm64 is the arm64 leg. It matters more than a mirror
-// here: `-target arm64-linux` assembles and links IN PROCESS, so this is the
-// only path that puts the emitted checkpoint through the self-host's own
-// assembler rather than GNU as.
+// TestSelfHostHeapMarkIRArm64 is the arm64 leg: it runs the cases through the
+// self-host CLI on arm64-linux, under qemu.
 func TestSelfHostHeapMarkIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range heapMarkCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (97 = the probe never grew the arena; 98 = the release did not rewind; 94-96 = a live allocation was corrupted)", tc.name, code, tc.want)
+			src := tc.src + "\n"
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d (97 = the probe never grew the arena; 98 = the release did not rewind; 94-96 = a live allocation was corrupted)\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}

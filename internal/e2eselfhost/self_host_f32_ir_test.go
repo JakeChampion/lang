@@ -1,11 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -21,9 +16,7 @@ import (
 // (is_f64_scalar_type_name).
 //
 // These are the std/float f32-method shapes (abs/sqrt/floor/round via
-// `__*_f64(x as f64) as f32`), written as free functions — value-RECEIVER f32
-// methods still route through the AST path, so only the free-function surface is
-// pinned to "ir" here.
+// `__*_f64(x as f64) as f32`), written as free functions.
 //
 // Each case casts its f32 result to i32 and returns a non-negative value kept
 // <= 126 (the wasmtime exit-code truncation gap, cf. #2908), oracle-checked
@@ -77,110 +70,19 @@ function main(): i32 { var p: P = P { v: 5.5 as f32 }; return dbl(p) as i32; }`}
 function main(): i32 { var b: B = B { v: 4294967297 as u64 }; if (b.v == 4294967297 as u64) { return 7; } return 0; }`},
 }
 
-// TestSelfHostF32IRX86_64 routes each case through the self-hosted x86-64 IR
-// driver, oracle-checked, with routing pinned to the "ir" path.
-func TestSelfHostF32IRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+// TestSelfHostF32IR runs each case through the self-host CLI on x86-64, arm64
+// and wasm, oracle-checked against the interpreter.
+func TestSelfHostF32IR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
 	for _, tc := range f32IRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			want := interpExit(t, interpBin, string(src))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
-	}
-}
-
-// TestSelfHostF32IRWasm runs the same cases through the wasm IR backend.
-func TestSelfHostF32IRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host f32 wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range f32IRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			want := interpExit(t, interpBin, string(src))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "f32_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != want {
-				t.Errorf("f32 wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
-	}
-}
-
-// TestSelfHostF32IRArm64 runs the same cases through the self-hosted arm64
-// auto-decide driver (asm_ir_run.fern (-target arm64-linux)), oracle-checked under qemu. The arm64
-// IR path shares eligibility with x86 (the asmcore frontend is common), so these
-// route IR there too; correctness is the gate. Mirrors TestSelfHostFloatArm64.
-func TestSelfHostF32IRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range f32IRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			want := interpExit(t, interpBin, string(src))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, src, "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("f32 arm64 IR %q exited %d, want %d (interp oracle)", tc.name, code, want)
+			src := tc.main + "\n"
+			want := interpExit(t, interpBin, src)
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != want {
+					t.Errorf("%s on %s exited %d, want %d (interp oracle)\n%s", tc.name, target, code, want, stderr)
+				}
 			}
 		})
 	}
