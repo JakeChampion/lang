@@ -151,6 +151,31 @@ function main(): i32 {
     if (acc != 149) { return 97; }
     return 52;
 }`, 52},
+	// A scalar `to_string` local that is itself a `to_string` receiver. The
+	// string-local gate decides it (it now admits a number's `.to_string()`), and
+	// the result aliases its source, so neither may double-release. 200 rounds of
+	// 2 × len = 980, %251 = 227.
+	{"tostr-scalar-then-string-recv", `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var s: string = i.to_string();
+        var t: string = s.to_string();
+        if (s.len() != t.len()) { return 97; }
+        acc = (acc + s.len() + t.len()) % 251;
+        i = i + 1;
+    }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var u: string = j.to_string(); var v: string = u.to_string(); acc = (acc + v.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    if (acc < 0) { return 97; }
+    return 0;
+}`, 0},
 	// ESCAPE negative: the credited local is returned, so it must NOT be freed.
 	{"tostr-scalar-escape-return-safe", `import "std/i32";
 function mk(n: i32): string { var s: string = n.to_string(); return s; }

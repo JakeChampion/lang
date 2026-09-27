@@ -3201,6 +3201,8 @@ function main(): i32 {
 `},
 	// The same shape through the standard library: every ordmap method with a
 	// bounded key is that clone, and the tree under it is produced with it.
+	// 65 of 65: core/cmp's numeric `add` impls reach only i32 and u64 (and
+	// bigint); the f32, f64, i64 and u32 ones are unreachable.
 	{name: "ordmap-bounded-method-clones", atLeast: 65, src: `
 import "std/ordmap";
 function main(): i32 {
