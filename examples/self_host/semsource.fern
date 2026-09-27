@@ -981,6 +981,12 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
         var v: Value = expr(args[i], s, shape.types[i]);
         s = v.s;
         if (!s.ok) { return v; }
+        // A 32-bit payload widens into a 64-bit field of its signedness, as
+        // the checker admits `Ok(n)` for an i32 `n` into `Result[i64, _]`.
+        if (widens_to(s.values[v.id], shape.types[i])) {
+            v = define(s, ssasem.cast(), [v.id], 0, "", shape.types[i]);
+            s = v.s;
+        }
         if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
         ids = ids.append(v.id);
         i = i + 1;
