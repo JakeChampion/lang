@@ -2544,7 +2544,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
     // and the registry base it was derived over feed the emit directly).
     if (asmcore.new_state().use_ir) {
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-        var base: irlower.FnSigs = ircore.sub_sigs(sub, ircore.wp_fn_sigs(lm.funcs, stab));
+        var base: irlower.FnSigs = ircore.sub_base(sub, lm.funcs, stab);
         var g: ircore.Lowered = lower_all_gated(lm, stab, base, sub);
         var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
         if (g.ok && ir_route_final(cache, component, io)) {
@@ -4734,7 +4734,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): string {
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { return " (result i64)\n"; }
     if (irlower.is_f64_scalar_type_name(fd.ret_type)) { return " (result f64)\n"; }
-    if (irlower.erased_passthrough_safe(fd, structs)) { return " (result i64)\n"; }
+    if (irlower.erased_passthrough_safe(fd)) { return " (result i64)\n"; }
     return " (result i32)\n";
 }
 
@@ -13545,9 +13545,13 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
     var n: i32 = o.i32_imm;
     var esz: i32 = 4;
     if (o.width == 64) { esz = 8; }
-    parts = parts.append("    i32.const " + util.i32_to_string(n * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+    // An empty literal gets the capacity its first push would grow to, as
+    // ssa_lift.lift_empty_arr gives it on the native ISAs.
+    var cap: i32 = n;
+    if (n == 0) { cap = 4; }
+    parts = parts.append("    i32.const " + util.i32_to_string(cap * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n");
-    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n");
+    parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(cap) + "\n    i32.store\n");
     var em: i32 = n - 1;
     while (em >= 0) {
         if (o.width == 64 && o.unsigned) {

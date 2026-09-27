@@ -29,9 +29,14 @@ func goCheckerDiags(t *testing.T, dir, src string) []driverDiag {
 	}
 	prog, _, err := modload.Load(p)
 	if err != nil {
-		return nil
+		t.Fatalf("load gocheck input: %v", err)
 	}
 	_, err = checker.Check(prog)
+	return checkErrDiags(err)
+}
+
+// checkErrDiags splits a checker error into code/message pairs.
+func checkErrDiags(err error) []driverDiag {
 	if err == nil {
 		return nil
 	}
@@ -88,6 +93,15 @@ type hintTextCase struct {
 }
 
 var hintTextCases = []hintTextCase{
+	// The message names the struct's type parameter, which the self-host
+	// respells internally (#9577); it must read as written.
+	{
+		name: "E040 uninferred struct type parameter",
+		src: `struct Box[T] { xs: T[] }
+function main(): i32 { var b = Box { xs: [] }; return b.xs.len(); }`,
+		code:     "E040",
+		spelling: "could not infer type parameter T for struct Box",
+	},
 	{
 		name: "E041 equality",
 		src: `struct P { x: i32 }

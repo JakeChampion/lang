@@ -784,7 +784,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
     match (st) {
         ast.StmtVar(v) => {
             var init_bound: string[] = bound;
-            if let ast.ExprLambda(lm) = v.init { init_bound = append_bound_name(init_bound, v.name); }
+            if (ast.var_binds_itself(v)) { init_bound = append_bound_name(init_bound, v.name); }
             return scoped_reads(v.init, init_bound, acc, reads);
         },
         ast.StmtExpr(e) => { return scoped_reads(e.value, bound, acc, reads); },
@@ -1199,7 +1199,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
     match (st) {
         ast.StmtVar(v) => {
             var before: ConstSubst = c;
-            if let ast.ExprLambda(lm) = v.init { before = cs_bind(before, v.name); }
+            if (ast.var_binds_itself(v)) { before = cs_bind(before, v.name); }
             return (ast.StmtVar { ...v, init: cs_expr(v.init, before) }, cs_bind(c, v.name), true);
         },
         ast.StmtIf(f) => {

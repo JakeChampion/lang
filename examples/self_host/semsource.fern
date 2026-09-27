@@ -77,7 +77,7 @@ struct State {
     // The module declarations whose body may hand one of their parameters out,
     // by contract name; `handers` computes it and `lend` consults it.
     handers: string[],
-    // The builtin names a module free function takes over (`shadowed_builtins`).
+    // The builtin names a module declaration takes over (`shadowed_builtins`).
     shadows: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
@@ -230,11 +230,11 @@ function merge_env(s: State, envs: i32[][], count: i32): State {
 // type-variable spellings of the generic it came out of and declares no type
 // parameter of its own. The spelling is a variable either way, bound by the
 // instantiation the body is produced under.
-function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
+function generic_decl(fd: parser.FuncDecl): boolean {
     if (fd.type_params.len() > 0 || fd.all_type_params.len() > 0) { return true; }
-    if (spelled_typevar(fd.ret_type, scope)) { return true; }
-    for p in fd.params { if (spelled_typevar(p.type_name, scope)) { return true; } }
-    return spelled_typevar(fd.receiver_type, scope);
+    if (spelled_typevar(fd.ret_type)) { return true; }
+    for p in fd.params { if (spelled_typevar(p.type_name)) { return true; } }
+    return spelled_typevar(fd.receiver_type);
 }
 
 // A type variable anywhere in a spelling — bare, an array's element, a
@@ -243,14 +243,14 @@ function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
 // and the parser's instance of `map[T, U]` at `T = i32` keeps `U` in its
 // result for the function argument to bind. The names a `dyn` set lists are
 // traits, never variables, so the set is skipped whole.
-function spelled_typevar(spelling: string, scope: checker.Scope): boolean {
+function spelled_typevar(spelling: string): boolean {
     var i: i32 = 0;
     while (i < spelling.len()) {
         var start: i32 = i;
         i = ident_end(spelling, i);
         if (i > start && slice_unchecked(spelling, start, i) == "dyn") {
             i = dyn_set_end(spelling, i);
-        } else if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) {
+        } else if (i > start && parser.looks_type_var(slice_unchecked(spelling, start, i) + "")) {
             return true;
         }
         if (i == start) { i = i + 1; }
@@ -292,15 +292,6 @@ function typevar_reason_name(reason: string): string {
     return "";
 }
 
-// Inside a generic declaration a bare type-variable letter no struct or enum
-// declares IS that variable — the rule irlower's own erasure keys on
-// (`is_erased_typevar`), and the one `type_from_name_erasing_tparams` applies
-// when the parser kept the name.
-function bare_typevar(name: string, scope: checker.Scope): boolean {
-    if (name.len() != 1 || name[0] < b'A' || name[0] > b'Z') { return false; }
-    if (checker.struct_sig(scope, name).name.len() > 0) { return false; }
-    return checker.union_sig(scope, name).name.len() == 0;
-}
 
 // resolved reads a type the checker computed for a body. Inside a template a
 // bare type-variable name the checker could not resolve is that variable, and
@@ -309,37 +300,37 @@ function bare_typevar(name: string, scope: checker.Scope): boolean {
 // consuming slot bound to a scalar drops its `own` as `typeinfo.own_flags`
 // says. Every other unknown is left alone and refuses where it stands, and so
 // does a variable the binding does not name, which stays a variable.
-function resolved(t: typeinfo.Type, template: boolean, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
+function resolved(t: typeinfo.Type, template: boolean, b: ssasem.Binding): typeinfo.Type {
     if (!template) { return t; }
     if let typeinfo.TypeUnknown(u) = t {
         var name: string = typevar_reason_name(u.reason);
-        if (bare_typevar(name, scope)) { return ssasem.substitute(typeinfo.TypeErased { name: name }, b); }
+        if (parser.looks_type_var(name)) { return ssasem.substitute(typeinfo.TypeErased { name: name }, b); }
         return t;
     }
-    return resolved_within(t, scope, b);
+    return resolved_within(t, b);
 }
 
-function resolved_within(t: typeinfo.Type, scope: checker.Scope, b: ssasem.Binding): typeinfo.Type {
-    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: resolved(a.elem, true, scope, b), view: a.view }; }
-    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: resolved_list(tup.elements, scope, b) }; }
+function resolved_within(t: typeinfo.Type, b: ssasem.Binding): typeinfo.Type {
+    if let typeinfo.TypeArray(a) = t { return typeinfo.TypeArray { elem: resolved(a.elem, true, b), view: a.view }; }
+    if let typeinfo.TypeTuple(tup) = t { return typeinfo.TypeTuple { elements: resolved_list(tup.elements, b) }; }
     if let typeinfo.TypeFunc(fn) = t {
-        var params: typeinfo.Type[] = resolved_list(fn.param_types, scope, b);
-        return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved(fn.ret_type, true, scope, b) };
+        var params: typeinfo.Type[] = resolved_list(fn.param_types, b);
+        return typeinfo.TypeFunc { ...fn, param_types: params, param_own: typeinfo.own_flags(fn.param_own, params), ret_type: resolved(fn.ret_type, true, b) };
     }
-    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: resolved(m.key, true, scope, b), value: resolved(m.value, true, scope, b) }; }
-    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: resolved_list(r.args, scope, b) }; }
-    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: resolved_list(u.args, scope, b) }; }
+    if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: resolved(m.key, true, b), value: resolved(m.value, true, b) }; }
+    if let typeinfo.TypeStruct(r) = t { return typeinfo.TypeStruct { ...r, args: resolved_list(r.args, b) }; }
+    if let typeinfo.TypeUnion(u) = t { return typeinfo.TypeUnion { ...u, args: resolved_list(u.args, b) }; }
     return t;
 }
 
-function resolved_list(ts: typeinfo.Type[], scope: checker.Scope, b: ssasem.Binding): typeinfo.Type[] {
+function resolved_list(ts: typeinfo.Type[], b: ssasem.Binding): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
-    for t in ts { out = out.append(resolved(t, true, scope, b)); }
+    for t in ts { out = out.append(resolved(t, true, b)); }
     return out;
 }
 
 function bound_type(s: State, name: string, scope: checker.Scope): typeinfo.Type {
-    return settled(resolved(checker.scope_type(scope, name), s.template, scope, s.binding));
+    return settled(resolved(checker.scope_type(scope, name), s.template, s.binding));
 }
 
 // A float the checker left polymorphic — a literal's binding with no
@@ -367,7 +358,7 @@ function settled(t: typeinfo.Type): typeinfo.Type {
 // ---- expressions ------------------------------------------------------------
 
 function checked(e: ast.Expr, s: State): typeinfo.Type {
-    return settled(resolved(checker.expr_type(e, s.scope), s.template, s.scope, s.binding));
+    return settled(resolved(checker.expr_type(e, s.scope), s.template, s.binding));
 }
 
 function decimal(text: string): boolean {
@@ -1327,7 +1318,7 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
     if (!s.ok) { return v; }
     if (!ssasem.is_dyn(s.values[v.id])) { return refused(s, "downcast of a value that is not dyn"); }
     var target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
-    var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.scope, s.binding);
+    var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.binding);
     if (struct_name(concrete) != target && union_name(concrete) != target) { return refused(s, "downcast target: " + target); }
     if (union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
         return refused(s, "downcast to an enum whose box carries no shape: " + target);
@@ -2068,7 +2059,7 @@ function block_type(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.T
     var ty: typeinfo.Type = checked(e, s);
     if (semtypes.concrete(ty, false)) { return ty; }
     if let ast.ExprLambda(lam) = c.callee {
-        if (lam.ret_type.len() > 0) { return resolved(s.scope.resolve_type(lam.ret_type), s.template, s.scope, s.binding); }
+        if (lam.ret_type.len() > 0) { return resolved(s.scope.resolve_type(lam.ret_type), s.template, s.binding); }
     }
     return ty;
 }
@@ -3442,7 +3433,7 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
         var slot: typeinfo.Type = closure_slot_type(slot_init(fd.body, id.name), contracts);
         if (semtypes.concrete(slot, false)) { return slot; }
     }
-    return resolved(checker.expr_type(returned, at), generic_decl(fd, scope), scope, b);
+    return resolved(checker.expr_type(returned, at), generic_decl(fd), b);
 }
 
 // The type of a slot the lambda lift filled with a closure constructor:
@@ -3544,7 +3535,7 @@ function synthesised_name(name: string): boolean {
 
 function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
     if (fd.ret_type.len() == 0) { return inferred_result(fd, scope, b, contracts); }
-    var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd, scope), scope, b);
+    var declared: typeinfo.Type = resolved(scope.ret_type, generic_decl(fd), b);
     if (synthesised(fd)) {
         var (returned, _) = checker.first_returned(fd.body, scope);
         if (!literal_adapts(returned, declared)) {
@@ -3595,7 +3586,7 @@ function env_captures(fd: parser.FuncDecl, scope: checker.Scope, template: boole
             if (reads_env_slot(v.init, out.len() + 1)) {
                 read = true;
                 at = checker.bind_stmt(st, at);
-                out = out.append(resolved(checker.scope_type(at, v.name), template, scope, b));
+                out = out.append(resolved(checker.scope_type(at, v.name), template, b));
             }
         }
         if (!read) { return out; }
@@ -3638,7 +3629,7 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     var entry: ssa.SBlock = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
-        template: generic_decl(fd, scope), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows,
+        template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows,
         name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body) };
 }
 
@@ -3947,12 +3938,19 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
     return out;
 }
 
-// The builtin names a module's free function takes over. Methods are not
-// counted: a receiver-keyed builtin lowers by name (#10363).
+// The builtin names a module declaration takes over: any free function, and a
+// string method only when std/string is not loaded. std/string's own methods
+// are what the runtime helpers stand in for, and native rejects a second
+// declaration of one beside them (E006).
 function shadowed_builtins(mod: parser.Module): string[] {
     var out: string[] = [];
     var keys: string[] = [];
-    for fd in mod.funcs { if (fd.receiver_type.len() == 0) { keys = keys.append(fd.name); } }
+    var std_string: boolean = false;
+    for im in mod.imports { if (im.path == "std/string") { std_string = true; } }
+    for fd in mod.funcs {
+        if (fd.receiver_type.len() == 0) { keys = keys.append(fd.name); }
+        else if (!std_string && util.base_type_name(fd.receiver_type) == "string") { keys = keys.append(decl_key(fd)); }
+    }
     for b in builtin_contracts() {
         if (util.index_of_str(keys, b.name) >= 0 && util.index_of_str(out, b.name) < 0) { out = out.append(b.name); }
     }
@@ -4085,10 +4083,10 @@ function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.C
     var params: typeinfo.Type[] = [];
     var modes: i32[] = [];
     var names: string[] = decl_param_names(fd);
-    var generic: boolean = generic_decl(fd, scope);
+    var generic: boolean = generic_decl(fd);
     var at: i32 = 0;
     while (at < names.len()) {
-        var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, scope, ssasem.unbound());
+        var ty: typeinfo.Type = resolved(checker.scope_type(scope, names[at]), generic, ssasem.unbound());
         if (at == 0 && is_closure_body(fd)) { ty = env_type(fd, scope, generic, ssasem.unbound(), decl_key(fd)); }
         if (!semtypes.shaped(ty, true)) { return none; }
         params = params.append(ty);
@@ -4444,9 +4442,8 @@ function builtin_contracts(): ssasem.Contract[] {
 // `is_str_builtin_method`'s seven. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
 // owner method_call already derives. contracts() keeps a declaration of one of
-// these over the builtin, but ssarc.string_method_site lowers the call by name
-// to the helper's op all the same — right for std/string's own declarations,
-// which the helpers stand in for, and wrong for a user's (#10363).
+// these over the builtin; a user's own is then an ordinary call
+// (`shadowed_builtins`), and std/string's lowers to the helper's op.
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
 // and the three that answer text hand back a fresh string of the caller's own,
@@ -4509,14 +4506,17 @@ function raw_floor_contracts(): ssasem.Contract[] {
 // needs a contract for each the way it does for `__memcpy`.
 //
 // Signatures are the call sites': `__fern_rc_inc` answers the pointer it was
-// given (map.fern:477, 747, 970), `__fern_str_dec` takes the string and gives
-// nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
+// given (map.fern:477, 747, 970), `__fern_str_dec` is lent the string and
+// gives nothing back (657, 719), `__map_hash_seed` answers the i32 stored in the
 // header (342), and the two array drops take a pointer and a stride (727, 730).
 function rc_contracts(): ssasem.Contract[] {
     var v: i32 = ssaunits.value_mode();
     return [
         ssasem.Contract { name: "__fern_rc_inc", params: [t_usize()], modes: [v], result: t_usize() },
-        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [v], result: t_void() },
+        // Lent, not consumed: core/map calls it on `k as string`, a raw column
+        // word the frame holds no counted unit for, and the helper releases
+        // the string itself.
+        ssasem.Contract { name: "__fern_str_dec", params: [t_string()], modes: [ssaunits.borrow_mode()], result: t_void() },
         ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
@@ -5066,7 +5066,7 @@ pub function build_module(mod: parser.Module): Built {
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];
         var p: Produced = template_entry(decl_key(fd), false, "uninstantiated generic", true);
-        if (!generic_decl(fd, scopes[i])) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, mod.funcs, mod.impls); }
+        if (!generic_decl(fd)) { p = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, mod.funcs, mod.impls); }
         pending = queue(pending, p.requests);
         decls = decls.append(p);
         names = names.append(decl_key(fd));
