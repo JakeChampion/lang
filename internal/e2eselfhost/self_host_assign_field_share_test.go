@@ -15,7 +15,8 @@ import (
 // field, the reading local holds a counted share it releases itself, and a
 // reassign of the box the slot already holds gives its retain back.
 // The strarr_ rows are the `string[]` field (#10379): a holder rebound by
-// assignment, and a scalar's `to_string()` as a fresh element.
+// assignment, a scalar's `to_string()` as a fresh element, and a field
+// element read as a comparison operand.
 // Every answer is interpreter-confirmed.
 var assignFieldShareCases = []struct {
 	name string
@@ -183,7 +184,7 @@ function run(n: i32): i32 {
         acc = (acc + r.names.len()) % 251;
         i = i + 1;
     }
-    if (r.names[0].len() != 4) { return 97; }
+    if (r.names[0] != "1199") { return 97; }
     return (acc + r.names.len()) % 89;
 }
 function main(): i32 { return run(200); }
@@ -201,7 +202,7 @@ function run(n: i32): i32 {
         acc = (acc + r.names.len() + xs.len()) % 251;
         i = i + 1;
     }
-    if (r.names[0].len() != 4) { return 97; }
+    if (r.names[0] != "1199") { return 97; }
     return (acc + r.names.len()) % 251;
 }
 function main(): i32 { return run(200); }
@@ -231,14 +232,14 @@ function run(n: i32): i32 {
     var i: i32 = 0;
     while (i < n) {
         var r: Rec = Rec { names: [(i + 1000).to_string(), "a" + "b"], n: i };
-        acc = acc + r.names[0].len();
+        if (r.names[0] == "1100") { acc = acc + (r.names[1] + "!").len(); }
         acc = (acc + r.names.len()) % 251;
         i = i + 1;
     }
     return acc % 89;
 }
 function main(): i32 { return run(200); }
-`, 18},
+`, 63},
 	{"strarr_var_in_loop_local", `import "std/i32";
 import "std/string";
 struct Rec { names: string[], n: i32 }
