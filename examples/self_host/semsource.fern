@@ -4411,6 +4411,9 @@ function rc_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        // The handle release in __map_drop_impl: frees the rc'd block at the
+        // address minus its header, and answers the address.
+        ssasem.Contract { name: "__fern_box_free", params: [t_usize(), t_i32()], modes: [v, v], result: t_usize() },
         // The manual-release and manual-retain test hooks. Each is lent its
         // array: the count it moves is one the plan does not see, which is the
         // point of a hook that exercises the underflow detector. The retain

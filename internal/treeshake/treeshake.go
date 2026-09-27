@@ -156,8 +156,8 @@ var watHelperDeps = map[string][]string{
 	// `__method_MapIter_*` names; the stdlib bodies live
 	// under `_impl` suffixes that the codegen alias rewrites
 	// to. Pull each impl in when its alias is referenced.
-	// map_new also roots __map_drop_values: the IR injects a call
-	// to it at every owned-Map drop site (after lowering, so no
+	// map_new also roots __map_drop_values and __map_drop_impl: the IR
+	// injects a call to each at every owned-Map drop site (after lowering, so no
 	// AST reference exists for tree-shake to follow), and every
 	// owned map traces back to a map_new. It transitively pulls in
 	// __map_dec_value / __map_val_kind / __map_val_stride from its
@@ -169,7 +169,7 @@ var watHelperDeps = map[string][]string{
 	// these mutator results (issue #2763), and that injection — like
 	// __map_drop_values above — happens after lowering, so there's no
 	// AST reference for tree-shake to follow on its own.
-	"map_new":             {"map_new_impl", "__map_drop_values"},
+	"map_new":             {"map_new_impl", "__map_drop_values", "__map_drop_impl"},
 	"__method_Map_len":    {"__map_len_impl"},
 	"__method_Map_has":    {"__map_has_impl", "__map_lookup", "__map_hash"},
 	"__method_Map_get":    {"__map_get_impl", "__map_lookup", "__map_hash"},

@@ -95,7 +95,7 @@ function main(): i32 {
 	},
 	{
 		// Many short-lived maps: each is dropped at scope exit through
-		// __fern_map_drop, and the seed is drawn once for all of them.
+		// __map_drop_impl, and the seed is drawn once for all of them.
 		name: "many_maps_in_a_loop",
 		src: `import "std/i32";
 import "core/map";
@@ -110,6 +110,20 @@ function main(): i32 {
   var r: i32 = 0;
   while (r < 300) { total = total + count(r % 17); r = r + 1; }
   stdout().write("total=" + total.to_string() + "\n");
+  return 0;
+}`,
+	},
+	{
+		// A handle dropped at a zero count is an over-release on both
+		// backends: the drop hands it to __fern_rc_dec, which counts it.
+		name: "over_released_handle_is_counted",
+		src: `import "std/i32";
+import "core/map";
+function main(): i32 {
+  var h: usize = map_new_impl(4, 0, 0);
+  __store_i32(h - 8, 0);
+  __map_drop_impl(h);
+  stdout().write("underflows=" + __rc_underflow_count().to_string() + "\n");
   return 0;
 }`,
 	},
