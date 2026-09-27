@@ -8226,8 +8226,9 @@ pub function str_expr_ownership(e: ast.Expr, s: LowerState): i32 {
 //   - __raw_string(p, n)                       — the Tier-2 raw box constructor
 // EXCLUDED here (need the `: string` disambiguation, handled in the caller): a
 // bare `a + b` (could be int add) and the `.<m>()` methods (`.reverse()` /
-// `.repeat()` also exist on arrays). `.to_string()` stays excluded entirely — it
-// is the identity/alias case on a string receiver and may return a struct field.
+// `.repeat()` also exist on arrays). `.to_string()` is a method, not an ident
+// callee, so it never reaches this test; str_local_binding_is_fresh admits it on
+// a stamped scalar receiver and refuses it on a string one.
 function str_free_producer_ident(c: ast.ExprCall): boolean {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -8264,8 +8265,10 @@ function str_free_producer_ident(c: ast.ExprCall): boolean {
 // DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
 // and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
-// (aliases a live string), `.replace()` / `.to_string()` (receiver-identity
-// fast-paths), and a general call (may return a borrowed param).
+// (aliases a live string), `.replace()` and a string receiver's `.to_string()`
+// (receiver-identity fast-paths), and a general call (may return a borrowed
+// param). A stamped scalar's `.to_string()` is admitted: only the
+// stamped_scalar receiver test separates it from the string receiver's alias.
 function str_local_binding_is_fresh(init: ast.Expr): boolean {
     match (init) {
         ast.ExprCall(c) => {
@@ -37440,8 +37443,7 @@ function litstr_tostring_recv_body(stmts: ast.Stmt[], name: string): boolean {
 // --- `<scalar>.to_string()` string locals (#6599) -----------------------------
 //
 // `var s: string = i.to_string()` leaked its box on every backend: the method form
-// is excluded from str_free_producer_ident / str_local_binding_is_fresh, whose
-// comments give the reason — `.to_string()` is a "receiver-identity fast-path". That
+// was refused as a "receiver-identity fast-path" whatever its receiver. That
 // is true on a STRING receiver, where the call returns the receiver itself, so
 // freeing the result would release a box the source still owns. On a SCALAR receiver
 // it is the decimal-text builtin returning a fresh sole-owned box, which is the same
