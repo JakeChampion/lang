@@ -116,9 +116,9 @@ function main(): i32 {
 const enumFieldAliasCountWant = 24
 
 // A returned alias (and a returned fresh enum local, the same family's sweep)
-// hands its count to the caller, which no caller credit releases yet (#10365), so these
-// shapes are held to the answer and the underflow detector, not the census.
-// Before the fix the returning frame's own sweep freed the box it returned.
+// hands its count to the caller, whose binding releases it as an "ENUM:" call
+// result (#10365). Before #10356 the returning frame's own sweep freed the box
+// it returned.
 const enumFieldAliasReturnSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -194,16 +194,22 @@ func TestSelfHostEnumFieldAliasCountX86_64(t *testing.T) {
 	checkEnumFieldAlias(t, "x86-64-linux", enumFieldAliasCountSrc, "rc_loop", enumFieldAliasCountWant, true)
 }
 
-func TestSelfHostEnumFieldAliasCountSanitizeX86_64(t *testing.T) {
+// checkEnumFieldAliasSanitized runs src on x86-64 under FERN_SANITIZE and every
+// lowering, requiring the answer and a silent sanitizer.
+func checkEnumFieldAliasSanitized(t *testing.T, src, mixed string, want int) {
 	cli := buildSelfHostCLI(t)
-	for _, lw := range enumFieldAliasLowerings("rc_loop") {
+	for _, lw := range enumFieldAliasLowerings(mixed) {
 		t.Run(lw.name, func(t *testing.T) {
-			stderr, exit := cli.exitOf(t, enumFieldAliasCountSrc, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
-			if exit != enumFieldAliasCountWant || strings.Contains(stderr, "fern-sanitizer:") {
-				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, enumFieldAliasCountWant, stderr)
+			stderr, exit := cli.exitOf(t, src, "x86-64-linux", "FERN_SANITIZE=1", lw.env)
+			if exit != want || strings.Contains(stderr, "fern-sanitizer:") {
+				t.Fatalf("exit = %d, want %d, and the sanitizer silent\n%s", exit, want, stderr)
 			}
 		})
 	}
+}
+
+func TestSelfHostEnumFieldAliasCountSanitizeX86_64(t *testing.T) {
+	checkEnumFieldAliasSanitized(t, enumFieldAliasCountSrc, "rc_loop", enumFieldAliasCountWant)
 }
 
 func TestSelfHostEnumFieldAliasCountArm64(t *testing.T) {
@@ -218,16 +224,20 @@ func TestSelfHostEnumFieldAliasCountWasm(t *testing.T) {
 }
 
 func TestSelfHostEnumFieldAliasReturnX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, false)
+	checkEnumFieldAlias(t, "x86-64-linux", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, true)
+}
+
+func TestSelfHostEnumFieldAliasReturnSanitizeX86_64(t *testing.T) {
+	checkEnumFieldAliasSanitized(t, enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant)
 }
 
 func TestSelfHostEnumFieldAliasReturnArm64(t *testing.T) {
-	checkEnumFieldAlias(t, "arm64-linux", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, false)
+	checkEnumFieldAlias(t, "arm64-linux", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, true)
 }
 
 func TestSelfHostEnumFieldAliasReturnWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-field alias return")
 	}
-	checkEnumFieldAlias(t, "wasm32-wasi", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, false)
+	checkEnumFieldAlias(t, "wasm32-wasi", enumFieldAliasReturnSrc, "sc_get", enumFieldAliasReturnWant, true)
 }
