@@ -13265,71 +13265,21 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
 //
-// `scalars` names the bindings declared at a scalar type, `scalar_arrs` those
-// declared at an array of one, and `scalar_fns` the functions returning one:
-// a scalar argument carries no reference, so handing it to a consuming
+// `scope` is the checker's scope at the walk's position: an argument whose
+// checked type is scalar carries no reference, so handing it to a consuming
 // parameter transfers nothing and needs no proof of ownership (native's
-// scalarArgs). ow_expr_is_scalar reads all three.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scalars: string[], scalar_arrs: string[], scalar_fns: string[] }
+// scalarArgs).
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope }
 
-// ow_scalar_binding records whether `name` is now bound at a scalar type, or
-// at an array of one.
-function ow_scalar_binding(ctx: OwnCtx, name: string, type_name: string, scalar: boolean): OwnCtx {
-  var rest: string[] = ow_names_del(ctx.scalars, name);
-  if (scalar) { rest = rest.append(name); }
-  var arrs: string[] = ow_names_del(ctx.scalar_arrs, name);
-  if (ow_scalar_arr_type(type_name)) { arrs = arrs.append(name); }
-  return OwnCtx { ...ctx, scalars: rest, scalar_arrs: arrs };
-}
-
-function ow_scalar_arr_type(t: string): boolean {
-  return t.len() > 2 && slice_unchecked(t, t.len() - 2, t.len()) == "[]" && !ow_ownable_type(slice_unchecked(t, 0, t.len() - 2));
-}
-
-// ow_var_is_scalar: a `var` declared at a scalar type, or unannotated with a
-// scalar initialiser.
-function ow_var_is_scalar(v: ast.StmtVar, ctx: OwnCtx): boolean {
-  if (v.type_name.len() > 0) { return !ow_ownable_type(v.type_name); }
-  return ow_expr_is_scalar(v.init, ctx);
-}
-
-// ow_scalar_fns names the free functions whose declared result is a scalar.
-function ow_scalar_fns(funcs: parser.FuncDecl[]): string[] {
-  var out: string[] = [];
-  for fd in funcs {
-    if (fd.receiver_type.len() == 0 && fd.ret_type.len() > 0 && !ow_ownable_type(fd.ret_type)) { out = out.append(fd.name); }
-  }
-  return out;
-}
-
-// ow_expr_is_scalar: an expression whose value is a scalar, whatever its
-// shape (native's definitelyScalar on the argument's checked type).
+// ow_expr_is_scalar is native's definitelyScalar on the argument's checked type.
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) { return true; }
-  match (e) {
-    ast.ExprIdent(id) => {
-      return util.has_str(ctx.scalars, id.name);
-    },
-    ast.ExprBinary(b) => {
-      var cmp: string[] = ["==", "!=", "<", "<=", ">", ">=", "&&", "||"];
-      return util.has_str(cmp, b.op) || ow_expr_is_scalar(b.left, ctx);
-    },
-    ast.ExprUnary(u) => {
-      return u.op == "!" || ow_expr_is_scalar(u.operand, ctx);
-    },
-    ast.ExprCall(c) => {
-      if let ast.ExprIdent(cid) = c.callee {
-        return !util.has_str(ctx.bound, cid.name) && util.has_str(ctx.scalar_fns, cid.name);
-      }
-      return false;
-    },
-    ast.ExprIndex(ix) => {
-      if let ast.ExprIdent(aid) = ix.array { return util.has_str(ctx.scalar_arrs, aid.name); }
-      return false;
-    },
-    _ => {
-      return false;
-    }
+  match (check_expr(e, ctx.scope)) {
+    typeinfo.TypeI32(_) => { return true; },
+    typeinfo.TypeBool(_) => { return true; },
+    typeinfo.TypeFloat(_) => { return true; },
+    typeinfo.TypeVoid(_) => { return true; },
+    _ => { return false; }
   }
 }
 
@@ -13389,7 +13339,8 @@ function ow_ownable_type(type_name: string): boolean {
 // ow_nested_ctx layers a nested function's parameters over the enclosing
 // owned set: an `own` parameter is owned inside the body it belongs to, and
 // any other parameter SHADOWS an outer owned name it repeats.
-function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
+function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
+  var params: ast.ParamDecl[] = lm.params;
   var names: string[] = ctx.owned;
   var borrowed: string[] = ctx.borrowed;
   for param in params {
@@ -13407,8 +13358,7 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   }
   var bound: string[] = ctx.bound;
   for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
-  var nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scalars: ctx.scalars, scalar_arrs: ctx.scalar_arrs, scalar_fns: ctx.scalar_fns };
-  for p in params { nested = ow_scalar_binding(nested, p.name, p.type_name, !ow_ownable_type(p.type_name)); }
+  var nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope) };
   return nested;
 }
 
@@ -13926,7 +13876,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       // `function inner(own b)` could not transfer `b` onward, and a plain
       // parameter repeating an outer owned name would be read as that name
       // (#7452).
-      var lctx: OwnCtx = ow_nested_ctx(ctx, lm.params);
+      var lctx: OwnCtx = ow_nested_ctx(ctx, lm);
       var inner: OwnWalk = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
       return OwnWalk { moved: moved, diags: inner.diags };
     },
@@ -14019,7 +13969,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtFor(fr) => {
       var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
-      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ow_bind_ctx(ctx, fr.var_name));
+      var fctx: OwnCtx = ow_bind_ctx(ctx, fr.var_name);
+      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
     ast.StmtMatch(m) => {
@@ -14031,10 +13982,12 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
+      var whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       for arm in m.arms {
         // A binder shadows for its arm either way; only the ownership
         // TRANSFER below depends on the scrutinee being owned.
         var actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
+        actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
           actx = ow_arm_payload_ctx(actx, arm.pattern);
         }
@@ -14065,10 +14018,8 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     var r: OwnWalk = ow_stmt(stmt, m, c);
     m = r.moved;
     d = util.append_diags(d, r.diags);
-    if let ast.StmtVar(v) = stmt {
-      var scalar: boolean = ow_var_is_scalar(v, c);
-      c = ow_scalar_binding(ow_bind_ctx(c, v.name), v.name, v.type_name, scalar);
-    }
+    if let ast.StmtVar(v) = stmt { c = ow_bind_ctx(c, v.name); }
+    c = OwnCtx { ...c, scope: bind_stmt(stmt, c.scope) };
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -14109,9 +14060,8 @@ function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 // variable or a match arm's binder, each of which shadows for its body only.
 function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
   if (name.len() == 0) { return ctx; }
-  var c: OwnCtx = ow_scalar_binding(ctx, name, "", false);
-  if (util.has_str(c.bound, name)) { return c; }
-  return OwnCtx { ...c, bound: c.bound.append(name) };
+  if (util.has_str(ctx.bound, name)) { return ctx; }
+  return OwnCtx { ...ctx, bound: ctx.bound.append(name) };
 }
 
 // ow_arm_payload_ctx layers a match arm's pointer-typed payload bindings onto
@@ -14483,25 +14433,21 @@ pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
-  var scalar_fns: string[] = ow_scalar_fns(mod.funcs);
+  var env: ModuleEnv = module_env(mod);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) { continue; }
     var owned: string[] = [];
     var borrowed: string[] = [];
-    var scalars: string[] = [];
-    var scalar_arrs: string[] = [];
     for param in fn.params {
       if (param.own && ow_ownable_type(param.type_name)) {
         owned = owned.append(param.name);
       } else {
         borrowed = borrowed.append(param.name);
       }
-      if (!ow_ownable_type(param.type_name)) { scalars = scalars.append(param.name); }
-      if (ow_scalar_arr_type(param.type_name)) { scalar_arrs = scalar_arrs.append(param.name); }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scalars: scalars, scalar_arrs: scalar_arrs, scalar_fns: scalar_fns };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);

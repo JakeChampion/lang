@@ -154,6 +154,30 @@ function main(): i32 { return h([1]); }
 function h(xs: string[]): string { return g(xs[0]); }
 function main(): i32 { return h(["a"]).len(); }
 `, 1},
+	// Scalar by the argument's checked type: a field, a method result and a
+	// `for` binder qualify; a checked operator's Option and a cast to string
+	// do not, whatever their operands are.
+	{"scalar-typed-reads-into-own", `struct P { n: i32 }
+function g(own y: i32): i32 { return y; }
+function a(p: P): i32 { return g(p.n); }
+function b(xs: i32[]): i32 { return g(xs.len()); }
+function c(s: string): i32 { return g(s.len()); }
+function d(xs: i32[]): i32 { var t = 0; for x in xs { t = t + g(x); } return t; }
+function main(): i32 { var p = P { n: 1 }; return a(p) + b([1, 2]) + c("hi") + d([1, 2]); }
+`, 0},
+	{"checked-op-into-own", `function g(own o: Option[i32]): i32 {
+  match (o) { Some(v) => { return v; }, None => { return 0; } }
+}
+function main(): i32 { var a: i32 = 1; var b: i32 = 2; return g(a +? b); }
+`, 1},
+	{"checked-op-local-into-own", `function g(own o: Option[i32]): i32 {
+  match (o) { Some(v) => { return v; }, None => { return 0; } }
+}
+function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c = a +? b; return g(c); }
+`, 1},
+	{"cast-to-string-into-own", `function g(own s: string): i32 { return s.len(); }
+function main(): i32 { var k: usize = 3; return g(k as string); }
+`, 1},
 	// A borrowed reference still is not an owned argument.
 	{"borrowed-string-into-own", `function g(own y: string): string { return y; }
 function f(x: string): string { return g(x); }
