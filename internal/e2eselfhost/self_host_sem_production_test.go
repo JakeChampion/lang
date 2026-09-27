@@ -2268,12 +2268,10 @@ function main(): i32 {
     return r.ops.len() % 100 + r.name.len();
 }
 `},
-	// A `str` binding in a module that declares a generic struct. The parser
-	// erases `str` to `string` at parse time and records the view-ness on the
-	// declaration's `is_str`; the struct monomorphiser rewrote every `var`
-	// annotation in every body and dropped that flag, so the checker typed
-	// the binding `string` against a `str` value and every function holding
-	// one refused. Produces 0 of 2 with the flag dropped.
+	// A `str` binding in a module that declares a generic struct. The struct
+	// monomorphiser rewrites every `var` annotation in every body; when that
+	// lost the binding's view-ness, the checker typed it `string` against a
+	// `str` value and every function holding one refused, producing 0 of 2.
 	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
 	// array arm and an empty array literal as an arm's value are both
 	// refused by the AST lowering ("immediately-invoked value block"), and

@@ -274,8 +274,8 @@ Self-host status: E063 and E065 are **ported** (`slc_walk`,
 view at runtime: a slice copies into an owned array, so `[T]` is
 a checker-only `view` flag on `typeinfo.TypeArray`, re-entered
 from the parser's erased spelling through `StmtVar.is_view`,
-`ParamDecl.is_view` and `FuncDecl.ret_slice` the way `str` uses
-`is_str` / `ret_str`. A slice and `.as_bytes()` are views; a view
+`ParamDecl.is_view` and `FuncDecl.ret_slice`. (`str` needs no
+flag: its spelling reaches the checker unerased.) A slice and `.as_bytes()` are views; a view
 and an owned `T[]` convert in neither direction (E003 / E002 /
 E043 / E038) except the owned-into-`[T]` argument lend, as in
 native (#9944). Still looser than native: method resolution does
