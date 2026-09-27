@@ -257,7 +257,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 300,
 		},
 		{
 			// The leaf passed to a callee that keeps it.

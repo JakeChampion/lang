@@ -21420,14 +21420,13 @@ func isWideMapValueTypeIR(t ast.Type) bool {
 // this is the narrow one. isWideMapValueTypeIR is the wide one (i64 / u64 /
 // f64, walked inline). `boolean` is the third and the least obvious: it is
 // not pointer-shaped, but its array element strides a POINTER WIDTH on the
-// natives, so emitBoolMapColumn passes __ptr_width() rather than leaving it
-// at 4 (#10000).
+// natives, so emitBoolMapColumn builds a real `boolean[]` (#10000).
 //
 // The remainder do stride 4, and that is measured rather than assumed: i32,
 // u32, f32 and usize columns all read back equal to the interpreter on both
 // register targets. A pointer-shaped column never meets the fixed stride at
 // all — a string, struct, enum or array column is routed to
-// __map_string_column / __map_ptr_column before __map_column.
+// __map_string_column / __map_ptr_column before __map_i32_column.
 func isByteMapColumnIR(t ast.Type) bool {
 	n, ok := t.(ast.NumberType)
 	return ok && n.NormalWidth() == 8
@@ -21461,18 +21460,14 @@ func (b *builder) emitByteMapColumn(n *ast.Call, values bool) error {
 	return nil
 }
 
-// emitBoolMapColumn lowers them on a `boolean` column, whose array element
-// strides a POINTER WIDTH on the natives — ast.ElemSizeBytesFor has no
-// BoolType case, so it takes the pointer default even though a boolean is not
-// pointer-shaped. __map_column's own stride argument carries it; passing
-// __ptr_width() is right on both targets at once, since a wasm32 boolean
-// element strides 4 and that is the arm the runtime already had.
+// emitBoolMapColumn lowers them on a `boolean` column to __map_bool_column,
+// which builds a real `boolean[]`: its element strides a pointer width on the
+// natives, not the 4 an i32 column writes (#10000).
 func (b *builder) emitBoolMapColumn(n *ast.Call, values bool) error {
 	if err := b.emitMapColumnReceiver(n, values); err != nil {
 		return err
 	}
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__ptr_width", Width: ResNarrow, I32: 0})
-	b.emit(Op{Kind: OpCallDirect, Str: "__map_column", I32: 3})
+	b.emit(Op{Kind: OpCallDirect, Str: "__map_bool_column", I32: 2})
 	return nil
 }
 
