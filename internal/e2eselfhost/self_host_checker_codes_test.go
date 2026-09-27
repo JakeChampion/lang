@@ -179,6 +179,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// A literal local takes ONE integer type: its first width-fixing use
+		// decides it, i32 when none does (#10123). The self-host held it at i32
+		// from its binding and native let each use pick a width, so the same
+		// local read at two widths was accepted natively and miscompiled.
+		{"literal-local-widens", "function main(): i32 { var x = 5; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-narrows", "function main(): i32 { var x = 5; var y: u8 = x; return 0; }\n", nil},
+		{"literal-local-shift-count", "function main(): i32 { var x = 5; var z: u64 = 1 as u64 << x; return 0; }\n", nil},
+		{"literal-local-wider-operand", "function main(): i32 { var x = 5; var y: i64 = x + (1 as i64); return 0; }\n", nil},
+		{"literal-local-through-a-second-local", "function main(): i32 { var x = 5; var y = x + 1; var z: u64 = y; return 0; }\n", nil},
+		{"literal-local-assigned-typed", "function main(): i32 { var x = 0; var n: i64 = 7i64; x = n; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-parameter", "function take(v: u64): i32 { return 0; }\nfunction main(): i32 { var x = 3; var r = take(x); var y: u64 = x; return r; }\n", nil},
+		{"literal-local-struct-field", "struct P { a: i64 }\nfunction main(): i32 { var x = 3; var p = P { a: x }; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-array-sibling", "function main(): i32 { var x = 3; var xs: i64[] = [x, 2i64]; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-cast-does-not-decide", "function main(): i32 { var x = 5; var f: f64 = x as f64; var y: i64 = x; return 0; }\n", nil},
+		{"range-variable-shifts-u64", "function main(): i32 {\n    var t: i64 = 0 as i64;\n    for i in 0..64 {\n        var bits: i64 = (1 as u64 << i) as i64;\n        t = t + bits;\n    }\n    return 0;\n}\n", nil},
+		{"range-variable-typed-bound", "function main(): i32 { var n: i64 = 5i64; for i in 0..n { var k: i64 = i; } return 0; }\n", nil},
+		{"literal-local-two-widths", "function main(): i32 { var x = 5; var a: i32 = x; var b: i64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-two-widths-wrapped", "function main(): i32 {\n    var x = 2147483647;\n    x = x + 1;\n    var a: i32 = x;\n    var b: i64 = x;\n    if (b > 0i64) { return 1; }\n    if (a < 0) { return 2; }\n    return 3;\n}\n", []string{"E003"}},
+		{"literal-local-index-is-i32", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i = 1; var v = xs[i]; var w: i64 = i; return v; }\n", []string{"E003"}},
+		{"literal-local-float", "function main(): i32 { var x = 5; var f: f64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-out-of-range", "function main(): i32 { var x = 300; var b: u8 = x; return 0; }\n", []string{"E047"}},
+		// An open literal local compared with, or combined with, one that has
+		// already settled takes its width, whichever order the two settle in.
+		{"literal-local-compared-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-compared-before-settling", "function main(): i32 { var hi = 255; var i = 250; if (i != hi) {} var b: u8 = i; var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-arithmetic-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; var d = hi - i; var e: u8 = d; return 0; }\n", nil},
+		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
+		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
+		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
 		// `fbip` exists for — drew E053 there and nothing natively, and
@@ -803,6 +832,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
+		// Only a nested `function` sees its own name (#10383): an arrow lambda
+		// bound by `var` calling that var, directly or one lambda deeper, is E001.
+		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
+		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
@@ -2537,6 +2570,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		// A method's parameter or result spelling the receiver's type
+		// parameter is bound by the receiver's instantiation, on an enum
+		// receiver as on a struct one (#10014).
+		{"method-enum-recv-bound-result-mismatch", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); var n: boolean = o.get_or(\"\"); return 0; }\n"},
+		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
+		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
+		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { var wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
@@ -2561,6 +2601,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// control: the rule must read the program's import closure, not
 		// just flag every map_new it walks.
 		{"map-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// A recursive local is a nested `function`; an arrow lambda bound by
+		// `var` does not see its own name, so a self-call is E001 and a
+		// same-named OUTER binding is what it reads (#10383).
+		{"rec-local-fn-ok", "function demo(n: i32): i32 { function f(k: i32): i32 { if (k <= 0) { return n; } return f(k - 1); } return f(3); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow", "function demo(n: i32): i32 { var f = (): i32 => { if (n <= 0) { return 0; } return f(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-nested", "function demo(n: i32): i32 { var f = (): i32 => { var g2 = (): i32 => { return f(); }; return g2(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-reads-outer", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; if (true) { var f = (x: i32): i32 => { return f(x) * 2; }; return f(3); } return 0; }\n"},
 		{"map-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		// The literal spelling reaches the same rule by a different road: the
 		// compile parse desugars `Map { … }` to a __map_new_i32 / map_new

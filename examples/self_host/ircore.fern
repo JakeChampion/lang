@@ -1285,11 +1285,12 @@ function produced_or_lowered(sub: Sub, i: i32, fd: parser.FuncDecl, structs: irl
     return irlower.lower_func(fd, structs, sg, for_wasm);
 }
 
-// The registry base the lowering and the emit share: the caller's own when no
-// substitution is happening, and the rewritten set when one is.
-pub function sub_sigs(sub: Sub, base: irlower.FnSigs): irlower.FnSigs {
-    if (!sub.on) { return base; }
-    return sub.sigs;
+// The registry base the lowering and the emit share: the whole-program set when
+// no substitution is happening, and the rewritten set when one is. The
+// substitution was built from that same set, so it is not computed again.
+pub function sub_base(sub: Sub, funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
+    if (sub.on) { return sub.sigs; }
+    return wp_fn_sigs(funcs, structs);
 }
 
 // The cache the emit reads: each produced body in place of the AST one, then

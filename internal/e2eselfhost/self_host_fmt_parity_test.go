@@ -89,6 +89,13 @@ pub fip function keep(own xs: i32[]): i32[] { return xs; }
 @inline
 function id[T](x: T): T { return x; }
 `},
+	// A self-recursive nested function must reprint as a `function`: the
+	// arrow-lambda `var` it desugars to cannot call itself (#10383).
+	{"nested-fn-recursive", `function main(): i32 {
+function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); }
+return f(3);
+}
+`},
 	// Precedence is the substantive half — one wrong level silently
 	// reassociates. `(n & (n - 1)) == 0` is the trap native's own table
 	// documents: bitwise sits BELOW the comparison family in Fern's grammar,
