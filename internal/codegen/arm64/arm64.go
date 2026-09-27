@@ -624,7 +624,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// any other function, and before the gates below: emitting one sets the
 	// use-flags for what it calls, exactly as a user function does.
 	for _, name := range g.fernHelpers {
-		decl, irFn, err := fernrt.Func(name, 8)
+		decl, irFn, err := fernrt.Func(name, g.fernTarget())
 		if err != nil {
 			return "", err
 		}
@@ -865,14 +865,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.emitMemsetRuntime()
 	}
 	if g.usesTcp {
-		g.emitTcpListenRuntime()
-		g.emitTcpConnectRuntime()
-		g.emitTcpAcceptRuntime()
-		g.emitTcpLocalPortRuntime()
 		g.emitTcpRecvRuntime()
 		g.emitTcpSendRuntime()
-		g.emitTcpCloseRuntime()
-		g.emitTcpPollableRuntime()
 	}
 	if g.usesUdp {
 		g.emitUdpSendRuntime()
@@ -6335,173 +6329,6 @@ func (g *generator) emitEnvRuntime() {
 	g.line(".ltorg")
 }
 
-// emitTcpListenRuntime emits `__fern_tcp_listen(port)` —
-// opens a TCP listening socket on 0.0.0.0:port. Returns the
-// listener fd on success, or `-errno` on failure. C-style
-// API; callers check `if (fd < 0)`.
-//
-// Steps: socket(AF_INET, SOCK_STREAM, 0); bind to a stack-
-// allocated sockaddr_in; listen with backlog=128.
-func (g *generator) emitTcpListenRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_listen")
-	g.typeDirective("__fern_tcp_listen")
-	g.label("__fern_tcp_listen")
-	g.emit("stp x29, x30, [sp, #-32]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("mov x19, x0") // x19 = port (callee-save across calls)
-	// socket(AF_INET=2, SOCK_STREAM=1, 0)
-	g.emit("mov x0, #2")
-	g.emit("mov x1, #1")
-	g.emit("mov x2, #0")
-	g.syscall("socket")
-	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_err")
-	g.emit("mov x20, x0") // x20 = listener fd
-	// Build sockaddr_in on the stack (16 bytes).
-	g.emit("sub sp, sp, #16")
-	g.emit("mov w0, #2")
-	g.emit("strh w0, [sp]") // sin_family
-	g.emit("rev16 w0, w19") // htons(port)
-	g.emit("strh w0, [sp, #2]")
-	g.emit("str wzr, [sp, #4]") // sin_addr = 0
-	g.emit("str xzr, [sp, #8]") // sin_zero[0..7]
-	// bind(fd, sa, 16)
-	g.emit("mov x0, x20")
-	g.emit("mov x1, sp")
-	g.emit("mov x2, #16")
-	g.syscall("bind")
-	g.emit("add sp, sp, #16") // pop sockaddr_in
-	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_close")
-	// listen(fd, 128)
-	g.emit("mov x0, x20")
-	g.emit("mov x1, #128")
-	g.syscall("listen")
-	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_lst_close")
-	g.emit("mov x0, x20") // return fd
-	g.emit("b .Ltcp_lst_done")
-	g.label(".Ltcp_lst_close")
-	g.emit("mov x19, x0") // preserve the setup errno across close
-	g.emit("mov x0, x20")
-	g.syscall("close")
-	g.emit("mov x0, x19")
-	g.label(".Ltcp_lst_err")
-	// x0 holds -errno from the failed syscall.
-	g.label(".Ltcp_lst_done")
-	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #32")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_listen")
-	g.line(".ltorg")
-}
-
-// emitTcpConnectRuntime emits `__fern_tcp_connect(host_be, port)` — the
-// outbound client primitive (arm64 mirror of the x86-64 helper).
-// host_be is the IPv4 in network byte order packed into an i32 (drops
-// straight into sin_addr); returns the connected fd or -errno.
-func (g *generator) emitTcpConnectRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_connect")
-	g.typeDirective("__fern_tcp_connect")
-	g.label("__fern_tcp_connect")
-	g.emit("stp x29, x30, [sp, #-48]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("str x21, [sp, #32]")
-	g.emit("mov x19, x0") // host_be
-	g.emit("mov x20, x1") // port
-	// socket(AF_INET=2, SOCK_STREAM=1, 0)
-	g.emit("mov x0, #2")
-	g.emit("mov x1, #1")
-	g.emit("mov x2, #0")
-	g.syscall("socket")
-	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_con_err")
-	g.emit("mov x21, x0") // fd
-	// sockaddr_in on the stack.
-	g.emit("sub sp, sp, #16")
-	g.emit("mov w0, #2")
-	g.emit("strh w0, [sp]") // sin_family
-	g.emit("rev16 w0, w20") // htons(port)
-	g.emit("strh w0, [sp, #2]")
-	g.emit("str w19, [sp, #4]") // sin_addr = host_be (network order)
-	g.emit("str xzr, [sp, #8]") // sin_zero
-	// connect(fd, sa, 16)
-	g.emit("mov x0, x21")
-	g.emit("mov x1, sp")
-	g.emit("mov x2, #16")
-	g.syscall("connect")
-	g.emit("add sp, sp, #16")
-	g.emit("cmp x0, #0")
-	g.emit("blt .Ltcp_con_close")
-	g.emit("mov x0, x21") // return fd
-	g.emit("b .Ltcp_con_done")
-	g.label(".Ltcp_con_close")
-	g.emit("mov x19, x0") // preserve the setup errno across close
-	g.emit("mov x0, x21")
-	g.syscall("close")
-	g.emit("mov x0, x19")
-	g.label(".Ltcp_con_err")
-	// x0 holds -errno from the failed syscall.
-	g.label(".Ltcp_con_done")
-	g.emit("ldr x21, [sp, #32]")
-	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_connect")
-	g.line(".ltorg")
-}
-
-// emitTcpAcceptRuntime emits `__fern_tcp_accept(fd)` —
-// accepts a connection on the listener fd, returns the new
-// connection fd or `-errno`. Passes NULL addr/addrlen
-// out-params; callers don't need the peer address.
-func (g *generator) emitTcpAcceptRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_accept")
-	g.typeDirective("__fern_tcp_accept")
-	g.label("__fern_tcp_accept")
-	// x0 = listener fd (already in x0 from caller).
-	g.emit("mov x1, #0") // addr = NULL
-	g.emit("mov x2, #0") // addrlen = NULL
-	g.syscall("accept")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_accept")
-	g.line(".ltorg")
-}
-
-// emitTcpLocalPortRuntime emits `__fern_tcp_local_port(fd)` —
-// getsockname(2) into a stack sockaddr_in, returning the port
-// the socket is bound to in host order, or `-errno`. This is
-// what reports the kernel-picked port of a `tcp_listen(0)`.
-func (g *generator) emitTcpLocalPortRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_local_port")
-	g.typeDirective("__fern_tcp_local_port")
-	g.label("__fern_tcp_local_port")
-	// x0 = fd (already in x0 from caller). sockaddr_in at [sp],
-	// socklen_t at [sp, #16].
-	g.emit("sub sp, sp, #32")
-	g.emit("mov w9, #16")
-	g.emit("str w9, [sp, #16]")
-	g.emit("mov x1, sp")
-	g.emit("add x2, sp, #16")
-	g.syscall("getsockname")
-	lbl := g.freshLabel("tcp_lport_done")
-	// x0 holds -errno from the failed syscall.
-	g.emit("tbnz x0, #63, %s", lbl)
-	g.emit("ldrh w0, [sp, #2]") // sin_port, network order
-	g.emit("rev16 w0, w0")      // ntohs
-	g.label(lbl)
-	g.emit("add sp, sp, #32")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_local_port")
-	g.line(".ltorg")
-}
-
 // emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —
 // reads up to `max` bytes from the socket fd into a fresh
 // `u8[]` in the __alloc_u8 box shape (cap = max, len = the
@@ -6776,34 +6603,6 @@ func (g *generator) emitWasmBlockRuntime() {
 	g.emit("mov w0, #0") // return 0 (no-op)
 	g.emit("ret")
 	g.sizeDirective("__fern_wasm_block")
-	g.line(".ltorg")
-}
-
-// emitTcpPollableRuntime emits `__fern_tcp_pollable(fd)` — on native the
-// readiness token for a socket IS its fd (ppoll(2) takes fds directly), so
-// this is the identity: the fd argument is already in w0/x0, just return it.
-// Lets `std/async`'s `fetch_future` build a portable `Pending(tcp_pollable(fd), …)`
-// (on wasm `tcp_pollable` yields a real wasi:io/poll pollable handle).
-func (g *generator) emitTcpPollableRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_pollable")
-	g.typeDirective("__fern_tcp_pollable")
-	g.label("__fern_tcp_pollable")
-	g.emit("ret") // fd argument already in w0/x0 → identity
-	g.sizeDirective("__fern_tcp_pollable")
-	g.line(".ltorg")
-}
-
-// emitTcpCloseRuntime emits `__fern_tcp_close(fd)` — thin
-// wrapper around `close(2)`. Returns 0 or `-errno`.
-func (g *generator) emitTcpCloseRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_close")
-	g.typeDirective("__fern_tcp_close")
-	g.label("__fern_tcp_close")
-	g.syscall("close")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_close")
 	g.line(".ltorg")
 }
 
@@ -17362,8 +17161,10 @@ func (g *generator) prescanOps(ops []ir.Op) {
 			op.Kind != ir.OpRcInc && op.Kind != ir.OpRcDec && op.Kind != ir.OpRcIsUnique {
 			continue
 		}
-		if fernrt.Has(op.Str) {
-			g.needFern(op.Str)
+		// A builtin whose helper is written in Fern is reached through its
+		// alias (ir.CodegenAliases), the runtime symbol runtime.fern defines.
+		if h := ir.CodegenAlias(op.Str); fernrt.Has(h) {
+			g.needFern(h)
 			continue
 		}
 		switch op.Str {
@@ -17403,12 +17204,22 @@ func (g *generator) needFern(name string) {
 	g.fernHelpers = append(g.fernHelpers, name)
 }
 
+// fernTarget is what this backend lowers a Fern runtime helper for: the OS
+// half is what its own lowering folds `target_os()` to.
+func (g *generator) fernTarget() fernrt.Target {
+	os := "linux"
+	if g.darwin {
+		os = "darwin"
+	}
+	return fernrt.Target{PtrW: 8, OS: os, Arch: "arm64"}
+}
+
 // resolveFernHelpers pre-scans each needed Fern helper as it does the
 // program's own functions. A helper may need another, so the list can grow
 // while it is walked.
 func (g *generator) resolveFernHelpers() error {
 	for i := 0; i < len(g.fernHelpers); i++ {
-		decl, irFn, err := fernrt.Func(g.fernHelpers[i], 8)
+		decl, irFn, err := fernrt.Func(g.fernHelpers[i], g.fernTarget())
 		if err != nil {
 			return err
 		}
@@ -20689,12 +20500,12 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "udp_send":
 			target = "__fern_" + target
 			g.usesUdp = true
-		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_recv", "tcp_send", "tcp_close", "tcp_pollable", "tcp_connect":
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect":
+			target = "__fern_" + target
+		case "tcp_recv", "tcp_send":
 			target = "__fern_" + target
 			g.usesTcp = true
-			// usesTcp always emits __fern_tcp_recv, which calls
-			// __alloc_u8 for its read buffer — so any tcp builtin
-			// needs the alloc runtime, even a connect-only program.
+			// __fern_tcp_recv calls __alloc_u8 for its read buffer.
 			g.usesAlloc = true
 			g.usesAllocU8 = true
 		case "wasm_pollable_drop":

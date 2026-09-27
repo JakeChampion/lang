@@ -128,8 +128,17 @@ still need their own classifications.
 | wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
 | interp | never reached: refused with the target, not at run time | — |
 
-`FERN_SANDBOX=1` refuses a program that reaches the floor on x86-64: the
-number is a run-time operand, so the seccomp allowlist cannot cover it.
+`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
+like any other syscall, and refuses a program whose number is a run-time
+operand, which the seccomp allowlist cannot cover.
+
+On the Go compiler `tcp_listen`, `tcp_connect`, `tcp_accept`,
+`tcp_local_port`, `tcp_close` and `tcp_pollable` are one Fern body each in
+`internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
+arm64-darwin and on both backends of each ISA (the sockaddr's leading
+`sin_len` byte is the Darwin difference); wasm keeps its wasi:sockets
+bodies, and the interpreter its Go ones. `tcp_recv`, `tcp_send` and
+`udp_send` are still hand-written per backend.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

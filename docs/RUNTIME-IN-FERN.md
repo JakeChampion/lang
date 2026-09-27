@@ -340,7 +340,11 @@ hand-written `__fern_utf8_valid`. `internal/fernrt` is the native answer:
 `runtime.fern` defines a helper as an ordinary Fern function under its exact
 runtime symbol name, and a backend that needs it asks `fernrt.Func` for the
 declaration and lowered IR and emits it through the same function emitter it
-uses for user code. One source, lowered per target. There is no bootstrap
+uses for user code. One source, lowered per target: `fernrt.Func` takes the
+target (`fernrt.Target`: pointer width, OS, ISA), folds `target_os()` and
+`target_arch()` before the body is checked, and `ir.Inline` then makes a
+constant-returning sibling (`__sys_socket()`, a syscall number keyed by
+target) the constant at its call sites. There is no bootstrap
 circularity on this side — Go compiles the source — so the only constraint is
 the one the self-host has: a body may reach only the provided-callee floor
 (`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, `__store_u8`,
@@ -352,19 +356,35 @@ How each backend reaches a helper:
 
 - **x86-64 / arm64** — a hand-written body that calls one declares it with
   `needFern` next to its other use-flags (`read_file` is the one that needs
-  `__fern_utf8_valid`), the pre-scan walks the helper's IR for the flags it
-  sets, and the helper is emitted through `emitFunc` at the head of the
-  runtime chain under `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is
-  the symbol the hand-asm calls.
-- **arm64ssa** — `referencedRuntimeHelpers` reports the Fern helpers the
-  module reaches (through `runtimeHelperDeps` as well), and each is lifted
-  with `ssa.LiftFromIRWith`, optimised, verified and emitted as a module
-  function under `fnLabel(name)`; the scan repeats until a lifted helper
-  reaches nothing new.
+  `__fern_utf8_valid`), a builtin whose helper is Fern reaches it through
+  `ir.CodegenAliases` (`tcp_listen` → `__fern_tcp_listen`) in the pre-scan,
+  the pre-scan walks the helper's IR for the flags it sets, and the helper
+  is emitted through `emitFunc` at the head of the runtime chain under
+  `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is the symbol the
+  hand-asm calls.
+- **x86-64ssa / arm64ssa** — `referencedRuntimeHelpers` reports the Fern
+  helpers the module reaches (through `ir.CodegenAlias` and
+  `runtimeHelperDeps` as well), and each is lifted with
+  `ssa.LiftFromIRWith`, optimised, verified and emitted as a module function
+  under `fnLabel(name)`; the scan repeats until a lifted helper reaches
+  nothing new.
 - **wasmbin** — `injectFernHelpers` moves the helper out of the
   `runtimeHelperSpecs` set and into `prog.Funcs`, unexported, so `emitBody`
   lowers it and `funcIdx` resolves its name for the hand-built bodies; its
-  own needs are scanned in like a user function's.
+  own needs are scanned in like a user function's. A name that has a
+  hand-built wasi body is that target's twin of a native helper written on
+  the syscall floor, and the wasi body wins.
+
+The socket helpers `__fern_tcp_listen`, `__fern_tcp_connect`,
+`__fern_tcp_accept`, `__fern_tcp_local_port`, `__fern_tcp_close` and
+`__fern_tcp_pollable` are Fern bodies over `__syscall3` (#9853): four
+hand-written copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone.
+The x86-64 stack backend records a raw syscall whose number is a literal
+(`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
+allowlist stays exact through them; a number computed at run time is refused
+under `FERN_SANDBOX=1`. `tcp_recv`, `tcp_send` and `udp_send` stay
+hand-written until the floor can hand a body a string's or an array's bytes
+without going through the SSO seam.
 
 A Fern helper is a function, not a provided callee: it has no row in
 `verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and

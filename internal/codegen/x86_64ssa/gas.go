@@ -2401,19 +2401,13 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_read_line":       emitReadLineHelper("__method_Reader_read_line", "", -1),
 	"read_line":                       emitReadLineHelper("read_line", "_0", 0),
 	"read_dir":                        emitReadDirHelper,
-	"tcp_listen":                      emitTcpListenHelper,
-	"tcp_connect":                     emitTcpConnectHelper,
-	"tcp_accept":                      emitTcpAcceptHelper,
-	"tcp_local_port":                  emitTcpLocalPortHelper,
 	"tcp_recv":                        emitTcpRecvHelper,
 	"tcp_send":                        emitTcpSendHelper,
 	"udp_send":                        emitUdpSendHelper,
-	"tcp_close":                       emitTcpCloseHelper,
 	"__syscall3":                      emitSyscallHelper(3),
 	"__syscall4":                      emitSyscallHelper(4),
 	"__syscall5":                      emitSyscallHelper(5),
 	"__syscall6":                      emitSyscallHelper(6),
-	"tcp_pollable":                    emitIdentityHelper("tcp_pollable"),
 	"wasm_timer_pollable":             emitConstHelper("wasm_timer_pollable", -1),
 	"wasm_pollable_drop":              emitConstHelper("wasm_pollable_drop", 0),
 	"poll":                            emitPollHelper,
@@ -2820,7 +2814,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				if (in.Op == Call || in.Op == CallPair) && !inlinedCall(in) {
-					add(in.Callee)
+					add(ir.CodegenAlias(in.Callee))
 				}
 			}
 		}
@@ -2840,7 +2834,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 // optimise and emit steps as a program function, so it lands in the module
 // under fnLabel(name).
 func liftFernHelper(name string, numAlloc int) (*Program, error) {
-	_, irFn, err := fernrt.Func(name, 8)
+	_, irFn, err := fernrt.Func(name, fernrt.Target{PtrW: 8, OS: "linux", Arch: "x86-64"})
 	if err != nil {
 		return nil, err
 	}

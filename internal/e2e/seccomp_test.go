@@ -231,6 +231,16 @@ func TestSeccompDoesNotBreakWorkingPrograms(t *testing.T) {
     if (t > 0) { return 0; }
     return 1;
 }`},
+		// The socket helpers are Fern bodies over the raw floor, whose
+		// literal syscall numbers the allowlist has to carry.
+		{"sockets", `function main(): i32 {
+    var fd: i32 = tcp_listen(0);
+    if (fd < 0) { return 1; }
+    var port: i32 = tcp_local_port(fd);
+    tcp_close(fd);
+    if (port <= 0) { return 2; }
+    return 0;
+}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
