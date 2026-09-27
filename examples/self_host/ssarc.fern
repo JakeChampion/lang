@@ -3635,8 +3635,8 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
     return out;
 }
 
-pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
-    return bare_indexed(caller_rows(sg, name, f, modes, plan));
+pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
+    return bare_indexed(caller_rows(sg, name, f, modes, plan, method));
 }
 
 // `borrow_bare` indexes every row of `borrowable_params`: a caller applying
@@ -3646,7 +3646,7 @@ pub function bare_indexed(sg: irlower.FnSigs): irlower.FnSigs {
 }
 
 // caller_sigs without the `borrow_bare` reindex; see bare_indexed.
-pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
+pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,
     // including the bare name. A row says the caller may release something;
@@ -3669,7 +3669,7 @@ pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
         if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
     }
     if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
-    if (box_only_result(f)) { arrays = arrays.append(name); }
+    if (bare_row_result(f, plan, method)) { arrays = arrays.append(name); }
     // A union result is one counted reference the caller releases, which the
     // "ENUM:" readers' rc-gated releases honour whatever the payload (#10365).
     if let typeinfo.TypeUnion(_) = f.result { arrays = arrays.append("ENUM:" + name); }
@@ -3809,23 +3809,80 @@ function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
     return false;
 }
 
-// A nominal struct result whose release is the box and nothing else.
+// A nominal struct result the bare-name row can carry.
 //
-// This is the one nominal shape the bare-name row can carry. That row asserts
-// the caller SOLE-owns the result, which this boundary does not promise: a
-// return supplies one counted unit, and a value the function did not build —
-// a projection of a borrowed parameter — is supplied by a retain over a box
-// its caller still owns. The row's exit sweep then runs __struct_drop_<T>
-// with no uniqueness guard, freeing a field buffer the other owner still
-// reads.
+// That row asserts the caller SOLE-owns the result, which a return alone does
+// not promise: it supplies one counted unit, and a value the function did not
+// build — a projection of a borrowed parameter — is supplied by a retain over
+// a box its caller still owns. The row's exit sweep runs __struct_drop_<T>
+// with no uniqueness guard, which would free a field buffer the other owner
+// still reads.
 //
 // A schema with no reference field has no field walk for that sweep to run,
 // so the release is the rc-guarded box dec alone and a shared result stays
-// balanced. Every other nominal result keeps the leak floor until it can
-// prove the box is the caller's only one.
-function box_only_result(f: ssasem.Func): boolean {
-    if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f); }
+// balanced. Any other schema needs the box proven the caller's only one
+// (built_result); the walk's per-field releases are rc-guarded, so the counts
+// the box holds on its fields need no such proof. A method's AST callers look
+// it up as `<Base>.<name>`, never by the bare name written here, so a method
+// is left at the box-only floor rather than lend its verdict to a free
+// function of the same name.
+function bare_row_result(f: ssasem.Func, plan: ssaunits.Plan, method: boolean): boolean {
+    if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f) || (!method && built_result(f, plan)); }
     return false;
+}
+
+// Every return hands back a record this body constructed, and nothing but a
+// field read touches it on the way, so no other reference to the box exists.
+function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
+    if (!plan.ok) { return false; }
+    var boxes: i32[] = returned_records(f);
+    if (boxes.len() == 0) { return false; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (!box_use_ok(ins, boxes)) { return false; }
+        }
+    }
+    for step in plan.steps {
+        for item in step.supplies {
+            if (item.mode == ssaunits.retain_unit() && util.index_of_i32(boxes, item.value) >= 0) { return false; }
+        }
+    }
+    return true;
+}
+
+// The returned values and every copy or phi operand they merge, or nothing
+// when one of them is defined by anything but a record construction.
+function returned_records(f: ssasem.Func): i32[] {
+    var out: i32[] = [];
+    for b in f.graph.blocks {
+        if (b.term.kind_tag == 1 && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) { out = out.append(b.term.value); }
+    }
+    var at: i32 = 0;
+    while (at < out.len()) {
+        var def: ssa.SInst = defining(f, out[at]);
+        if (def.kind_tag == 7 || def.kind_tag == 8) {
+            for arg in def.args { if (util.index_of_i32(out, arg) < 0) { out = out.append(arg); } }
+        } else if (def.kind_tag != ssasem.record_new()) {
+            return [];
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+function defining(f: ssasem.Func, v: i32): ssa.SInst {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result == v) { return ins; } }
+    }
+    return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+// A field read, or a copy or phi that stays inside the returned set.
+function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
+    if (ins.kind_tag == ssasem.record_get()) { return true; }
+    if ((ins.kind_tag == 7 || ins.kind_tag == 8) && util.index_of_i32(boxes, ins.result) >= 0) { return true; }
+    for arg in ins.args { if (util.index_of_i32(boxes, arg) >= 0) { return false; } }
+    return true;
 }
 
 function scalar_array(t: typeinfo.Type): boolean {
