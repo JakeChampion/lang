@@ -1076,6 +1076,35 @@ pub function __map_drop_impl(m: usize): usize {
     return m;
 }
 
+// __map_key_of returns the key slot the column holds for a key equal to `k`,
+// or 0 when there is none — the unit a delete drops from the column.
+pub function __map_key_of(m: usize, k: usize): usize {
+    var idx: i32 = __map_lookup(m, k);
+    if (idx == 0 - 1) { return 0; }
+    var buf: usize = __load_ptr(m);
+    var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+    return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
+}
+
+// __map_drop_strkey_impl is __map_drop_impl for a string key column whose
+// slots are the keys themselves: the last reference releases every live key
+// before the buffer and the handle go.
+pub function __map_drop_strkey_impl(m: usize): usize {
+    if (m == 0) { return m; }
+    if (__load_i32(m - 8) == 1) {
+        var buf: usize = __load_ptr(m);
+        var len_: i32 = __load_i32(buf + 4);
+        var entryStride: i32 = 2 * __ptr_width();
+        var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+        var i: i32 = 0;
+        while (i < len_) {
+            __fern_str_dec(__load_ptr(entriesBase + i * entryStride) as string);
+            i = i + 1;
+        }
+    }
+    return __map_drop_impl(m);
+}
+
 // Delete by key: tombstone the bucket, swap-with-last in the entries
 // array (which is what breaks insertion-order iteration after a delete —
 // see the module header's "Iteration order" contract, #4388). Details:
