@@ -23814,6 +23814,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
+    if (struct_ty == "" && v.type_name.len() == 0) {
+        var (vbst, vbarr) = value_block_struct_type(v.init, se.frame.structs);
+        if (vbst != "") { struct_ty = vbst; is_arr = is_arr || vbarr; }
+    }
     // Aliasing an array local (`var qs = ps`) — expr_struct_type returns
     // "" for an array (the value itself isn't a struct), so the ELEMENT
     // struct/enum type the source array carries (which drives
@@ -78303,6 +78307,21 @@ pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
 
 pub function (s: LowerState) with_fld_moves(keys: string[]): LowerState {
     return LowerState { ...s, fld_moves: keys };
+}
+
+// value_block_struct_type is the struct or enum a value block's checked result
+// names, with true when the result is an array of one, or "". It answers where
+// the block's leaf cannot: a tail naming a local the block itself declared.
+function value_block_struct_type(init: ast.Expr, structs: StructTab): (string, boolean) {
+    if let ast.ExprCall(c) = init {
+        if let ast.ExprLambda(lam) = c.callee {
+            var arr: boolean = is_array_type_name(lam.ret_type);
+            var et: string = lam.ret_type;
+            if (arr) { et = slice_unchecked(et, 0, et.len() - 2) + ""; }
+            if (parser.is_value_block_origin(lam.origin) && (decl_is_struct(structs, et) || is_enum_like_name(et, structs))) { return (et, arr); }
+        }
+    }
+    return ("", false);
 }
 
 function struct_ty_from_arr_alias(se: LowerState, v: ast.StmtVar, struct_ty: string): string {
