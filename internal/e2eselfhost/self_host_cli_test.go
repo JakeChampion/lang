@@ -1262,9 +1262,8 @@ function main(): i32 {
 		// value into a dyn slot (`var d: dyn Greet = Dog { }`) type-checks
 		// (assignment into a dyn slot is lenient) — the program passes self-host
 		// `-check` (exit 0) where the pre-slice self-host bound `d` to unknown
-		// and silently over-rejected (the shape the over-reject test used to
-		// pin). Method dispatch THROUGH the dyn value is the remaining unmodelled
-		// shape — see check-overreject-not-silent below.
+		// and silently over-rejected. Dispatch through the dyn value is
+		// check-dyn-dispatch-ok below.
 		srcPath := filepath.Join(dir, "dyn_bind.fern")
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
@@ -1278,23 +1277,30 @@ function main(): i32 {
 		}
 	})
 
-	t.Run("check-overreject-not-silent", func(t *testing.T) {
-		// #4346: after the piece-2 slices the last unmodelled shape is method
-		// DISPATCH through a dyn value — `d.hi()` where `d: dyn Greet`. The dyn
-		// annotation now types (TypeDyn), so the binding is accepted (see
-		// check-dyn-bind-ok), but a call on a dyn receiver isn't resolved to the
-		// trait method, so `d.hi()` infers unknown and marks the module
-		// ill-typed. No coded rule fires (the E043 method-existence pass has no
-		// dyn-receiver arm, and Greet is object-safe so E021/E059/E060 stay
-		// silent). This program is native-valid (exit 0) yet over-rejected here;
-		// piece 1 surfaces a best-effort `error[type]` hint so the rejection is
-		// never silent. The native `fern` stays the full oracle (this asserts
-		// non-silence, not a code).
-		srcPath := filepath.Join(dir, "overreject.fern")
+	t.Run("check-dyn-dispatch-ok", func(t *testing.T) {
+		// A call on a dyn receiver has its trait method's result type (#10421),
+		// so `return d.hi()` type-checks, as it does natively.
+		srcPath := filepath.Join(dir, "dyn_dispatch.fern")
 		src := "trait Greet { function hi(self: Self): i32; }\n" +
 			"struct Dog { }\n" +
 			"impl Greet for Dog { function hi(self: Self): i32 { return 7; } }\n" +
 			"function main(): i32 { var d: dyn Greet = Dog { }; return d.hi(); }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if out, code := runDriver(t, "-check", srcPath); code != 0 {
+			t.Errorf("-check on a dyn-dispatch program exited %d, want 0\n%s", code, out)
+		}
+	})
+
+	t.Run("check-overreject-not-silent", func(t *testing.T) {
+		// #4346: a native-valid program the self-host checker cannot type is
+		// over-rejected, and piece 1 surfaces a best-effort `error[type]` hint so
+		// the rejection is never silent. An immediately-invoked lambda is such a
+		// program: its value has no inferred type. The native `fern` stays the
+		// full oracle (this asserts non-silence, not a code).
+		srcPath := filepath.Join(dir, "overreject.fern")
+		src := "function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }\n"
 		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
 		}
