@@ -315,7 +315,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 300,
 		},
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",

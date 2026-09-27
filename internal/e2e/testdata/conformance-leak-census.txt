@@ -391,6 +391,7 @@ lambda_returning_a_capturing_lambda                  6
 lambda_tuple_return                                  0
 len_on_empty_u8                                      0
 let_else_pattern_forms                               0
+literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
 log_leveled                                          0
 loop_form                                            0
