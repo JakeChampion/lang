@@ -2055,7 +2055,7 @@ function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5 || k == ssasem.zero(); }
 
-function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean): irlower.LowerResult {
+function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean, link: Link): irlower.LowerResult {
     r = negation_zero(r, f, ins);
     if (ins.kind_tag == ssasem.with()) { r = with_update(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
     if (ssasem.is_cell_op(ins.kind_tag)) { return cell_site(r, f, ins); }
@@ -2064,7 +2064,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.map_insert() || ins.kind_tag == ssasem.map_delete()) { r = map_mutation(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.call() && fern_helper_call(ins.str, ins.args.len())) { r = helper_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
-    if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0); return emit(r, ir.op_store_local(ins.result)); }
+    if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0, link); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (dyn_call(ins)) { r = dyn_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
@@ -2178,9 +2178,10 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
 // leaves a shared receiver's count alone and hands back an un-share copy — so
 // the release that makes the operation take exactly one unit at every count
 // belongs here rather than in the shared helper the AST lowering also calls.
-function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean): irlower.LowerResult {
+function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irlower.LowerResult {
+    if (link.root >= 0) { return append_linked(r, f, ins, link); }
     if (defer0 && p.grows[ins.result] >= 0) { return append_field(r, f, p, ins); }
-    if (defer0) { return append_borrowed(r, f, ins); }
+    if (defer0) { return append_borrowed(r, f, ins, link.out); }
     var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
     var res: i32 = scratch_base(f);
     r = reserve(r, res + 1);
@@ -2229,25 +2230,139 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // untouched and the element just pushed is not among them. O(n) per grow, so
 // amortised O(1) against the doubling, and the same shape `sole_owned_base`
 // already uses on its copy arm.
-function append_borrowed(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
-    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+//
+// A result that is a chain LINK (`out`, see `append_linked`) skips the retain:
+// it is owed where the chain ends.
+function append_borrowed(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, out: boolean): irlower.LowerResult {
     var scratch: i32 = scratch_base(f);
     r = reserve(r, scratch + 1);
+    r = borrowed_push(r, f, ins, scratch, out);
+    return emit(r, ir.op_load_local(scratch));
+}
+
+// The non-consuming push onto a box the frame holds no unit of, into
+// `scratch`, and the units that settles: a retain of the result when it is
+// the receiver's box, unless `out` defers it, and a count on every element
+// the receiver shares with a fresh result.
+function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irlower.LowerResult {
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, arr_push_borrowed_op(elem));
     r = emit(r, ir.op_store_local(scratch));
+    var aliased: boolean = ssasem.reference(elem);
+    if (out && !aliased) { return r; }
     r = emit(r, ir.op_load_local(scratch));
     r = emit(r, ir.op_load_local(ins.args[0]));
+    if (out) {
+        r = emit(r, ir.op_bin("ne", 0, false));
+        r = emit(r, ir.op_if(0));
+        r = helper(r, ins.args[0], "__fern_arr_inc_elems");
+        return emit(r, ir.op_end());
+    }
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     r = helper(r, scratch, "__fern_rc_inc");
-    if (ssasem.reference(elem)) {
+    if (aliased) {
         r = emit(r, ir.op_else());
         r = helper(r, ins.args[0], "__fern_arr_inc_elems");
     }
+    return emit(r, ir.op_end());
+}
+
+// A chain of appends on a borrowed parameter, `b = b.append(x); return
+// b.append(y)`. Retaining each result as `append_borrowed` does would leave
+// the caller's box at two counts, and the next push would copy it whole. So
+// a result whose only use is as the next append's receiver is a LINK: it
+// still carries the unit the plan gives it, but encoded at run time. A link
+// that is still the parameter's box (`root`) has not taken its unit, and the
+// push onto it is the non-consuming one again. Any other link is a fresh box
+// of the frame's own at one count, which the consuming push grows in place.
+// The last append of the chain takes the unit that is owed.
+struct Link { root: i32, out: boolean }
+
+function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irlower.LowerResult {
+    var elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+    var scratch: i32 = scratch_base(f);
+    r = reserve(r, scratch + 1);
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(link.root));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = borrowed_push(r, f, ins, scratch, link.out);
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, arr_push_op(elem));
+    r = emit(r, ir.op_store_local(scratch));
     r = emit(r, ir.op_end());
     return emit(r, ir.op_load_local(scratch));
+}
+
+// The links in one block, by position: `roots` is the parameter the append's
+// receiver is a link of (-1 when it is not one), `outs` whether its result is
+// one. A chain starts at an append whose receiver's retain was deferred onto a
+// borrowed parameter. It continues while the result's only use in the whole
+// function is the receiver of a later append in this block, which the plan
+// moves the unit into, so no path can drop a link or read it anywhere else.
+struct Chains { roots: i32[], outs: boolean[] }
+
+function block_chains(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock): Chains {
+    var roots: i32[] = [];
+    var outs: boolean[] = [];
+    var links: i32[] = [];
+    var link_roots: i32[] = [];
+    var pos: i32 = 0;
+    while (pos < b.insts.len()) {
+        var ins: ssa.SInst = b.insts[pos];
+        var root: i32 = 0 - 1;
+        var start: i32 = 0 - 1;
+        if (ins.kind_tag == ssasem.append() && p.grows[ins.result] < 0) {
+            var at_link: i32 = util.index_of_i32(links, ins.args[0]);
+            if (at_link >= 0) { root = link_roots[at_link]; }
+            start = root;
+            if (start < 0 && deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins)) { start = ins.args[0]; }
+        }
+        var out: boolean = start >= 0 && linked_use(f, p, idx, b, pos);
+        roots = roots.append(root);
+        outs = outs.append(out);
+        if (out) {
+            links = links.append(ins.result);
+            link_roots = link_roots.append(start);
+        }
+        pos = pos + 1;
+    }
+    return Chains { roots: roots, outs: outs };
+}
+
+function linked_use(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pos: i32): boolean {
+    var v: i32 = b.insts[pos].result;
+    if (uses(f, v) != 1) { return false; }
+    var q: i32 = pos + 1;
+    while (q < b.insts.len()) {
+        var nxt: ssa.SInst = b.insts[q];
+        if (nxt.kind_tag == ssasem.append() && nxt.args[0] == v && p.grows[nxt.result] < 0) {
+            for supply in at(p, idx, b.id, q, 0 - 1).supplies {
+                if (supply.slot == 0 && supply.value == v && supply.mode == ssaunits.move_unit()) { return true; }
+            }
+            return false;
+        }
+        q = q + 1;
+    }
+    return false;
+}
+
+// How many operands, phi inputs and terminator operands read `v`.
+function uses(f: ssasem.Func, v: i32): i32 {
+    var n: i32 = 0;
+    for blk in f.graph.blocks {
+        for ins in blk.insts {
+            for a in ins.args { if (a == v) { n = n + 1; } }
+        }
+        if (blk.term.kind_tag == 1 && blk.term.value == v) { n = n + 1; }
+        if (blk.term.kind_tag == 3 && blk.term.cond == v) { n = n + 1; }
+    }
+    return n;
 }
 
 // The push onto a FIELD buffer of a record this frame reads no further
@@ -2991,6 +3106,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
     r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
     var pairs: ReusePairs = reuse_pairs(f, p, idx, b);
+    var chains: Chains = block_chains(f, p, idx, b);
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
@@ -3007,7 +3123,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             // reads one token slot and the runtime decides.
             if (pairs.selfs[pos] >= 0) { r = reuse_token(r, f, pairs.selfs[pos]); }
             if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) { r = reuse_construct(r, f, ins); }
-            else { r = instruction(r, f, p, ins, structs, defer0); }
+            else { r = instruction(r, f, p, ins, structs, defer0, Link { root: chains.roots[pos], out: chains.outs[pos] }); }
             r = bracket_give(r, f, held);
             if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos]); }
             r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
