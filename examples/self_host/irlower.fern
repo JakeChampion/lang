@@ -1358,14 +1358,14 @@ pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
 }
 
-// credit_enum_field_alias grants the counted alias bound at `site`, which
-// collect_enum_field_alias_sites admitted, the release the source struct gives
-// the same box. The alias is never a sole owner, so both are rc-gated: the
-// __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the struct's
-// field release deep-drops (enum_arr_elems_walk_ok), else the box-only dec of
-// "SCENUMS:", because any other payload may have reached the box uncounted.
-// Whichever owner releases last does the payload work, in either order.
-function credit_enum_field_alias(s: LowerState, site: string, ety: string): LowerState {
+// credit_counted_enum_local grants the counted local bound at `site`, which
+// collect_counted_enum_local_sites admitted, the release a struct gives an enum
+// field. The local is never known to be the sole owner, so both are rc-gated:
+// the __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the
+// struct's field release deep-drops (enum_arr_elems_walk_ok), else the box-only
+// dec of "SCENUMS:", because any other payload may have reached the box
+// uncounted. Whichever owner releases last does the payload work, in either order.
+function credit_counted_enum_local(s: LowerState, site: string, ety: string): LowerState {
     var rn: string[] = s.frame.reclaimable_names;
     if (enum_arr_elems_walk_ok(s.frame.structs, ety)) {
         rn = rn.append("RCENUM:" + site).append("RCENUMS:" + site);
@@ -17571,8 +17571,8 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // __struct_drop → arr_dec of the enum box, one level). To balance
             // that dec, retain UNLESS the value is a FRESH variant ctor
             // (`V(args)` / bare `V`, variant_ctor_enum_owner != "") or a call
-            // to a strict-fresh enum producer ("ENUM:" registry — every return
-            // a fresh ctor), both sole-owned rc=1 and freed with no inc; every
+            // to an "ENUM:" member, whose result carries a count this frame
+            // owns, both handed over with no inc; every
             // other source (a bare enum local/param, a field copy, an
             // unregistered enum-returning call) is inc'd — conservative and
             // SOUND: a genuinely-fresh non-ctor source then just LEAKS (rc
@@ -18225,6 +18225,16 @@ function try_success_type(ot: string, structs: StructTab): string {
     return "";
 }
 
+// call_opt_tag_or is the checker's "Option[T]" / "Result[T, E]" tag on a call,
+// or `fallback` when `e` is no call or carries no such tag. An array of them
+// (`Option[i32][]`, or `Option[]` for an array of the argless union) is not one.
+function call_opt_tag_or(e: ast.Expr, fallback: string): string {
+    if let ast.ExprCall(c) = e {
+        if (c.ty.len() >= 7 && !is_array_type_name(c.ty) && (slice_unchecked(c.ty, 0, 7) == "Option[" || slice_unchecked(c.ty, 0, 7) == "Result[")) { return c.ty; }
+    }
+    return fallback;
+}
+
 // try_opt_type recovers the Option/Result type spelling of a match scrutinee or
 // try-operator operand: a direct-call `f()` via opt_ret_fns, a direct `Some(x)`
 // construction via some_opt_type, a map `.get()` (Option[V]), a local/param via
@@ -18238,10 +18248,9 @@ function try_opt_type(inner: ast.Expr, s: LowerState): string {
     // resolution. Guarded to a well-formed Option[…] / Result[…] tag; anything
     // else (an unresolved "" tag, or a non-call scrutinee) falls through to the
     // structural walk below.
+    var tagged: string = call_opt_tag_or(inner, "");
+    if (tagged != "") { return tagged; }
     match (inner) {
-        ast.ExprCall(oc0) => {
-            if (oc0.ty.len() >= 7 && (slice_unchecked(oc0.ty, 0, 7) == "Option[" || slice_unchecked(oc0.ty, 0, 7) == "Result[")) { return oc0.ty; }
-        },
         // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
         ast.ExprBinary(ob) => {
             if (is_chk_op(ob.op)) { return chk_opt_type_tag(ob, s); }
@@ -20995,6 +21004,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     // referenced it. Everything else is released as usual.
     var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
     moved_slots = returned_own_struct_param_slot(r.value, se, moved_slots);
+    if (ret_enum_alias_uncounted(r.value, se, moved_slots)) { se = se.retain_tos("ret-enum-alias"); }
     se = emit_consumed_param_exit(se, r.value, true);
     se = emit_dec_sweep_except_list(se, moved_slots);
     return se.emit(ir.op_return());
@@ -21014,6 +21024,14 @@ function settle_returned_append(e: ast.Expr, s: LowerState): LowerState {
         }
     }
     return s;
+}
+
+// ret_enum_alias_uncounted: `e` is an "ERETALIAS:" local whose count no
+// credit moved out, so the "ENUM:" contract needs the return to retain it.
+function ret_enum_alias_uncounted(e: ast.Expr, s: LowerState, moved: i32[]): boolean {
+    var n: string = ident_name_or_empty(e);
+    if (n.len() == 0 || !reclaim_has(s.frame.reclaimable_names, "ERETALIAS:", n)) { return false; }
+    return !slot_list_has(moved, s.slot_of(n));
 }
 
 function lower_stmt_if(iff: ast.StmtIf, s: LowerState): LowerState {
@@ -23614,7 +23632,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             var efsite: string = reclaim_site_key_of(v.name, v.line, v.col);
             if (efty != "" && reclaim_has(se.frame.reclaimable_names, "EALIAS:", efsite)) {
                 alias_inc = true;
-                se = credit_enum_field_alias(se, efsite, efty);
+                se = credit_counted_enum_local(se, efsite, efty);
             }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
@@ -23664,6 +23682,12 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // lowered fine. The two predicates have to agree (#3457).
                     else if (fid.name == "args" && cc.args.len() == 0) { is_arr = true; }
                     else if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
+                    // An "ENUM:" member's result carries this frame's count (#10365).
+                    var ecsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    if (se.slot_of(fid.name) < 0 && reclaim_has(se.frame.reclaimable_names, "ECALL:", ecsite)) {
+                        var ecty: string = se.struct_ret_type(fid.name);
+                        if (decl_is_enum(se.frame.structs, ecty)) { se = credit_counted_enum_local(se, ecsite, ecty); }
+                    }
                 },
                 // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes
                 // returns a fresh owned u8[] (rc=1) — a move, track as array.
@@ -24134,6 +24158,8 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprSlice(osl) => { if (expr_is_str(osl.array, se)) { opt_ty = "Option[string]"; } },
         _ => {}
     }
+    // The checker's instantiation, where an erased generic callee registers `Result[T, E]`.
+    opt_ty = call_opt_tag_or(v.init, opt_ty);
     if (opt_ty == "" && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) { opt_ty = v.type_name; }
     // An UNANNOTATED array literal of Option values (`var a = [Some(1),
     // Some(2), None]`): infer the element opt-type from the first Some
@@ -29111,7 +29137,7 @@ function emit_box_elem_array_release(se: LowerState, arrty: string): LowerState 
     if (decl_is_struct(st.frame.structs, elem) && nested_field_deep_drop_ok(st.frame.structs, elem)) {
         return emit_arrstruct_deep_free(st, bslot, elem);
     }
-    if (enum_arr_elems_walk_ok(st.frame.structs, elem)) { return emit_arrenum_deep_free(st, bslot, elem, true); }
+    if (enum_arr_elems_walk_ok(st.frame.structs, elem)) { return emit_arrenum_deep_free(st, bslot, elem); }
     return st.emit(ir.op_load_local(bslot)).emit(ir.op_call_direct("__fern_arrarr_free", 1)).emit(ir.op_drop());
 }
 
@@ -33362,7 +33388,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var aej: i32 = st.frame.n_params;
     while (aej < st.locals.len()) {
         if (!slot_list_has(keeps, aej) && slot_is_reclaimable_arrenum(st, aej)) {
-            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej), false);
+            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej));
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(aej));
         }
@@ -36900,35 +36926,47 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], 
     return a;
 }
 
-// collect_enum_field_alias_sites tags "EALIAS:" the `var g = h.e` enum-field
-// aliases this frame may release (#10310): never reassigned, since the assign
-// path has no alias release, and not escaping by either the plan, which forgives
-// a counted sink, or the enum-field walk, which needs no type for `h` — the plan
-// taints an alias of a source it cannot type, such as a method receiver, though
-// the dup makes the alias an owner. Only a tagged alias is dup'd and credited;
-// any other stays the uncounted borrow it was.
-function collect_enum_field_alias_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+// collect_counted_enum_local_sites tags the enum locals this frame may release
+// as counted, possibly shared owners: "EALIAS:" for a `var g = h.e` field alias
+// (#10310), which the bind dups, and "ECALL:" for `var a = f(..)` where `f` is
+// an "ENUM:" member, whose result already carries the caller's count (#10365).
+// Each must be never reassigned, since the assign path has no counted-enum
+// release, and not escape by either the plan, which forgives a counted sink,
+// or the enum-field walk, which needs no type for `h` — the plan taints an
+// alias of a source it cannot type, such as a method receiver, though the dup
+// makes the alias an owner. An "RCE:" call stays with collect_fresh_rcenum_names.
+// Only a tagged alias is dup'd; any other stays the uncounted borrow it was.
+function collect_counted_enum_local_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], fresh_ret: string[], opt_fresh_ret: SigReg, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (enum_field_alias_candidate(v.init, structs) && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                var tag: string = counted_enum_local_tag(v.init, structs, fresh_ret, opt_fresh_ret);
+                if (tag != "" && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
                     var site: string = reclaim_site_key_of(v.name, v.line, v.col);
                     var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
                     if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
-                    if (esc_ok) { a = a.append("EALIAS:" + site); }
+                    if (esc_ok) { a = a.append(tag + site); }
                 }
             },
-            ast.StmtIf(iff) => { a = collect_enum_field_alias_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_enum_field_alias_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtWhile(w) => { a = collect_enum_field_alias_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
-            ast.StmtFor(fo) => { a = collect_enum_field_alias_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtIf(iff) => { a = collect_counted_enum_local_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, a); a = collect_counted_enum_local_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_counted_enum_local_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_counted_enum_local_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_enum_field_alias_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
+                for arm in m.arms { a = collect_counted_enum_local_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, a); }
             },
             _ => {}
         }
     }
     return a;
+}
+
+// counted_enum_local_tag: the collect_counted_enum_local_sites tag `init` earns
+// before the reassign and escape gates, or "".
+function counted_enum_local_tag(init: ast.Expr, structs: StructTab, fresh_ret: string[], opt_fresh_ret: SigReg): string {
+    if (enum_field_alias_candidate(init, structs)) { return "EALIAS:"; }
+    if (enum_fresh_ret_call(init, fresh_ret) && rcenum_call_init_owner(init, opt_fresh_ret) == "") { return "ECALL:"; }
+    return "";
 }
 
 // enum_field_alias_candidate: `e` may be a struct field read (`h.e`) — the AST
@@ -37247,7 +37285,7 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
 }
 
 // fresh_enum_arg_type: the enum `arg` produces when it is a call to a free
-// function whose every return is a fresh variant box this frame will own —
+// function whose every return is a variant box this frame will own a count of —
 // "RCE:" for an rc-payload enum, "ENUM:" for an all-scalar one — or "".
 //
 // An all-scalar box holds nothing a callee could hand out, so the borrowable
@@ -43091,7 +43129,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
-    out = collect_enum_field_alias_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, out);
+    out = collect_counted_enum_local_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, fresh_ret, opt_fresh_ret, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -44970,16 +45008,19 @@ function fresh_enum_ret_value(e: ast.Expr, structs: StructTab, acc: string[]): b
 }
 
 // body_has_nonfreshenum_return: some return in `stmts` hands back an enum value
-// the caller cannot be told it owns — anything but a fresh variant ctor or an
-// admitted forwarding call. All-or-nothing, like the struct walk beneath.
-function body_has_nonfreshenum_return(stmts: ast.Stmt[], structs: StructTab, acc: string[]): boolean {
+// the caller cannot be told it owns — anything but a fresh variant ctor, an
+// admitted forwarding call, or a local enum_ret_local_kind admits.
+// All-or-nothing, like the struct walk beneath.
+function body_has_nonfreshenum_return(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: StructTab, acc: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtReturn(r) => { if (!fresh_enum_ret_value(r.value, structs, acc)) { return true; } },
-            ast.StmtIf(f) => { if (body_has_nonfreshenum_return(f.then_body, structs, acc) || body_has_nonfreshenum_return(f.else_body, structs, acc)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfreshenum_return(w.body, structs, acc)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfreshenum_return(fo.body, structs, acc)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshenum_return(m.arms[a].body, structs, acc)) { return true; } a = a + 1; } },
+            ast.StmtReturn(r) => {
+                if (!fresh_enum_ret_value(r.value, structs, acc) && enum_ret_local_kind(fn, ident_name_or_empty(r.value), structs, acc) == "") { return true; }
+            },
+            ast.StmtIf(f) => { if (body_has_nonfreshenum_return(f.then_body, fn, structs, acc) || body_has_nonfreshenum_return(f.else_body, fn, structs, acc)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfreshenum_return(w.body, fn, structs, acc)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfreshenum_return(fo.body, fn, structs, acc)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfreshenum_return(m.arms[a].body, fn, structs, acc)) { return true; } a = a + 1; } },
             ast.StmtDefer(_) => {},
             _ => {}
         }
@@ -44987,9 +45028,63 @@ function body_has_nonfreshenum_return(stmts: ast.Stmt[], structs: StructTab, acc
     return false;
 }
 
+// enum_ret_local_kind: how a bare `return name` of `fn` hands the caller a
+// count, or "" when it may not. "fresh": a never-reassigned local built by a
+// fresh ctor or a member call that escapes only by the return, so its box is
+// this frame's own whether or not a credit sweeps it. "alias": a
+// never-reassigned `var g = h.e` field alias, which counts only when its
+// EALIAS credit dup'd it; the return path retains it otherwise
+// (enum_ret_alias_rows).
+function enum_ret_local_kind(fn: parser.FuncDecl, name: string, structs: StructTab, acc: string[]): string {
+    if (name.len() == 0 || local_decl_count(fn.body, name) != 1) { return ""; }
+    for pd in fn.params { if (pd.name == name) { return ""; } }
+    if (util.index_of_str(body_assign_targets(fn.body), name) >= 0) { return ""; }
+    var kind: string = enum_local_init_kind(fn.body, name, structs, acc);
+    if (kind == "fresh" && body_unsafe_for_allow_bare_ret(fn.body, name, [])) { return ""; }
+    return kind;
+}
+
+// enum_local_init_kind: enum_ret_local_kind's reading of `name`'s declaration.
+function enum_local_init_kind(stmts: ast.Stmt[], name: string, structs: StructTab, acc: string[]): string {
+    for stmt in stmts {
+        var k: string = "";
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (v.name == name) {
+                    if (fresh_enum_ret_value(v.init, structs, acc)) { return "fresh"; }
+                    if (enum_field_alias_candidate(v.init, structs)) { return "alias"; }
+                    return "";
+                }
+            },
+            ast.StmtIf(f) => {
+                k = enum_local_init_kind(f.then_body, name, structs, acc);
+                if (k == "") { k = enum_local_init_kind(f.else_body, name, structs, acc); }
+            },
+            ast.StmtWhile(w) => { k = enum_local_init_kind(w.body, name, structs, acc); },
+            ast.StmtFor(fo) => { k = enum_local_init_kind(fo.body, name, structs, acc); },
+            ast.StmtMatch(m) => { for arm in m.arms { if (k == "") { k = enum_local_init_kind(arm.body, name, structs, acc); } } },
+            _ => {}
+        }
+        if (k != "") { return k; }
+    }
+    return "";
+}
+
+// enum_ret_alias_rows tags "ERETALIAS:" each "alias" local an "ENUM:" member
+// returns bare, so that return retains it when no credit moved its count out.
+function enum_ret_alias_rows(fn: parser.FuncDecl, structs: StructTab, reg: string[], acc: string[]): string[] {
+    if (fn.receiver_type.len() > 0 || util.index_of_str(reg, "ENUM:" + fn.name) < 0) { return acc; }
+    var out: string[] = acc;
+    for rn in arr_returned_ident_names(fn.body, []) {
+        if (enum_ret_local_kind(fn, rn, structs, []) == "alias") { out = push_str_unique(out, "ERETALIAS:" + rn); }
+    }
+    return out;
+}
+
 // fresh_enum_fwd_fixpoint: the bare names of FREE functions whose every return
-// is a fresh variant ctor or a forwarding call to another member — the "ENUM:"
-// half of the strict-fresh registry, iterated like the struct fixpoint below so
+// hands the caller a count — a fresh variant ctor, a forwarding call to another
+// member, or a local enum_ret_local_kind admits — the "ENUM:" half of the
+// strict-fresh registry, iterated like the struct fixpoint below so
 // forwarding chains ground out; mutual recursion with no grounding stays
 // uncredited (conservative).
 function fresh_enum_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab): string[] {
@@ -45010,7 +45105,7 @@ function fresh_enum_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab): 
         var p: i32 = 0;
         while (p < pending.len()) {
             var fi: i32 = pending[p];
-            if (!body_has_nonfreshenum_return(funcs[fi].body, structs, acc)) {
+            if (!body_has_nonfreshenum_return(funcs[fi].body, funcs[fi], structs, acc)) {
                 acc = acc.append(funcs[fi].name);
                 added = true;
             } else {
@@ -45026,8 +45121,8 @@ function fresh_enum_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab): 
 }
 
 // enum_fresh_ret_call: `e` is a call to a free function in the "ENUM:" half of
-// the strict-fresh registry, so its result is an rc=1 variant box this caller
-// owns outright.
+// the strict-fresh registry, so its result is a variant box carrying one count
+// this caller owns, which may be shared (an alias return, a produced callee).
 pub function enum_fresh_ret_call(e: ast.Expr, reg: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -45120,10 +45215,9 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
     // Free functions only: the forwarding arm resolves a bare-ident callee, so a
     // method key could never be the thing it looks up.
     var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh, sfok);
-    // "ENUM:<name>" — FREE functions whose every return is a fresh variant ctor
-    // (or a forwarding call to another member). A call result from one is an
-    // rc=1 variant box the caller owns outright, so the ExprStructLit enum arm
-    // hands it over with no alias-inc, the same class as a ctor written at the
+    // "ENUM:<name>" — FREE functions whose every return hands the caller a
+    // count (fresh_enum_fwd_fixpoint). The ExprStructLit enum arm hands such a
+    // result over with no alias-inc, the same class as a ctor written at the
     // field position.
     var enum_fresh: string[] = fresh_enum_fwd_fixpoint(funcs, structs);
     var efi: i32 = 0;
@@ -49434,7 +49528,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
-// or an enum-field alias taking the box-only release (credit_enum_field_alias),
+// or a counted enum local taking the box-only release (credit_counted_enum_local),
 // credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
 // reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
 // block-scoped local on block exit, and a lookup that refuses those would miss
@@ -54766,8 +54860,8 @@ function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: st
 // Two things make this class its own machinery rather than another ARRSTRUCT:
 //
 //   - The per-element drop DISPATCHES on the variant at runtime, so it routes
-//     emit_enum_variant_drops rather than a type-directed __struct_drop_<T>.
-//   - emit_enum_variant_drops frees the element box ITSELF and zeroes the slot,
+//     emit_enum_variant_drops_gated rather than a type-directed __struct_drop_<T>.
+//   - emit_enum_variant_drops_gated decs the element box ITSELF and zeroes the slot,
 //     so this walk must NOT copy ARRTUP/ARRSTRUCT's trailing __fern_rc_dec on the
 //     element. Copying it double-frees every element.
 //
@@ -54779,10 +54873,12 @@ function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: st
 
 // arrenum_lit_enum: `e` is a non-empty array literal whose EVERY element is a fresh
 // construction of the SAME enum (fresh_rcpayload_enum_init — the ctor forms the
-// scalar-enum reclaim already admits, qualified and unqualified, call and unit).
-// Returns that enum's name, else "". A bare-ident element would alias a live enum
-// box the free could dangle, so only constructions qualify.
-function arrenum_lit_enum(e: ast.Expr, structs: StructTab): string {
+// scalar-enum reclaim already admits, qualified and unqualified, call and unit),
+// or a call to an "ENUM:" member of the enum `tname` annotates as `E[]`, whose
+// result is a counted element the rc-gated walk releases. Returns that enum's
+// name, else "". A bare-ident element would alias a live enum box the free
+// could dangle, so it never qualifies.
+function arrenum_lit_enum(e: ast.Expr, structs: StructTab, fresh_ret: string[], tname: string): string {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return ""; }
@@ -54794,6 +54890,7 @@ function arrenum_lit_enum(e: ast.Expr, structs: StructTab): string {
                 // element release is a box-only free, so the same sole-owner
                 // argument holds with no payload counting to prove.
                 if (o.len() == 0) { o = fresh_scalar_enum_init(arr.elements[i], structs); }
+                if (o.len() == 0 && enum_fresh_ret_call(arr.elements[i], fresh_ret)) { o = enum_array_type_elem(structs, tname); }
                 if (o.len() == 0) { return ""; }
                 if (owner.len() == 0) { owner = o; }
                 if (o != owner) { return ""; }
@@ -54804,6 +54901,14 @@ function arrenum_lit_enum(e: ast.Expr, structs: StructTab): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// enum_array_type_elem: the declared enum `t` spells as `E[]`, or "".
+function enum_array_type_elem(structs: StructTab, t: string): string {
+    if (t.len() < 3 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return ""; }
+    var en: string = slice_unchecked(t, 0, t.len() - 2) + "";
+    if (!decl_is_enum(structs, en)) { return ""; }
+    return en;
 }
 
 // arrenum_scrut_elem_read: `e` is exactly `name[<idx>]`, an element read of the
@@ -55462,7 +55567,7 @@ function collect_fresh_arrenum_names(stmts: ast.Stmt[], fn_reassigned: string[],
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                var owner: string = arrenum_lit_enum(v.init, structs);
+                var owner: string = arrenum_lit_enum(v.init, structs, fresh_ret, v.type_name);
                 // A producer CALL earns the same credit the literal it returns
                 // would: the "ARENUMF:" registry proved every returned element
                 // box is the callee's own, and the ANNOTATION supplies the
@@ -55572,8 +55677,8 @@ function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
 // dispatch on it, then decs the outer buffer. Consumes no operand; leaves the slot
 // dangling.
 //
-// NO per-element __fern_rc_dec: emit_enum_variant_drops already frees the box and
-// zeroes the slot. That is the one place this differs from its ARRTUP/ARRSTRUCT
+// NO per-element __fern_rc_dec: emit_enum_variant_drops_gated already decs the box
+// and zeroes the slot. That is the one place this differs from its ARRTUP/ARRSTRUCT
 // siblings, and copying their trailing dec double-frees every element.
 //
 // The element loop is rc-gated on the BUFFER, not just per element: a buffer this
@@ -55584,9 +55689,9 @@ function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
 // struct sibling because this walk FREES each element box rather than deccing it,
 // so two owners both walking is a double free rather than a double dec. Only the
 // buffer dec stays unconditional — it is the release every owner must perform.
-// `shared` gates each element's payload walk on its own uniqueness, for a buffer
-// whose elements may have a second owner.
-function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string, shared: boolean): LowerState {
+// Each element's payload walk is gated on its own uniqueness, since an element
+// may have a second owner.
+function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -55619,8 +55724,7 @@ function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string, shared
     st = st.emit(ir.op_load_local(idxslot));
     st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (enum box ptr)
     st = st.emit(ir.op_store_local(elslot));
-    var no_moved: string[] = [];
-    st = emit_enum_variant_drops_gated(st, elslot, ename, no_moved, shared); // drop payload AND free the box
+    st = emit_enum_variant_drops_gated(st, elslot, ename, [], true); // an element may be a counted share
     st = st.emit(ir.op_br(0));                       // back-edge
     st = st.emit(ir.op_end());                       // end loop
     st = st.emit(ir.op_end()).exit_loop();           // end block
@@ -55645,7 +55749,7 @@ function emit_arrenum_reclaim_store(se: LowerState, slot: i32, ename: string): L
     st = st.emit(ir.op_load_local(tmp));             // new
     st = st.emit(ir.op_bin("ne", 0, false));
     st = st.emit(ir.op_if(0));
-    st = emit_arrenum_deep_free(st, slot, ename, false);    // free old structure
+    st = emit_arrenum_deep_free(st, slot, ename);    // free old structure
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
@@ -58347,7 +58451,7 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
                         else if (sccfa.field == "len" && scc.args.len() == 0
                                 && (expr_is_str(sccfa.obj, s) || expr_is_arr_src(sccfa.obj, s)
                                     || expr_is_strarr(sccfa.obj, s) || expr_is_f64arr(sccfa.obj, s)
-                                    || expr_is_i64arr(sccfa.obj, s))) { el_call_ok = true; }
+                                    || expr_is_i64arr(sccfa.obj, s) || arr_field_read(sccfa.obj, s))) { el_call_ok = true; }
                         // (f) a MAP read method — the other builtin receiver the
                         // registry cannot answer for. Admitted exactly when
                         // map_method_elem_tag names the result kind, so the slot
@@ -61166,6 +61270,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var fn_moves_top: MlOut = rc_ml_compute_toplevel(fn, structs);
     var fn_moves_all: MlOut = rc_ml_extend_loops(fn, structs, fn_moves_top);
     var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns);
+    reclaim = enum_ret_alias_rows(fn, structs, sg.return_fresh_struct_ret_fns, reclaim);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -62985,7 +63090,7 @@ function body_has_nonfresh_arrenum_return(stmts: ast.Stmt[], fnbody: ast.Stmt[],
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (arrenum_lit_enum(r.value, structs) != ename) {
+                if (arrenum_lit_enum(r.value, structs, [], "") != ename) {
                     match (r.value) {
                         ast.ExprIdent(rid) => { if (!arrenum_producer_ret_local(fnbody, rid.name, structs, ename)) { return true; } },
                         _ => { return true; }
@@ -63709,12 +63814,9 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: Struc
     // registry, so a field built from `[wide(n), …]` is admitted on the same
     // terms as one built from inline concats. Walked only when some type
     // actually has a string[] field — it is linear in every body.
+    var has_strarr_fld: boolean = strarrfld_program_has_field(structs);
     var arr_str_fresh: string[] = [];
-    var wantsf: i32 = 0;
-    while (wantsf < structs.decls.len()) {
-        if (struct_has_strarr_field(structs, structs.decls[wantsf].name)) { arr_str_fresh = str_fresh_ret_fns_of(funcs); wantsf = structs.decls.len(); }
-        else { wantsf = wantsf + 1; }
-    }
+    if (has_strarr_fld) { arr_str_fresh = str_fresh_ret_fns_of(funcs); }
     // Whole-array PRODUCERS the field store gate may accept, on the same terms
     // the "STRARR:" registry admits them.
     var arr_producers: string[] = [];
@@ -63727,19 +63829,10 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: Struc
     // condition the partial-funcs paths already satisfy by passing [] funcs.
     var arr_fwd: string[] = strarrfld_forwarders_of(funcs, structs);
     for fn in funcs {
-        // Drop any producer name THIS frame shadows — a local or parameter of
-        // that name holds an unknown body, not the registered declaration.
-        // The frame's binders are collected once, not once per producer.
-        var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
-        var vis: string[] = [];
-        var vk: i32 = 0;
-        while (vk < arr_producers.len()) {
-            if (util.index_of_str(bound, arr_producers[vk]) < 0 && !fn_has_param_named(fn, arr_producers[vk])) {
-                vis = vis.append(arr_producers[vk]);
-            }
-            vk = vk + 1;
-        }
-        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
+        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, strarr_visible_producers(fn, arr_producers), arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
+    }
+    if (has_strarr_fld) {
+        arr_unsafe = strarrfld_borrowed_elem_marks(funcs, structs, arr_str_fresh, arr_producers, arr_unsafe);
     }
     for sd in structs.decls {
         var at: string = sd.name;
@@ -65001,6 +65094,352 @@ function fn_has_param_named(fn: parser.FuncDecl, name: string): boolean {
 // strarrfld_fn_binds seeds the scan's type bindings for one function: its
 // receiver and every parameter, so `b.notes[0]` inside a method resolves to
 // "<Recv>.notes" instead of poisoning the bare name everywhere.
+// strarrfld_program_has_field: some struct declares a `string[]` field.
+function strarrfld_program_has_field(structs: StructTab): boolean {
+    for sd in structs.decls {
+        if (struct_has_strarr_field(structs, sd.name)) { return true; }
+    }
+    return false;
+}
+
+// strarr_visible_producers: the whole-array producers `fn` can call by name —
+// a local or parameter of a producer's name holds an unknown body, not the
+// registered declaration.
+function strarr_visible_producers(fn: parser.FuncDecl, producers: string[]): string[] {
+    var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    var vis: string[] = [];
+    for pn in producers {
+        if (!util.has_str(bound, pn) && !fn_has_param_named(fn, pn)) { vis = vis.append(pn); }
+    }
+    return vis;
+}
+
+// StrarrOwnSrc is what strarr_owned_value can prove ownership from: the
+// frame's fresh-string and producer registries, its owned locals, and its
+// struct-typed names (fnfld_bind pairs) for a field read's receiver.
+struct StrarrOwnSrc { str_fresh: string[], producers: string[], owned: string[], binds: string[], structs: StructTab }
+
+// strarr_owned_value: `e` hands over a `string[]` whose elements are owned by
+// its buffer — an element-fresh literal, a call to a visible producer, a local
+// in `owned`, or a holder's `string[]` field read, the counted share the
+// struct-literal gate already admits inline.
+function strarr_owned_value(e: ast.Expr, src: StrarrOwnSrc): boolean {
+    if let ast.ExprArray(al) = e {
+        for el in al.elements {
+            if (!strarr_value_is_fresh(el, src.str_fresh)) { return false; }
+        }
+        return true;
+    }
+    if let ast.ExprCall(c) = e { return util.has_str(src.producers, ident_name_or_empty(c.callee)); }
+    if let ast.ExprIdent(id) = e { return util.has_str(src.owned, id.name); }
+    if let ast.ExprFieldAccess(fa) = e {
+        if (ident_name_or_empty(fa.obj).len() == 0) { return false; }
+        return decl_field_type(src.structs, fnfld_obj_type(fa.obj, src.structs, src.binds), fa.field) == "string[]";
+    }
+    return false;
+}
+
+// strarr_owned_rebind: an assignment to an element-owned local keeps it one —
+// an owned value, or a self-append of a fresh element.
+function strarr_owned_rebind(a: ast.StmtAssign, src: StrarrOwnSrc): boolean {
+    if (strarr_owned_value(a.value, src)) { return true; }
+    if let ast.ExprCall(c) = a.value {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            return fa.field == "append" && ident_name_or_empty(fa.obj) == a.target && c.args.len() == 1
+                && strarr_value_is_fresh(c.args[0], src.str_fresh);
+        }
+    }
+    return false;
+}
+
+// strarr_local_owned_decls: how many `var name = …` declarations `stmts` holds,
+// or -1 when one of them, or an assignment to `name`, stores a value whose
+// elements the local would not own.
+function strarr_local_owned_decls(stmts: ast.Stmt[], name: string, src: StrarrOwnSrc): i32 {
+    var acc: StrarrDeclCount = StrarrDeclCount { name: name, src: src, n: 0 };
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_decl_count_step); }
+    return acc.n;
+}
+
+// StrarrDeclCount threads strarr_local_owned_decls' walk: the local, what its
+// ownership is proved from, and the declarations counted so far.
+struct StrarrDeclCount { name: string, src: StrarrOwnSrc, n: i32 }
+
+function strarr_decl_count_step(st: ast.Stmt, own acc: StrarrDeclCount): StrarrDeclCount {
+    if (acc.n < 0) { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (v.name != acc.name) { return acc; }
+        if (!strarr_owned_value(v.init, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+        return StrarrDeclCount { ...acc, n: acc.n + 1 };
+    }
+    if let ast.StmtAssign(a) = st {
+        if (a.target == acc.name && !strarr_owned_rebind(a, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+    }
+    return acc;
+}
+
+// StrarrOwnFrame is what strarrfld_borrowed_elem_marks knows about one body:
+// `params` is aligned with the function's parameters, naming each one whose
+// value is the caller's argument for the whole body ("" otherwise); `owned`
+// (in `src`) holds the locals whose every element is theirs. `stores` is the second pass's
+// parameter-store registry, empty on the first.
+struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, stores: string[], store_fns: string[] }
+
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: StructTab, str_fresh: string[], producers: string[], stores: string[], store_fns: string[]): StrarrOwnFrame {
+    var vis: string[] = strarr_visible_producers(fn, producers);
+    var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    var assigned: string[] = body_assign_targets(fn.body);
+    var params: string[] = [];
+    for p in fn.params {
+        if (p.type_name == "string[]" && !util.has_str(bound, p.name) && !util.has_str(assigned, p.name)) { params = params.append(p.name); }
+        else { params = params.append(""); }
+    }
+    var src: StrarrOwnSrc = StrarrOwnSrc { str_fresh: str_fresh, producers: vis, owned: [], binds: strarr_frame_binds(fn, structs), structs: structs };
+    src = StrarrOwnSrc { ...src, owned: strarr_owned_locals(fn, bound, src) };
+    return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_fns: store_fns };
+}
+
+// strarr_frame_binds: strarrfld_fn_binds plus every struct-typed local of `fn`,
+// name-level like the rest of the frame.
+function strarr_frame_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
+    var b: string[] = strarrfld_fn_binds(fn, structs);
+    for v in strarr_var_decls(fn.body, []) {
+        var vty: string = v.type_name;
+        if (vty.len() == 0) { vty = fnfld_lit_type(v.init); }
+        if (decl_is_struct(structs, vty)) { b = fnfld_bind(b, v.name, vty, structs); }
+    }
+    return b;
+}
+
+// strarr_owned_locals: the `string[]` locals of `fn` whose elements their own
+// buffer owns — every binder of the name a declaration, and every declaration
+// and assignment an owned value. An alias of an owned local is one too, so the
+// set grows to a fixed point.
+function strarr_owned_locals(fn: parser.FuncDecl, bound: string[], src: StrarrOwnSrc): string[] {
+    var cands: string[] = strarr_owned_candidates(fn);
+    var owned: string[] = [];
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for nm in cands {
+            if (!util.has_str(owned, nm)) {
+                var decls: i32 = strarr_local_owned_decls(fn.body, nm, StrarrOwnSrc { ...src, owned: owned });
+                if (decls > 0 && decls == strarr_count_of(bound, nm)) { owned = owned.append(nm); grew = true; }
+            }
+        }
+    }
+    return owned;
+}
+
+// strarr_owned_candidates: the locals of `fn` declared `string[]` or
+// unannotated, parameters and the receiver excluded.
+function strarr_owned_candidates(fn: parser.FuncDecl): string[] {
+    var cands: string[] = [];
+    for v in strarr_var_decls(fn.body, []) {
+        if ((v.type_name == "string[]" || v.type_name == "") && !util.has_str(cands, v.name)
+            && !fn_has_param_named(fn, v.name) && v.name != fn.receiver_name) { cands = cands.append(v.name); }
+    }
+    return cands;
+}
+
+function strarr_count_of(names: string[], nm: string): i32 {
+    var n: i32 = 0;
+    for b in names { if (b == nm) { n = n + 1; } }
+    return n;
+}
+
+// strarr_var_decls: every `var` declaration in `stmts`, lambda bodies aside.
+function strarr_var_decls(stmts: ast.Stmt[], own acc: ast.StmtVar[]): ast.StmtVar[] {
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_var_decl_step); }
+    return acc;
+}
+
+function strarr_var_decl_step(st: ast.Stmt, own acc: ast.StmtVar[]): ast.StmtVar[] {
+    if let ast.StmtVar(v) = st { return acc.append(v); }
+    return acc;
+}
+
+// strarr_frame_param_key: "<fn>#<index>" when `e` names one of the frame's
+// tracked parameters, else "".
+function strarr_frame_param_key(e: ast.Expr, fr: StrarrOwnFrame): string {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return ""; }
+    var j: i32 = 0;
+    while (j < fr.params.len()) {
+        if (fr.params[j] == nm) { return fr.fnkey + "#" + util.i32_to_string(j); }
+        j = j + 1;
+    }
+    return "";
+}
+
+function strarr_callee_key(c: ast.ExprCall): string {
+    if let ast.ExprIdent(id) = c.callee { return id.name; }
+    if let ast.ExprFieldAccess(fa) = c.callee { return fa.field; }
+    return "";
+}
+
+// strarr_own_node is one expression's contribution. First pass (no `stores`
+// yet): "st:<fn>#<j>|<T>.<f>" for a parameter stored bare into a `string[]`
+// field, "mk:<T>.<f>" for any other bare ident stored there whose elements
+// this frame does not own, and "ln:<callee>#<i>|<fn>#<j>" for a tracked
+// parameter passed on bare. Second pass: "bd:<callee>#<i>" for an argument
+// that reaches a storing parameter without owning its elements, and
+// "cl:" / "id:" occurrences of a storing function's name, to find one used as
+// a value (whose callers are unseen).
+function strarr_own_node(e: ast.Expr, own st: StrarrOwnAcc): StrarrOwnAcc {
+    var fr: StrarrOwnFrame = st.fr;
+    var a: string[] = st.out;
+    if let ast.ExprStructLit(sl) = e { a = strarr_own_struct_lit(sl, fr, a); }
+    if let ast.ExprCall(c) = e { a = strarr_own_call(c, fr, a); }
+    if let ast.ExprIdent(id) = e {
+        if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) { a = a.append("id:" + id.name); }
+    }
+    if let ast.ExprLambda(lm) = e {
+        a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
+    }
+    return StrarrOwnAcc { fr: fr, out: a };
+}
+
+function strarr_own_struct_lit(sl: ast.ExprStructLit, fr: StrarrOwnFrame, own a: string[]): string[] {
+    if (fr.store_fns.len() > 0) { return a; }
+    var i: i32 = 0;
+    while (i < sl.field_names.len()) {
+        if (decl_field_type(fr.src.structs, sl.type_name, sl.field_names[i]) == "string[]"
+            && ident_name_or_empty(sl.field_values[i]).len() > 0) {
+            var tf: string = sl.type_name + "." + sl.field_names[i];
+            var pk: string = strarr_frame_param_key(sl.field_values[i], fr);
+            if (pk.len() > 0) { a = a.append("st:" + pk + "|" + tf); }
+            else if (!strarr_owned_value(sl.field_values[i], fr.src)) { a = a.append("mk:" + tf); }
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): string[] {
+    var k: string = strarr_callee_key(c);
+    if (k.len() == 0) { return a; }
+    if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) { a = a.append("cl:" + k); }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var ck: string = k + "#" + util.i32_to_string(i);
+        var pk: string = strarr_frame_param_key(c.args[i], fr);
+        if (fr.store_fns.len() == 0) {
+            if (pk.len() > 0) { a = a.append("ln:" + ck + "|" + pk); }
+        } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && strarr_keyed_any(fr.stores, ck + "|")) {
+            a = a.append("bd:" + ck);
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function strarr_not_lambda(e: ast.Expr): boolean {
+    if let ast.ExprLambda(_) = e { return false; }
+    return true;
+}
+
+// StrarrOwnAcc threads the frame through the fold beside the rows it collects.
+struct StrarrOwnAcc { fr: StrarrOwnFrame, out: string[] }
+
+// strarr_own_stmts folds strarr_own_node over `stmts`. A lambda body is folded
+// on its own with an empty frame: its parameters and locals are not the
+// enclosing function's.
+function strarr_own_stmts(stmts: ast.Stmt[], fr: StrarrOwnFrame, out: string[]): string[] {
+    var acc: StrarrOwnAcc = StrarrOwnAcc { fr: fr, out: out };
+    for st in stmts { acc = astwalk.fold_stmt_pruned(st, acc, strarr_own_node, strarr_not_lambda); }
+    return acc.out;
+}
+
+// strarr_keyed_any: some entry of `rows` starts with `pfx`.
+function strarr_keyed_any(rows: string[], pfx: string): boolean {
+    for r in rows {
+        if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) { return true; }
+    }
+    return false;
+}
+
+// strarr_keyed_values: the text after `pfx` of every entry of `rows` that
+// starts with it.
+function strarr_keyed_values(rows: string[], pfx: string): string[] {
+    var out: string[] = [];
+    for r in rows {
+        if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) { out = out.append(slice_unchecked(r, pfx.len(), r.len()) + ""); }
+    }
+    return out;
+}
+
+// strarr_param_stores: "<fn>#<j>|<T>.<f>" for every parameter whose argument
+// reaches a `string[]` field bare — stored there, or passed on bare to a
+// parameter that is (`links`, least fixed point over forwarding chains).
+function strarr_param_stores(direct: string[], links: string[]): string[] {
+    var stores: string[] = direct;
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for ln in links {
+            var bar: i32 = 0;
+            while (ln[bar] != b'|') { bar = bar + 1; }
+            var callee: string = slice_unchecked(ln, 0, bar + 1) + "";
+            var caller: string = slice_unchecked(ln, bar + 1, ln.len()) + "";
+            for tf in strarr_keyed_values(stores, callee) {
+                var row: string = caller + "|" + tf;
+                if (!util.has_str(stores, row)) { stores = stores.append(row); grew = true; }
+            }
+        }
+    }
+    return stores;
+}
+
+// strarrfld_borrowed_elem_marks: the `string[]` fields a bare-ident store can
+// reach with elements it does not own (#10405). The struct-literal gate admits a
+// bare ident because the construction retains the BUFFER, but the element walk
+// also needs every element to be the array's: `names = names.append(item.name)`
+// holds boxes `item` still owns, and walking them from a field frees them under
+// it. A local proves that in its own frame (strarr_local_owned_decls); a
+// parameter at every call site, so its verdict moves there as a forwarder's does.
+// Each mark is the READ half only: the retained buffer still goes back through
+// "arrbuf:".
+function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[], producers: string[], acc: string[]): string[] {
+    var none: string[] = [];
+    var first: string[] = [];
+    for fn in funcs { first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, none, none), first); }
+    var stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
+    var a: string[] = acc;
+    for tf in strarr_keyed_values(first, "mk:") { a = push_str_unique(a, tf); }
+    if (stores.len() == 0) { return a; }
+    var store_fns: string[] = strarr_store_fns(stores);
+    var second: string[] = [];
+    for fn in funcs { second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_fns), second); }
+    for bk in strarr_keyed_values(second, "bd:") {
+        for tf in strarr_keyed_values(stores, bk + "|") { a = push_str_unique(a, tf); }
+    }
+    for fname in store_fns {
+        if (strarr_count_of(second, "id:" + fname) > strarr_count_of(second, "cl:" + fname)) {
+            for pf in strarr_keyed_values(stores, fname + "#") { a = push_str_unique(a, strarr_after_bar(pf)); }
+        }
+    }
+    return a;
+}
+
+// strarr_store_fns: the functions that own a storing parameter.
+function strarr_store_fns(stores: string[]): string[] {
+    var out: string[] = [];
+    for row in stores {
+        var h: i32 = 0;
+        while (row[h] != b'#') { h = h + 1; }
+        out = push_str_unique(out, slice_unchecked(row, 0, h) + "");
+    }
+    return out;
+}
+
+// strarr_after_bar: the text after the first `|` of a registry row.
+function strarr_after_bar(row: string): string {
+    var bar: i32 = 0;
+    while (row[bar] != b'|') { bar = bar + 1; }
+    return slice_unchecked(row, bar + 1, row.len()) + "";
+}
+
 function strarrfld_fn_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
     var b: string[] = [];
     if (fn.receiver_name.len() > 0) {
@@ -65140,6 +65579,9 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // name (mark_struct_type) so `t.N[i].field` / `match (t.N[i])` resolve
             // the element shape — exactly the struct-array field-read bind (#3292).
             if (!ok_elem && (is_struct_array_field_type(structs, t) || is_enum_array_field_type(structs, t))) { ok_elem = true; }
+            // A nested array (`T[][]`) is one outer-buffer pointer, like the flat
+            // arrays; the `.N` / destructure read marks the inner level.
+            if (!ok_elem && (is_nested_array_field_type(structs, t) || t == "string[][]")) { ok_elem = true; }
             // A Map[K, V] element is a leak-only heap box in one pointer slot, like
             // a struct / array element — so a tuple-returning fn can return it (the
             // `(Map, V)` shape of Map.get_or_insert / Map.without). Construction

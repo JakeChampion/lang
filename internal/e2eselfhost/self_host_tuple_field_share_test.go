@@ -220,6 +220,44 @@ function main(): i32 {
     return p0.tag[1] + t.0 + t.1[0].tag[0] + acc - 72;
 }
 `, 17, true},
+	// An array field's length as a returned element, and a nested-array field
+	// as one, refused the callee on the AST leg (#10318). The nested rows still
+	// leak there (tupleFieldSharePins): nothing releases a T[][] a record or a
+	// tuple holds (#10397).
+	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
+function mk(k: i32): (i32, i32, i32) {
+    var r: Ints = Ints { n: k, ys: [k, 1] };
+    var f: Fs = Fs { n: k, ws: [1.5, 2.5, 3.5] };
+    return (r.n, r.ys.len(), f.ws.len());
+}
+function main(): i32 {
+    var t: (i32, i32, i32) = mk(3);
+    mk(4);
+    return t.0 + t.1 + t.2;
+}
+`, 8, true},
+	{"callee_local_nested", `struct Bag { n: i32, grid: i32[][] }
+function mk(k: i32): (i32, i32[][]) {
+    var r: Bag = Bag { n: k, grid: [[k, 1], [2, 3]] };
+    return (r.n, r.grid);
+}
+function main(): i32 {
+    var t: (i32, i32[][]) = mk(3);
+    mk(4);
+    return t.0 + t.1[0][0] + t.1[1][1] + t.1.len();
+}
+`, 11, false},
+	{"callee_local_nested_strarr", `struct Grid { n: i32, rows: string[][] }
+function mk(k: i32): (i32, string[][]) {
+    var r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
+    return (r.n, r.rows);
+}
+function main(): i32 {
+    var (n, rows) = mk(3);
+    var last: string[] = rows[1];
+    return n + rows[0][0].len() + last[0].len() + rows.len();
+}
+`, 10, false},
 	// Extracting the element to a new owner refuses the tuple's element release,
 	// so the AST leg keeps the tuple's reference: a leak, never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
@@ -241,8 +279,12 @@ var tupleFieldShareLowerings = []struct{ name, env string }{
 }
 
 // tupleFieldShareBalanced: whether the census must balance for this row and
-// lowering. The refused row leaks wherever main is AST-lowered.
-func tupleFieldShareBalanced(balanced bool, lowering string) bool {
+// lowering. The refused row leaks wherever main is AST-lowered; a pinned
+// lowering leaks by its pin.
+func tupleFieldShareBalanced(row string, balanced bool, lowering string) bool {
+	if _, ok := tupleFieldSharePins[row][lowering]; ok {
+		return false
+	}
 	return balanced || lowering == "semantic" || lowering == "ast_callees"
 }
 
@@ -265,11 +307,13 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 				if exit != tc.want {
 					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
 				}
-				if tupleFieldShareBalanced(tc.balanced, lw.name) {
+				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, stderr)
+				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
+					assertLeakPinned(t, stderr, pin, "#10397")
 				}
 				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, tupleFieldShareBalanced(tc.balanced, lw.name)) {
+				if exit != tc.want || forArrStructSanitizerFault(stderr, tupleFieldShareBalanced(tc.name, tc.balanced, lw.name)) {
 					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
 				}
 			})
@@ -320,8 +364,10 @@ func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 				if code := cmd.ProcessState.ExitCode(); code != tc.want {
 					t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
 				}
-				if tupleFieldShareBalanced(tc.balanced, lw.name) {
+				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, eb.String())
+				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
+					assertLeakPinned(t, eb.String(), pin, "#10397")
 				}
 			})
 		}
@@ -341,12 +387,21 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 				if exit != tc.want {
 					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
 				}
-				if tupleFieldShareBalanced(tc.balanced, lw.name) {
+				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, stderr)
+				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
+					assertLeakPinned(t, stderr, pin, "#10397")
 				}
 			})
 		}
 	}
+}
+
+// tupleFieldSharePins: rows that still leak on a leg, by row and lowering,
+// compared exactly. Nothing releases a T[][] a record or a tuple holds (#10397).
+var tupleFieldSharePins = map[string]map[string][2]int64{
+	"callee_local_nested":        {"ast": {10, 4}, "ast_callees": {10, 4}, "ast_main": {10, 4}},
+	"callee_local_nested_strarr": {"ast": {5, 1}, "ast_callees": {5, 1}, "ast_main": {5, 1}},
 }
 
 // assertLeakPinned: a row that still leaks on this leg (the leak `issue`
