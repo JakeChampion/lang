@@ -12,8 +12,8 @@
 // is a handler that cannot reach an effect it was not given, which is
 // the seam the rest of the platform design hangs off — mock platforms in
 // tests (Rec §6), per-target capability sets (Rec §2), effect rows
-// (Rec §10). `fern -lint`'s `ambient-capability` rule reports a handler
-// body that reaches around the bag.
+// (Rec §10). A function handed a bag that reaches around it, directly or
+// through a helper, is refused at check time (E080).
 //
 // Each method needs the target capability named in its comment
 // (`internal/platforms`): a target whose profile lacks it fails the
@@ -51,16 +51,23 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 //     var resp: HttpResponse = handle(req, platform_new());
 //
 // `version` is the bag's ABI version, bumped when a capability field is
-// added, so a handler compiled against an older bag can tell.
+// added, so a handler compiled against an older bag can tell. Version 2
+// added `handle`, the worker-owned runtime handle: the reactor of the
+// serving worker that built the bag (`std/tcp`'s loops), 0 for a bag built
+// here or by the wasi-http wrapper, which serve no reactor. Struct fields
+// are frozen after construction and a cell holds only a scalar or a string
+// (E057), so the mutable per-worker state a capability needs — idle
+// connections, timers, the sim's driver — lives behind the handle rather
+// than in the bag.
 pub function platform_new(): Platform {
-    return Platform { version: 1, mode: PLATFORM_MODE_HOST, sink: cell_new("") };
+    return Platform { version: 2, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
 }
 
 // `platform_mock(sink)` — a bag that records into `sink` instead of reaching
 // the host. std/mock_platform is the caller: it passes its own cell, so the
 // mock and the handler write one log through two views.
 pub function platform_mock(sink: Cell[string]): Platform {
-    return Platform { version: 1, mode: PLATFORM_MODE_MOCK, sink: sink };
+    return Platform { version: 2, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
 }
 
 // `.is_mock()` — is this a recording bag? Each capability method below asks
