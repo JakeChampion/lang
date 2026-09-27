@@ -294,7 +294,7 @@ pub function reference(t: typeinfo.Type): boolean {
 // than at some of them.
 pub function text_constant(t: typeinfo.Type): boolean { return is_wide(t) || is_u32(t); }
 
-function is_bool(t: typeinfo.Type): boolean {
+pub function is_bool(t: typeinfo.Type): boolean {
     if let typeinfo.TypeBool(_) = t { return true; }
     return false;
 }

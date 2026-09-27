@@ -1500,6 +1500,18 @@ pub function __mapiter_advance_impl(it: usize): void {
     __store_i32(it + 8, __load_i32(it + 8) + 1);
 }
 
+// __mapiter_drop_impl releases one reference to the cursor `it`; the last
+// frees its block. The cursor holds no reference to the map.
+pub function __mapiter_drop_impl(it: usize): usize {
+    if (it == 0) { return it; }
+    if (__load_i32(it - 8) != 1) {
+        __fern_rc_dec(it);
+        return it;
+    }
+    __fern_box_free(it, 16);
+    return it;
+}
+
 // === higher-level Map verbs (#2685) =============================
 //
 // Built on the core builtins above (`keys` / `get` / `insert` /

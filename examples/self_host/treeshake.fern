@@ -114,9 +114,22 @@ function ts_recv_rooted(name: string): boolean {
 // spelled out rather than wildcarded so a new expression kind fails E030 here
 // and gets a reachability decision, not a silent empty contribution — the
 // soundness property the hand-written walk this replaces had.
+// ts_routed_map_roots are the core/map functions the typed lowering calls for
+// a map it routes onto core/map (ssarc.routed_map_site), which no source
+// spells. Every map is built by one of the two constructors, so they root them.
+function ts_routed_map_roots(): string[] {
+    return ["map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
+        "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
+        "__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
+        "__mapiter_key_impl", "__mapiter_value_impl", "__mapiter_advance_impl", "__mapiter_drop_impl"];
+}
+
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
-        ast.ExprIdent(id) => { return acc.append(id.name); },
+        ast.ExprIdent(id) => {
+            if (id.name == "map_new" || id.name == "__map_new_i32") { acc = util.append_all(acc, ts_routed_map_roots()); }
+            return acc.append(id.name);
+        },
         ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
             if (m.len() == 0) { return acc; }
