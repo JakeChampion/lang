@@ -57,6 +57,9 @@ var CodegenAliases = map[string]string{
 	// (internal/fernrt): the helper is named by its runtime symbol, and a
 	// backend that calls helpers by the builtin's name reaches it here.
 	"tcp_listen":      "__fern_tcp_listen",
+	"tcp_recv":        "__fern_tcp_recv",
+	"tcp_send":        "__fern_tcp_send",
+	"udp_send":        "__fern_udp_send",
 	"tcp_connect":     "__fern_tcp_connect",
 	"tcp_accept":      "__fern_tcp_accept",
 	"tcp_local_port":  "__fern_tcp_local_port",

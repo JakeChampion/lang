@@ -141,6 +141,21 @@ function __sys_shutdown(): i32 {
     if (target_os() == "darwin") { return 134; }
     return 210;
 }
+function __sys_read(): i32 {
+    if (target_arch() == "x86-64") { return 0; }
+    if (target_os() == "darwin") { return 3; }
+    return 63;
+}
+function __sys_write(): i32 {
+    if (target_arch() == "x86-64") { return 1; }
+    if (target_os() == "darwin") { return 4; }
+    return 64;
+}
+function __sys_sendto(): i32 {
+    if (target_arch() == "x86-64") { return 44; }
+    if (target_os() == "darwin") { return 133; }
+    return 206;
+}
 function __sys_fcntl(): i32 {
     if (target_arch() == "x86-64") { return 72; }
     if (target_os() == "darwin") { return 92; }
@@ -162,6 +177,12 @@ function __so_keepalive(): i64 {
 function __o_nonblock(): i64 {
     if (target_os() == "darwin") { return 4; }
     return 2048;
+}
+// MSG_NOSIGNAL: a send on a peer-closed socket answers -EPIPE instead of
+// raising SIGPIPE at the process.
+function __msg_nosignal(): i64 {
+    if (target_os() == "darwin") { return 524288; }
+    return 16384;
 }
 
 // setsockopt(fd, level, name, &value, 4) with the i32 in a fresh block.
@@ -284,4 +305,83 @@ function __fern_tcp_local_port(fd: i32): i32 {
     __free(sa, 20);
     if (r < 0) { return r as i32; }
     return port;
+}
+
+// __fern_tcp_recv(fd, max) is a fresh u8[] of the bytes one read(2) of up to
+// max answered: shorter on a short read, empty at end of stream, on an
+// error, and for a max of zero or less. The op has no error channel, so
+// -errno reads as empty too.
+function __fern_tcp_recv(fd: i32, max: i32): u8[] {
+    if (max <= 0) { return __alloc_u8(0); }
+    var buf: u8[] = __alloc_u8(max);
+    var n: i64 = __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, max as i64);
+    if (n < 0) { n = 0; }
+    __arr_set_len(buf, n as i32);
+    return buf;
+}
+
+// sendto(fd, p, n, MSG_NOSIGNAL) on a connected socket: the bytes accepted,
+// or -errno.
+function __send_bytes(fd: i32, p: usize, n: i32): i32 {
+    return __syscall6(__sys_sendto(), fd as i64, p as i64, n as i64, __msg_nosignal(), 0, 0) as i32;
+}
+
+// __fern_tcp_send(fd, s) writes s's bytes to a connected socket. A string
+// carried inline in its words has no address until it is spilled, so that
+// case borrows sixteen bytes for the call; a heap string is sent from where
+// it is.
+function __fern_tcp_send(fd: i32, s: string): i32 {
+    var p: usize = __str_bytes(s, 0 as usize);
+    if (p != (0 as usize)) { return __send_bytes(fd, p, s.len()); }
+    var scratch: usize = __alloc(16);
+    var r: i32 = __send_bytes(fd, __str_bytes(s, scratch), s.len());
+    __free(scratch, 16);
+    return r;
+}
+
+// __fern_udp_send(host, port, data) is one datagram to host:port from an
+// ephemeral socket that is closed again: the bytes accepted, -errno from the
+// step that failed, or -3 for a host that is not a dotted quad of octets.
+function __fern_udp_send(host: string, port: i32, data: string): i32 {
+    var host_be: i32 = 0;
+    var octet: i32 = 0;
+    var octets: i32 = 0;
+    var digits: i32 = 0;
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < host.len()) {
+        var c: i32 = host[i] as i32;
+        if (c == 46) {
+            if (digits == 0 || octets == 3) { bad = 1; }
+            host_be = host_be | (octet << (8 * octets));
+            octets = octets + 1;
+            octet = 0;
+            digits = 0;
+        } else {
+            if (c < 48 || c > 57) { bad = 1; }
+            octet = octet * 10 + (c - 48);
+            digits = digits + 1;
+            if (octet > 255) { bad = 1; }
+        }
+        i = i + 1;
+    }
+    if (bad != 0 || octets != 3 || digits == 0) { return 0 - 3; }
+    host_be = host_be | (octet << 24);
+    var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_in(port, host_be);
+    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
+    __free(sa, 16);
+    if (r >= 0) {
+        var p: usize = __str_bytes(data, 0 as usize);
+        if (p != (0 as usize)) {
+            r = __syscall3(__sys_write(), fd, p as i64, data.len() as i64);
+        } else {
+            var scratch: usize = __alloc(16);
+            r = __syscall3(__sys_write(), fd, __str_bytes(data, scratch) as i64, data.len() as i64);
+            __free(scratch, 16);
+        }
+    }
+    __syscall3(__sys_close(), fd, 0, 0);
+    return r as i32;
 }

@@ -992,6 +992,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__store_i32")
 				case "__store_u8":
 					needs.add("__store_u8")
+				case "__str_bytes":
+					needs.add("__str_bytes")
+				case "__arr_set_len":
+					needs.add("__arr_set_len")
 				case "__load_i64":
 					needs.add("__load_i64")
 				case "__store_i64":
@@ -2063,6 +2067,22 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildStoreU8Body,
+	},
+	"__str_bytes": {
+		// (data, len, scratch) → addr — the string's bytes: its data
+		// pointer for a heap string, or, for the inline form, the pair
+		// spilled to the eight bytes at scratch (byte i at scratch+i),
+		// 0 when scratch is 0.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildStrBytesBody,
+	},
+	"__arr_set_len": {
+		// (data, n) → () — the length word at data-4 of an __alloc_u8
+		// box becomes n; the capacity stays.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildArrSetLenBody,
 	},
 	"__load_i64": {
 		// (addr) → i64 — i64.load wrapper. Map runtime uses this
@@ -7018,6 +7038,47 @@ func buildStoreU8Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // addr
 	body = inst.InstLocalGet(body, 1) // v
 	body = memory.InstI32Store8(body, 0, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStrBytesBody — (data, len, scratch) → addr. A heap string answers
+// data; an inline one (len's top bit set) spills data to scratch+0 and len
+// to scratch+4, the layout that puts byte i at scratch+i, and answers
+// scratch, or 0 when scratch is 0.
+func buildStrBytesBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, encode.ValtypeI32)
+	{
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstIfStart(body, encode.ValtypeI32)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 1)
+		body = memory.InstI32Store(body, 2, 4)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstElse(body)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstElse(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildArrSetLenBody — (data, n) → (). Stores n at data-4.
+func buildArrSetLenBody(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

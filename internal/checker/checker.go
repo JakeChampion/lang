@@ -4141,6 +4141,22 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// `__str_bytes(s, scratch)` — the address of a string's bytes, for the
+	// length `s.len()` reports. A heap string answers its data pointer; a
+	// string a backend carries inline in its words is copied into `scratch`,
+	// sixteen bytes the caller keeps alive as long as it reads through the
+	// result, or answers 0 when `scratch` is 0. The socket send helpers hand
+	// the kernel a string through it.
+	c.info.FuncSigs["__str_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, usizeT},
+		Result: usizeT,
+	}
+	// `__arr_set_len(a, n)` — shorten a fresh `u8[]` from `__alloc_u8` to
+	// the n bytes a read filled; its capacity is unchanged.
+	c.info.FuncSigs["__arr_set_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
 	// `__syscall3(nr, a, b, c)` … `__syscall6(nr, a, …, f)` — the native
 	// runtime's syscall floor, the same names and shapes the self-host's
 	// asmcore helpers are written on: the number and arguments are

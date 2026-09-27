@@ -538,6 +538,8 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && name == "__load_i64") { return t_i64(); }
   if (argc == 1 && name == "__load_ptr") { return t_usize(); }
   if (argc == 2 && name == "__store_u8") { return t_void(); }
+  if (argc == 2 && name == "__str_bytes") { return t_usize(); }
+  if (argc == 2 && name == "__arr_set_len") { return t_void(); }
   if (argc == 2 && name == "__store_i32") { return t_void(); }
   if (argc == 2 && name == "__store_i64") { return t_void(); }
   if (argc == 2 && name == "__store_ptr") { return t_void(); }
@@ -604,6 +606,8 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (name == "__memset") { return ([t_usize(), t_i32(), t_i32()], true); }
   if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") { return ([t_usize()], true); }
   if (name == "__store_u8") { return ([t_usize(), t_i32()], true); }
+  if (name == "__str_bytes") { return ([t_string(), t_usize()], true); }
+  if (name == "__arr_set_len") { return ([t_array(t_u8()), t_i32()], true); }
   if (name == "__store_i32") { return ([t_usize(), t_i32()], true); }
   if (name == "__store_i64") { return ([t_usize(), t_i64()], true); }
   if (name == "__store_ptr") { return ([t_usize(), t_usize()], true); }
@@ -13139,7 +13143,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 // list entry for entry.
 function registered_intrinsics(): string[] {
   return [
-    "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count",
+    "__abs_f64", "__alloc", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
@@ -13149,7 +13153,7 @@ function registered_intrinsics(): string[] {
     "__map_hash_seed", "__memchr", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
     "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
     "__round_f64", "__scale_f64", "__scan_set", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
-    "__store_ptr", "__store_u8", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64"
+    "__store_ptr", "__store_u8", "__str_bytes", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64"
   ];
 }
 
