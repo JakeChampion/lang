@@ -914,7 +914,7 @@ func goldenDiff(want, got string) string {
 		len(w), len(g), at+1, window(w), window(g))
 }
 
-const semsourceRCProgram = `
+const semsourceRCProgram = `import "core/map";
 @noinline function pick(k: i32): i32[] {
     var rows: i32[][] = [[1, 2], [3, 4], [5, 6]];
     var chosen: i32[] = rows[0];
@@ -3845,11 +3845,15 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
 import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir";
+import "./modloader"; import "./flatten"; import "./treeshake";
 function main(): i32 {
     var av = args();
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var parsed = parser.parse_module(lexer.tokenize(src));
+    var entry = parser.parse_module(lexer.tokenize(src));
+    // The program's imports load from the stdlib directory av[3] and are
+    // bundled and pruned as the CLI does.
+    var parsed = treeshake.treeshake(flatten.bundle(flatten.resolve_imports(entry, av[3], av[3]), modloader.load_imports(modloader.no_overlay(), av[3], entry)));
     // The typed lowering reads typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
     var mod = parser.erase_str_module(typed);
@@ -3957,6 +3961,17 @@ function main(): i32 {
 }
 `
 
+// stdlibDir is the stdlib root semsourceRCDriver loads a program's imports
+// from, with the trailing slash modloader joins against.
+func stdlibDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir + "/"
+}
+
 // inScratchDir runs the program in a fresh directory of its own, so the
 // writers it exercises touch nothing else: the working directory for a native
 // run, and the one preopened directory for wasm, where a relative path
@@ -3988,7 +4003,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, program)
+			cmd := runX86_64Bin(runner, driver, emitTarget, program, stdlibDir(t))
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics

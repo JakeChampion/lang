@@ -122,7 +122,7 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, path)
+			cmd := runX86_64Bin(runner, driver, emitTarget, path, stdlibDir(t))
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
