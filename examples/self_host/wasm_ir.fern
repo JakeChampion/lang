@@ -2544,7 +2544,7 @@ pub function emit_module_mode_or_error_sub(mod: parser.Module, component: boolea
     // and the registry base it was derived over feed the emit directly).
     if (asmcore.new_state().use_ir) {
         var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
-        var base: irlower.FnSigs = ircore.sub_sigs(sub, ircore.wp_fn_sigs(lm.funcs, stab));
+        var base: irlower.FnSigs = ircore.sub_base(sub, lm.funcs, stab);
         var g: ircore.Lowered = lower_all_gated(lm, stab, base, sub);
         var cache: irlower.LowerResult[] = ircore.sub_cache(sub, g.cache);
         if (g.ok && ir_route_final(cache, component, io)) {
