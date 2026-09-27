@@ -3042,10 +3042,10 @@ function main(): i32 {
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
 	// copy-on-write gate see a second holder. The AST lowering borrows the
-	// receiver and writes the sole-held box in place, so the write shows
-	// through `m`, and its `without` writes an ALIASED receiver in place too
-	// (#9835).
-	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "63|", src: `
+	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
+	// `rest` all name one box (#9834); only the delete `snapshot` still reads
+	// through copies (#9835).
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "94|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
