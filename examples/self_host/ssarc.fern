@@ -2109,7 +2109,8 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
-    if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
+    if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) { r = emit(r, ir.op_str_slice_frame(0)); }
+    else if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
     // A call's counted parameters were supplied before its operands were
     // loaded; its result is the unit the callee returns. A runtime builtin
     // is its own op, pushing the value its contract names or the dummy a
@@ -3722,6 +3723,23 @@ function without_rows(rows: string[], name: string, prefixes: string[]): string[
     return out;
 }
 
+// A frame view's three words sit above every other slot, which is only known
+// once the body is lowered, so `instruction` marks the op and this gives each
+// its own words.
+function place_views(own r: irlower.LowerResult): irlower.LowerResult {
+    var ops: ir.Op[] = r.ops;
+    var next: i32 = r.n_locals;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (ops[i].kind_tag == ir.op_str_slice().kind_tag && ops[i].i32_imm > 0) {
+            ops = ops.with(i, ir.op_str_slice_frame(next));
+            next = next + 3;
+        }
+        i = i + 1;
+    }
+    return irlower.LowerResult { ...r, ops: ops, n_locals: next };
+}
+
 // `structs` is the declaration table the backends read a construction's field
 // store widths from; the physical lowering names a declaration by index, as
 // the AST lowering does.
@@ -3737,6 +3755,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     var steps: i32[][] = ssaunits.step_index(p);
     var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
     if (e.why != "") { return empty(e.why); }
+    e = Emit { ...e, r: place_views(e.r) };
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }
