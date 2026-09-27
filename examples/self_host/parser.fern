@@ -17843,7 +17843,8 @@ pub function module_with_builtins(mod: Module): Module {
 // template (#9577). rename_type_vars_module, the last step of the compile-path
 // parse, respells every declaration's type variables `0_<name>`. No identifier
 // starts with a digit, so looks_type_var is exact on the result;
-// util.show_type_vars turns the spelling back for a diagnostic.
+// util.show_type_vars turns the spelling back for a diagnostic, and
+// written_type_vars_module for the printer.
 
 function tvar_spelling(name: string): string {
     if (looks_type_var(name)) { return name; }
@@ -17851,24 +17852,47 @@ function tvar_spelling(name: string): string {
 }
 
 function rename_type_vars_module(mod: Module): Module {
+    return respell_type_vars_module(mod, false);
+}
+
+// written_type_vars_module is the inverse: every type variable back to the
+// name it was written as, for a printer handed a compile-path parse.
+pub function written_type_vars_module(mod: Module): Module {
+    return respell_type_vars_module(mod, true);
+}
+
+function respell_type_vars_module(mod: Module, written: boolean): Module {
     var funcs: FuncDecl[] = [];
-    for fd in mod.funcs { funcs = funcs.append(rename_fn_type_vars(fd, fn_type_vars(fd, mod))); }
+    for fd in mod.funcs {
+        var fvars: string[] = fn_type_vars(fd, mod, written);
+        funcs = funcs.append(rename_fn_type_vars(fd, fvars, tvar_respellings(fvars, written)));
+    }
     var structs: StructDecl[] = [];
     for sd in mod.structs {
         var svars: string[] = sd.type_params;
         if (sd.enum_owner.len() > 0) { svars = decl_type_params(sd.enum_owner, mod); }
-        structs = structs.append(rename_struct_type_vars(sd, svars));
+        structs = structs.append(rename_struct_type_vars(sd, svars, tvar_respellings(svars, written)));
     }
     var enums: EnumDecl[] = [];
-    for ed in mod.enums { enums = enums.append(EnumDecl { ...ed, type_params: tvar_spellings(ed.type_params) }); }
+    for ed in mod.enums { enums = enums.append(EnumDecl { ...ed, type_params: tvar_respellings(ed.type_params, written) }); }
     var impls: ImplInfo[] = [];
-    for im in mod.impls { impls = impls.append(rename_impl_type_vars(im)); }
+    for im in mod.impls {
+        var none: string[] = [];
+        var ivars: string[] = add_tvars(add_tvars(none, im.all_type_params), im.type_params);
+        impls = impls.append(rename_impl_type_vars(im, ivars, tvar_respellings(ivars, written)));
+    }
     return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
 }
 
-function tvar_spellings(vars: string[]): string[] {
+// tvar_respellings maps each variable to its reserved spelling, or with
+// `written` back to the name it was written as.
+function tvar_respellings(vars: string[], written: boolean): string[] {
     var out: string[] = [];
-    for v in vars { out = out.append(tvar_spelling(v)); }
+    for v in vars {
+        if (!written) { out = out.append(tvar_spelling(v)); }
+        else if (looks_type_var(v)) { out = out.append(slice_unchecked(v, 2, v.len()) + ""); }
+        else { out = out.append(v); }
+    }
     return out;
 }
 
@@ -17888,12 +17912,14 @@ function decl_type_params(name: string, mod: Module): string[] {
 
 // fn_type_vars is every type variable `fd` is written in: its declared
 // parameters, the implicit ones a generic receiver binds, and — for a derived
-// method, whose receiver is spelled bare — its type's own parameters.
-function fn_type_vars(fd: FuncDecl, mod: Module): string[] {
+// method, whose receiver is spelled bare — its type's own parameters. Once
+// respelled, a receiver's variables are read straight off its spelling.
+function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
     var none: string[] = [];
     var vars: string[] = add_tvars(add_tvars(none, fd.all_type_params), fd.type_params);
     if (fd.receiver_type.len() == 0) { return vars; }
     if (first_bracket(fd.receiver_type) < 0) { vars = add_tvars(vars, decl_type_params(fd.receiver_type, mod)); }
+    if (respelled) { return type_str_vars(fd.receiver_type, vars); }
     return add_tvars(vars, receiver_type_vars(parse_type_ref(fd.receiver_type), mod));
 }
 
@@ -17946,9 +17972,8 @@ function rename_param_type_vars(pd: ast.ParamDecl, vars: string[], cts: string[]
     return ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, vars, cts), fn_ret: subst_ty(pd.fn_ret, vars, cts), fn_param_types: subst_ty_list(pd.fn_param_types, vars, cts), default_value: dv };
 }
 
-function rename_fn_type_vars(fd: FuncDecl, vars: string[]): FuncDecl {
+function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[]): FuncDecl {
     if (vars.len() == 0) { return fd; }
-    var cts: string[] = tvar_spellings(vars);
     var values: string[] = [];
     if (fd.receiver_name.len() > 0) { values = values.append(fd.receiver_name); }
     for pd in fd.params { values = astwalk.append_bound_name(values, pd.name); }
@@ -17965,19 +17990,15 @@ function rename_fn_type_vars(fd: FuncDecl, vars: string[]): FuncDecl {
         body: tv_obj_body(rename_tv_stmts(fd.body, vars, cts), sc) };
 }
 
-function rename_struct_type_vars(sd: StructDecl, vars: string[]): StructDecl {
+function rename_struct_type_vars(sd: StructDecl, vars: string[], cts: string[]): StructDecl {
     if (vars.len() == 0) { return sd; }
-    var cts: string[] = tvar_spellings(vars);
     var fields: StructFieldDecl[] = [];
     for f in sd.fields { fields = fields.append(StructFieldDecl { ...f, type_name: subst_ty(f.type_name, vars, cts), fn_ret: subst_ty(f.fn_ret, vars, cts), fn_param_types: subst_ty_list(f.fn_param_types, vars, cts) }); }
     return StructDecl { ...sd, fields: fields, type_params: rename_ty_list(sd.type_params, vars, cts) };
 }
 
-function rename_impl_type_vars(im: ImplInfo): ImplInfo {
-    var none: string[] = [];
-    var vars: string[] = add_tvars(add_tvars(none, im.all_type_params), im.type_params);
+function rename_impl_type_vars(im: ImplInfo, vars: string[], cts: string[]): ImplInfo {
     if (vars.len() == 0) { return im; }
-    var cts: string[] = tvar_spellings(vars);
     return ImplInfo { ...im, impl_type: subst_ty(im.impl_type, vars, cts), type_params: rename_ty_list(im.type_params, vars, cts),
         all_type_params: rename_ty_list(im.all_type_params, vars, cts), bounds: rename_bounds(im.bounds, vars, cts),
         trait_ref: subst_ty(im.trait_ref, vars, cts), assoc_values: rename_ty_list(im.assoc_values, vars, cts) };
@@ -21937,9 +21958,18 @@ function check_generics(): i32 {
     var srcBT: string = "function same[T: Eq + Display](a: T, b: T): i32 { return 0; }";
     var modBT: Module = parse_module(lexer.tokenize(srcBT));
     if (modBT.funcs[0].type_params.len() != 1) { return 1086; }
-    if (modBT.funcs[0].type_params[0] != "T") { return 1087; }
-    // The bound list is consumed; the param type stays the bare `T`.
-    if (modBT.funcs[0].params[0].type_name != "T") { return 1088; }
+    // The compile path respells a type variable `0_<name>` so no type can
+    // share its spelling (#9577); `-fmt`'s verbatim parse keeps it as written.
+    if (modBT.funcs[0].type_params[0] != "0_T") { return 1087; }
+    // The bound list is consumed; the param type stays the bare variable.
+    if (modBT.funcs[0].params[0].type_name != "0_T") { return 1088; }
+    if (parse_module_verbatim(lexer.tokenize(srcBT)).pmod.funcs[0].params[0].type_name != "T") { return 1001; }
+    // A receiver's single-letter argument is a variable only when this module
+    // declares no type of that name.
+    var srcRV: string = "struct K { v: i32 } struct Box[T] { x: T } function (b: Box[K]) key(): K { return b.x; } function (b: Box[U]) val(): U { return b.x; }";
+    var modRV: Module = parse_module(lexer.tokenize(srcRV));
+    if (modRV.funcs[0].receiver_type != "Box[K]") { return 1002; }
+    if (modRV.funcs[1].receiver_type != "Box[0_U]" || modRV.funcs[1].ret_type != "0_U") { return 1003; }
     var srcUT: string = "function id[T](x: T): T { return x; }";
     var modUT: Module = parse_module(lexer.tokenize(srcUT));
     if (modUT.funcs[0].type_params.len() != 0) { return 1089; }
