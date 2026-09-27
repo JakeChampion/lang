@@ -308,6 +308,13 @@ type module struct {
 	publicStructs    map[string]bool
 	publicConsts     map[string]bool
 	publicEnums      map[string]bool
+	// publicVariants maps each variant of a `pub enum` to that enum's
+	// pre-mangle name, so a consumer's `mod.Variant` resolves to the
+	// variant in expression and pattern position. A variant two public
+	// enums share maps to "". allVariants is the same over every enum,
+	// public or not, for the visibility diagnostic.
+	publicVariants map[string]string
+	allVariants    map[string]string
 	// allConsts is the pre-mangle name set of every const in this
 	// module (public or private). The visibility-error path uses it
 	// to decide whether `mod.X` should suggest `pub function X`
@@ -463,6 +470,8 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		publicStructs:    map[string]bool{},
 		publicConsts:     map[string]bool{},
 		publicEnums:      map[string]bool{},
+		publicVariants:   map[string]string{},
+		allVariants:      map[string]string{},
 		allConsts:        map[string]bool{},
 		allDecls:         map[string]bool{},
 		reexports:        map[string]string{},
@@ -511,6 +520,17 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		ed.SourceModule = path
 		if ed.Public {
 			mod.publicEnums[ed.Name] = true
+		}
+		for _, v := range ed.Variants {
+			mod.allVariants[v.Name] = ed.Name
+			if !ed.Public {
+				continue
+			}
+			if _, dup := mod.publicVariants[v.Name]; dup {
+				mod.publicVariants[v.Name] = ""
+			} else {
+				mod.publicVariants[v.Name] = ed.Name
+			}
 		}
 		mod.allDecls[ed.Name] = true
 		if ed.PackageScoped {
@@ -2107,6 +2127,7 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
+			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
 			if arm.Guard != nil {
 				r.rewriteExpr(&arm.Guard)
 			}
@@ -2184,6 +2205,15 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		if fa, ok := x.Callee.(*ast.FieldAccess); ok {
 			if id, ok := fa.Target.(*ast.Ident); ok {
 				if mod, prefix, ok := r.importedModule(id.Name); ok {
+					if en, handled := r.qualifiedVariant(mod, prefix, fa.Field, fa.P); handled {
+						if en != "" {
+							x.Callee = &ast.Ident{P: id.P, Name: fa.Field, EnumName: en}
+						}
+						for i := range x.Args {
+							r.rewriteExpr(&x.Args[i])
+						}
+						return
+					}
 					r.checkPublicFunc(mod, fa.Field, fa.P)
 					mangled := prefix + fa.Field
 					// A `pub use`-re-exported name resolves to its original
@@ -2235,6 +2265,12 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 				return
 			}
 			if mod, prefix, ok := r.importedModule(id.Name); ok {
+				if en, handled := r.qualifiedVariant(mod, prefix, x.Field, x.P); handled {
+					if en != "" {
+						*slot = &ast.Ident{P: id.P, Name: x.Field, EnumName: en}
+					}
+					return
+				}
 				r.checkPublicValue(mod, x.Field, x.P)
 				target := prefix + x.Field
 				if rx, ok := mod.reexports[x.Field]; ok {
@@ -2314,6 +2350,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		r.rewriteExpr(&x.Tag)
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.P)
+			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
 			if arm.Guard != nil {
 				r.rewriteExpr(&arm.Guard)
 			}
@@ -2389,6 +2426,18 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 			return
 		}
 		*armModule = mod.path
+		// A `pub enum`'s variants keep their bare names (only the union
+		// desugar mangles alternatives, as structs), so the pattern's name
+		// stays bare too and the checker matches it on the scrutinee enum
+		// after verifying the module qualifier.
+		if _, isVariant := mod.publicVariants[*armName]; isVariant && !mod.publicStructs[*armName] {
+			return
+		}
+		if en, private := mod.allVariants[*armName]; private && !mod.publicStructs[*armName] {
+			r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)",
+				r.modPath, pos, mod.name, *armName, en, en))
+			return
+		}
 		*armName = prefix + *armName
 		return
 	}
@@ -2399,6 +2448,55 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 	if r.ownStructs[*armName] {
 		*armName = r.selfPrefix + *armName
 	}
+}
+
+// rewritePatElems applies rewriteVariantPattern to every variant
+// sub-pattern nested in an arm's payload slots and tuple elements, to any
+// depth, so `Some(mod.Wrap(n))` resolves its qualifier the way the arm's
+// own `mod.Wrap(n)` does.
+func (r *rewriter) rewritePatElems(payloads []*ast.TuplePatElem, elems []ast.TuplePatElem, pos ast.Position) {
+	for _, el := range payloads {
+		if el != nil {
+			r.rewritePatElem(el, pos)
+		}
+	}
+	for i := range elems {
+		r.rewritePatElem(&elems[i], pos)
+	}
+}
+
+func (r *rewriter) rewritePatElem(el *ast.TuplePatElem, pos ast.Position) {
+	if el.VariantName != "" {
+		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, pos)
+	}
+	r.rewritePatElems(el.VariantPayloads, el.Nested, pos)
+}
+
+// qualifiedVariant resolves `mod.name` where name is a variant of one of
+// mod's enums. It reports (mangledEnum, true) for a variant of a `pub
+// enum` the reference should construct or match, ("", true) after
+// recording an error for a variant of a private enum or a name two public
+// enums share, and ("", false) when name is not a variant at all, so the
+// caller's function / const path runs. A public plain function of the
+// same name wins, as it does for a bare name in the checker.
+func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Position) (string, bool) {
+	if mod.publicPlainFuncs[name] || mod.publicConsts[name] {
+		return "", false
+	}
+	if en, ok := mod.publicVariants[name]; ok {
+		if en == "" {
+			r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of more than one exported enum in module %q; match on a value of the enum you mean",
+				r.modPath, pos, mod.name, name, mod.name))
+			return "", true
+		}
+		return prefix + en, true
+	}
+	if en, ok := mod.allVariants[name]; ok && !mod.allDecls[name] {
+		r.errs = append(r.errs, fmt.Errorf("%s:%s: %s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)",
+			r.modPath, pos, mod.name, name, en, en))
+		return "", true
+	}
+	return "", false
 }
 
 // rewriteStructName turns a struct name (possibly qualified as
