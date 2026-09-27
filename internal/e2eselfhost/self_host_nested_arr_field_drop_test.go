@@ -17,22 +17,19 @@ var nestedArrFieldDropCases = []struct {
 	name string
 	src  string
 	want int
-	// pinned: the lowerings on which the row still leaks for a reason outside
-	// this fix, with the census it leaves.
-	pinned map[string][2]int64
 }{
 	{"literal", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     var r: Bag = Bag { n: 3, grid: [[3, 1], [2, 3]] };
     return r.n + r.grid.len();
 }
-`, 5, nil},
+`, 5},
 	{"strarr_literal", `struct Grid { n: i32, rows: string[][] }
 function main(): i32 {
     var r: Grid = Grid { n: 3, rows: [["ab", "c"], ["def"]] };
     return r.n + r.rows.len() + r.rows[1][0].len();
 }
-`, 8, nil},
+`, 8},
 	{"loop_built_producer", `struct Bag { n: i32, grid: i32[][] }
 function build(k: i32): Bag {
     var g: i32[][] = [];
@@ -55,7 +52,7 @@ function main(): i32 {
     }
     return acc + r.n;
 }
-`, 51, map[string][2]int64{"ast_main": {57, 50}}},
+`, 51},
 	{"rebind_read_after_churn", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     var acc: i32 = 0;
@@ -70,7 +67,7 @@ function main(): i32 {
     }
     return acc;
 }
-`, 68, nil},
+`, 68},
 	{"strarr_producer_rebind", `struct Grid { n: i32, rows: string[][] }
 function mk(k: i32): Grid {
     return Grid { n: k, rows: [["ab", "c"], ["def", "g"]] };
@@ -88,7 +85,7 @@ function main(): i32 {
     }
     return acc;
 }
-`, 82, map[string][2]int64{"ast_main": {44, 41}}},
+`, 82},
 	{"shared_into_struct_array", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     var g: i32[][] = [[1, 2], [3]];
@@ -101,14 +98,14 @@ function main(): i32 {
     var junk: i32[] = [7, 7];
     return t + g[1][0] + b.grid[0][1] + a.n + junk.len();
 }
-`, 27, nil},
+`, 27},
 	{"nested_struct", `struct Bag { n: i32, grid: i32[][] }
 struct Box2 { b: Bag, m: i32 }
 function main(): i32 {
     var o: Box2 = Box2 { b: Bag { n: 1, grid: [[1, 2], [3, 4]] }, m: 2 };
     return o.b.grid[1][1] + o.m;
 }
-`, 6, nil},
+`, 6},
 	{"tuple_holds_field", `struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     var acc: i32 = 0;
@@ -123,7 +120,7 @@ function main(): i32 {
     }
     return acc;
 }
-`, 36, nil},
+`, 36},
 	{"tuple_holds_strarr_field", `struct Grid { n: i32, rows: string[][] }
 function main(): i32 {
     var r: Grid = Grid { n: 2, rows: [["ab", "c"], ["def"]] };
@@ -131,7 +128,7 @@ function main(): i32 {
     r = Grid { n: 1, rows: [["x"]] };
     return p.1[1][0].len() + p.0 + r.rows.len();
 }
-`, 6, nil},
+`, 6},
 	{"tuple_holds_local", `function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -144,7 +141,7 @@ function main(): i32 {
     }
     return acc;
 }
-`, 33, nil},
+`, 33},
 }
 
 var nestedArrFieldDropLowerings = []struct{ name, env string }{
@@ -173,10 +170,9 @@ func TestSelfHostNestedArrFieldDropX86_64(t *testing.T) {
 				if exit != tc.want {
 					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
 				}
-				pin, pinned := tc.pinned[lw.name]
-				assertNestedArrCensus(t, stderr, pin, pinned)
+				assertBalancedCensus(t, stderr)
 				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
-				if exit != tc.want || forArrStructSanitizerFault(stderr, !pinned) {
+				if exit != tc.want || forArrStructSanitizerFault(stderr, true) {
 					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer report\n%s", exit, tc.want, stderr)
 				}
 			})
@@ -202,8 +198,7 @@ func TestSelfHostNestedArrFieldDropArm64(t *testing.T) {
 				if code := cmd.ProcessState.ExitCode(); code != tc.want {
 					t.Fatalf("exit = %d, want %d\n%s", code, tc.want, eb.String())
 				}
-				pin, pinned := tc.pinned[lw.name]
-				assertNestedArrCensus(t, eb.String(), pin, pinned)
+				assertBalancedCensus(t, eb.String())
 			})
 		}
 	}
@@ -222,21 +217,8 @@ func TestSelfHostNestedArrFieldDropWasm(t *testing.T) {
 				if exit != tc.want {
 					t.Fatalf("exit = %d, want %d\n%s", exit, tc.want, stderr)
 				}
-				pin, pinned := tc.pinned[lw.name]
-				assertNestedArrCensus(t, stderr, pin, pinned)
+				assertBalancedCensus(t, stderr)
 			})
 		}
-	}
-}
-
-// assertNestedArrCensus: a balanced census, or exactly the pinned one. The two
-// pins are the caller-side leak of a struct a semantic-lowered producer returns
-// to an AST-lowered main (#10415).
-func assertNestedArrCensus(t *testing.T, stderr string, pin [2]int64, pinned bool) {
-	t.Helper()
-	if pinned {
-		assertLeakPinned(t, stderr, pin, "#10415")
-	} else {
-		assertBalancedCensus(t, stderr)
 	}
 }

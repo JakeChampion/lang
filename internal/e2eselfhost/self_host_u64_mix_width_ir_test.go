@@ -31,6 +31,8 @@ var u64MixWidthIRCases = []struct {
 	{"u32-field-static-high", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 4000000000 }; var s: u64 = 0; return ((s + p.x) - 3999999958) as i32; }`},
 	{"u32-field-static-hex", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 0x1E }; var s: u64 = 12; return (s + p.x) as i32; }`},
 	{"u32-field-static-mixed", `struct P { a: i32, x: u32, on: boolean } function main(): i32 { var p: P = P { a: 0 - 5, x: 40, on: true }; var s: u64 = 7; if (p.on) { return (s + p.x) as i32 + p.a; } return 0; }`},
+	// Two records differing only in a u32 field are two boxes (#10501). 30 + 12 = 42.
+	{"u32-field-static-distinct", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 30 }; var q: P = P { x: 12 }; var s: u64 = 0; return (s + p.x + q.x) as i32; }`},
 	// u64 + u32 tuple element. 30 + 12 = 42.
 	{"u32-tuple", `function main(): i32 { var t: (u32, u32) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
 	// u64 + u32[] element across a reduction. 10+20+30 = 60.
