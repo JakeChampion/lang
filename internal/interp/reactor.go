@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"os/signal"
 	"syscall"
 	"time"
 )
@@ -17,8 +19,76 @@ import (
 type reactor struct {
 	fd int
 	// handles maps a raw descriptor in the set to the handle it was
-	// watched under.
+	// watched under; a signal's pipe maps to -signal.
 	handles map[int]int64
+	// signals holds the pipes that turn a delivered signal into readiness.
+	signals map[int]*signalWatch
+}
+
+// signalWatch is one watched signal: os/signal delivers to ch, a
+// goroutine writes a byte per delivery into the pipe, and the pipe's read
+// end sits in the set under -signal.
+type signalWatch struct {
+	r, w *os.File
+	ch   chan os.Signal
+}
+
+// watchSignal makes signal sig a readiness event: the pipe's read end,
+// which reactor_ctl answers as the descriptor an unwatch names.
+func (r *reactor) watchSignal(sig int) (int, error) {
+	if r.signals == nil {
+		r.signals = map[int]*signalWatch{}
+	}
+	if w, ok := r.signals[sig]; ok {
+		return int(w.r.Fd()), nil
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return 0, err
+	}
+	raw := int(pr.Fd())
+	if err := syscall.SetNonblock(raw, true); err != nil {
+		pr.Close()
+		pw.Close()
+		return 0, err
+	}
+	if err := r.watch(raw, 1); err != nil {
+		pr.Close()
+		pw.Close()
+		return 0, err
+	}
+	w := &signalWatch{r: pr, w: pw, ch: make(chan os.Signal, 8)}
+	signal.Notify(w.ch, syscall.Signal(sig))
+	go func() {
+		for range w.ch {
+			w.w.Write([]byte{1})
+		}
+	}()
+	r.signals[sig] = w
+	r.handles[raw] = -int64(sig)
+	return raw, nil
+}
+
+func (r *reactor) unwatchSignal(sig int) error {
+	w, ok := r.signals[sig]
+	if !ok {
+		return syscall.EINVAL
+	}
+	signal.Stop(w.ch)
+	close(w.ch)
+	raw := int(w.r.Fd())
+	err := r.watch(raw, 0)
+	delete(r.handles, raw)
+	delete(r.signals, sig)
+	w.r.Close()
+	w.w.Close()
+	return err
+}
+
+// drainSignal consumes the deliveries queued in a signal's pipe.
+func (r *reactor) drainSignal(raw int) {
+	var buf [128]byte
+	syscall.Read(raw, buf[:])
 }
 
 func errnoOf(err error) int64 {
@@ -82,8 +152,22 @@ func builtinReactorCtl(i *Interp, args []Value) (Value, error) {
 	}
 	switch n[1] {
 	case 3:
+		for sig := range r.signals {
+			r.unwatchSignal(sig)
+		}
 		syscall.Close(r.fd)
 		delete(i.reactors, n[0])
+		return Number(0), nil
+	case 4:
+		raw, err := r.watchSignal(int(n[2]))
+		if err != nil {
+			return Number(errnoOf(err)), nil
+		}
+		return Number(raw), nil
+	case 5:
+		if err := r.unwatchSignal(int(n[2])); err != nil {
+			return Number(errnoOf(err)), nil
+		}
 		return Number(0), nil
 	case 1, 2:
 		raw, ok := i.rawFd(n[2])
@@ -143,8 +227,14 @@ func builtinReactorWait(i *Interp, args []Value) (Value, error) {
 		return Number(errnoOf(err)), nil
 	}
 	for k, e := range got {
-		events.E[2*k] = Number(r.handles[e.raw])
-		events.E[2*k+1] = Number(e.ready)
+		handle := r.handles[e.raw]
+		ready := e.ready
+		if handle < 0 {
+			r.drainSignal(e.raw)
+			ready = 1
+		}
+		events.E[2*k] = Number(handle)
+		events.E[2*k+1] = Number(ready)
 	}
 	return Number(len(got)), nil
 }

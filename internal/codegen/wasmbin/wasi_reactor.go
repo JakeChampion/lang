@@ -32,10 +32,11 @@ import (
 
 // Preview 1 errno numbers the reactor answers before any host call.
 const (
-	errnoReactorBadf  = 8
-	errnoReactorInval = 28
-	errnoReactorIo    = 29
-	errnoReactorAgain = 6
+	errnoReactorBadf   = 8
+	errnoReactorInval  = 28
+	errnoReactorIo     = 29
+	errnoReactorAgain  = 6
+	errnoReactorNotsup = 58
 )
 
 const reactorEntrySize = 16
@@ -231,6 +232,15 @@ func buildReactorCtlBody(idxs map[string]uint32) []byte {
 	w.retConst(0)
 	w.end()
 
+	// A signal has no pollable on wasm: ops 4 and 5 are -ENOTSUP.
+	w.lg(op)
+	w.k(4)
+	w.sub()
+	w.k(2)
+	w.body = numeric.InstI32LtU(w.body)
+	w.ifStart()
+	w.retConst(-errnoReactorNotsup)
+	w.end()
 	// Only ops 1 and 2 remain.
 	w.lg(op)
 	w.k(1)

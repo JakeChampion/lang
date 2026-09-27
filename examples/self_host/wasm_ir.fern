@@ -2952,15 +2952,25 @@ pub function wasi_udp_socket_imports(): string {
 pub function wasi_udp_send_imports(): string {
     var o: string = "";
     o = o + "  (import \"wasi:sockets/udp@0.2.0\" \"[method]outgoing-datagram-stream.check-send\" (func $__fern_wasi_udp_check_send (param i32 i32)))\n";
-    o = o + "  (import \"wasi:sockets/udp@0.2.0\" \"[method]outgoing-datagram-stream.subscribe\" (func $__fern_wasi_udp_subscribe (param i32) (result i32)))\n";
     o = o + "  (import \"wasi:sockets/udp@0.2.0\" \"[method]outgoing-datagram-stream.send\" (func $__fern_wasi_udp_send_dgram (param i32 i32 i32 i32)))\n";
     return o;
+}
+
+// The datagram-stream subscribes stand apart from the send and receive
+// imports: reactor_ctl watches the streams without moving a datagram, and
+// receive returns a list the host materialises through cabi_realloc, which
+// a module that only subscribes does not export.
+pub function wasi_udp_out_subscribe_import(): string {
+    return "  (import \"wasi:sockets/udp@0.2.0\" \"[method]outgoing-datagram-stream.subscribe\" (func $__fern_wasi_udp_subscribe (param i32) (result i32)))\n";
+}
+
+pub function wasi_udp_in_subscribe_import(): string {
+    return "  (import \"wasi:sockets/udp@0.2.0\" \"[method]incoming-datagram-stream.subscribe\" (func $__fern_wasi_udp_in_subscribe (param i32) (result i32)))\n";
 }
 
 pub function wasi_udp_recv_imports(): string {
     var o: string = "";
     o = o + "  (import \"wasi:sockets/udp@0.2.0\" \"[method]incoming-datagram-stream.receive\" (func $__fern_wasi_udp_receive (param i32 i64 i32)))\n";
-    o = o + "  (import \"wasi:sockets/udp@0.2.0\" \"[method]incoming-datagram-stream.subscribe\" (func $__fern_wasi_udp_in_subscribe (param i32) (result i32)))\n";
     return o;
 }
 
@@ -3041,6 +3051,7 @@ pub function reactor_ctl_func(): string {
     o = o + "      (call $__fern_raw_free (local.get $ents) (i32.mul (local.get $cap) (i32.const 16)))\n";
     o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 12))\n";
     o = o + "      (return (i32.const 0))))\n";
+    o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 2)) (then (return (i32.const -58))))\n";
     o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 1)) (then (local.set $interest (i32.and (local.get $arg) (i32.const 3)))))\n";
     o = o + "    (local.set $kind (i32.load offset=12 (local.get $fd)))\n";
@@ -10546,8 +10557,10 @@ function preview1_imports(needs: string[]): string {
     if (need_udp_socket(needs)) { parts = parts.append(wasi_udp_socket_imports()); }
     // reactor_ctl subscribes both datagram streams, so it shares the udp
     // send and receive import sets.
-    if (need_udp_send(needs) || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_send_imports()); }
-    if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_recv_imports()); }
+    if (need_udp_send(needs)) { parts = parts.append(wasi_udp_send_imports()); }
+    if (need(needs, "udp_recvfrom")) { parts = parts.append(wasi_udp_recv_imports()); }
+    if (need_udp_send(needs) || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_out_subscribe_import()); }
+    if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_in_subscribe_import()); }
     var udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
     if (udp_waits && !need(needs, "wasm_block") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_block_import()); }
     if (udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
