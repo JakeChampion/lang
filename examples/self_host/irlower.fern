@@ -28128,8 +28128,21 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
 function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
     var st: LowerState = lower_expr(val, s);
     if (!st.ok) { return st; }
-    if (stored_elem_is_borrow(val, st)) { st = st.retain_tos("append-borrowed-elem"); }
+    if (stored_elem_is_borrow(val, st) || swept_arr_local_ident(val, st)) { st = st.retain_tos("append-borrowed-elem"); }
     return st;
+}
+
+// swept_arr_local_ident: `e` names a local array this frame owns and releases
+// at its exit sweep. An append is not a move site (rc_ml_compute_toplevel
+// knows aliases, destructures and constructions), so the container takes its
+// own count; without it the sweep freed the element under the container
+// (`chunks.append(chunk)`, a `u8[][]` field grown with a fresh `u8[]`).
+function swept_arr_local_ident(e: ast.Expr, s: LowerState): boolean {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return false; }
+    var sl: i32 = s.slot_of(nm);
+    if (sl < s.frame.n_params) { return false; }
+    return s.is_arr_slot(sl) && !s.is_borrowed_arr_slot(sl);
 }
 
 // emit_arr_share emits one side of an array share bracket: load `slot`, call
