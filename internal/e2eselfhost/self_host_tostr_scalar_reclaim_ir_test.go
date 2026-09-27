@@ -355,6 +355,9 @@ func TestSelfHostTostrScalarReclaimWasmIR(t *testing.T) {
 			}
 			cmd := exec.Command("wasmtime", "run", watFile)
 			_ = cmd.Run()
+			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+				t.Fatalf("wasmtime did not exit normally for %s:\n%s", tc.name, wat)
+			}
 			if code := cmd.ProcessState.ExitCode(); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = to_string box leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
 			}
