@@ -8,12 +8,13 @@ import (
 	"testing"
 )
 
-// A map whose key and value are 32-bit integers or booleans runs on core/map's
-// hash table under the typed lowering (ssarc.routed_map, #9608). These cases
-// pin what the routing has to keep: the whole Map surface, copy-on-write under
-// an alias, negative keys (which cross into core/map's usize slot and must be
-// equal slots however they were computed), u32 values past 2^31 and boolean
-// columns — on every target, with every allocation returned.
+// A map whose key is a string, a 32-bit integer or a boolean, and whose value
+// is a 32-bit integer or a boolean, runs on core/map's hash table under the
+// typed lowering (ssarc.routed_map, #9608). These cases pin what the routing
+// has to keep: the whole Map surface, copy-on-write under an alias, negative
+// keys (which cross into core/map's usize slot and must be equal slots however
+// they were computed), u32 values past 2^31, boolean columns, and a string key
+// column's units — on every target, with every allocation returned.
 
 // routedMapSurfaceSrc exercises every routed op: construction, insert with and
 // without an alias, get / get_or / has, without, keys / values, the cursor,
@@ -128,6 +129,45 @@ function main(): i32 {
 }
 `
 
+// routedMapStringKeysSrc: a string key column holds one unit of each key. An
+// overwrite keeps the equal key already there and releases the arriving one;
+// `without` releases the key it removes; a copy under an alias takes a unit of
+// every key; the map's last release walks them all.
+const routedMapStringKeysSrc = `import "core/map";
+import "std/i32";
+function key(i: i32): string { return "k" + i.to_string(); }
+function build(n: i32): Map[string, i32] {
+    var m: Map[string, i32] = Map {};
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(key(i), i * 3); i = i + 1; }
+    return m;
+}
+function main(): i32 {
+    var m: Map[string, i32] = build(200);
+    m = m.insert(key(5), 999);
+    m = m.insert("lit", 7);
+    var alias: Map[string, i32] = m;
+    alias = alias.insert(key(1000), 1);
+    alias = alias.insert(key(6), 66);
+    var s: i32 = m.len() * 1000 + alias.len();
+    s = s + m.get_or(key(5), 0) + m.get_or("nope", -9) + alias.get_or(key(6), 0) + m.get_or(key(6), 0);
+    if (m.has("lit")) { s = s + 1; }
+    match (m.get(key(7))) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
+    var r: (Map[string, i32], boolean) = m.without(key(8));
+    var m2: Map[string, i32] = r.0;
+    if (r.1 && !m2.has(key(8)) && m.has(key(8))) { s = s + 13; }
+    var r2: (Map[string, i32], boolean) = m2.without("absent");
+    m2 = r2.0;
+    var kl: i32 = 0;
+    for k in m2.keys() { kl = kl + k.len(); }
+    var it: i32 = 0;
+    for (k, v) in m2 { it = it + k.len() + v; }
+    var e: Map[string, i32] = m2.cleared();
+    print(s.to_string() + " " + kl.to_string() + " " + it.to_string() + " " + e.len().to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -146,6 +186,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"negative_keys", routedMapNegativeKeysSrc, "-150 -147 2847 false"},
 		{"cow", routedMapCowSrc, "14 1000 true false 100 100 99"},
 		{"u32_bool", routedMapU32BoolSrc, "true true 2 12"},
+		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
