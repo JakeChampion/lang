@@ -239,16 +239,39 @@ function generic_decl(fd: parser.FuncDecl, scope: checker.Scope): boolean {
 // function type's slot, a receiver's argument — marks the declaration a
 // template: a method on `Option[T]` declares no type parameter of its own,
 // and the parser's instance of `map[T, U]` at `T = i32` keeps `U` in its
-// result for the function argument to bind.
+// result for the function argument to bind. The names a `dyn` set lists are
+// traits, never variables, so the set is skipped whole.
 function spelled_typevar(spelling: string, scope: checker.Scope): boolean {
     var i: i32 = 0;
     while (i < spelling.len()) {
         var start: i32 = i;
-        while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
-        if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) { return true; }
+        i = ident_end(spelling, i);
+        if (i > start && slice_unchecked(spelling, start, i) == "dyn") {
+            i = dyn_set_end(spelling, i);
+        } else if (i > start && bare_typevar(slice_unchecked(spelling, start, i) + "", scope)) {
+            return true;
+        }
         if (i == start) { i = i + 1; }
     }
     return false;
+}
+
+function ident_end(spelling: string, i: i32): i32 {
+    while (i < spelling.len() && ((spelling[i] >= b'A' && spelling[i] <= b'Z') || (spelling[i] >= b'a' && spelling[i] <= b'z') || (spelling[i] >= b'0' && spelling[i] <= b'9') || spelling[i] == b'_')) { i = i + 1; }
+    return i;
+}
+
+// Past `dyn`, the end of its `T1 + T2 + …` trait set.
+function dyn_set_end(spelling: string, i: i32): i32 {
+    while (true) {
+        while (i < spelling.len() && spelling[i] == b' ') { i = i + 1; }
+        i = ident_end(spelling, i);
+        var j: i32 = i;
+        while (j < spelling.len() && spelling[j] == b' ') { j = j + 1; }
+        if (j >= spelling.len() || spelling[j] != b'+') { return i; }
+        i = j + 1;
+    }
+    return i;
 }
 
 // A type variable reaches the checker as an UNKNOWN naming it: a promoted
@@ -1066,6 +1089,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
     s = left.s;
     if (!s.ok) { return left; }
     if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left.id])) { want = s.values[left.id]; }
+    if (!operand_type(want) && parser.float_literal_tree(b.right) && ssasem.is_float(s.values[left.id])) { want = s.values[left.id]; }
     // The left operand decides whether this is a composite comparison, and the
     // decision is taken before the RIGHT one is produced: the method call
     // produces it, and producing it here too would give the call two values for
@@ -1172,6 +1196,7 @@ function shift_count(op: string, count: Value, value: typeinfo.Type): Value {
 // operand through it; a cast names its own destination and passes none on.
 function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
     if (u.op == "try_") { return try_expr(u, s); }
+    if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") { return downcast(e, u, s); }
     if (parser.is_cast_op(u.op)) { return cast(e, u, s); }
     var want: typeinfo.Type = typeinfo.unchecked();
     if (u.op == "-") { want = expected; }
@@ -1258,6 +1283,44 @@ function try_conversion(from: typeinfo.Type, to: typeinfo.Type, s: State): strin
     var c: ssasem.Contract = s.contracts[ssasem.find_contract(s.contracts, key)];
     if (c.params.len() != 1 || !semtypes.equal(c.params[0], from)) { return ""; }
     return key;
+}
+
+// `x as? T` is `Some(x)` narrowed to `T` when the dyn box is a `T`, and `None`
+// otherwise: a test of the box's shape, and a branch joining the two options.
+// The narrowing is the same box, so `Some` holds a unit of it.
+function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
+    var v: Value = expr(u.operand, s, typeinfo.unchecked());
+    s = v.s;
+    if (!s.ok) { return v; }
+    if (!ssasem.is_dyn(s.values[v.id])) { return refused(s, "downcast of a value that is not dyn"); }
+    var target: string = slice_unchecked(u.op, 4, u.op.len()) + "";
+    var concrete: typeinfo.Type = resolved(s.scope.resolve_type(target), s.template, s.scope, s.binding);
+    if (struct_name(concrete) != target && union_name(concrete) != target) { return refused(s, "downcast target: " + target); }
+    if (union_name(concrete) == target && union_layout(s, target) != semrecords.layout_variant() && union_layout(s, target) != semrecords.layout_member()) {
+        return refused(s, "downcast to an enum whose box carries no shape: " + target);
+    }
+    var whole: typeinfo.Type = ssasem.option_of(concrete);
+    var layout: i32 = semrecords.layout_option();
+    var names: string[] = variant_names(s, whole, layout);
+    var some: Payloads = literal_payloads(s, whole, names[0], layout);
+
+    var pred: i32 = s.cur.id;
+    var hit: i32 = s.next_block;
+    var miss: i32 = hit + 1;
+    var join: i32 = hit + 2;
+    s = State { ...s, next_block: join + 1 };
+    var test: Value = define(s, ssasem.dyn_is(), [v.id], 0, target, t_bool());
+    s = terminate(test.s, t_brif(test.id, hit, miss));
+
+    var narrowed: Value = define(open(s, hit, [pred]), ssasem.dyn_as(), [v.id], 0, target, some.types[0]);
+    var yes: Value = define(narrowed.s, ssasem.variant_new(), [narrowed.id], 0, names[0], whole);
+    var hit_end: i32 = yes.s.cur.id;
+    s = terminate(yes.s, t_br(join));
+
+    var no: Value = define(open(s, miss, [pred]), ssasem.variant_new(), [], 0, names[1], whole);
+    var miss_end: i32 = no.s.cur.id;
+    s = terminate(no.s, t_br(join));
+    return define(open(s, join, [hit_end, miss_end]), 8, [yes.id, no.id], 0, "", whole);
 }
 
 function try_layout(layout: i32): boolean {
@@ -1750,7 +1813,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
 function dyn_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
     var receiver: typeinfo.Type = s.values[recv.id];
     var traits: string[] = parser.dyn_trait_set(typeinfo.spelling(receiver));
-    var arms: string[] = dyn_arms(s.funcs, fa.field, traits);
+    var arms: string[] = dyn_arms(s.funcs, s.impls, fa.field, traits);
     if (arms.len() == 0) { return refused(s, "dyn method has no implementation: " + fa.field); }
     var shape: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
     for arm in arms {
@@ -3817,7 +3880,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
         var n: string = util.base_type_name(imp.impl_type);
         if (util.base_type_name(imp.trait_name) != util.base_type_name(traits[0]) || util.index_of_str(seen, n) >= 0) { continue; }
         seen = seen.append(n);
-        if (!implements_all(s, n, traits)) { continue; }
+        if (!implements_traits(s.impls, n, traits)) { continue; }
         if (n == "string") { out = out.append(t_string()); }
         else if (record_schema(n, s).name.len() > 0) { out = out.append(typeinfo.TypeStruct { name: n, args: [] }); }
         else if (union_layout(s, n) == semrecords.layout_variant()) { out = out.append(typeinfo.TypeUnion { name: n, args: [] }); }
@@ -3851,10 +3914,10 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
     return out;
 }
 
-function implements_all(s: State, n: string, traits: string[]): boolean {
+function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
     for tr in traits {
         var found: boolean = false;
-        for imp in s.impls {
+        for imp in impls {
             if (util.base_type_name(imp.trait_name) == util.base_type_name(tr) && util.base_type_name(imp.impl_type) == n) { found = true; }
         }
         if (!found) { return false; }
@@ -4411,6 +4474,9 @@ function rc_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__map_hash_seed", params: [], modes: [], result: t_i32() },
         ssasem.Contract { name: "__fern_drop_arr_ptr", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__fern_arr_dec", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        // The handle release in __map_drop_impl: frees the rc'd block at the
+        // address minus its header, and answers the address.
+        ssasem.Contract { name: "__fern_box_free", params: [t_usize(), t_i32()], modes: [v, v], result: t_usize() },
         // The manual-release and manual-retain test hooks. Each is lent its
         // array: the count it moves is one the plan does not see, which is the
         // point of a hook that exercises the underflow detector. The retain
@@ -4969,31 +5035,42 @@ pub function build_module(mod: parser.Module): Built {
         if (decls[i].template) { decls = decls.with(i, template_verdict(names[i], instances)); }
         i = i + 1;
     }
-    return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, util.append_all(decls, instances)) };
+    return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, mod.impls, util.append_all(decls, instances)) };
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the
 // methods `parser.dyn_arm_matches` picks, which is the search every backend's
 // dispatch chain runs, less an array method's `T[]` receiver, which no chain
 // takes.
-pub function dyn_arms(funcs: parser.FuncDecl[], method: string, traits: string[]): string[] {
+// A method is an arm only on a type that implements the whole trait set: a
+// type with a same-named method of its own is never inside the dyn. A
+// monomorphised clone `base__…` implements what its generic base does.
+pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method: string, traits: string[]): string[] {
     var out: string[] = [];
     for fd in funcs {
         var n: i32 = fd.receiver_type.len();
         if (n == 0 || (n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]")) { continue; }
+        if (!arm_receiver_implements(impls, util.base_type_name(fd.receiver_type), traits)) { continue; }
         if (parser.dyn_arm_matches(fd, traits, method, funcs)) { out = out.append(decl_key(fd)); }
     }
     return out;
 }
 
-function dispatched_arms(funcs: parser.FuncDecl[], all: Produced[]): string[] {
+function arm_receiver_implements(impls: parser.ImplInfo[], n: string, traits: string[]): boolean {
+    if (implements_traits(impls, n, traits)) { return true; }
+    var at: i32 = 1;
+    while (at + 1 < n.len() && !(n[at] == b'_' && n[at + 1] == b'_')) { at = at + 1; }
+    return at + 1 < n.len() && implements_traits(impls, slice_unchecked(n, 0, at) + "", traits);
+}
+
+function dispatched_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], all: Produced[]): string[] {
     var out: string[] = [];
     for p in all {
         if (!p.ok) { continue; }
         for b in p.func.graph.blocks {
             for ins in b.insts {
                 if (ins.kind_tag != ssasem.call() || !ssasem.is_dyn_call(ins.str)) { continue; }
-                for arm in dyn_arms(funcs, ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str)) {
+                for arm in dyn_arms(funcs, impls, ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str)) {
                     if (util.index_of_str(out, arm) < 0) { out = out.append(arm); }
                 }
             }

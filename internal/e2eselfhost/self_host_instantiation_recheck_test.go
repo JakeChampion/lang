@@ -173,7 +173,7 @@ function main(): i32 { var a: i32 = 1; var b: i32 = 2; return g(a +? b); }
 	{"checked-op-local-into-own", `function g(own o: Option[i32]): i32 {
   match (o) { Some(v) => { return v; }, None => { return 0; } }
 }
-function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c = a +? b; return g(c); }
+function main(): i32 { var a: i32 = 1; var b: i32 = 2; var c = a +? b; var r: i32 = g(c); match (c) { Some(v) => { return r + v; }, None => { return r; } } }
 `, 1},
 	{"cast-to-string-into-own", `function g(own s: string): i32 { return s.len(); }
 function main(): i32 { var k: usize = 3; return g(k as string); }

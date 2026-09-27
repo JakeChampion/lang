@@ -1761,7 +1761,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-single-consume-ok", "function sink(xs: i32[]): i32 { return xs[0]; }\nfunction f(own xs: i32[]): i32 { return sink(xs); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E051: argument to an owned parameter must be an owned value.
 		{"own-arg-borrowed-param", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(xs: i32[]): i32 { return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"own-arg-plain-local", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { var xs: i32[] = [1, 2]; return consume(xs); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		// A local handed over where it dies is a move (#9541); one read after
+		// the call, or a handover inside a loop, is still a borrow.
+		{"own-arg-plain-local-last-use", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { var xs: i32[] = [1, 2]; return consume(xs); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-plain-local-read-after", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction mk(): i32[] { return [1, 2]; }\nfunction f(): i32 { var xs: i32[] = mk(); var n: i32 = consume(xs); return n + xs.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-plain-local-in-loop", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction mk(): i32[] { return [1, 2]; }\nfunction f(): i32 { var xs: i32[] = mk(); var n: i32 = 0; while (n < 3) { n = n + consume(xs); } return n; }\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-fresh-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(): i32 { return consume([1, 2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"own-arg-forward-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction f(own ys: i32[]): i32 { return consume(ys); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E049: assigning to a reference-typed variable captured by a closure.
@@ -2510,6 +2514,18 @@ func equalStrings(a, b []string) bool {
 // regression then fails loudly in this differential instead of remaining a
 // latent false positive only triggered when someone runs the self-host checker
 // over real code.
+// lastUsePrelude declares the consumers and producers the e051-last-use rows
+// share.
+const lastUsePrelude = "struct W { d: i32[], n: i32 }\nstruct Pair { a: W, b: W }\n" +
+	"function keep(own xs: i32[], k: i32): i32 { return xs[0] + k; }\n" +
+	"function eat(own w: W): i32 { return w.n; }\n" +
+	"function grow(own xs: i32[], v: i32): i32[] { return xs.append(v); }\n" +
+	"function mk(n: i32): i32[] { return [n]; }\n" +
+	"function mkw(n: i32): W { return W { d: [n], n: n }; }\n" +
+	"function mkp(n: i32): Pair { return Pair { a: mkw(n), b: mkw(n) }; }\n" +
+	"function (w: W) bump(k: i32): W { return W { d: w.d, n: w.n + k }; }\n" +
+	"function main(): i32 { return 0; }\n"
+
 func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
@@ -2946,6 +2962,34 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"dyn-array-literal-mixed-arg-ok", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction n(xs: dyn Show[]): i32 { return xs.len(); }\nfunction main(): i32 { return n([1, \"ab\"]); }\n"},
 		{"dyn-array-literal-mixed-assign", "trait Show { function show(self: Self): i32; }\nimpl Show for i32 { function show(self: Self): i32 { return self; } }\nimpl Show for string { function show(self: Self): i32 { return self.len(); } }\nfunction main(): i32 { var xs: dyn Show[] = [1]; xs = [2, \"ab\"]; return xs.len(); }\n"},
 		{"array-literal-mixed-undirected", "function main(): i32 { var xs = [1, \"ab\"]; return xs.len(); }\n"},
+		// A local at its last use in an `own` position (#9541): native admits by
+		// CallArgDeaths and the self-host by its lu_* port, so each shape that
+		// analysis reasons about has a row here.
+		{"e051-last-use-ret-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; return keep(a, 1); }\n"},
+		{"e051-last-use-ret-binary-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; return keep(a, 1) + 1; }\n"},
+		{"e051-last-use-mid-call", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r; }\n"},
+		{"e051-last-use-mid-lit", lastUsePrelude + "function f(): i32 { var a: i32[] = [1]; var r: i32 = keep(a, 1); return r; }\n"},
+		{"e051-last-use-read-again", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var r: i32 = keep(a, 1); return r + a[0]; }\n"},
+		{"e051-last-use-loop", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { t = t + keep(a, 1); } return t; }\n"},
+		{"e051-last-use-loop-nested-reassign", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }\n"},
+		{"e051-last-use-two-stmt-loop", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var t: i32 = 0; while (t < 2) { var b: i32[] = grow(a, 2); a = b; t = t + 1; } return a.len(); }\n"},
+		{"e051-last-use-defer", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); defer { var z: i32 = a.len(); } return keep(a, 1); }\n"},
+		{"e051-last-use-lambda", lastUsePrelude + "function f(): i32 { var a: i32[] = mk(1); var g = (): i32 => a.len(); return keep(a, 1) + g(); }\n"},
+		{"e051-last-use-in-lambda", lastUsePrelude + "function f(): i32 { var g = (): i32 => { var a: i32[] = mk(1); return keep(a, 1); }; return g(); }\n"},
+		{"e051-last-use-held", lastUsePrelude + "function two(x: i32, k: i32): i32 { return k; }\nfunction f(): i32 { var a: i32[] = mk(1); var r: i32 = two(a.len(), keep(a, 1)); return r; }\n"},
+		{"e051-last-use-struct-path-last", lastUsePrelude + "function f(c: boolean): i32 { var w: W = mkw(1); if (c) { var r: i32 = eat(w); return r; } return w.n; }\n"},
+		{"e051-last-use-array-path-last", lastUsePrelude + "function f(c: boolean): i32 { var a: i32[] = mk(1); if (c) { var r: i32 = keep(a, 1); return r; } return a.len(); }\n"},
+		{"e051-last-use-path-last-break", lastUsePrelude + "function f(c: boolean): i32 { var w: W = mkw(1); var r: i32 = 0; while (c) { if (c) { r = eat(w); break; } } return r + w.n; }\n"},
+		{"e051-last-use-unpack", lastUsePrelude + "function f(): i32 { var p: Pair = mkp(1); var x: W = p.a; var r: i32 = eat(x); return r; }\n"},
+		{"e051-last-use-unpack-twice", lastUsePrelude + "function f(): i32 { var p: Pair = mkp(1); var x: W = p.a; var r: i32 = eat(x); return r + p.a.n; }\n"},
+		{"e051-last-use-rename-param", lastUsePrelude + "function f(w0: W): i32 { var w: W = w0; var r: i32 = eat(w); return r; }\n"},
+		{"e051-last-use-method-chain", lastUsePrelude + "function f(): i32 { var w: W = mkw(1); var v: W = w.bump(1); var u: W = v.bump(2); return eat(u); }\n"},
+		{"e051-last-use-field-arg-local", lastUsePrelude + "function f(): i32 { var w: W = mkw(1); return keep(w.d, 1); }\n"},
+		{"e051-last-use-if-expr", lastUsePrelude + "function f(c: boolean): i32 { var a: i32[] = mk(1); var r: i32 = if (c) { keep(a, 1) } else { 0 }; return r; }\n"},
+		{"e051-last-use-if-expr-read-after", lastUsePrelude + "function f(c: boolean): i32 { var a: i32[] = mk(1); var r: i32 = if (c) { keep(a, 1) } else { 0 }; return r + a.len(); }\n"},
+		{"e051-last-use-match-expr-read-after", lastUsePrelude + "enum E { A, B }\nfunction f(e: E): i32 { var w: W = mkw(1); var r: i32 = match (e) { A => eat(w), B => 0 }; return r + w.n; }\n"},
+		{"e051-last-use-same-twice", lastUsePrelude + "function both(own a: W, own b: W): i32 { return a.n + b.n; }\nfunction f(): i32 { var x: W = mkw(1); return both(x, x); }\n"},
+		{"e051-last-use-for-in", lastUsePrelude + "function f(): i32 { var t: i32 = 0; for i in [1, 2] { var w: W = mkw(i); t = t + eat(w); } return t; }\n"},
 	}
 
 	for _, tc := range progs {

@@ -128,7 +128,6 @@ function rc_release_helpers(): string[] {
         "__fern_arr_dec",
         "__fern_box_free",
         "__fern_cell_free",
-        "__fern_map_drop",
         "__fern_closure_drop",
         "__fern_drop_arr_ptr",
         "__fern_drop_arr_str",
@@ -171,7 +170,7 @@ function generated_drop_prefixes(): string[] {
 // generated_drop_names are the generated drops whose name carries no type
 // suffix, so no prefix reaches them.
 function generated_drop_names(): string[] {
-    return ["__drop_arr_closure", "__drop_closure_value", "__map_drop_values"];
+    return ["__drop_arr_closure", "__drop_closure_value", "__map_drop_values", "__map_drop_impl"];
 }
 
 // name_has_prefix requires a non-empty suffix: a drop's suffix is the type

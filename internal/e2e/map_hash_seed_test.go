@@ -291,8 +291,7 @@ func TestMapHashSeedVariesPerProcessArm64(t *testing.T) {
 }
 
 // The kv-buffer header size is spelled twice — once in Go as
-// ast.MapHeaderBytes (which the generated __drop_map_* column walks and every
-// backend's __fern_map_drop use) and once in Fern as __map_hdr_bytes (which
+// ast.MapHeaderBytes (which the generated __drop_map_* column walks use) and once in Fern as __map_hdr_bytes (which
 // allocates and indexes the buffer). They must agree exactly.
 //
 // This is not hypothetical: while the header was being widened for the seed,

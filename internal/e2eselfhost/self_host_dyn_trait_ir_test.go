@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // dynTraitIRCases exercise `dyn Trait` method dispatch through the stack-IR
 // path. A `dyn Trait` value's concrete type is known only at runtime, so
@@ -100,6 +93,16 @@ var dynTraitIRCases = []struct {
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function dc(s: dyn Shape): i32 { match (s as? Rect) { Some(re) => { return re.w * re.h; }, None => { return 0; } } } function main(): i32 { var r: Rect = Rect { w: 2, h: 5 }; return dc(r); }`, 10},
 	// HETEROGENEOUS `dyn Shape[]`: downcast each element to Circle and count the
 	// hits. [Circle, Rect, Circle] → 2 circles.
+	// An ENUM target: its box carries the shape of the variant it holds, so
+	// the downcast tests every variant. circle(5) and square(2) hit, a Dot
+	// misses: 5 + 4*10 + 0*100.
+	{"downcast-enum-target",
+		`enum Form { circle(i32), square(i32) } struct Dot { n: i32 } trait Shape { function area(self: Self): i32; } impl Shape for Form { function area(self: Self): i32 { match (self) { circle(r) => { return r; }, square(w) => { return w * w; } } } } impl Shape for Dot { function area(self: Self): i32 { return self.n; } } function to_form(s: dyn Shape): i32 { match (s as? Form) { Some(f) => { return f.area(); }, None => { return 0; } } } function main(): i32 { return to_form(Form.circle(5)) + to_form(Form.square(2)) * 10 + to_form(Dot { n: 4 }) * 100; }`, 45},
+	// A MISS on a concrete that owns a string: the None arm reads the dyn value
+	// again and the census must still balance. 4 + 7*10.
+	{"downcast-string-owner-miss",
+		`import "std/string";
+struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: Self): i32; } impl Tag for Named { function t(self: Self): i32 { return self.s.len(); } } impl Tag for Plain { function t(self: Self): i32 { return self.n; } } function probe(d: dyn Tag): i32 { match (d as? Plain) { Some(p) => { return p.n; }, None => { return 100 + d.t(); } } } function main(): i32 { var a: i32 = probe(Named { s: "ab" + "cd" }); var b: i32 = probe(Plain { n: 7 }); return a - 100 + b * 10; }`, 74},
 	{"downcast-array-count",
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { var n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
 
@@ -199,78 +202,19 @@ var dynTraitIRCases = []struct {
 		`trait Arr { function make(self: Self): string[]; } struct S { s: string } impl Arr for S { function make(self: Self): string[] { return [self.s, "hello"]; } } function main(): i32 { var s: S = S { s: "ab" }; var d: dyn Arr = s; return d.make()[1].len(); }`, 5},
 }
 
-// TestSelfHostDynTraitIRX86_64 routes each case through the self-hosted x86-64
-// driver (asm_run) and asserts the exit code, AND probes the routing
-// (asm_pathprobe_run) to pin each case to the "ir" path.
-func TestSelfHostDynTraitIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range dynTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
-			}
-		})
-	}
-}
-
-// TestSelfHostDynTraitIRWasm runs the same cases through the wasm IR backend
-// (wasm_ir_run -ir): the shape is a numeric type id (i32.load @0), and the
-// dispatch is a nested if/else chain.
-func TestSelfHostDynTraitIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host dyn-trait wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range dynTraitIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "dyntrait_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("dyn-trait wasm IR %q = %d, want %d", tc.name, code, tc.expected)
-			}
-		})
+// TestSelfHostDynTraitIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code and the leak census.
+func TestSelfHostDynTraitIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range dynTraitIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_LEAKCHECK=1")
+				if code != tc.expected {
+					t.Fatalf("exited %d, want %d\n%s", code, tc.expected, stderr)
+				}
+				assertBalancedCensus(t, stderr)
+			})
+		}
 	}
 }
