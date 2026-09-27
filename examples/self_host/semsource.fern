@@ -4898,6 +4898,8 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
             builtins = builtins.append(c.name);
         }
     }
+    // Valid while the rounds only rewrite a row's bits: a row appended below
+    // would be invisible to `find`, and its function silently skipped.
     var ix: ownership.Index = ownership.index(rows);
     var own_row: i32[] = [];
     i = 0;

@@ -78,7 +78,15 @@ the decision it needs.
 
 ## Gates
 
-`internal/e2eselfhost` (physical RC, ownership inference, inferred reuse,
-the IR verifiers, keyed maps, recursive drops, the semantic and leak legs),
-the semantic differential on x86-64, arm64 and wasm, `make check-sources`'
-checks and the lint ratchet.
+Run locally, on the tree as committed:
+
+- `internal/e2eselfhost`, 57 tests: the IR verifiers and their corpus
+  sweeps, ownership inference, inferred reuse, keyed maps, recursive,
+  enum-field and receiver deep drops on three targets, the leak matrices,
+  `TestSelfHostSemIRStrict`, block-reassign scope, the feature census and
+  fixture sources; and, in a second run once a local mutation check had
+  finished touching the tree, the physical-RC legs (x86-64, arm64, rejects),
+  `TestSelfHostSemanticWholeCompilerX86_64`, the semantic reuse
+  differential and the three `TestSelfHostSemanticSource*` tests.
+- The semantic differential on x86-64, arm64 and wasm.
+- `make check-sources`' checks and the lint ratchet.
