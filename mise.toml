@@ -28,7 +28,7 @@ lockfile = true
 FERN_MISE_VERSION = "2026.9.1"
 
 [tools]
-go = "1.26"
+go = "1.27"
 # wasmtime and the WASI preview1 adapter ship from the same wasmtime release,
 # so these two versions must always be equal. The adapter is a data file the
 # wasm e2e tests read via FERN_WASI_ADAPTER, which every consumer derives from

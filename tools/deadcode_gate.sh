@@ -25,7 +25,7 @@ ALLOW="tools/deadcode-allowlist.txt"
 # x/tools v0.43.0+ needs go >= 1.25; CI exports GOTOOLCHAIN=local, which
 # forbids a toolchain switch, so this pin may not outrun the Go version
 # mise.toml pins.
-DEADCODE_VERSION="v0.49.0"
+DEADCODE_VERSION="v0.50.0"
 
 raw="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -test ./...)"
 
