@@ -223,6 +223,18 @@ func (g *generator) emitSyscallPreloaded(n int) {
 	g.syscalls[n] = true
 }
 
+// emitSyscallRaw emits `syscall` for the raw floor, `__syscall3` …
+// `__syscall6`, whose number is a run-time operand. Nothing is recorded
+// because nothing can be: the set would be every syscall. The sandbox
+// refuses such a program outright (emitCollecting) rather than install a
+// filter that kills it at its first call.
+func (g *generator) emitSyscallRaw(callee string) {
+	g.emit("syscall")
+	if g.rawSyscall == "" {
+		g.rawSyscall = callee
+	}
+}
+
 // Linux x86-64 syscall numbers. See the asm-generic table
 // for the full set.
 const (
@@ -1206,6 +1218,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// the binary having an implicit executable stack.
 	g.line(".section .note.GNU-stack,\"\",@progbits")
 	g.flushPeep()
+	if ast.SandboxEnabled && g.rawSyscall != "" {
+		return "", nil, fmt.Errorf("%s passes the syscall number at run time, which the seccomp sandbox cannot allowlist; FERN_SANDBOX=1 refuses the program", g.rawSyscall)
+	}
 	nums := make([]int, 0, len(g.syscalls))
 	for n := range g.syscalls {
 		nums = append(nums, n)
@@ -1549,6 +1564,10 @@ type generator struct {
 	// two are the only way to emit the instruction — see their comments.
 	// Read back by Syscalls() after Emit.
 	syscalls map[int]bool
+	// rawSyscall names the first raw-floor callee (`__syscall3` …
+	// `__syscall6`) the program reaches, whose number is a run-time
+	// operand no allowlist can cover; the sandbox refuses the program.
+	rawSyscall string
 	// usesRcUnderflowCount gates the Phase 3 detector reader
 	// `__fern_rc_underflow_count` (returns the BSS over-release
 	// counter __fern_rc_dec bumps). Set when the IR emits the
@@ -4296,14 +4315,30 @@ func (g *generator) emitRawPokeIntrinsic(name string) bool {
 			g.emit("mov rax, [rax]")
 		}
 		g.push()
-	case "__store_i32", "__store_i64", "__store_ptr":
+	case "__store_i32", "__store_i64", "__store_ptr", "__store_u8":
 		g.popReg("rcx") // value (on top)
 		g.pop()         // addr
-		if name == "__store_i32" {
+		switch name {
+		case "__store_i32":
 			g.emit("mov [rax], ecx")
-		} else {
+		case "__store_u8":
+			g.emit("mov [rax], cl")
+		default:
 			g.emit("mov [rax], rcx")
 		}
+	case "__syscall3", "__syscall4", "__syscall5", "__syscall6":
+		// The operands sit on the stack in call order, number first, so
+		// the last argument is on top. The kernel's argument registers
+		// (rdi, rsi, rdx, r10, r8, r9) are all scratch here, as are the
+		// rcx and r11 the instruction clobbers.
+		n := int(name[len(name)-1] - '0')
+		regs := []string{"rdi", "rsi", "rdx", "r10", "r8", "r9"}
+		for i := n - 1; i >= 0; i-- {
+			g.popReg(regs[i])
+		}
+		g.pop() // number → rax
+		g.emitSyscallRaw(name)
+		g.push()
 	case "__ptr_width":
 		g.emit("mov eax, 8")
 		g.push()

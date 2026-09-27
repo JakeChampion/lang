@@ -976,6 +976,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__load_u8")
 				case "__store_i32":
 					needs.add("__store_i32")
+				case "__store_u8":
+					needs.add("__store_u8")
 				case "__load_i64":
 					needs.add("__load_i64")
 				case "__store_i64":
@@ -2033,6 +2035,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 		body:    buildStoreI32Body,
+	},
+	"__store_u8": {
+		// (addr, v) → () — i32.store8 wrapper; the byte the socket
+		// helpers write into a sockaddr or an option word.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+		body:    buildStoreU8Body,
 	},
 	"__load_i64": {
 		// (addr) → i64 — i64.load wrapper. Map runtime uses this
@@ -6962,6 +6971,15 @@ func buildStoreI32Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // addr
 	body = inst.InstLocalGet(body, 1) // v
 	body = memory.InstI32Store(body, 2, 0)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildStoreU8Body — (addr, v) → (). Single i32.store8 at offset 0.
+func buildStoreU8Body(_ map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0) // addr
+	body = inst.InstLocalGet(body, 1) // v
+	body = memory.InstI32Store8(body, 0, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 

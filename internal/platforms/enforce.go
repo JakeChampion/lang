@@ -310,6 +310,10 @@ var gatedBuiltins = map[string]string{
 	"__c_call2": "cabi", "__c_call2_f32": "cabi", "__c_call2_f64": "cabi",
 	"__c_call3": "cabi", "__c_call3_f32": "cabi", "__c_call3_f64": "cabi",
 	"__c_call4": "cabi", "__c_call4_f32": "cabi", "__c_call4_f64": "cabi",
+	// The raw syscall floor: a kernel to trap into, which only the
+	// hosted-native profile has. wasm refuses it here rather than at
+	// codegen, and the interpreter never reaches it.
+	"__syscall3": "syscall", "__syscall4": "syscall", "__syscall5": "syscall", "__syscall6": "syscall",
 }
 
 // coreBuiltins is the other half of the classification: user-callable

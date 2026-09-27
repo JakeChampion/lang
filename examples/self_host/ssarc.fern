@@ -1632,6 +1632,7 @@ function integer_kind(op: string, operand: typeinfo.Type): string {
 // name — its operands do.
 function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
     if (ssasem.is_wide(f.values[ins.args[0]])) { return 64; }
+    if (ssasem.is_usize(f.values[ins.args[0]])) { return ir.width_ptr(); }
     return 0;
 }
 
@@ -1717,8 +1718,10 @@ function scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irl
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false)); }
     else { r = emit(r, ir.op_bin("sub", w, false)); }
     // The 64-bit operators are already full-width, so only a narrower result
-    // can leave the range its type names.
-    if (!wraps(ins.str) || ssasem.is_wide(f.values[ins.result])) { return r; }
+    // can leave the range its type names. An address is the register's own
+    // width too: wrapping one sign-extended `base + n` from 32 bits, which
+    // faulted on any mapping above 2 GiB (#10454).
+    if (!wraps(ins.str) || ssasem.is_wide(f.values[ins.result]) || ssasem.is_usize(f.values[ins.result])) { return r; }
     return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
 }
 
@@ -3311,6 +3314,17 @@ function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_free());
 }
 
+// __store_u8(addr, v): the raw byte store at a constant zero offset. Its
+// offset sits between the two operands, so they are re-read round it.
+function store_u8(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_raw_store8());
+}
+
 // The raw-memory escape hatches. The byte load has no op of its own: it is the
 // two-operand raw load at a constant zero offset, which is also what keeps the
 // address at full pointer width.
@@ -3338,6 +3352,7 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__load_i32") { return Lowered { found: true, r: emit(r, ir.op_load_i32()) }; }
     if (ins.str == "__load_i64") { return Lowered { found: true, r: emit(r, ir.op_load_i64()) }; }
     if (ins.str == "__load_ptr") { return Lowered { found: true, r: emit(r, ir.op_load_ptr()) }; }
+    if (ins.str == "__store_u8") { return Lowered { found: true, r: store_u8(r, ins) }; }
     if (ins.str == "__store_i32") { return Lowered { found: true, r: emit(r, ir.op_store_i32()) }; }
     if (ins.str == "__store_i64") { return Lowered { found: true, r: emit(r, ir.op_store_i64()) }; }
     if (ins.str == "__store_ptr") { return Lowered { found: true, r: emit(r, ir.op_store_ptr()) }; }

@@ -52,6 +52,19 @@ stable op ID alongside the existing registry.
 These tests prove the syscall floor needed by the networking runtime. They
 do not establish socket correctness, leak freedom or a performance result.
 
+The Go compiler's copy of that floor (`__syscall3` … `__syscall6`,
+`__store_u8`) is gated by `TestNativeSyscallFloor` in `internal/e2e`, one leg
+per native backend (x86-64 and arm64, stack machine and `-backend ssa`),
+`TestArm64DarwinNativeSyscallFloor` in the macOS lane, and
+`TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
+callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
+through the self-host driver. `TestRawSyscallRefusedUnderSandbox` in
+`internal/codegen/x86_64` pins that `FERN_SANDBOX=1` refuses the floor
+rather than emitting a filter that kills the program at its first call.
+The probe's last-byte read is also the regression test for the SSA lift
+masking usize arithmetic to 32 bits; `TestLiftPointerWidthArithmeticIsAnAddress`
+in `internal/ssa` pins the lift half on its own.
+
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
 inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
 timed-out, empty, negative, invalid and duplicate descriptors, the lowest

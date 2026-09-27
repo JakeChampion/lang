@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -415,7 +415,11 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "__c_call3_f64", capability: "cabi" },
         Gate { builtin: "__c_call4", capability: "cabi" },
         Gate { builtin: "__c_call4_f32", capability: "cabi" },
-        Gate { builtin: "__c_call4_f64", capability: "cabi" }
+        Gate { builtin: "__c_call4_f64", capability: "cabi" },
+        Gate { builtin: "__syscall3", capability: "syscall" },
+        Gate { builtin: "__syscall4", capability: "syscall" },
+        Gate { builtin: "__syscall5", capability: "syscall" },
+        Gate { builtin: "__syscall6", capability: "syscall" }
     ];
 }
 
