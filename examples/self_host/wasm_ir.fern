@@ -4734,7 +4734,7 @@ function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDec
 function decl_result_wat(fd: parser.FuncDecl, structs: irlower.StructTab): string {
     if (fd.ret_type == "i64" || fd.ret_type == "u64") { return " (result i64)\n"; }
     if (irlower.is_f64_scalar_type_name(fd.ret_type)) { return " (result f64)\n"; }
-    if (irlower.erased_passthrough_safe(fd, structs)) { return " (result i64)\n"; }
+    if (irlower.erased_passthrough_safe(fd)) { return " (result i64)\n"; }
     return " (result i32)\n";
 }
 

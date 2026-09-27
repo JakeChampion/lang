@@ -847,6 +847,31 @@ pub function dunder_at(name: string): i32 {
   return 0 - 1;
 }
 
+// show_type_vars turns each type variable in `text` back into the name it was
+// written as: the parser spells one `0_<name>` (parser.tvar_spelling), which
+// is not a spelling anyone can type.
+pub function show_type_vars(text: string): string {
+  var out: string = "";
+  var start: i32 = 0;
+  var i: i32 = 0;
+  while (i + 2 < text.len()) {
+    var boundary: boolean = i == 0 || !(ident_start_byte(text[i - 1]) || (text[i - 1] >= b'0' && text[i - 1] <= b'9'));
+    if (boundary && text[i] == b'0' && text[i + 1] == b'_' && ident_start_byte(text[i + 2])) {
+      out = out + slice_unchecked(text, start, i);
+      start = i + 2;
+      i = i + 2;
+    } else {
+      i = i + 1;
+    }
+  }
+  if (start == 0) { return text; }
+  return out + slice_unchecked(text, start, text.len());
+}
+
+function ident_start_byte(c: u8): boolean {
+  return (c >= b'A' && c <= b'Z') || (c >= b'a' && c <= b'z') || c == b'_';
+}
+
 // demangle turns a module-mangled name back into the `mod.Name` the reader
 // wrote. `mod__Name` is not a spelling anyone can type, so a hint carrying
 // one names a fix that does not compile.

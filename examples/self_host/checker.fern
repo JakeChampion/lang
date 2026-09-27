@@ -6556,21 +6556,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
 
 // func_scope_tparams is what the body may read as type VARIABLES: the declared
 // parameters plus the implicit ones a generic RECEIVER binds. `(m: Map[K, V])
-// merge(...)` declares no `[K, V]`, yet K and V are variables in its body —
-// never a reference to a user `struct K` in a module core/map cannot see. The
-// declared half already erases (#6118); a receiver-only variable was the half
-// still open, so a single-letter user struct captured every stdlib receiver
-// spelling that named it.
-//
-// struct_receiver_typevars is the reader, so a name is a variable because it
-// stands in an ARGUMENT position of a receiver whose arguments are ALL
-// variables — the predicate the monomorphiser already keys a generic receiver
-// on. A receiver that is a bare name contributes nothing however single-letter
-// it is: `(a: V) add(b: V)` on `struct V` is V's own method, and erasing V
-// there would bind the receiver to unknown and cost check_func_body its strict
-// pass over a concrete body. Native separates the two by module visibility
-// (checker.go's collectFreeTypeVars); position is what this checker has, and
-// the two agree on every receiver the stdlib declares.
+// merge(...)` declares no `[K, V]`, yet K and V are variables in its body. The
+// parser has already told the two apart by module visibility, as native's
+// collectFreeTypeVars does, and respelled the variables, so
+// struct_receiver_typevars reads them straight off the receiver.
 //
 // The implicit ones are unbounded, so the caller pads tbounds to match.
 function func_scope_tparams(fd: parser.FuncDecl): string[] {
@@ -12695,11 +12684,11 @@ pub function filter_build_gate(diags: util.Diag[]): util.Diag[] {
 // position. Most emitters use dg today and migrate to dg_at as their AST
 // node gains a position.
 function dg(code: string, message: string): util.Diag {
-  return util.Diag { code: code, message: message, line: 0, col: 0 };
+  return dg_at(code, message, 0, 0);
 }
 
 function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
-  return util.Diag { code: code, message: message, line: line, col: col };
+  return util.Diag { code: code, message: util.show_type_vars(message), line: line, col: col };
 }
 
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /

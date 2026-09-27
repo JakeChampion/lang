@@ -20794,7 +20794,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     // would bail the erased return (its ret_type isn't literally "i64").
     // Register backends never set for_wasm — their 8-byte return slot needs
     // no widening, so they take the generic path below unchanged.
-    if (s.for_wasm() && s.erased_passthrough() && is_erased_typevar(s.frame.cur_ret, s.frame.structs)) {
+    if (s.for_wasm() && s.erased_passthrough() && parser.looks_type_var(s.frame.cur_ret)) {
         var rerw: LowerState = lower_i64(r.value, s);
         if (!rerw.ok) { return rerw; }
         rerw = emit_dec_sweep_except(rerw, 0 - 1);
@@ -60935,7 +60935,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         // heuristic assigned to the bare spelling, so elem_type_tag / expr_struct_type
         // read the slot at its i64 width (a tuple element stores 8-byte) rather than
         // returning the typevar name.
-        if (for_wasm && is_erased_typevar(fn.params[i].type_name, structs) && erased_widenable(fn, structs)) { pty = ""; }
+        if (for_wasm && parser.looks_type_var(fn.params[i].type_name) && erased_widenable(fn)) { pty = ""; }
         structty = structty.append(pty);
         // An Option[T]/Result[T,E] param is opt-tracked so `match (param)` can
         // recover the payload type.
@@ -60971,7 +60971,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         // those still defer via erased_wide. Free functions only (methods are
         // never erased generics), matching flag '5' in fn_param_sigs_of.
         isi64 = isi64.append(fn.params[i].type_name == "i64"
-            || (for_wasm && is_erased_typevar(fn.params[i].type_name, structs) && erased_widenable(fn, structs)));
+            || (for_wasm && parser.looks_type_var(fn.params[i].type_name) && erased_widenable(fn)));
         isf64 = isf64.append(is_f64_scalar_type_name(fn.params[i].type_name));
         // `float` is excluded deliberately — it is the f64 alias, not f32
         // (#5882). isf64 above already covers it via is_f64_scalar_type_name.
@@ -61306,7 +61306,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // bit 3: this function is a wasm-widenable erased pass-through
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
-    if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
+    if (for_wasm && erased_passthrough_safe(fn)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
@@ -62065,7 +62065,7 @@ pub function str_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // dispatches as a string read — before, the result was untyped and
         // `.len()` silently read 0. The '|' keeps these entries invisible to
         // is_str_ret_fn's exact-name membership scan.
-        else if (fn.receiver_type.len() == 0 && irl_looks_type_var(fn.ret_type)) {
+        else if (fn.receiver_type.len() == 0 && parser.looks_type_var(fn.ret_type)) {
             var gpi: i32 = 0;
             while (gpi < fn.params.len()) {
                 if (fn.params[gpi].type_name == fn.ret_type) {
@@ -62221,45 +62221,20 @@ pub function struct_ret_argref(s: LowerState, name: string): i32 {
     return sig_reg_argref(s.frame.sigs.struct_ret_fns, name);
 }
 
-// irl_is_alnum_byte: an identifier byte — [0-9A-Za-z_]. Used to detect a
-// STANDALONE single-uppercase-letter type variable (T / K / V …) so a longer
-// name like "JsonValue" is never mistaken for one.
+// irl_is_alnum_byte: an identifier byte — [0-9A-Za-z_].
 function irl_is_alnum_byte(b: i32): boolean {
     return (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95;
 }
 
-// is_bare_typevar_name: a STANDALONE single-uppercase-letter type variable
-// (T / K / V …) — the erased-generic param spelling (fn_param_sigs flag '5').
-// On wasm such a param/return/local is typed i64 (the uniform 8-byte slot the
-// register backends give every param), so an 8-byte value moving opaquely through
-// it survives; callers coerce their arg/result at the i64 boundary (#erased-wide).
-pub function is_bare_typevar_name(t: string): boolean {
-    return t.len() == 1 && t[0] >= b'A' && t[0] <= b'Z';
-}
-
-// is_erased_typevar: a single-uppercase-letter spelling that is an ERASED
-// generic type variable, NOT a declared single-letter struct/enum (a program
-// may name a struct `A` — `is_bare_typevar_name` alone would misread it as a
-// typevar and wrongly widen `A.default(): A` to an i64 return). The struct/enum
-// exclusion needs the module's decls, so this is the predicate the wasm
-// erased-wide widening (#5464) keys on — is_bare_typevar_name stays the pure
-// syntactic check for the flag-'5' registry, which is width-gated and inert on
-// a struct-typed param anyway.
-pub function is_erased_typevar(t: string, structs: StructTab): boolean {
-    // Only exclude ACTUALLY-DECLARED single-letter structs/enums — not the broad
-    // is_enum_like_name heuristic, which reads any bare uppercase letter (incl. a
-    // real typevar `T`) as enum-like and would defeat the widening entirely.
-    return is_bare_typevar_name(t) && !decl_is_struct(structs, t) && !decl_is_enum(structs, t);
-}
 
 // is_erased_typevar_array reports whether `t` spells an ARRAY of a bare typevar
-// (`T[]`). The element sibling of is_erased_typevar: the value is a pointer
+// (`T[]`). The element sibling of parser.looks_type_var: the value is a pointer
 // either way, so nothing here is "wide", but the element WIDTH is erased and on
 // wasm32 that is the difference between a 4- and an 8-byte stride.
-pub function is_erased_typevar_array(t: string, structs: StructTab): boolean {
+pub function is_erased_typevar_array(t: string): boolean {
     if (t.len() < 3) { return false; }
     if (slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
-    return is_erased_typevar(slice_unchecked(t, 0, t.len() - 2) + "", structs);
+    return parser.looks_type_var(slice_unchecked(t, 0, t.len() - 2) + "");
 }
 
 // erased_expr_uses_any: does `e` reference any of the (erased-param) names?
@@ -62348,14 +62323,14 @@ function erased_uses_only_returned(stmts: ast.Stmt[], names: string[]): boolean 
 // container/concrete return, or a body that USES the erased value) is refused
 // here (a wide instantiation defers via erased_wide; a narrow one is
 // unaffected).
-pub function erased_passthrough_safe(fn: parser.FuncDecl, structs: StructTab): boolean {
+pub function erased_passthrough_safe(fn: parser.FuncDecl): boolean {
     if (!declares_typevars(fn)) { return false; }
     if (fn.receiver_type.len() != 0) { return false; }
-    if (!is_erased_typevar(fn.ret_type, structs)) { return false; }
+    if (!parser.looks_type_var(fn.ret_type)) { return false; }
     var enames: string[] = [];
     var i: i32 = 0;
     while (i < fn.params.len()) {
-        if (is_erased_typevar(fn.params[i].type_name, structs)) { enames = enames.append(fn.params[i].name); }
+        if (parser.looks_type_var(fn.params[i].type_name)) { enames = enames.append(fn.params[i].name); }
         i = i + 1;
     }
     if (enames.len() == 0) { return false; }
@@ -62381,8 +62356,8 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
 // back at the caller's concrete per-element width with no layout change (#5464).
 // The SCALAR-only erased_passthrough_safe still gates the (result i64) return
 // typing + result narrowing; a tuple return stays an i32 pointer.
-pub function erased_widenable(fn: parser.FuncDecl, structs: StructTab): boolean {
-    if (erased_passthrough_safe(fn, structs)) { return true; }
+pub function erased_widenable(fn: parser.FuncDecl): boolean {
+    if (erased_passthrough_safe(fn)) { return true; }
     if (!declares_typevars(fn)) { return false; }
     if (fn.receiver_type.len() != 0) { return false; }
     // A BARE tuple return `(A, B)` (not a tuple-array `(A,B)[]`).
@@ -62390,15 +62365,14 @@ pub function erased_widenable(fn: parser.FuncDecl, structs: StructTab): boolean 
     var enames: string[] = [];
     var i: i32 = 0;
     while (i < fn.params.len()) {
-        if (is_erased_typevar(fn.params[i].type_name, structs)) { enames = enames.append(fn.params[i].name); }
+        if (parser.looks_type_var(fn.params[i].type_name)) { enames = enames.append(fn.params[i].name); }
         i = i + 1;
     }
     if (enames.len() == 0) { return false; }
     return erased_uses_only_returned(fn.body, enames);
 }
 
-// rewrite_typevars_to_argrefs replaces every STANDALONE single-uppercase-letter
-// type variable in a type spelling with a positional "$arg<i>" reference to the
+// rewrite_typevars_to_argrefs replaces every type variable in a type spelling with a positional "$arg<i>" reference to the
 // first param declared with that variable. It works token-wise over the whole
 // string, so it rewrites a bare payload (`Option[T]` → `Option[$arg0]`), a
 // tuple payload (`Option[(T, i32)]` → `Option[($arg0, i32)]`), or a Result Ok
@@ -62408,23 +62382,23 @@ pub function rewrite_typevars_to_argrefs(t: string, params: ast.ParamDecl[]): st
     var out: string = "";
     var i: i32 = 0;
     while (i < t.len()) {
-        var c: i32 = t[i] as i32;
-        var is_upper: boolean = c >= 65 && c <= 90;
-        var prev_alnum: boolean = i > 0 && irl_is_alnum_byte((t[i - 1] as i32));
-        var next_alnum: boolean = i + 1 < t.len() && irl_is_alnum_byte((t[i + 1] as i32));
-        if (is_upper && !prev_alnum && !next_alnum) {
-            var tv: str = slice_unchecked(t, i, i + 1);
-            var repl: string = tv + "";
+        if (!irl_is_alnum_byte((t[i] as i32))) {
+            out = out + slice_unchecked(t, i, i + 1);
+            i = i + 1;
+            continue;
+        }
+        var start: i32 = i;
+        while (i < t.len() && irl_is_alnum_byte((t[i] as i32))) { i = i + 1; }
+        var tok: string = slice_unchecked(t, start, i) + "";
+        var repl: string = tok;
+        if (parser.looks_type_var(tok)) {
             var pi: i32 = 0;
             while (pi < params.len()) {
-                if (params[pi].type_name == tv) { repl = "$arg" + util.i32_to_string(pi); pi = params.len(); }
+                if (params[pi].type_name == tok) { repl = "$arg" + util.i32_to_string(pi); pi = params.len(); }
                 else { pi = pi + 1; }
             }
-            out = out + repl;
-        } else {
-            out = out + slice_unchecked(t, i, i + 1);
         }
-        i = i + 1;
+        out = out + repl;
     }
     return out;
 }
@@ -62478,11 +62452,10 @@ pub function strarr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
         // expr_is_strarr re-types the call by the ACTUAL argument — the
         // array sibling of str_ret_fns_of's bare-`T` entries. Invisible to
         // is_strarr_ret_fn's exact-name scan (the '|').
-        else if (fn.receiver_type.len() == 0 && fn.ret_type.len() == 3
-                && slice_unchecked(fn.ret_type, 1, 3) == "[]" && irl_looks_type_var(slice_unchecked(fn.ret_type, 0, 1))) {
+        else if (fn.receiver_type.len() == 0 && is_erased_typevar_array(fn.ret_type)) {
             var sgpi: i32 = 0;
             while (sgpi < fn.params.len()) {
-                if (fn.params[sgpi].type_name == slice_unchecked(fn.ret_type, 0, 1)) { out = out.append(fn.name + "|$arg" + util.i32_to_string(sgpi)); sgpi = fn.params.len(); }
+                if (fn.params[sgpi].type_name == slice_unchecked(fn.ret_type, 0, fn.ret_type.len() - 2)) { out = out.append(fn.name + "|$arg" + util.i32_to_string(sgpi)); sgpi = fn.params.len(); }
                 else { sgpi = sgpi + 1; }
             }
         }
@@ -65111,25 +65084,6 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
     return true;
 }
 
-// irl_looks_type_var: a bare generic type variable spelling — a single
-// uppercase letter (K / V / T / …). Mirrors parser.looks_type_var (private
-// there). The self-host ERASES unbounded type params (they never reach
-// monomorphize_module's clone worklist), so an erased-generic fn's tuple
-// return keeps its type-var spellings ("(K, V)") and the registry tag would
-// otherwise degrade the element to a scalar at every call site.
-// fn_has_param_typed reports whether `fd` declares a parameter spelled exactly
-// `ty`. Used to recognise an ERASED generic from its signature: an unbounded
-// type param is stripped from `type_params`, so a bare-`T` return is only
-// distinguishable from a same-named enum by the binding site of the var.
-function fn_has_param_typed(fd: parser.FuncDecl, ty: string): boolean {
-    var i: i32 = 0;
-    while (i < fd.params.len()) {
-        if (fd.params[i].type_name == ty) { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
 // enum_ret_recordable reports whether `name` — a function's return type, or the
 // ELEMENT of its array return — is a nominal enum worth recording as a call
 // site's result type. It exists so the scalar return and the two array returns
@@ -65140,20 +65094,11 @@ function fn_has_param_typed(fd: parser.FuncDecl, ty: string): boolean {
 // (#6441): `T` rules out primitives, arrays, bracketed generics and tuples, so
 // it passes every one of that predicate's tests. Recording `id|T` stamps the
 // call site's slot "T" and a later `v.to_string()` keys `T.to_string`, which
-// nothing defines. The type-var TEST alone is not enough to tell this from a
-// real enum — an `enum E` is a single uppercase letter too — so it also
-// requires the erased-generic signature: a free function with a parameter
-// declared at exactly the return's spelling.
-function enum_ret_recordable(name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
-    if (!is_enum_like_name(name, structs)) { return false; }
-    return !(irl_looks_type_var(name) && fn.receiver_type.len() == 0 && fn_has_param_typed(fn, fn.ret_type));
+// nothing defines.
+function enum_ret_recordable(name: string, structs: StructTab): boolean {
+    return is_enum_like_name(name, structs) && !parser.looks_type_var(name);
 }
 
-function irl_looks_type_var(s: string): boolean {
-    if (s.len() != 1) { return false; }
-    var c: i32 = s[0] as i32;
-    return c >= 65 && c <= 90;
-}
 
 // tuple_ret_fns_of records "name|<elem tags>" for each function whose return
 // type is a tuple, so a call site can recover the element types for `.N` /
@@ -65197,7 +65142,7 @@ pub function arrtup_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 }
 
 // irl_type_has_var reports whether a type spelling contains a bare type VARIABLE
-// segment — the `irl_looks_type_var` convention tuple_ret_fns_of already keys on,
+// segment — the parser.looks_type_var test tuple_ret_fns_of already keys on,
 // applied across a tuple's comma-separated segments.
 function irl_type_has_var(ty: string): boolean {
     var depth: i32 = 0;
@@ -65209,7 +65154,7 @@ function irl_type_has_var(ty: string): boolean {
         if (i == inner.len() || (inner[i] == b',' && depth == 0)) {
             var seg: str = slice_unchecked(inner, start, i);
             if (seg.len() > 0 && seg[0] == b' ') { seg = slice_unchecked(seg, 1, seg.len()); }
-            if (irl_looks_type_var(seg)) { return true; }
+            if (parser.looks_type_var(seg)) { return true; }
             start = i + 1;
         } else {
             if (inner[i] == b'(' || inner[i] == b'[') { depth = depth + 1; }
@@ -65248,7 +65193,7 @@ pub function tuple_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
                     var seg: str = slice_unchecked(tags, start, ti);
                     if (!first) { rw = rw + ","; }
                     var repl: string = seg + "";
-                    if (irl_looks_type_var(seg)) {
+                    if (parser.looks_type_var(seg)) {
                         var pi: i32 = 0;
                         while (pi < fn.params.len()) {
                             if (fn.params[pi].type_name == seg) { repl = "$arg" + util.i32_to_string(pi); pi = fn.params.len(); }
@@ -65369,7 +65314,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         // asks too. Unrecorded, a type-var slot falls through to the scalar
         // path and dispatches on the real type; an annotated binding already
         // supplies the type.
-        else if (enum_ret_recordable(rt, fn, structs)) { elig = true; }
+        else if (enum_ret_recordable(rt, structs)) { elig = true; }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
         // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
@@ -65388,12 +65333,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
             // this one did not, so `function mk(): Color[]` recorded nothing and
             // `mk()[i].m()` typed its receiver i32 and bailed on `i32.m`. A
             // variant box is leak-only, so there is no leak-safety test to apply.
-            // BEFORE the erased-generic branch: a one-letter enum name satisfies
-            // irl_looks_type_var, so that branch would claim `E[]`, find no
-            // parameter spelled `E[]`, and record nothing — while
-            // enum_ret_recordable declines exactly the erased-generic signature
-            // and leaves the branch below to handle it.
-            else if (enum_ret_recordable(et + "", fn, structs)) { elig = true; elem_t = et + ""; }
+            else if (enum_ret_recordable(et + "", structs)) { elig = true; elem_t = et + ""; }
             // An ERASED-generic `T[]` return (`idf[T](arr: T[]): T[]`, `sort_by_
             // i32_key[T](arr: T[], key: (T) => i32): T[]`): the element is the bare
             // typevar, so there is no declared struct to record and an UNANNOTATED
@@ -65406,7 +65346,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
             // returns above; the '|' keeps the entry invisible to the exact-name
             // membership scans. Free functions only — a receiver method is never an
             // erased generic — matching the string-side producer.
-            else if (fn.receiver_type.len() == 0 && irl_looks_type_var(et + "")) {
+            else if (fn.receiver_type.len() == 0 && parser.looks_type_var(et + "")) {
                 var api: i32 = 0;
                 while (api < fn.params.len()) {
                     if (fn.params[api].type_name == rt) {
@@ -65438,7 +65378,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
                 // is lifted the same way, and `cs[i].m()` needs the element type
                 // for the same reason. A variant box is leak-only, so — as in the
                 // scalar enum arm — there is no leak-safety test to apply.
-                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
+                else if (aelem.len() > 0 && enum_ret_recordable(aelem, structs)) { elig = true; elem_t = aelem; }
             }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
@@ -65537,7 +65477,7 @@ pub function f64arr_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
 pub function erased_elem_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
     var out: string[] = [];
     for fn in funcs {
-        if (is_erased_typevar_array(fn.ret_type, structs)) {
+        if (is_erased_typevar_array(fn.ret_type)) {
             var key: string = fn.name;
             if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
             out = out.append(key);
@@ -66097,8 +66037,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, grow
             // consumers are unaffected.
             else if (grow_tok_at(gmask, pj + 1) == "1") { flags = flags + "4"; any = true; }
             // A BARE-TYPEVAR (erased-generic) param (`x: T` — a standalone
-            // single-uppercase-letter type spelling, the same convention
-            // rewrite_typevars_to_argrefs keys on; unbounded type params are
+            // type-variable spelling, the test rewrite_typevars_to_argrefs
+            // keys on; unbounded type params are
             // STRIPPED from the decl, so fd.type_params can't be
             // consulted): flag '5', or '6' when the fn is a wasm-WIDENABLE
             // pass-through (erased_passthrough_safe — bare-typevar return + the
@@ -66108,8 +66048,8 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, grow
             // '5' and '6' (so the register i64-arg path is unchanged), while the
             // wasm-only widening/coercion keys on '6' via callee_param_is_erased_widened.
             // Free functions only (methods are never erased generics).
-            else if (fd.receiver_type.len() == 0 && is_erased_typevar(fd.params[pj].type_name, structs)) {
-                if (erased_widenable(fd, structs)) { flags = flags + "6"; } else { flags = flags + "5"; }
+            else if (fd.receiver_type.len() == 0 && parser.looks_type_var(fd.params[pj].type_name)) {
+                if (erased_widenable(fd)) { flags = flags + "6"; } else { flags = flags + "5"; }
                 any = true;
             }
             // '7': an erased typevar ARRAY param (`xs: T[]`). Distinct from '5'
@@ -66123,7 +66063,7 @@ pub function fn_param_sigs_of(funcs: parser.FuncDecl[], structs: StructTab, grow
             // A callee that only asks for `.len()` never uses a stride, so the
             // refusal would cost coverage for nothing — `is_empty[T](xs: T[])`
             // at an `f64[]`. The predicate calls everything but `.len()` a read.
-            else if (fd.receiver_type.len() == 0 && is_erased_typevar_array(fd.params[pj].type_name, structs)
+            else if (fd.receiver_type.len() == 0 && is_erased_typevar_array(fd.params[pj].type_name)
                      && elem_read_in_body(fd.body, fd.params[pj].name)) {
                 flags = flags + "7";
                 any = true;
