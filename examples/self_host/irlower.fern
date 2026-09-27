@@ -842,9 +842,9 @@ pub struct LowerFrame {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
-    // map_clone_sites: the site keys (target@line:col) of the map self-reassigns
-    // `m = m.insert(k, v)` at which an alias of m may be live, so the store
-    // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
+    // map_clone_sites: the site keys of the map mutations (`m = m.insert(k, v)`,
+    // `m.without(k)`) at which an alias of m may be live, so the mutation
+    // clones instead of writing in place (map_clone_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
     // param that is neither `own` nor inferred-moved (a mutated capture's
@@ -14566,15 +14566,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         }
         return mgo;
     }
-    if (fa.field == "without" && c.args.len() == 1) {
-        // Functional delete: `m.without(k)` -> the map with k
-        // removed (reuses __fern_map_delete, like the AST path).
-        var mdel: LowerState = lower_expr(fa.obj, s);
-        if (!mdel.ok) { return mdel; }
-        mdel = lower_expr(c.args[0], mdel);
-        if (!mdel.ok) { return mdel; }
-        return mdel.emit(ir.op_map_delete(mkk2, meqfn, false, 0));
-    }
+    if (fa.field == "without" && c.args.len() == 1) { return lower_map_without(c, fa.obj, mtype, mkk2, meqfn, s); }
     if (fa.field == "cleared" && c.args.len() == 0) {
         // Functional clear: `m.cleared()` -> a fresh empty map
         // of the same key kind. Construction, not a clear op:
@@ -27166,10 +27158,6 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
 function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, val: ast.Expr, maptype: string, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var mc: string = "$mc" + util.i32_to_string(n);
-    var mck: string = "$mck" + util.i32_to_string(n);
-    var mcv: string = "$mcv" + util.i32_to_string(n);
-    var mci: string = "$mci" + util.i32_to_string(n);
-    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     // The receiver's box before the rebind: released at the end against the
     // holders of m's alias group (#7235) when the group owns its releases.
     var mslot: i32 = s.slot_of(target);
@@ -27182,6 +27170,49 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
         st = st.emit(ir.op_load_local(mslot));
         st = st.emit(ir.op_store_local(moldslot));
     }
+    st = lower_map_clone(mc, recv, maptype, st);
+    if (!st.ok) { return st; }
+    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
+    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
+    var mcref: ast.Expr = ast.ExprIdent { name: mc, line: 0, col: 0, ty: "" };
+    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
+    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    if (!st.ok || moldslot < 0) { return st; }
+    var msite: string = st.reclaim_site_key(mslot);
+    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+}
+
+// lower_map_without lowers the functional delete `recv.without(key)`, the map
+// with key removed and whether it was there. A receiver an alias still reads
+// (map_clone_sites, #9835) is cloned first, so the alias keeps the box it holds
+// whole; the removed entry is not released, since the clone shares its column
+// elements with that box.
+function lower_map_without(c: ast.ExprCall, recv: ast.Expr, maptype: string, keykind: i32, eqfn: string, s: LowerState): LowerState {
+    var st: LowerState = s;
+    if (util.index_of_str(s.frame.map_clone_sites, reclaim_site_key_of(ident_name_or_empty(recv), c.line, c.col)) >= 0) {
+        var mc: string = "$mc" + util.i32_to_string(s.locals.len());
+        st = lower_map_clone(mc, recv, maptype, s);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_load_local(st.slot_of(mc)));
+    } else {
+        st = lower_expr(recv, s);
+        if (!st.ok) { return st; }
+    }
+    st = lower_expr(c.args[0], st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_map_delete(keykind, eqfn, false, 0));
+}
+
+// lower_map_clone binds a fresh local `mc` of type `maptype` to a copy of the
+// map `recv`: a `map_new` and one insert per entry over snapshots of its
+// columns. The clone shares the column elements with `recv`, uncounted.
+function lower_map_clone(mc: string, recv: ast.Expr, maptype: string, s: LowerState): LowerState {
+    var n: i32 = s.locals.len();
+    var mck: string = "$mck" + util.i32_to_string(n);
+    var mcv: string = "$mcv" + util.i32_to_string(n);
+    var mci: string = "$mci" + util.i32_to_string(n);
+    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    var st: LowerState = s;
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
     st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
@@ -27203,15 +27234,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     var insargs: ast.Expr[] = [ast.ExprIndex { array: mckref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }, ast.ExprIndex { array: mcvref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }];
     var insexpr: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_args: [], ty: "" };
     var loopbody: ast.Stmt[] = [ast.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
-    st = lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
-    if (!st.ok) { return st; }
-    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
-    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
-    if (!st.ok || moldslot < 0) { return st; }
-    var msite: string = st.reclaim_site_key(mslot);
-    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+    return lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
@@ -34757,25 +34780,75 @@ function aliased_array_names_of(body: ast.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
-// --- map alias liveness at a self-reassign (#7235) ---------------------------
+// --- map alias liveness at a mutation (#7235) --------------------------------
 //
-// map_clone_insert_sites_of returns the site keys (target@line:col) of every map
-// self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)` at which an alias of
-// `m` may be LIVE, so the store must clone the map (lower_map_clone_insert)
-// rather than mutate the box the alias still reads. An alias is live at the
-// insert when it is created earlier in lowering order, anywhere inside a loop
-// enclosing the insert (the back edge carries an alias bound textually AFTER the
-// insert into the next iteration's insert), or inside a defer. An insert with no
-// alias live at it mutates in place; a `var q = m` bound afterwards shares the
+// map_clone_sites_of returns the site keys of every map mutation at which an
+// alias of the receiver `m` may be LIVE, so the mutation must clone the map
+// rather than write the box the alias still reads: a self-reassign
+// `m = m.insert(k, v)` / `m = m.set(k, v)` keyed target@line:col of the
+// assignment (lower_map_clone_insert), and a `m.without(k)` call keyed
+// m@line:col of the call (lower_map_without, #9835). An alias is live at
+// the mutation when it is created earlier in lowering order, anywhere inside a
+// loop enclosing the mutation (the back edge carries an alias bound textually
+// AFTER it into the next iteration), or inside a defer. A mutation with no
+// alias live at it writes in place; a `var q = m` bound afterwards shares the
 // mutated box, which is what the alias reads on native too.
 //
-// Alias positions are alias_idents_in_value's: a bare-ident bind or assignment
-// value, or a container-literal element. An alias inside an `if` arm counts for
-// everything after the `if`, whichever way the branch went.
+// Alias positions are mcis_alias_names': both names of a bare-ident bind or
+// assignment, and a container-literal element. An alias inside an `if` arm
+// counts for everything after the `if`, whichever way the branch went.
 struct MapCloneScan { seen: string[], sites: string[] }
 
-function map_clone_insert_sites_of(body: ast.Stmt[]): string[] {
+function map_clone_sites_of(body: ast.Stmt[]): string[] {
     return mcis_stmts(body, no_names(), MapCloneScan { seen: [], sites: [] }).sites;
+}
+
+// mcis_alias_names adds the names a binding of `name` to `value` makes aliases:
+// alias_idents_in_value's, and `name` itself when `value` is a bare ident, since
+// a mutation through the new name writes the box the old one reads too.
+function mcis_alias_names(name: string, value: ast.Expr, seen: string[]): string[] {
+    var out: string[] = alias_idents_in_value(value, seen);
+    if (ident_name_or_empty(value).len() > 0) { out = push_str_unique(out, name); }
+    return out;
+}
+
+// mcis_loop_aliases is alias_names_in_stmts over a loop body with the binders
+// mcis_alias_names adds, so the back edge carries both names of an alias.
+function mcis_loop_aliases(body: ast.Stmt[], acc: string[]): string[] {
+    function visit(st: ast.Stmt, own a: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return mcis_alias_names(v.name, v.init, a); },
+            ast.StmtAssign(x) => { return mcis_alias_names(x.target, x.value, a); },
+            _ => { return a; }
+        }
+    }
+    var out: string[] = util.append_all(no_names(), acc);
+    for st in body { out = astwalk.fold_stmt_spine(st, out, visit); }
+    return out;
+}
+
+// mcis_without_sites adds the site of every `m.without(k)` in `e` whose
+// receiver has an alias: one in `sc.seen` or in `loop_aliases`.
+function mcis_without_sites(e: ast.Expr, loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    var seen: string[] = sc.seen;
+    function visit(x: ast.Expr, own acc: string[]): string[] {
+        match (x) {
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprFieldAccess(fa) => {
+                        var rn: string = ident_name_or_empty(fa.obj);
+                        if (fa.field == "without" && c.args.len() == 1 && rn.len() > 0 && (util.index_of_str(seen, rn) >= 0 || util.index_of_str(loop_aliases, rn) >= 0)) {
+                            return acc.append(reclaim_site_key_of(rn, c.line, c.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        return acc;
+    }
+    return MapCloneScan { ...sc, sites: util.append_all(sc.sites, astwalk.fold_expr(e, no_names(), visit)) };
 }
 
 function mcis_stmts(stmts: ast.Stmt[], loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
@@ -34792,17 +34865,25 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             if (assign_is_self_two_arg_method(a) && (util.index_of_str(sc.seen, a.target) >= 0 || util.index_of_str(loop_aliases, a.target) >= 0)) {
                 acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
             }
-            return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
+            acc = MapCloneScan { ...acc, seen: mcis_alias_names(a.target, a.value, acc.seen) };
+            return mcis_without_sites(a.value, loop_aliases, acc);
         },
-        ast.StmtVar(v) => { return MapCloneScan { ...sc, seen: alias_idents_in_value(v.init, sc.seen) }; },
+        ast.StmtVar(v) => {
+            var acc: MapCloneScan = MapCloneScan { ...sc, seen: mcis_alias_names(v.name, v.init, sc.seen) };
+            return mcis_without_sites(v.init, loop_aliases, acc);
+        },
         ast.StmtIf(iff) => {
-            var acc: MapCloneScan = mcis_stmts(iff.then_body, loop_aliases, sc);
+            var acc: MapCloneScan = mcis_without_sites(iff.cond, loop_aliases, sc);
+            acc = mcis_stmts(iff.then_body, loop_aliases, acc);
             return mcis_stmts(iff.else_body, loop_aliases, acc);
         },
-        ast.StmtWhile(w) => { return mcis_stmts(w.body, alias_names_in_stmts(w.body, loop_aliases), sc); },
-        ast.StmtFor(f) => { return mcis_stmts(f.body, alias_names_in_stmts(f.body, loop_aliases), sc); },
+        ast.StmtWhile(w) => {
+            var wal: string[] = mcis_loop_aliases(w.body, loop_aliases);
+            return mcis_stmts(w.body, wal, mcis_without_sites(w.cond, wal, sc));
+        },
+        ast.StmtFor(f) => { return mcis_stmts(f.body, mcis_loop_aliases(f.body, loop_aliases), mcis_without_sites(f.iter, loop_aliases, sc)); },
         ast.StmtMatch(m) => {
-            var acc: MapCloneScan = sc;
+            var acc: MapCloneScan = mcis_without_sites(m.scrutinee, loop_aliases, sc);
             var k: i32 = 0;
             while (k < m.arms.len()) { acc = mcis_stmts(m.arms[k].body, loop_aliases, acc); k = k + 1; }
             return acc;
@@ -34812,9 +34893,9 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             return mcis_stmt(d.action, loop_aliases, acc);
         },
         // Spelled out rather than wildcarded: a statement kind with a body this
-        // walk skipped would leave an insert inside it mutating in place.
-        ast.StmtReturn(_) => { return sc; },
-        ast.StmtExpr(_) => { return sc; },
+        // walk skipped would leave a mutation inside it writing in place.
+        ast.StmtReturn(r) => { return mcis_without_sites(r.value, loop_aliases, sc); },
+        ast.StmtExpr(x) => { return mcis_without_sites(x.value, loop_aliases, sc); },
         ast.StmtBreak(_) => { return sc; },
         ast.StmtContinue(_) => { return sc; },
         ast.StmtUnknown(_) => { return sc; },
@@ -61067,7 +61148,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
