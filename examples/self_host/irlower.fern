@@ -21014,6 +21014,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     }
     if (!se.ok) { return se; }
     se = tail_release_snapshot_locals(r.value, se);
+    se = settle_returned_append(r.value, se);
     // Perceus move-on-return: any array local the returned value MOVES out
     // (a bare array local, an `.append` receiver, or an array under a
     // returned enum / struct-enum-field — see returned_moved_arr_slots) is
@@ -21028,6 +21029,22 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     se = emit_consumed_param_exit(se, r.value, true);
     se = emit_dec_sweep_except_list(se, moved_slots);
     return se.emit(ir.op_return());
+}
+
+// settle_returned_append: `return a.append(v)` keeps the local `a` from the exit
+// sweep (returned_moved_arr_slots), so the pushed result must take over the
+// reference `a` holds. A grow or a copy hands back a new buffer and leaves the
+// old one counted; the store releases it as a self-append rebind does (#10367).
+function settle_returned_append(e: ast.Expr, s: LowerState): LowerState {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var slot: i32 = s.slot_of(ident_name_or_empty(fa.obj));
+            if (fa.field != "append" || c.args.len() != 1 || slot < s.frame.n_params) { return s; }
+            if (!s.is_arr_slot(slot) || !arr_slot_shallow_release_ok(s, slot)) { return s; }
+            return emit_aliased_push_store(s, slot, false).emit(ir.op_load_local(slot));
+        }
+    }
+    return s;
 }
 
 // ret_enum_alias_uncounted: `e` is an "ERETALIAS:" local whose count no
@@ -22477,30 +22494,10 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     if (slot_is_reclaimable_arrenum(sb, slot)) {
         return emit_arrenum_reclaim_store(sb, slot, arrenum_enum_of_slot(sb, slot));
     }
-    // Reclaimable (<struct-with-array>)[] LOOP-LOCAL (#4365): free the prior iteration's
-    // whole structure — each element struct's rc fields + struct box, then the outer
-    // buffer — before the store (the shallow emit_arr_store dec frees only the buffer).
-    if (slot_is_reclaimable_arrstruct(sb, slot)) {
-        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
-    }
-    // Reclaimable SCALAR-FIELD struct-array LOOP-LOCAL (#4355): a struct[] whose
-    // element struct has no rc field — the deep arrstruct path above skips it, so
-    // free the prior iteration's element boxes + outer buffer here (shallow box dec
-    // per element via __fern_arrarr_free), else every element struct box leaks per
-    // iteration. Disjoint from arrstruct (slot_is_reclaimable_structarr excludes
-    // field-routing structs), so at most one of these two branches fires per slot.
-    // A STRUCTARR element struct that ROUTES FIELD RECLAIM takes the DEEP walk
-    // instead (#6127): slot_is_reclaimable_structarr excludes rc-array-field
-    // structs, so this can only be a STRFLDOK-admitted string / string[] / fn
-    // -fielded element, whose field the shallow per-element box dec never reaches.
-    // A bare local of the same struct already reclaims its string through
-    // __field_reclaim_<T>'s STRFLDOK arm; it was only the ELEMENT walk that did
-    // not, so the array form leaked one string box per element per iteration.
-    if (slot_is_reclaimable_structarr(sb, slot) && sb.struct_routes_field_reclaim(sb.struct_type_of_slot(slot))) {
-        return emit_arrstruct_reclaim_store(sb, slot, sb.struct_type_of_slot(slot));
-    }
-    if (slot_is_reclaimable_structarr(sb, slot)) {
-        return emit_structarr_reclaim_store(sb, slot);
+    // A reclaimable struct-array LOOP-LOCAL: free the prior iteration's element
+    // boxes and buffer before the store (emit_struct_arr_reclaim_store).
+    if (slot_is_reclaimable_struct_arr(sb, slot)) {
+        return emit_struct_arr_reclaim_store(sb, slot);
     }
     // A reclaimable string[] LOOP-LOCAL (`while { var xs: string[] = [pre + "x",
     // pre + "y"]; … }`, #4353 item 4 / #4355 loop-rebind follow-up): the
@@ -24676,10 +24673,12 @@ function slot_holds_counted_elems(s: LowerState, i: i32): boolean {
 // append_target_sole_owner: `name = name.append(v)` may reclaim the superseded
 // buffer on a grow (arr_push_owned) only when no other reference survives it —
 // not a local something else aliases, not a parameter (the caller's buffer,
-// #3457), and not a binding borrowed from a box it still shares with, a match
-// projection say, whose grow must leave the box's buffer to the box.
+// #3457), not a binding that shares a buffer another name still reaches
+// (`var out = acc` over a borrowed parameter, #10367), and not a binding borrowed
+// from a box it still shares with, a match projection say, whose grow must leave
+// the box's buffer to the box.
 function append_target_sole_owner(s: LowerState, name: string, slot: i32): boolean {
-    return !s.is_aliased_name(name) && slot >= s.frame.n_params && !s.is_borrowed_arr_slot(slot);
+    return !s.is_aliased_name(name) && !s.is_borrowed_name(name) && slot >= s.frame.n_params && !s.is_borrowed_arr_slot(slot);
 }
 
 function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
@@ -25266,6 +25265,10 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // exclusion either: the target IS an array here, which is what makes this
     // the branch the array classes below could not cover.
     if (slot_is_reclaimable_strarr(s, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
+    // A credited struct array REBOUND from a producer (`ps = mk(n)`, #10360):
+    // the rebuild shares nothing with the old array, so its element boxes go
+    // with its buffer.
+    if (slot_is_reclaimable_struct_arr(s, slot)) { return emit_struct_arr_reclaim_store(se, slot); }
     // A reclaimable REBOUND Option (`o = Some(..)`, credited "OPTARR:" /
     // "OPTARRARR:" / "OPTSTRUCT:" / "OPTTUP:"): free the superseded payload + option
     // box before storing the fresh one, at the depth that payload kind needs. This
@@ -42986,7 +42989,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
         if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
         if (!marker
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok)
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"))
             && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
             && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
@@ -50523,7 +50526,7 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 if (structarr_self_append_elem(a.value, name, fresh_ret)) { return false; }
-                return true;   // any other reassignment of the candidate
+                return !struct_arr_producer_rebind(a.value, name, borrowable, fresh_ret, "STRUCTARRF:");
             }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
@@ -50556,6 +50559,56 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
+}
+
+// struct_arr_producer_rebind: `name = g(..)` rebuilds the struct-array candidate
+// from a producer registered under `tag` that the frame does not shadow
+// (`producers` is unshadowed_producer_rows' list), and the call reads `name` at
+// most as a borrow. The producer's elements are its own, so the new array shares
+// nothing with the old and the rebind store frees the old one whole (#10360).
+function struct_arr_producer_rebind(e: ast.Expr, name: string, borrowable: string[], producers: string[], tag: string): boolean {
+    return producer_call_row(e, producers, tag) && !expr_unsafe_for(e, name, borrowable, []);
+}
+
+// producer_call_row: `e` is a direct call to a function `rows` lists under `tag`.
+function producer_call_row(e: ast.Expr, rows: string[], tag: string): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee { return util.index_of_str(rows, tag + cid.name) >= 0; }
+    }
+    return false;
+}
+
+// unshadowed_producer_rows: `rows` less the `tag` rows naming a function that a
+// local of `body` shadows — a call through that name reaches the local's value.
+function unshadowed_producer_rows(rows: string[], body: ast.Stmt[], tag: string): string[] {
+    var out: string[] = [];
+    for row in rows {
+        var shadowed: boolean = row.len() > tag.len() && slice_unchecked(row, 0, tag.len()) == tag
+            && body_declares_name(body, slice_unchecked(row, tag.len(), row.len()) + "");
+        if (!shadowed) { out = out.append(row); }
+    }
+    return out;
+}
+
+// ProducerRebindScan / producer_rebind_visit: the astwalk.fold_stmt_spine state
+// that finds a `name = g(..)` assignment to a `tag` producer.
+struct ProducerRebindScan { name: string, rows: string[], tag: string, found: boolean }
+
+function producer_rebind_visit(st: ast.Stmt, own sc: ProducerRebindScan): ProducerRebindScan {
+    if let ast.StmtAssign(a) = st {
+        if (a.target == sc.name && producer_call_row(a.value, sc.rows, sc.tag)) {
+            return ProducerRebindScan { ...sc, found: true };
+        }
+    }
+    return sc;
+}
+
+// name_rebound_by_producer: some statement of `stmts` rebinds `name` from a call
+// to a `tag` producer in `rows`.
+function name_rebound_by_producer(stmts: ast.Stmt[], name: string, rows: string[], tag: string): boolean {
+    var sc: ProducerRebindScan = ProducerRebindScan { name: name, rows: rows, tag: tag, found: false };
+    for st in stmts { sc = astwalk.fold_stmt_spine(st, sc, producer_rebind_visit); }
+    return sc.found;
 }
 
 // collect_fresh_structarr_names: `var g = [P { .. }, P { .. }]` bindings whose
@@ -50593,6 +50646,12 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // would have earned one frame in.
                 else if (structarr_elem_struct_type(v.type_name, structs) != ""
                     && struct_arr_call_producer(v.init, body, fresh_ret, "STRUCTARRF:")) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+                // An EMPTY seed the body rebinds from a producer (#10360): each
+                // rebind earns what the producer init above does.
+                else if (structarr_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
+                    && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"), "STRUCTARRF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -54281,11 +54340,11 @@ function expr_spread_sites(e: ast.Expr, structs: StructTab, acc: string[]): stri
 // sound because this class's own element hazards (an element alias, an element
 // field-payload extraction) are checked separately by arrstruct_row_escapes and
 // arrstruct_elem_payload_escapes, applied alongside this gate.
-function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[]): boolean {
-    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok)) { return true; } }
+function arrstruct_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], producers: string[]): boolean {
+    for stmt in stmts { if (stmt_arrstruct_unsafe_for(stmt, name, borrowable, structs, msites, sfok, producers)) { return true; } }
     return false;
 }
-function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[]): boolean {
+function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], structs: StructTab, msites: string[], sfok: string[], producers: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => {
             if (arrstruct_counted_field_share(v.init, name, structs, msites)) { return false; }
@@ -54302,18 +54361,18 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return false; }
-                return true;   // any other reassignment of the candidate
+                return !struct_arr_producer_rebind(a.value, name, borrowable, producers, "ARRSTRUCTF:");
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
             return expr_unsafe_for(a.value, name, borrowable, []);
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites, sfok) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites, sfok);
+            return arrstruct_unsafe_for(f.then_body, name, borrowable, structs, msites, sfok, producers) || arrstruct_unsafe_for(f.else_body, name, borrowable, structs, msites, sfok, producers);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites, sfok);
+            return arrstruct_unsafe_for(w.body, name, borrowable, structs, msites, sfok, producers);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -54322,17 +54381,17 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites, sfok);
+            return arrstruct_unsafe_for(fo.body, name, borrowable, structs, msites, sfok, producers);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites, sfok)) { return true; }
+                if (arrstruct_unsafe_for(arm.body, name, borrowable, structs, msites, sfok, producers)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites, sfok); },
+        ast.StmtDefer(d) => { return stmt_arrstruct_unsafe_for(d.action, name, borrowable, structs, msites, sfok, producers); },
         _ => { return stmt_unsafe_for(st, name, borrowable, []); }
     }
     return false;
@@ -54561,6 +54620,11 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                     && arrstruct_name_is_appended(stmts, v.name, structs, msites, sfok)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
+                }
+                // An EMPTY seed rebound from a producer (#10360), as for STRUCTARR.
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
+                    && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), "ARRSTRUCTF:")) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             ast.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites, sfok); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites, sfok); },
@@ -55927,6 +55991,26 @@ function is_scalar_field_type(ft: string): boolean {
     if (ft == "usize") { return true; }
     if (ft == "boolean") { return true; }
     return false;
+}
+
+// slot_is_reclaimable_struct_arr: slot i holds a credited struct array of
+// either class, whose rebind store frees the prior array's element boxes.
+function slot_is_reclaimable_struct_arr(s: LowerState, i: i32): boolean {
+    return slot_is_reclaimable_arrstruct(s, i) || slot_is_reclaimable_structarr(s, i);
+}
+
+// emit_struct_arr_reclaim_store stores `new` into a credited struct-array slot,
+// freeing the prior array whole, cow-guarded. An rc-array-field element takes
+// the deep walk (ARRSTRUCT), and so does a STRUCTARR element struct that routes
+// field reclaim (#6127): that can only be a string / string[] / fn field, which
+// the shallow per-element box dec of __fern_arrarr_free never reaches. Every
+// other STRUCTARR element is scalar-only, and the box dec is its whole release.
+function emit_struct_arr_reclaim_store(sb: LowerState, slot: i32): LowerState {
+    var sty: string = sb.struct_type_of_slot(slot);
+    if (slot_is_reclaimable_arrstruct(sb, slot) || sb.struct_routes_field_reclaim(sty)) {
+        return emit_arrstruct_reclaim_store(sb, slot, sty);
+    }
+    return emit_structarr_reclaim_store(sb, slot);
 }
 
 // emit_structarr_reclaim_store: the struct-element twin of
@@ -80996,7 +81080,7 @@ while (sa2i < sarrs2.len()) {
     // As above: site keys, with the "A|" marker carried in the same key.
     var sanm: string = reclaim_site_name(sarrs2[sa2i]);
     if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
-        && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
+        && !structarr_unsafe_for(body, sanm, borrowable, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"))
         && !structarr_elem_escapes(body, sanm, borrowable)) {
         // Append-built candidates take the SEPARATE STRUCTARRA: credit,
         // which slot_is_reclaimable_structarr additionally gates on the
