@@ -13300,8 +13300,8 @@ function is_socket_call(name: string, argc: i32): boolean {
 }
 
 function socket_call_arity(name: string): i32 {
-    if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port"], name)) { return 1; }
-    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind"], name)) { return 2; }
+    if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port", "unix_connect"], name)) { return 1; }
+    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen"], name)) { return 2; }
     if (util.has_str(["udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with"], name)) { return 3; }
     if (name == "udp_sendto") { return 4; }
     return 0;
@@ -13323,12 +13323,14 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     if (cid.name == "tcp_listen") { return a0.emit(ir.op_tcp_listen()); }
     if (cid.name == "tcp_accept") { return a0.emit(ir.op_tcp_accept()); }
     if (cid.name == "tcp_local_port") { return a0.emit(ir.op_tcp_local_port()); }
+    if (cid.name == "unix_connect") { return a0.emit(ir.op_unix_connect()); }
     var a1: LowerState = lower_expr(c.args[1], a0);
     if (!a1.ok) { return a1; }
     if (cid.name == "tcp_connect") { return a1.emit(ir.op_tcp_connect()); }
     if (cid.name == "tcp_send") { return a1.emit(ir.op_tcp_send()); }
     if (cid.name == "tcp_recv") { return a1.emit(ir.op_tcp_recv()); }
     if (cid.name == "udp_bind") { return a1.emit(ir.op_udp_bind()); }
+    if (cid.name == "unix_listen") { return a1.emit(ir.op_unix_listen()); }
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     if (cid.name == "tcp_listen_with") { return a2.emit(ir.op_tcp_listen_with()); }

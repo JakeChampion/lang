@@ -925,6 +925,35 @@ pub function connect_result(sock: i32): Result[(), NetError] {
     return __socket_result(tcp_socket_ctl(sock, 5, 0));
 }
 
+// `accept(sock)` — the next connection a listener has queued, or the error
+// the accept reported.
+pub function accept(sock: i32): Result[i32, NetError] {
+    return __socket_count(tcp_accept(sock));
+}
+
+// ---------------------------------------------------------------------------
+// Unix-domain sockets
+//
+// Native only: neither WASI world has a filesystem namespace for socket
+// endpoints, so a program that names these does not compile for wasm.
+
+// `listen_unix(path, backlog)` — a stream socket listening at the filesystem
+// path with that accept queue, or the error the bind or listen reported:
+// `AddrInUse` while a socket file is there (remove it first when it is a
+// stale one), `Other(ENAMETOOLONG)` for a path longer than the address
+// holds (107 bytes on Linux, 103 on Darwin). `accept`, `tcp_recv`,
+// `tcp_send` and `close` take the sockets.
+pub function listen_unix(path: string, backlog: i32): Result[i32, NetError] {
+    return __socket_count(unix_listen(path, backlog));
+}
+
+// `connect_unix(path)` — a stream socket connected to the listener at the
+// filesystem path, or the error the dial reported (`Other(ENOENT)` when
+// nothing is there).
+pub function connect_unix(path: string): Result[i32, NetError] {
+    return __socket_count(unix_connect(path));
+}
+
 // `local_port(sock)` — the port a socket is bound to, which is how a
 // socket bound to port 0 learns the one the host picked.
 pub function local_port(sock: i32): Result[i32, NetError] {

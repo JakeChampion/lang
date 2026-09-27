@@ -980,6 +980,10 @@ pub function op_udp_recvfrom(): Op { return op0("udp_recvfrom"); }
 // `tcp_connect_with` [host_be, port, nonblocking] -> i32 connected fd, or one
 // whose connect is under way (or -errno) (#9853).
 pub function op_tcp_connect_with(): Op { return op0("tcp_connect_with"); }
+// The Unix-domain sockets (#9853). `unix_listen` [path, backlog] -> i32
+// listener (or -errno); `unix_connect` [path] -> i32 connection (or -errno).
+pub function op_unix_listen(): Op { return op0("unix_listen"); }
+pub function op_unix_connect(): Op { return op0("unix_connect"); }
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -2538,6 +2542,7 @@ function kind_id_len11(name: string): i32 {
     if (c == b't' && name == "termios_set") { return 313; }
     if (c == b'u' && name == "uname_field") { return 250; }
     if (c == b'u' && name == "udp_connect") { return 335; }
+    if (c == b'u' && name == "unix_listen") { return 339; }
     if (c == b'w' && name == "window_size") { return 276; }
     return 0;
 }
@@ -2578,6 +2583,7 @@ function kind_id_len12(name: string): i32 {
     if (c == b's') { return kind_id_len12_s(name); }
     if (c == b't' && name == "tcp_pollable") { return 112; }
     if (c == b'u' && name == "udp_recvfrom") { return 337; }
+    if (c == b'u' && name == "unix_connect") { return 340; }
     if (c == b'w' && name == "writer_write") { return 202; }
     return 0;
 }
@@ -2907,6 +2913,8 @@ function kind_name_4(id: i32): string {
     if (id == 336) { return "udp_sendto"; }
     if (id == 337) { return "udp_recvfrom"; }
     if (id == 338) { return "tcp_connect_with"; }
+    if (id == 339) { return "unix_listen"; }
+    if (id == 340) { return "unix_connect"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 306) { return "buf_push_u64"; }
@@ -3130,6 +3138,7 @@ function pops1_io(t: i32): boolean {
     return t == 154 || t == 158 || t == 159 || t == 160                  // if, brif, drop, return
         || t == 163 || t == 164 || t == 165 || t == 166                  // print_str, eprint_str, putchar, exit
         || t == 169 || t == 233 || t == 171 || t == 172 || t == 173      // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
+        || t == 340                                                      // unix_connect (path)
         || t == 310                                                      // read_dir_all
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
         || t == 266                                                      // sleep_ns
@@ -3186,7 +3195,7 @@ function pops2_io(t: i32): boolean {
         || t == 284                                                      // set_process_group (pid, pgid)
         || t == 311                                                      // fd_dup_onto (fd, newfd)
         || t == 178 || t == 187                                          // read_chunk, poll
-        || t == 110 || t == 114 || t == 115 || t == 334                  // tcp_connect, tcp_send, tcp_recv, udp_bind
+        || t == 110 || t == 114 || t == 115 || t == 334 || t == 339      // tcp_connect, tcp_send, tcp_recv, udp_bind, unix_listen
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }

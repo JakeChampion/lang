@@ -197,6 +197,17 @@ Waiting for a started connect is a loop over op 5 today: the readiness
 builtins watch readability only, and writability arrives with the reactor.
 std/net wraps the three as `connect`, `connect_start` and `connect_result`.
 
+`unix_listen(path, backlog)` and `unix_connect(path)` are the Unix-domain
+sockets: a stream listener at a filesystem path and a connection to one,
+each a descriptor or -errno (-ENAMETOOLONG for a path longer than the
+address holds, 107 bytes on Linux and 103 on Darwin, before any socket
+exists; a held path is -EADDRINUSE, and the socket file is not unlinked
+first), which `tcp_accept`, `tcp_recv`, `tcp_send` and `tcp_close` take.
+Fern bodies on both compilers (Darwin leads the address with sun_len) and
+the net package in the interpreter. Native only: the `unix` capability is
+in no wasi profile, so E066 refuses them on both wasm worlds at check time,
+and std/net's `listen_unix`, `connect_unix` and `accept` wrap them.
+
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through
 the byte store. The Darwin legs run in the Apple Silicon lane.

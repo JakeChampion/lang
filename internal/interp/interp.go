@@ -1386,6 +1386,8 @@ func New() *Interp {
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
+	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
+	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}

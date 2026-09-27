@@ -441,6 +441,8 @@ var providedSigs = map[string]providedSig{
 	"tcp_send":                        {-1, rWord},
 	"tcp_socket_ctl":                  {-1, rWord},
 	"tcp_connect_with":                {-1, rWord},
+	"unix_listen":                     {-1, rWord},
+	"unix_connect":                    {-1, rWord},
 	"temp_dir":                        {-1, rWord},
 	"timer_fd":                        {-1, rWord},
 	"udp_send":                        {-1, rWord},

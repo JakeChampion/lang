@@ -302,7 +302,12 @@ var rcInertBuiltins = map[string]bool{
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"proc_waitpid_nohang": true,
-	"sleep_ms":            true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
+	// (path, backlog) / (path) → a descriptor or -errno; the path is read,
+	// not kept. Native-only like `access` below: the `unix` capability
+	// refuses them on both wasm worlds, so they are classified here under
+	// the builtin name rather than as a wasm runtime helper.
+	"unix_listen": true, "unix_connect": true,
+	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
 	// refuses it on both wasm worlds, which have no process table — so
 	// like `access` it is classified here under the builtin name rather

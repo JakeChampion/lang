@@ -233,6 +233,8 @@ var rcResultOwned = map[string]bool{
 	// classified there under the builtin name, which is why they are
 	// spelled the builtin's way here too.
 	"access":            true,
+	"unix_listen":       true,
+	"unix_connect":      true,
 	"write_file_exec":   true,
 	"chmod":             true,
 	"chmod_at":          true,

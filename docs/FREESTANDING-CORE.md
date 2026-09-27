@@ -59,7 +59,8 @@ costs a silent failure on the first target that lacks it.
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `signal` | `signal_ignore`, `signal_default` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
-| `tcp` | `tcp_*`, `udp_send` | a network stack |
+| `tcp` | `tcp_*`, `udp_*` | a network stack |
+| `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `proc_waitpid`, `proc_waitpid_nohang`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
