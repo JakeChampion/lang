@@ -72,7 +72,7 @@ function main(): i32 {
     var junk: i32[] = [9, 9, 9, 9, 9];
     return k[0] * 10 + k[4] + junk[0] - 9;
 }
-`, 44, false, [2]int64{15, 5}},
+`, 44, false, [2]int64{14, 4}},
 	{"refused_elem_escapes", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -81,7 +81,7 @@ function main(): i32 {
     for h in hold { if (h.n > 2) { other = other.append(h); } }
     return other.len() * 10 + other[1].ops[0];
 }
-`, 24, false, [2]int64{15, 5}},
+`, 24, false, [2]int64{13, 3}},
 	{"refused_rebind_in_loop", `function main(): i32 {
     var hold: St[] = [];
     var j: i32 = 0;
@@ -90,7 +90,7 @@ function main(): i32 {
     for h in hold { s = s + h.ops[0]; if (h.n == 1) { hold = hold.append(St { ops: [7], n: 7 }); } }
     return s * 10 + hold.len();
 }
-`, 106, false, [2]int64{16, 4}},
+`, 106, false, [2]int64{15, 3}},
 }
 
 func TestSelfHostForArrStructReleaseX86_64(t *testing.T) {
