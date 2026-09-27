@@ -60877,18 +60877,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         if (s.locals[cpi].is_cell) { s = s.mark_cell_elem(cpi, s.locals[cpi].cell_elem); }
         cpi = cpi + 1;
     }
-    var roots: string[] = [];
-    var ri: i32 = 0;
-    while (ri < s.frame.n_params) {
-        if (own_array_flag_param(s, ri)) { roots = roots.append(s.locals[ri].slot_name); }
-        ri = ri + 1;
-    }
-    var ohb: Handbacks = own_handbacks_of(fn, roots, append_all(sg.own_positions, fn_value_own_rows(fn, sg.own_positions, false)),
-        append_all(append_all(sg.own_scalar_arr_positions, sg.own_consumed_positions), fn_value_own_rows(fn, sg.own_scalar_arr_positions, true)));
-    var ohb_rows: string[] = [];
-    var ohi: i32 = 0;
-    while (ohi < ohb.sites.len()) { ohb_rows = ohb_rows.append(ohb.sites[ohi] + "|" + ohb.srcs[ohi]); ohi = ohi + 1; }
-    s = LowerState { ...s, frame: LowerFrame { ...s.frame, own_handback_sites: ohb_rows, grow_alias: grow_alias_names_of(fn, ohb.sites) } };
+    s = with_own_handbacks(fn, s);
     // Array params threaded with an ownership flag (ownflag_name): allocate and
     // set each flag before any body op, in parameter order, so slot numbering is
     // deterministic. A reassigned borrowed param and a reassigned flagged `own`
@@ -77643,52 +77632,48 @@ pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]
     var ownpos: string[] = own_positions_of(funcs);
     var scalar: string[] = own_scalar_arr_positions_of(funcs);
     while (changed) {
-        changed = false;
+        var before: i32 = out.len();
         for fn in funcs {
-            if (fn.receiver_name.len() > 0) { continue; }
-            // The `own` array params, and the locals that take a pointer-element
-            // one over at its last use (own_handbacks_of, with the rows the
-            // lowering reads), each paired with the param it stands for.
-            var owned: string[] = [];
-            var roots: string[] = [];
-            for p in fn.params {
-                if (p.own && is_array_type_name(p.type_name)) {
-                    owned = owned.append(p.name);
-                    if (!is_leaksafe_array_field(p.type_name)) { roots = roots.append(p.name); }
-                }
-            }
-            if (owned.len() == 0) { continue; }
-            var hb: Handbacks = own_handbacks_of(fn, roots, append_all(ownpos, fn_value_own_rows(fn, ownpos, false)),
-                append_all(append_all(scalar, out), fn_value_own_rows(fn, scalar, true)));
-            var stands: string[] = append_all(owned, hb.roots);
-            owned = append_all(owned, hb.names);
-            var sole: string[] = grow_sole_exempt_names_of(fn);
-            var passes: string[] = [];
-            var si: i32 = 0;
-            while (si < fn.body.len()) { passes = grow_dying_passes_stmt(fn.body[si], owned, sole, passes); si = si + 1; }
-            for entry in passes {
-                var b1: i32 = 0;
-                while (b1 < entry.len() && entry[b1] != b'|') { b1 = b1 + 1; }
-                var b2: i32 = b1 + 1;
-                while (b2 < entry.len() && entry[b2] != b'|') { b2 = b2 + 1; }
-                var cname: string = slice_unchecked(entry, 0, b1) + "";
-                var slot: i32 = util.digits_to_i32(slice_unchecked(entry, b1 + 1, b2));
-                var pname: string = slice_unchecked(entry, b2 + 1, entry.len()) + "";
-                if (cname.len() == 0 || cname[0] == b'@' || slot < 1) { continue; }
-                var oi: i32 = util.index_of_str(owned, pname);
-                if (oi >= 0) { pname = stands[oi]; }
-                if (util.index_of_str(out, cname + "|" + util.i32_to_string(slot - 1)) < 0) { continue; }
-                var at: i32 = 0;
-                while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
-                var row: string = fn.name + "|" + util.i32_to_string(at);
-                if (at < fn.params.len() && util.index_of_str(out, row) < 0) {
-                    out = out.append(row);
-                    changed = true;
-                }
-            }
+            if (fn.receiver_name.len() == 0) { out = fn_consumed_positions(fn, out, ownpos, scalar); }
         }
+        changed = out.len() > before;
     }
     return out;
+}
+
+// fn_consumed_positions adds to `out` the rows of `fn`'s `own` array params
+// that it passes, itself or through a local that took it over at its last use
+// (own_handbacks_of, with the rows the lowering reads), to a consuming position
+// in a dying shape.
+function fn_consumed_positions(fn: parser.FuncDecl, out: string[], ownpos: string[], scalar: string[]): string[] {
+    var owned: string[] = [];
+    var roots: string[] = [];
+    for p in fn.params {
+        if (p.own && is_array_type_name(p.type_name)) {
+            owned = owned.append(p.name);
+            if (!is_leaksafe_array_field(p.type_name)) { roots = roots.append(p.name); }
+        }
+    }
+    if (owned.len() == 0) { return out; }
+    var hb: Handbacks = own_handbacks_of(fn, roots, append_all(ownpos, fn_value_own_rows(fn, ownpos, false)),
+        append_all(append_all(scalar, out), fn_value_own_rows(fn, scalar, true)));
+    var stands: string[] = append_all(owned, hb.roots);
+    owned = append_all(owned, hb.names);
+    var sole: string[] = grow_sole_exempt_names_of(fn);
+    var passes: string[] = [];
+    for st in fn.body { passes = grow_dying_passes_stmt(st, owned, sole, passes); }
+    var res: string[] = out;
+    for entry in passes {
+        var parts: string[] = split_bar(entry);
+        if (parts.len() != 3 || parts[0].len() == 0 || parts[0][0] == b'@' || util.digits_to_i32(parts[1]) < 1) { continue; }
+        if (util.index_of_str(res, parts[0] + "|" + util.i32_to_string(util.digits_to_i32(parts[1]) - 1)) < 0) { continue; }
+        var pname: string = parts[2];
+        if (util.index_of_str(owned, pname) >= 0) { pname = stands[util.index_of_str(owned, pname)]; }
+        var at: i32 = 0;
+        while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
+        if (at < fn.params.len()) { res = push_str_unique(res, fn.name + "|" + util.i32_to_string(at)); }
+    }
+    return res;
 }
 
 // consume_sigs installs the consuming `own` array positions the produced
@@ -78071,6 +78056,24 @@ function var_site_key(st: ast.Stmt): string {
 // last use — the site ("line:col"), the name bound, the name taken over, and
 // the root that name stands for.
 pub struct Handbacks { sites: string[], names: string[], srcs: string[], roots: string[] }
+
+// with_own_handbacks records `fn`'s own_handbacks_of binds on the frame, rooted
+// at its flagged `own` array parameters, and the grow aliases that leaves.
+function with_own_handbacks(fn: parser.FuncDecl, s: LowerState): LowerState {
+    var sg: FnSigs = s.frame.sigs;
+    var roots: string[] = [];
+    var ri: i32 = 0;
+    while (ri < s.frame.n_params) {
+        if (own_array_flag_param(s, ri)) { roots = roots.append(s.locals[ri].slot_name); }
+        ri = ri + 1;
+    }
+    var hb: Handbacks = own_handbacks_of(fn, roots, append_all(sg.own_positions, fn_value_own_rows(fn, sg.own_positions, false)),
+        append_all(append_all(sg.own_scalar_arr_positions, sg.own_consumed_positions), fn_value_own_rows(fn, sg.own_scalar_arr_positions, true)));
+    var rows: string[] = [];
+    var i: i32 = 0;
+    while (i < hb.sites.len()) { rows = rows.append(hb.sites[i] + "|" + hb.srcs[i]); i = i + 1; }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, own_handback_sites: rows, grow_alias: grow_alias_names_of(fn, hb.sites) } };
+}
 
 // own_handbacks_of finds, in `fn`'s top-level statements, each `var a = …`
 // whose initialiser hands over whole (own_handback_arg) one of `roots` or an
