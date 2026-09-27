@@ -64935,20 +64935,17 @@ struct StrarrOwnSrc { str_fresh: string[], producers: string[], owned: string[],
 // in `owned`, or a holder's `string[]` field read, the counted share the
 // struct-literal gate already admits inline.
 function strarr_owned_value(e: ast.Expr, src: StrarrOwnSrc): boolean {
-    match (e) {
-        ast.ExprArray(al) => {
-            for el in al.elements {
-                if (!strarr_value_is_fresh(el, src.str_fresh)) { return false; }
-            }
-            return true;
-        },
-        ast.ExprCall(c) => { return util.has_str(src.producers, ident_name_or_empty(c.callee)); },
-        ast.ExprIdent(id) => { return util.has_str(src.owned, id.name); },
-        ast.ExprFieldAccess(fa) => {
-            if (ident_name_or_empty(fa.obj).len() == 0) { return false; }
-            return decl_field_type(src.structs, fnfld_obj_type(fa.obj, src.structs, src.binds), fa.field) == "string[]";
-        },
-        _ => { return false; }
+    if let ast.ExprArray(al) = e {
+        for el in al.elements {
+            if (!strarr_value_is_fresh(el, src.str_fresh)) { return false; }
+        }
+        return true;
+    }
+    if let ast.ExprCall(c) = e { return util.has_str(src.producers, ident_name_or_empty(c.callee)); }
+    if let ast.ExprIdent(id) = e { return util.has_str(src.owned, id.name); }
+    if let ast.ExprFieldAccess(fa) = e {
+        if (ident_name_or_empty(fa.obj).len() == 0) { return false; }
+        return decl_field_type(src.structs, fnfld_obj_type(fa.obj, src.structs, src.binds), fa.field) == "string[]";
     }
     return false;
 }
@@ -64957,17 +64954,11 @@ function strarr_owned_value(e: ast.Expr, src: StrarrOwnSrc): boolean {
 // an owned value, or a self-append of a fresh element.
 function strarr_owned_rebind(a: ast.StmtAssign, src: StrarrOwnSrc): boolean {
     if (strarr_owned_value(a.value, src)) { return true; }
-    match (a.value) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprFieldAccess(fa) => {
-                    return fa.field == "append" && ident_name_or_empty(fa.obj) == a.target && c.args.len() == 1
-                        && strarr_value_is_fresh(c.args[0], src.str_fresh);
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
+    if let ast.ExprCall(c) = a.value {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            return fa.field == "append" && ident_name_or_empty(fa.obj) == a.target && c.args.len() == 1
+                && strarr_value_is_fresh(c.args[0], src.str_fresh);
+        }
     }
     return false;
 }
@@ -64976,37 +64967,26 @@ function strarr_owned_rebind(a: ast.StmtAssign, src: StrarrOwnSrc): boolean {
 // or -1 when one of them, or an assignment to `name`, stores a value whose
 // elements the local would not own.
 function strarr_local_owned_decls(stmts: ast.Stmt[], name: string, src: StrarrOwnSrc): i32 {
-    var n: i32 = 0;
-    for st in stmts {
-        var k: i32 = 0;
-        match (st) {
-            ast.StmtVar(v) => {
-                if (v.name == name) {
-                    if (!strarr_owned_value(v.init, src)) { return 0 - 1; }
-                    k = 1;
-                }
-            },
-            ast.StmtAssign(a) => {
-                if (a.target == name && !strarr_owned_rebind(a, src)) { return 0 - 1; }
-            },
-            ast.StmtIf(f) => { k = strarr_owned_decls_sum(strarr_local_owned_decls(f.then_body, name, src), strarr_local_owned_decls(f.else_body, name, src)); },
-            ast.StmtWhile(w) => { k = strarr_local_owned_decls(w.body, name, src); },
-            ast.StmtFor(fo) => { k = strarr_local_owned_decls(fo.body, name, src); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { k = strarr_owned_decls_sum(k, strarr_local_owned_decls(arm.body, name, src)); }
-            },
-            ast.StmtDefer(d) => { k = strarr_local_owned_decls([d.action], name, src); },
-            _ => {}
-        }
-        n = strarr_owned_decls_sum(n, k);
-        if (n < 0) { return n; }
-    }
-    return n;
+    var acc: StrarrDeclCount = StrarrDeclCount { name: name, src: src, n: 0 };
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_decl_count_step); }
+    return acc.n;
 }
 
-function strarr_owned_decls_sum(a: i32, b: i32): i32 {
-    if (a < 0 || b < 0) { return 0 - 1; }
-    return a + b;
+// StrarrDeclCount threads strarr_local_owned_decls' walk: the local, what its
+// ownership is proved from, and the declarations counted so far.
+struct StrarrDeclCount { name: string, src: StrarrOwnSrc, n: i32 }
+
+function strarr_decl_count_step(st: ast.Stmt, own acc: StrarrDeclCount): StrarrDeclCount {
+    if (acc.n < 0) { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (v.name != acc.name) { return acc; }
+        if (!strarr_owned_value(v.init, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+        return StrarrDeclCount { ...acc, n: acc.n + 1 };
+    }
+    if let ast.StmtAssign(a) = st {
+        if (a.target == acc.name && !strarr_owned_rebind(a, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+    }
+    return acc;
 }
 
 // StrarrOwnFrame is what strarrfld_borrowed_elem_marks knows about one body:
@@ -65047,40 +65027,46 @@ function strarr_frame_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
 // and assignment an owned value. An alias of an owned local is one too, so the
 // set grows to a fixed point.
 function strarr_owned_locals(fn: parser.FuncDecl, bound: string[], src: StrarrOwnSrc): string[] {
-    var cands: string[] = [];
-    for v in strarr_var_decls(fn.body, []) {
-        if ((v.type_name == "string[]" || v.type_name == "") && !util.has_str(cands, v.name)
-            && !fn_has_param_named(fn, v.name) && v.name != fn.receiver_name) { cands = cands.append(v.name); }
-    }
+    var cands: string[] = strarr_owned_candidates(fn);
     var owned: string[] = [];
     var grew: boolean = true;
     while (grew) {
         grew = false;
         for nm in cands {
             if (!util.has_str(owned, nm)) {
-                var binders: i32 = 0;
-                for b in bound { if (b == nm) { binders = binders + 1; } }
                 var decls: i32 = strarr_local_owned_decls(fn.body, nm, StrarrOwnSrc { ...src, owned: owned });
-                if (decls > 0 && decls == binders) { owned = owned.append(nm); grew = true; }
+                if (decls > 0 && decls == strarr_count_of(bound, nm)) { owned = owned.append(nm); grew = true; }
             }
         }
     }
     return owned;
 }
 
+// strarr_owned_candidates: the locals of `fn` declared `string[]` or
+// unannotated, parameters and the receiver excluded.
+function strarr_owned_candidates(fn: parser.FuncDecl): string[] {
+    var cands: string[] = [];
+    for v in strarr_var_decls(fn.body, []) {
+        if ((v.type_name == "string[]" || v.type_name == "") && !util.has_str(cands, v.name)
+            && !fn_has_param_named(fn, v.name) && v.name != fn.receiver_name) { cands = cands.append(v.name); }
+    }
+    return cands;
+}
+
+function strarr_count_of(names: string[], nm: string): i32 {
+    var n: i32 = 0;
+    for b in names { if (b == nm) { n = n + 1; } }
+    return n;
+}
+
 // strarr_var_decls: every `var` declaration in `stmts`, lambda bodies aside.
 function strarr_var_decls(stmts: ast.Stmt[], own acc: ast.StmtVar[]): ast.StmtVar[] {
-    for st in stmts {
-        match (st) {
-            ast.StmtVar(v) => { acc = acc.append(v); },
-            ast.StmtIf(f) => { acc = strarr_var_decls(f.else_body, strarr_var_decls(f.then_body, acc)); },
-            ast.StmtWhile(w) => { acc = strarr_var_decls(w.body, acc); },
-            ast.StmtFor(fo) => { acc = strarr_var_decls(fo.body, acc); },
-            ast.StmtMatch(m) => { for arm in m.arms { acc = strarr_var_decls(arm.body, acc); } },
-            ast.StmtDefer(d) => { acc = strarr_var_decls([d.action], acc); },
-            _ => {}
-        }
-    }
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_var_decl_step); }
+    return acc;
+}
+
+function strarr_var_decl_step(st: ast.Stmt, own acc: ast.StmtVar[]): ast.StmtVar[] {
+    if let ast.StmtVar(v) = st { return acc.append(v); }
     return acc;
 }
 
@@ -65098,11 +65084,8 @@ function strarr_frame_param_key(e: ast.Expr, fr: StrarrOwnFrame): string {
 }
 
 function strarr_callee_key(c: ast.ExprCall): string {
-    match (c.callee) {
-        ast.ExprIdent(id) => { return id.name; },
-        ast.ExprFieldAccess(fa) => { return fa.field; },
-        _ => { return ""; }
-    }
+    if let ast.ExprIdent(id) = c.callee { return id.name; }
+    if let ast.ExprFieldAccess(fa) = c.callee { return fa.field; }
     return "";
 }
 
@@ -65117,51 +65100,53 @@ function strarr_callee_key(c: ast.ExprCall): string {
 function strarr_own_node(e: ast.Expr, own st: StrarrOwnAcc): StrarrOwnAcc {
     var fr: StrarrOwnFrame = st.fr;
     var a: string[] = st.out;
-    match (e) {
-        ast.ExprStructLit(sl) => {
-            var i: i32 = 0;
-            while (fr.store_fns.len() == 0 && i < sl.field_names.len()) {
-                if (decl_field_type(fr.src.structs, sl.type_name, sl.field_names[i]) == "string[]"
-                    && ident_name_or_empty(sl.field_values[i]).len() > 0) {
-                    var tf: string = sl.type_name + "." + sl.field_names[i];
-                    var pk: string = strarr_frame_param_key(sl.field_values[i], fr);
-                    if (pk.len() > 0) { a = a.append("st:" + pk + "|" + tf); }
-                    else if (!strarr_owned_value(sl.field_values[i], fr.src)) { a = a.append("mk:" + tf); }
-                }
-                i = i + 1;
-            }
-        },
-        ast.ExprCall(c) => {
-            var k: string = strarr_callee_key(c);
-            if (k.len() > 0 && fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) { a = a.append("cl:" + k); }
-            var i: i32 = 0;
-            while (k.len() > 0 && i < c.args.len()) {
-                var ck: string = k + "#" + util.i32_to_string(i);
-                var pk: string = strarr_frame_param_key(c.args[i], fr);
-                if (fr.store_fns.len() == 0) {
-                    if (pk.len() > 0) { a = a.append("ln:" + ck + "|" + pk); }
-                } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && strarr_keyed_any(fr.stores, ck + "|")) {
-                    a = a.append("bd:" + ck);
-                }
-                i = i + 1;
-            }
-        },
-        ast.ExprIdent(id) => {
-            if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) { a = a.append("id:" + id.name); }
-        },
-        ast.ExprLambda(lm) => {
-            a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
-        },
-        _ => {}
+    if let ast.ExprStructLit(sl) = e { a = strarr_own_struct_lit(sl, fr, a); }
+    if let ast.ExprCall(c) = e { a = strarr_own_call(c, fr, a); }
+    if let ast.ExprIdent(id) = e {
+        if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) { a = a.append("id:" + id.name); }
+    }
+    if let ast.ExprLambda(lm) = e {
+        a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
     }
     return StrarrOwnAcc { fr: fr, out: a };
 }
 
-function strarr_not_lambda(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprLambda(_) => { return false; },
-        _ => { return true; }
+function strarr_own_struct_lit(sl: ast.ExprStructLit, fr: StrarrOwnFrame, own a: string[]): string[] {
+    if (fr.store_fns.len() > 0) { return a; }
+    var i: i32 = 0;
+    while (i < sl.field_names.len()) {
+        if (decl_field_type(fr.src.structs, sl.type_name, sl.field_names[i]) == "string[]"
+            && ident_name_or_empty(sl.field_values[i]).len() > 0) {
+            var tf: string = sl.type_name + "." + sl.field_names[i];
+            var pk: string = strarr_frame_param_key(sl.field_values[i], fr);
+            if (pk.len() > 0) { a = a.append("st:" + pk + "|" + tf); }
+            else if (!strarr_owned_value(sl.field_values[i], fr.src)) { a = a.append("mk:" + tf); }
+        }
+        i = i + 1;
     }
+    return a;
+}
+
+function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): string[] {
+    var k: string = strarr_callee_key(c);
+    if (k.len() == 0) { return a; }
+    if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) { a = a.append("cl:" + k); }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var ck: string = k + "#" + util.i32_to_string(i);
+        var pk: string = strarr_frame_param_key(c.args[i], fr);
+        if (fr.store_fns.len() == 0) {
+            if (pk.len() > 0) { a = a.append("ln:" + ck + "|" + pk); }
+        } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && strarr_keyed_any(fr.stores, ck + "|")) {
+            a = a.append("bd:" + ck);
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function strarr_not_lambda(e: ast.Expr): boolean {
+    if let ast.ExprLambda(_) = e { return false; }
     return true;
 }
 
@@ -65234,33 +65219,36 @@ function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: Struct
     var a: string[] = acc;
     for tf in strarr_keyed_values(first, "mk:") { a = push_str_unique(a, tf); }
     if (stores.len() == 0) { return a; }
-    var store_fns: string[] = [];
-    for row in stores {
-        var h: i32 = 0;
-        while (row[h] != b'#') { h = h + 1; }
-        store_fns = push_str_unique(store_fns, slice_unchecked(row, 0, h) + "");
-    }
+    var store_fns: string[] = strarr_store_fns(stores);
     var second: string[] = [];
     for fn in funcs { second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_fns), second); }
     for bk in strarr_keyed_values(second, "bd:") {
         for tf in strarr_keyed_values(stores, bk + "|") { a = push_str_unique(a, tf); }
     }
     for fname in store_fns {
-        var ids: i32 = 0;
-        var calls: i32 = 0;
-        for r in second {
-            if (r == "id:" + fname) { ids = ids + 1; }
-            if (r == "cl:" + fname) { calls = calls + 1; }
-        }
-        if (ids > calls) {
-            for tf in strarr_keyed_values(stores, fname + "#") {
-                var bar: i32 = 0;
-                while (tf[bar] != b'|') { bar = bar + 1; }
-                a = push_str_unique(a, slice_unchecked(tf, bar + 1, tf.len()) + "");
-            }
+        if (strarr_count_of(second, "id:" + fname) > strarr_count_of(second, "cl:" + fname)) {
+            for pf in strarr_keyed_values(stores, fname + "#") { a = push_str_unique(a, strarr_after_bar(pf)); }
         }
     }
     return a;
+}
+
+// strarr_store_fns: the functions that own a storing parameter.
+function strarr_store_fns(stores: string[]): string[] {
+    var out: string[] = [];
+    for row in stores {
+        var h: i32 = 0;
+        while (row[h] != b'#') { h = h + 1; }
+        out = push_str_unique(out, slice_unchecked(row, 0, h) + "");
+    }
+    return out;
+}
+
+// strarr_after_bar: the text after the first `|` of a registry row.
+function strarr_after_bar(row: string): string {
+    var bar: i32 = 0;
+    while (row[bar] != b'|') { bar = bar + 1; }
+    return slice_unchecked(row, bar + 1, row.len()) + "";
 }
 
 function strarrfld_fn_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
