@@ -13893,9 +13893,10 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
 // i32)]` whose argument has no clone name. Such an enum is left out of the
 // pass entirely, declaration, variants and methods erased as before, because
 // a clone beside the generic original is unsound on the AST lowering, which
-// dispatches an enum's methods by name. A spelling naming the enum's own type
-// parameters (`List[T]` inside `enum List[T]`, or in an erased generic) is
-// the declaration's own recursion, not a use.
+// dispatches an enum's methods by name. A spelling that mentions a type
+// variable (`List[T]` inside `enum List[T]`, `Opt[U]` inside `enum E[U]`, or
+// one in an erased generic) belongs to a template, not a use: the template's
+// instantiation keys it.
 struct MeUses { enums: EnumDecl[], bases: string[] }
 
 function me_use_spelling(ty: string, own u: MeUses): MeUses {
@@ -13905,11 +13906,8 @@ function me_use_spelling(ty: string, own u: MeUses): MeUses {
     if (lb <= 0 || slice_unchecked(t, t.len() - 1, t.len()) != "]") { return u; }
     var base: string = slice_unchecked(t, 0, lb) + "";
     var parts: string[] = split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1));
-    var gi: i32 = genum_index(u.enums, base);
-    if (gi >= 0 && !str_in(u.bases, base)) {
-        var own_param: boolean = false;
-        for p in parts { if (str_in(u.enums[gi].type_params, p)) { own_param = true; } }
-        if (!own_param && genum_key_from_anno(t, base, u.enums).len() == 0) { u = MeUses { ...u, bases: u.bases.append(base) }; }
+    if (genum_index(u.enums, base) >= 0 && !str_in(u.bases, base) && !mono_ty_mentions_var(t) && genum_key_from_anno(t, base, u.enums).len() == 0) {
+        u = MeUses { ...u, bases: u.bases.append(base) };
     }
     for p in parts { u = me_use_spelling(p, u); }
     return u;
