@@ -1957,6 +1957,7 @@ func (b *builder) emitPreciseDrop(name string) {
 // (inc only fresh-owned bare idents) existed solely to avoid touching
 // view strings and is no longer needed.
 func (b *builder) emitAliasInc(e ast.Expr) {
+	e = blockValue(e)
 	if b.info != nil && b.info.DynCoercions != nil {
 		if dc, ok := b.info.DynCoercions[e]; ok {
 			b.emitDynConcreteInc(dc)

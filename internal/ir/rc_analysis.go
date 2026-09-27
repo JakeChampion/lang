@@ -1528,8 +1528,8 @@ func copyingBuiltinArg(name string, i int) bool {
 // stringStoresCounted reports whether every store into string local `name`
 // hands it a reference of its own: a literal, a fresh owned value, or an alias
 // the store retains. Only then may the exit sweep release a local it has not
-// proven owns its buffer. One bound to an alias no store retained, like a
-// block's tail value, holds nothing to give back.
+// proven owns its buffer. One bound to an alias no store retained holds
+// nothing to give back.
 func (b *builder) stringStoresCounted(name string) bool {
 	if b.strStoresFn != b.fn {
 		b.strStoresFn, b.strStoresCounted = b.fn, map[string]bool{}
@@ -2947,7 +2947,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	})
 	var escape func(e ast.Expr)
 	escape = func(e ast.Expr) {
-		switch x := e.(type) {
+		switch x := blockValue(e).(type) {
 		case *ast.Ident:
 			tainted[x.Name] = true
 			escaped[x.Name] = true
@@ -3005,6 +3005,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// shapes, so only uncovered yields (slice views, scalar / untracked
 	// projections) keep the escape walk.
 	escapeCountedYield := func(e ast.Expr) {
+		e = blockValue(e)
 		switch e.(type) {
 		case *ast.Ident, *ast.FieldAccess, *ast.Index:
 			if needsRcIncOnAlias(e, b) {
@@ -3379,7 +3380,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				}
 				// A counted copy of an ESCAPED value is freed through its new
 				// owner while the uncounted sink still holds it.
-				if src, ok := rhs.(*ast.Ident); ok && countedAssign[rhs] && escaped[src.Name] && !escaped[name] {
+				if src, ok := blockValue(rhs).(*ast.Ident); ok && countedAssign[rhs] && escaped[src.Name] && !escaped[name] {
 					tainted[name] = true
 					escaped[name] = true
 					changed = true
@@ -3390,11 +3391,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// (`tmp = arr; m.set(k, tmp)` taints arr too) — and
 				// an escaped one carries the escape back with it.
 				if tainted[name] {
-					if src, ok := rhs.(*ast.Ident); ok && !tainted[src.Name] {
+					if src, ok := blockValue(rhs).(*ast.Ident); ok && !tainted[src.Name] {
 						tainted[src.Name] = true
 						changed = true
 					}
-					if src, ok := rhs.(*ast.Ident); ok && escaped[name] && !escaped[src.Name] {
+					if src, ok := blockValue(rhs).(*ast.Ident); ok && escaped[name] && !escaped[src.Name] {
 						escaped[src.Name] = true
 						changed = true
 					}
@@ -3548,7 +3549,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 // borrowed (tainted) value, given the current taint set. See
 // computeFreeEligible. Conservative: unknown shapes are tainted.
 func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
-	switch x := unwrapFString(e).(type) {
+	switch x := unwrapFString(blockValue(e)).(type) {
 	case *ast.ArrayLit:
 		return false
 	case *ast.StructLit:
@@ -6238,6 +6239,7 @@ func (b *builder) retainsOnAlias(t ast.Type) bool {
 }
 
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
+	e = blockValue(e)
 	switch e.(type) {
 	case *ast.Ident, *ast.FieldAccess, *ast.Index, *ast.CaptureRef:
 		// A CaptureRef reads the closure env's own reference (inc'd at
@@ -6247,6 +6249,19 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 		return false
 	}
 	return b.retainsOnAlias(b.exprType(e))
+}
+
+// blockValue is the expression whose value a value block `{ stmts; tail }`
+// yields: its tail, through any nesting. The block's locals are released by
+// the exit sweep, so a tail naming one is an alias like any other.
+func blockValue(e ast.Expr) ast.Expr {
+	for {
+		blk, ok := e.(*ast.BlockExpr)
+		if !ok || blk.Tail == nil {
+			return e
+		}
+		e = blk.Tail
+	}
 }
 
 // rcIncOnAliasType is needsRcIncOnAlias' type half, split out for the callers
