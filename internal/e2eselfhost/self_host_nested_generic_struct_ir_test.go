@@ -169,12 +169,13 @@ function main(): i32 {
 	// field says.
 	{"literal_in_array_argument", `struct Same[T] { a: T, b: T }
 function take(xs: Same[i64][]): i32 {
-    var s: i64 = xs[0].a + xs[0].b + xs[1].a + xs[1].b;
-    return s as i32;
+    var s: i64 = xs[0].a + xs[0].b + xs[1].b;
+    return (s - 8589934592) as i32;
 }
 function main(): i32 {
-    return take([Same { a: 3, b: 4 }, Same { a: 1, b: 2 }]);
-}`, 10},
+    var y: i64 = 4294967296;
+    return take([Same { a: 3, b: y }, Same { a: 1, b: 4294967296 }]);
+}`, 3},
 	// a nested instantiation and a flat instantiation of the same struct
 	// coexisting (each clones independently).
 	{"coexist_with_flat", `struct Box[T] { v: T }

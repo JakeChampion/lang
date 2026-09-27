@@ -668,15 +668,21 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
 }
 
 // A field's static word, or "" when the value is not a constant this can
-// place. A negative i32 literal is `0 - k` in source, which arrives as that
-// subtraction or, once the front end has folded it, as a negation; negating a
-// non-negative i32 cannot wrap.
+// place. A u32 literal carries its text rather than an immediate, as
+// `ssarc.constant` reads it.
 function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     if (!narrow_scalar(t)) { return ""; }
     var d: ssa.SInst = defs[v];
     if (d.kind_tag == 1 && d.str != "") { return small_decimal(d.str); }
     if (d.kind_tag == 1 || d.kind_tag == 2) { return util.i32_to_string(d.imm); }
     if (d.str != "-" || !ssasem.is_i32(t)) { return ""; }
+    return negated_word(defs, d);
+}
+
+// A negative i32 literal is `0 - k` in source, which arrives as that
+// subtraction or, once the front end has folded it, as a negation; negating a
+// non-negative i32 cannot wrap.
+function negated_word(defs: ssa.SInst[], d: ssa.SInst): string {
     var k: ssa.SInst = defs[d.args[d.args.len() - 1]];
     if (k.kind_tag != 1 || k.imm < 0) { return ""; }
     if (d.kind_tag == 10) { return util.i32_to_string(0 - k.imm); }

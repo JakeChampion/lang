@@ -12254,19 +12254,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
             var o: RExpr = ms_expr(u.operand, env, gstructs, funcs, ins);
             return RExpr { rexpr: ast.ExprUnary { op: u.op, operand: o.rexpr, line: u.line, col: u.col, ty: u.ty }, rins: o.rins };
         },
-        ast.ExprCall(c) => {
-            var rc: RExpr = ms_expr(c.callee, env, gstructs, funcs, ins);
-            var cur: Insts = rc.rins;
-            var nargs: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                var ra: RExpr = ms_expr(c.args[i], env, gstructs, funcs, cur);
-                cur = ra.rins;
-                nargs = nargs.append(ra.rexpr);
-                i = i + 1;
-            }
-            return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
-        },
+        ast.ExprCall(c) => { return ms_call(c, env, gstructs, funcs, ins); },
         ast.ExprArray(a) => {
             var els: ast.Expr[] = [];
             var cur: Insts = ins;
@@ -12315,29 +12303,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
             var o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
             return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
         },
-        ast.ExprStructLit(s) => {
-            var cur: Insts = ins;
-            var vals: ast.Expr[] = [];
-            var i: i32 = 0;
-            while (i < s.field_values.len()) {
-                var rv: RExpr = ms_expr(s.field_values[i], env, gstructs, funcs, cur);
-                cur = rv.rins;
-                vals = vals.append(rv.rexpr);
-                i = i + 1;
-            }
-            var rb: RExpr = ms_expr(s.base, env, gstructs, funcs, cur);
-            cur = rb.rins;
-            var tn: string = s.type_name;
-            var gi: i32 = gstruct_index(gstructs, s.type_name);
-            if (gi >= 0) {
-                var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
-                if (key.len() > 0) {
-                    tn = s.type_name + "__" + sanitize_key(key);
-                    cur = cur.iadd(s.type_name, key);
-                }
-            }
-            return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
-        },
+        ast.ExprStructLit(s) => { return ms_struct_lit(s, "", env, gstructs, funcs, ins); },
         ast.ExprLambda(lm) => {
             var bodyr: RStmts = ms_stmts(lm.body, env, gstructs, funcs, ins, "");
             var rt: TyIns = mg_ty(lm.ret_type, gstructs, bodyr.rins3);
@@ -12367,6 +12333,95 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     return RExpr { rexpr: e, rins: ins };
 }
 
+// ms_struct_lit rewrites a struct literal of a generic struct to its mangled
+// clone. `dest` is the mangled type the literal is bound to, or "": a
+// destination naming a clone of the literal's struct fixes the instantiation,
+// as it does in the checker, so an untyped field literal (`a: 3`) cannot key an
+// `i32` clone for a `Same[i64]` slot. Without one the key is inferred from the
+// field values.
+function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
+    var cur: Insts = ins;
+    var vals: ast.Expr[] = [];
+    var i: i32 = 0;
+    while (i < s.field_values.len()) {
+        var rv: RExpr = ms_expr(s.field_values[i], env, gstructs, funcs, cur);
+        cur = rv.rins;
+        vals = vals.append(rv.rexpr);
+        i = i + 1;
+    }
+    var rb: RExpr = ms_expr(s.base, env, gstructs, funcs, cur);
+    cur = rb.rins;
+    var tn: string = s.type_name;
+    var gi: i32 = gstruct_index(gstructs, s.type_name);
+    if (gi >= 0 && is_clone_of(dest, s.type_name)) {
+        tn = dest;
+    } else if (gi >= 0) {
+        var key: string = infer_lit_key(gstructs[gi], s.field_names, vals, env, funcs);
+        if (key.len() > 0) {
+            tn = s.type_name + "__" + sanitize_key(key);
+            cur = cur.iadd(s.type_name, key);
+        }
+    }
+    return RExpr { rexpr: ast.ExprStructLit { type_name: tn, field_names: s.field_names, field_values: vals, has_base: s.has_base, base: rb.rexpr, line: s.line, col: s.col }, rins: cur };
+}
+
+// is_clone_of: `mangled` names a monomorphised clone of generic struct `base`.
+function is_clone_of(mangled: string, base: string): boolean {
+    var pfx: string = base + "__";
+    return mangled.len() > pfx.len() && slice_unchecked(mangled, 0, pfx.len()) == pfx;
+}
+
+// ms_expr_to is ms_expr for an expression bound to the mangled type `dest`: a
+// generic struct literal takes its instantiation from `dest`, and so does each
+// element of an array literal bound to `dest`'s array type.
+function ms_expr_to(e: ast.Expr, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
+    if (dest.len() == 0) { return ms_expr(e, env, gstructs, funcs, ins); }
+    if let ast.ExprStructLit(s) = e { return ms_struct_lit(s, dest, env, gstructs, funcs, ins); }
+    if let ast.ExprArray(a) = e {
+        if (type_ends_arr(dest)) {
+            var el: string = slice_unchecked(dest, 0, dest.len() - 2) + "";
+            var els: ast.Expr[] = [];
+            var cur: Insts = ins;
+            for x in a.elements {
+                var re: RExpr = ms_expr_to(x, el, env, gstructs, funcs, cur);
+                cur = re.rins;
+                els = els.append(re.rexpr);
+            }
+            return RExpr { rexpr: ast.ExprArray { ...a, elements: els }, rins: cur };
+        }
+    }
+    return ms_expr(e, env, gstructs, funcs, ins);
+}
+
+// ms_call rewrites a call's callee and arguments. An argument to a plain
+// function is bound to that parameter's declared type when the type names no
+// type variable.
+function ms_call(c: ast.ExprCall, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
+    var rc: RExpr = ms_expr(c.callee, env, gstructs, funcs, ins);
+    var cur: Insts = rc.rins;
+    var fname: string = "";
+    if let ast.ExprIdent(cid) = c.callee {
+        if (env.elook(cid.name).len() == 0) { fname = cid.name; }
+    }
+    var nargs: ast.Expr[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var dest: string = "";
+        var pty: string = "";
+        if (fname.len() > 0) { pty = func_param_type_at(funcs.decls, fname, i); }
+        if (pty.len() > 0 && !mono_ty_mentions_var(pty)) {
+            var pm: TyIns = mg_ty(pty, gstructs, cur);
+            cur = pm.mins;
+            dest = pm.ty;
+        }
+        var ra: RExpr = ms_expr_to(c.args[i], dest, env, gstructs, funcs, cur);
+        cur = ra.rins;
+        nargs = nargs.append(ra.rexpr);
+        i = i + 1;
+    }
+    return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
+}
+
 // retype_assoc_ctor rewrites a receiver-less associated call on a GENERIC
 // struct base — `Box.default()` — to its monomorphised name
 // `Box__Inner.default()` when the binding's annotation pins the instantiation
@@ -12393,33 +12448,6 @@ function retype_assoc_ctor(init: ast.Expr, concrete: string, gstructs: StructDec
                     }
                 },
                 _ => {}
-            }
-        },
-        _ => {}
-    }
-    return init;
-}
-
-// retype_struct_lit re-keys a still-generic struct literal from its binding's
-// annotation when the field values alone couldn't pin the instantiation. The
-// motivating case is a generic struct of a generic ENUM (`var b: Box[Opt[i32]]
-// = Box { v: Sm(5) }`): infer_lit_key can't infer `Opt[i32]` from the variant
-// construction `Sm(5)` (mono_infer doesn't key variant calls), so the literal
-// stays the bare generic `Box` and dangles. The annotation already mangled to
-// `concrete` (`Box__Opt__i32`) and mg_ty recorded that instantiation, so we
-// just re-point the literal's type name at it — the enum pass then keys the
-// inner `Sm(5)` from the clone's `v: Opt[i32]` field type. Mirrors
-// retype_assoc_ctor (the constructor-call analogue). A literal ms_expr already
-// keyed (its base is a mangled clone, not a generic base) is left untouched, as
-// is a non-matching annotation. See #3694.
-function retype_struct_lit(init: ast.Expr, concrete: string, gstructs: StructDecl[]): ast.Expr {
-    match (init) {
-        ast.ExprStructLit(s) => {
-            if (gstruct_index(gstructs, s.type_name) >= 0) {
-                var pfx: string = s.type_name + "__";
-                if (concrete.len() > pfx.len() && slice_unchecked(concrete, 0, pfx.len()) == pfx) {
-                    return ast.ExprStructLit { type_name: concrete, field_names: s.field_names, field_values: s.field_values, has_base: s.has_base, base: s.base, line: s.line, col: s.col };
-                }
             }
         },
         _ => {}
@@ -12517,26 +12545,19 @@ function ms_elem_ty(t: string, gstructs: StructDecl[], funcs: MFns): string {
 function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         ast.StmtVar(v) => {
-            var iv: RExpr = ms_expr(v.init, env, gstructs, funcs, ins);
-            var ta: TyIns = mg_ty(v.type_name, gstructs, iv.rins);
+            var ta: TyIns = mg_ty(v.type_name, gstructs, ins);
+            var iv: RExpr = ms_expr_to(v.init, ta.ty, env, gstructs, funcs, ta.mins);
             // A receiver-less associated constructor `Box.default()` bound to a
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
-            var ninit: ast.Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            var vr: TyIns = mg_ty(v.fn_ret, gstructs, ta.mins);
+            var ninit: ast.Expr = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs);
+            var vr: TyIns = mg_ty(v.fn_ret, gstructs, iv.rins);
             var vl: TyIns = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
             return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_view: v.is_view, fn_ret: vr.ty, fn_param_types: vl.ty }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
         },
         ast.StmtReturn(r) => {
-            var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
-            // A `return Box { xs: [] }` whose instantiation can't be inferred
-            // from the field values (an empty-array field yields no element
-            // type) takes it from the FUNCTION's concrete return type — the
-            // return-position sibling of the StmtVar annotation retype above.
-            // Without this a monomorphised no-arg constructor's generic struct
-            // literal stays "Box" and can't lower (std/set's set_new).
-            var nret: ast.Expr = retype_struct_lit(rv.rexpr, ret_ty, gstructs);
-            return RStmtOne { rstmt: ast.StmtReturn { value: nret, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+            var rv: RExpr = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
+            return RStmtOne { rstmt: ast.StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
         },
         ast.StmtExpr(x) => {
             var xv: RExpr = ms_expr(x.value, env, gstructs, funcs, ins);
