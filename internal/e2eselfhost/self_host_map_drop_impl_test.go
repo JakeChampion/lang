@@ -55,6 +55,30 @@ function main(): i32 {
 }
 `
 
+// mapSetGetSrc runs core/map's own insert, lookup, len and drop on a
+// scalar map. The typed lowering produces them only once it has a contract
+// and a lowering for every runtime helper they call by name, including the
+// string and array releases a scalar map never reaches at run time.
+const mapSetGetSrc = `import "core/map";
+function main(): i32 {
+    var h: usize = map_new_impl(4, 0, 0);
+    var i: i32 = 0;
+    while (i < 200) {
+        h = __map_set_impl(h, (i * 3) as usize, (i * 7) as usize);
+        i = i + 1;
+    }
+    var s: i32 = __map_len_impl(h);
+    i = 0;
+    while (i < 200) {
+        s = s + (__map_get_or_impl(h, (i * 3) as usize, 0 as usize) as i32);
+        i = i + 1;
+    }
+    __map_drop_impl(h);
+    if (s == 139500) { return 0; }
+    return 3;
+}
+`
+
 func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -71,6 +95,7 @@ func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 	for _, c := range []struct{ name, src string }{
 		{"handle", mapDropImplReuseSrc},
 		{"map_new_impl", mapNewImplReuseSrc},
+		{"set_get", mapSetGetSrc},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			caseDir := t.TempDir()
@@ -85,13 +110,13 @@ func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 			run := exec.Command(binPath)
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != 0 {
-				t.Fatalf("native: exit %d, want 0 (the freed handle comes back)", code)
+				t.Fatalf("native: exit %d, want 0", code)
 			}
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					exit, stderr := selfHostCLIRun(t, selfHostBin, stdlibRoot, c.src, target)
 					if exit != 0 {
-						t.Fatalf("self-host: exit %d, want 0 (the freed handle comes back)\n%s", exit, stderr)
+						t.Fatalf("self-host: exit %d, want 0\n%s", exit, stderr)
 					}
 				})
 			}

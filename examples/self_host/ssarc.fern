@@ -3143,6 +3143,12 @@ function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: false, r: r };
 }
 
+function no_op_release(own r: irlower.LowerResult, operands: i32): irlower.LowerResult {
+    var i: i32 = 0;
+    while (i < operands) { r = emit(r, ir.op_drop()); i = i + 1; }
+    return emit(r, ir.op_const_i32(0));
+}
+
 // __fern_box_free(data, size): the raw free of the rc'd block that starts 8
 // bytes before `data` and is `size + 8` long, as irlower lowers it.
 function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
@@ -3167,6 +3173,13 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__fern_box_free") { return Lowered { found: true, r: box_free(r, ins) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
     if (ins.str == "__map_hash_seed") { return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) }; }
+    // core/map's string and array-value releases stay no-ops, as irlower
+    // lowers them: the lent operands are dropped, nothing is released, and the
+    // dummy 0 a void call leaves is pushed.
+    if (ins.str == "__fern_str_dec") { return Lowered { found: true, r: no_op_release(r, 1) }; }
+    if (ins.str == "__fern_drop_arr_ptr" || ins.str == "__fern_arr_dec") {
+        return Lowered { found: true, r: no_op_release(r, 2) };
+    }
     if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
     if (ins.str == "__heap_alloc_count") { return Lowered { found: true, r: emit(r, ir.op_heap_alloc_count()) }; }
     if (ins.str == "__heap_mark") { return Lowered { found: true, r: emit(r, ir.op_heap_mark()) }; }
