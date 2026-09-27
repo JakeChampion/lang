@@ -5069,22 +5069,18 @@ pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
     return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
 }
 
-// is_box_elem_array_type: `t` is an array of a declared struct or enum, so each
-// element is an rc box the buffer's last owner releases.
+// is_box_elem_array_type: `t` is an array of a declared struct or enum, or of
+// arrays, so each element is an rc box the buffer's last owner releases.
 pub function is_box_elem_array_type(structs: StructTab, t: string): boolean {
     if (!is_array_type_name(t)) { return false; }
     var elem: string = slice_unchecked(t, 0, t.len() - 2) + "";
-    return decl_is_struct(structs, elem) || decl_is_enum(structs, elem);
+    return decl_is_struct(structs, elem) || decl_is_enum(structs, elem) || is_row_array_field_type(structs, t);
 }
 
 // is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
 // admitted array field type (scalar / struct / enum element). Its elements are
 // array POINTERS, so the outer buffer uses the same 4-byte-slot layout as an
-// i32[] and needs no element-width dispatch. Nothing ever frees it:
-// __struct_drop_<T> classifies no arm for a `T[][]` field, so both the outer
-// buffer and every row leak with the struct — which is what makes a shallow
-// clone of the outer buffer (the `.append` / `.with` value form) sound, since
-// the rows it shares with the source are released by neither owner.
+// i32[] and needs no element-width dispatch.
 //
 // ONE level of nesting, matching decl_is_leaksafe_at_d's own admission (which
 // calls this): a `T[][][]` field keeps its whole struct off the IR path, so
@@ -5096,6 +5092,14 @@ pub function is_nested_array_field_type(structs: StructTab, t: string): boolean 
     var elt: str = slice_unchecked(t, 0, n - 2);
     return is_leaksafe_array_field(elt) || is_struct_array_field_type(structs, elt)
         || is_enum_array_field_type(structs, elt);
+}
+
+// is_row_array_field_type: a field whose elements are counted array buffers —
+// a nested array, or `string[][]`, which is_nested_array_field_type does not
+// reach. __struct_drop_<T> releases each row and then the outer buffer, under
+// the same sole-owner gate as a struct-array field's element walk.
+pub function is_row_array_field_type(structs: StructTab, t: string): boolean {
+    return t == "string[][]" || is_nested_array_field_type(structs, t);
 }
 
 // arrarr_elem_kind_of_type: the inner element KIND a `T[][]` spelling records on
@@ -5515,6 +5519,22 @@ function enum_arr_field_share_read(fv: ast.Expr, cfft: string, s: LowerState): s
     return "";
 }
 
+// row_arr_value_is_borrowed: `fv`, stored into a nested-array field `cfft`,
+// reads a buffer another holder still owns — a field or tuple element read, or
+// an indexed element — so the store retains it. enum_arr_field_share_read
+// already names the bare-ident-holder field read; this covers every other
+// holder the field's drop would otherwise release uncounted.
+function row_arr_value_is_borrowed(fv: ast.Expr, cfft: string, s: LowerState): boolean {
+    if (!is_row_array_field_type(s.frame.structs, cfft)) { return false; }
+    if (enum_arr_field_share_read(fv, cfft, s).len() > 0) { return false; }
+    match (fv) {
+        ast.ExprFieldAccess(_) => { return true; },
+        ast.ExprIndex(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // str_field_share_read: the STRING limb of the counted-share question
 // enum_arr_field_share_read answers for arrays — `P { f: q.f }`, a bare-ident
 // field read handed straight into a struct-literal string field. Returns the
@@ -5680,7 +5700,7 @@ pub function enum_field_read_type(e: ast.Expr, s: LowerState): string {
 
 // counted_field_read_reaches_drop reports whether `e` reads a struct field that
 // the source struct's __struct_drop_<T> always releases: an enum, a nested
-// struct, a scalar array or an array of structs or enums. A container storing
+// struct, a scalar array, an array of structs or enums, or a nested array. A container storing
 // that value is a second owner, so the store retains it. A string, string[] or
 // fn field is released only for a type the whole-program read scan admits, and
 // its construction retain follows the same gate, so it is not counted here.
@@ -5692,7 +5712,7 @@ pub function counted_field_read_reaches_drop(e: ast.Expr, s: LowerState): boolea
             var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
             return decl_is_enum(s.frame.structs, ft) || decl_is_struct(s.frame.structs, ft)
                 || is_leaksafe_array_field(ft) || is_struct_array_field_type(s.frame.structs, ft)
-                || is_enum_array_field_type(s.frame.structs, ft);
+                || is_enum_array_field_type(s.frame.structs, ft) || is_row_array_field_type(s.frame.structs, ft);
         },
         _ => { return false; }
     }
@@ -17525,7 +17545,8 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                     // ast.Stmt[] — and so every statement block in the
                     // compiler — inside the same class.
                     _ => {
-                        if (enum_arr_field_share_read(slit.field_values[found], cfft, s).len() > 0) { fav_alias_inc = true; }
+                        if (enum_arr_field_share_read(slit.field_values[found], cfft, s).len() > 0
+                            || row_arr_value_is_borrowed(slit.field_values[found], cfft, s)) { fav_alias_inc = true; }
                     }
                 }
             }
@@ -22208,7 +22229,10 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                             if (sb.is_str_slot(kslot)) {
                                 if (strw && !sb.is_str_view_local_slot(kslot)) { kc = "s"; tkany = true; }
                             } else if (sb.slot_is_rc_container(kslot)) {
+                                // A nested array's rows are counted, so the tuple
+                                // releases them when it holds the last reference.
                                 kc = "a";
+                                if (is_row_array_field_type(sb.frame.structs, sb.tuple_elem_tag(slot, tki))) { kc = "b"; }
                                 tkany = true;
                             }
                             // A STRUCT box the store MOVES — the source's last
@@ -29083,8 +29107,8 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32, alias_inc: boolea
 // eight bytes below the block — heap corruption, not a leak. `S` (a string[]
 // field the literal retained) is an arr-box too, but its elements are string
 // boxes, so it takes __fern_str_arr_free: the element walk when the buffer is
-// unique, the buffer dec otherwise. `b` is an array of struct or enum boxes
-// (emit_box_elem_array_release, element type from the slot's tuple tag). `t` is
+// unique, the buffer dec otherwise. `b` is an array of struct or enum boxes or
+// of arrays (emit_box_elem_array_release, element type from the slot's tuple tag). `t` is
 // a struct box (the field drop, then the box). `.` is a position the
 // construction did not retain.
 function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
@@ -29419,6 +29443,7 @@ pub function struct_has_reclaim_array_field(structs: StructTab, sty: string): bo
         if (is_leaksafe_array_field(fdt)) { return true; }
         if (is_struct_array_field_type(structs, fdt)) { return true; }
         if (is_enum_array_field_type(structs, fdt)) { return true; }
+        if (is_row_array_field_type(structs, fdt)) { return true; }
         // A DIRECT nested-struct field (`inner: Inner`) is now SHALLOW-reclaimed
         // (emit_ir_struct_drop_one's k_struct), so a struct carrying one needs its
         // exit drop emitted too — admit it to the reclaim set (the construction
@@ -29650,7 +29675,8 @@ function nddo_reach(structs: StructTab, sty: string, visiting: string[]): i32 {
             var r: i32 = nddo_reach(structs, fdt, nv);
             if (r < 0) { return 0 - 1; }   // a cycle below poisons this struct too
             if (r == 1) { has_arr = true; }
-        } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)) {
+        } else if (is_leaksafe_array_field(fdt) || is_struct_array_field_type(structs, fdt) || is_enum_array_field_type(structs, fdt)
+            || is_row_array_field_type(structs, fdt)) {
             has_arr = true;
         } else if (fdt == "string") {
             has_arr = true;   // #4297 A2: a string field is reclaimable (k_str drop)
@@ -39100,7 +39126,7 @@ pub function tuple_ret_flags_of(entries: string[], name: string): string {
 }
 
 // arrf_flag_kind: the tuple element kind (emit_tup_elem_releases) an ARRF: flag
-// names — '1' a buffer dec, '2' a string[], '3' a struct or enum array.
+// names — '1' a buffer dec, '2' a string[], '3' a struct, enum or nested array.
 function arrf_flag_kind(flag: u8): string {
     if (flag == b'1') { return "a"; }
     if (flag == b'2') { return "S"; }
@@ -39383,7 +39409,7 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 // where the return-type annotation types k a scalar-element array, or an array
 // field read the literal retained. It is '2' when every return holds a retained
 // string[] field read, released by __fern_str_arr_free, and '3' when every
-// return holds a retained field read of a struct or enum array
+// return holds a retained field read of a struct, enum or nested array
 // (emit_box_elem_array_release). An IDENT there in any
 // return aliases a live local and keeps the position '0'. Any 8-byte SCALAR element (i64 /
 // u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
@@ -43899,9 +43925,11 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: StructTab, fnb
             while (i < slit.field_names.len()) {
                 var ft: string = decl_field_type(structs, slit.type_name, slit.field_names[i]);
                 if (field_type_is_array(ft)) {
-                    // Only scalar-element / string arrays — a struct[]/enum[] field
-                    // (deep-drop recursion into possibly-aliased elements) bails.
-                    if (!(is_leaksafe_array_field(ft) || ft == "string[]")) { return false; }
+                    // Only scalar-element / string / nested arrays — a struct[]/enum[]
+                    // field (deep-drop recursion into possibly-aliased elements)
+                    // bails. A nested array's rows are counted buffers the drop
+                    // releases one dec each, so a shared row is never freed early.
+                    if (!(is_leaksafe_array_field(ft) || ft == "string[]" || is_row_array_field_type(structs, ft))) { return false; }
                     var v: ast.Expr = slit.field_values[i];
                     var ok: boolean = iife_returns_fresh_array(v);
                     match (v) { ast.ExprArray(_) => { ok = true; }, _ => {} }
