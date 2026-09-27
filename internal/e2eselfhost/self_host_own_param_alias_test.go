@@ -38,7 +38,7 @@ var ownAliasCases = []struct {
 	// callers keep the AST lowering, and every other callee is produced.
 	mixed string
 	// pinned: the AST-leg census, where the leg still leaks for a reason
-	// outside this rule (#10360). Absent means balanced.
+	// outside this rule (#10420). Absent means balanced.
 	pinned map[string][2]int64
 	// census: false where the AST legs leak more than one pin can hold; the
 	// sanitizer then checks for everything but a leak.
@@ -376,7 +376,7 @@ func checkOwnAliasCensus(t *testing.T, stderr string, census bool, pinned map[st
 		return
 	}
 	if pin, ok := pinned[lowering]; ok {
-		assertLeakPinned(t, stderr, pin, "#10360")
+		assertLeakPinned(t, stderr, pin, "#10420")
 	} else if census {
 		assertBalancedCensus(t, stderr)
 	}

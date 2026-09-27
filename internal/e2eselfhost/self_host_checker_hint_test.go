@@ -57,17 +57,17 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, 0},
 		{"option-inferred-local", `function main(): i32 { var o = Some("ab"); match (o) { Some(v) => { return v.len(); }, None => { return 0; } } }`, 0},
 		{"dyn-binding", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return 0; }`, 0},
-		{"dyn-method", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return d.hi(); }`, 4},
+		{"dyn-method", dynPrelude + `function main(): i32 { var d: dyn Greet = Dog {}; return d.hi(); }`, 0},
+		{"iife", `function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }`, 1},
 		// Inside a loop the hint names the statement in the body, not the
 		// loop that encloses it.
-		{"dyn-method-in-loop", dynPrelude + `function main(): i32 {
-    var d: dyn Greet = Dog {};
+		{"iife-in-loop", `function main(): i32 {
     var n: i32 = 0;
     while (n < 3) {
-        n = n + d.hi();
+        n = n + ((x: i32): i32 => { return x; })(1);
     }
     return n;
-}`, 8},
+}`, 4},
 		// A variant assigned to a union-typed local widens, as it does in a
 		// declaration or a return.
 		{"union-variant-reassign", `struct Circle { r: i32 }

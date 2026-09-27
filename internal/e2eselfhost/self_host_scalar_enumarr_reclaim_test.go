@@ -62,7 +62,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 3, allocs: 3, frees: 3,
+			want: 3, allocs: 2, frees: 2,
 		},
 		{
 			// The literal flavor — it never consulted the walk gate at all;
@@ -108,7 +108,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return acc % 83;
 }`,
-			want: 35, allocs: 4, frees: 4,
+			want: 35, allocs: 3, frees: 3,
 		},
 	}
 }

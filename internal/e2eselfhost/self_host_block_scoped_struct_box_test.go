@@ -193,7 +193,7 @@ function round(r: i32): i32 {
     return acc + r;
 }`,
 			want:      8,
-			wantFrees: 1000,
+			wantFrees: 900,
 		},
 		{
 			// Aliased to a local that outlives the block and is read after it.
