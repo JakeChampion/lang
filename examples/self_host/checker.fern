@@ -4780,268 +4780,16 @@ function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: S
 
 function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
   match (e) {
-    ast.ExprNumber(n) => {
-      // `()` — the unit value. Its payload is the constant 0 the parser
-      // records, so the spelling is what tells it from a written `0`; native
-      // types its UnitLit `void` the same way.
-      if (parser.is_unit_literal(n)) {
-        return t_void();
-      }
-      if (n.is_float) {
-        return typeinfo.TypeFloat { width: 64, polymorphic: true };
-      }
-      // A SUFFIX names the type outright. Without this every integer
-      // literal typed i32, and check_call_expr's if-expression arm — which
-      // types the desugared IIFE from its branches' common type — handed
-      // irlower `c.ty = "i32"` for `if (c) { big_u64 } else { 0u64 }`.
-      // expr_is_u64 trusts that tag before its structural walk, so the
-      // chained `>>` selected the SIGNED shift: wrong once bit 63 is set,
-      // with no trap and no diagnostic. parser.if_expr_rt and mono_infer
-      // are the sibling literal classifiers.
-      if (n.suffix == "i64") {
-        return t_i64();
-      }
-      if (n.suffix == "u64") {
-        return t_u64();
-      }
-      if (n.suffix == "u32") {
-        return t_u32();
-      }
-      if (n.suffix == "u8") {
-        return t_u8();
-      }
-      // An `i32` suffix names i32 even past i32-max, where the magnitude rule
-      // below would call the literal i64 and the assignment would fail E003
-      // instead of the range check's E047. parser.if_expr_rt and
-      // parser.mono_infer read ANY suffix before that rule for the same reason.
-      if (n.suffix == "i32") {
-        return t_i32();
-      }
-      // `'x'` — the lexer tags a character literal with the type name
-      // rather than a numeric suffix, since `char` has no suffix form.
-      if (n.suffix == "char") {
-        return t_char();
-      }
-      // A magnitude past i32-max names i64 with no suffix to say so.
-      // parser.if_expr_rt and parser.mono_infer are the sibling literal
-      // classifiers; all three have to agree or a width is lost between them.
-      if (parser.literal_is_i64(n.text)) {
-        return t_i64();
-      }
-      return t_i32();
-    },
+    ast.ExprNumber(n) => { return check_number_expr(n, s); },
     ast.ExprBool(_) => {
       return t_bool();
     },
     ast.ExprString(_) => {
       return t_string();
     },
-    ast.ExprIdent(id) => {
-      var bound: typeinfo.Type = s.lookup(id.name);
-      if (!is_unknown(bound)) {
-        return bound;
-      }
-      // Fallback (#4346 piece 2): a bare no-payload enum variant used as
-      // a value types to its enum's union. A local of the same name
-      // shadows (handled above by the successful lookup). Payload
-      // variants reach the checker as calls (`Some(3)`) / struct
-      // literals and carry a backing struct with an `__ev` field, so we
-      // resolve ONLY when the variant carries no payload — exactly a
-      // unit variant like `Red` under `enum Color { Red, Green }`.
-      // Builtin Option/Result variants aren't registered as unions here,
-      // so they stay unknown (their generic payloads are a separate
-      // slice).
-      if (s.variant_ambiguous(id.name)) {
-        return t_unknown("ambiguous variant `" + id.name + "`");
-      }
-      var un: string = union_of_variant(id.name, s.unions);
-      if (un.len() > 0 && !variant_carries_payload(s, id.name)) {
-        return t_union(un);
-      }
-      // Builtin no-payload variants (`None`, `JNull`, the IoError set)
-      // aren't in the declared-union table but the front-end injects them
-      // (#4346 piece 2). Restricted to the no-payload set so a payload
-      // builtin (`Some` / `Ok` / …) stays unknown here and is typed at
-      // its constructor call in check_call_expr — resolving it bare would
-      // mistype a `Some(3)` callee as a value.
-      if (is_nopayload_builtin_variant(id.name)) {
-        return t_union(mx_builtin_enum_of(id.name));
-      }
-      // A top-level `const` reaches the parser as a zero-parameter FuncDecl
-      // carrying `is_const`, so it lands in the SIG table rather than the value
-      // scope, and a bare reference to one found nothing here. The const flag is
-      // what separates it from a bare function VALUE of the same shape, which
-      // types as a function rather than as its return type.
-      var csig: FuncSig = s.lookup_sig(id.name);
-      if (csig.is_const) {
-        return csig.ret_type;
-      }
-      // A bare NON-const function name used as a VALUE (`apply(mk)`,
-      // `var g = mk;`) types as its signature's function type — the
-      // call-site half of #5986's fn typing: with fn-typed params resolving
-      // to TypeFunc, an unknown-typed named-function argument would read as
-      // a mismatch and untype the call it feeds. Only for a name with NO
-      // binding at all: a binding typed opaquely-unknown (a builtin variant
-      // payload, a generic) still SHADOWS the function table — lookup's
-      // unknown return conflates the two, and resolving the shadowed name
-      // to the function turned `Some(pair) => pair.0` into an E043 inside
-      // std the moment a user function was named `pair`.
-      if (csig.name.len() > 0 && !s.is_bound(id.name)) {
-        return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
-      }
-      return bound;
-    },
-    ast.ExprBinary(b) => {
-      // A named-argument marker survives only on a call fill_default_args
-      // refused (E077 / E004 already reported); its value is what the
-      // parameter check types, as native types the argument beside its name.
-      if (b.op == "__named_arg") { return check_expr(b.right, s); }
-      var lt: typeinfo.Type = check_expr(b.left, s);
-      var rt: typeinfo.Type = check_expr(b.right, s);
-      // `+` is overloaded across i32 (arithmetic) and string
-      // (concatenation). Other arithmetic ops are i32-only.
-      if (b.op == "+") {
-        if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
-          return t_string();
-        }
-        if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left, b.right);
-        }
-        if (float_operands_agree(lt, rt)) {
-          return float_result(lt, rt);
-        }
-        // Composite operator overload (#2706): `a + b` on a struct / enum is
-        // `a.add(b)` and evaluates to that method's declared return type.
-        var povt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
-        if (!is_unknown(povt)) {
-          return povt;
-        }
-        return t_unknown("`+` operands type mismatch");
-      }
-      // Saturating arithmetic (#5542) clamps instead of wrapping;
-      // integer-only, so there is no string or float form. `<<|` is
-      // the shift member — same operand rule as `<<`.
-      if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
-        if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left, b.right);
-        }
-        return t_unknown("`" + b.op + "` operands must both be integers");
-      }
-      // Checked arithmetic (#5542) yields `Option[T]` — integer-only,
-      // no string or float form. The element carries the operands' own
-      // width, so `a %? b` on i64 is `Option[i64]`.
-      if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
-        if (is_integer(lt) && is_integer(rt)) {
-          var chkoa: typeinfo.Type[] = [int_result(lt, rt, b.left, b.right)];
-          return t_union_g("Option", chkoa);
-        }
-        return t_unknown("`" + b.op + "` operands must both be integers");
-      }
-      if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
-        if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left, b.right);
-        }
-        // `%` on floats isn't supported — interp surfaces
-        // VErr; checker is lenient and just rejects it.
-        if (b.op != "%" && float_operands_agree(lt, rt)) {
-          return float_result(lt, rt);
-        }
-        // Composite operator overload (#2706), the `+` arm's sibling.
-        var aovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
-        if (!is_unknown(aovt)) {
-          return aovt;
-        }
-        return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
-      }
-      // Bitwise expressions retain their operand type. Without this a u32
-      // mask becomes unknown and a following wide literal loses its context.
-      if (b.op == "&" || b.op == "|" || b.op == "^") {
-        if (is_integer(lt) && is_integer(rt)) {
-          return int_result(lt, rt, b.left, b.right);
-        }
-        return t_unknown("bitwise operands must both be integers");
-      }
-      if (b.op == "<<" || b.op == ">>") {
-        if (is_integer(lt) && is_integer(rt)) { return lt; }
-        return t_unknown("shift operands must both be integers");
-      }
-      if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-        if (is_integer(lt) && is_integer(rt)) {
-          return t_bool();
-        }
-        if (float_operands_agree(lt, rt)) {
-          return t_bool();
-        }
-        // String ordering is byte-wise lexicographic with a length
-        // tiebreak, lowered to the `str_cmp` op — a primitive, like
-        // `==` on strings, not an `Ord` dispatch.
-        if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
-          return t_bool();
-        }
-        return t_unknown("comparison op `" + b.op + "` requires matching i32, f64 or string operands");
-      }
-      if (b.op == "==" || b.op == "!=") {
-        if (float_operands_agree(lt, rt)) { return t_bool(); }
-        if (type_eq(lt, rt) && !is_unknown(lt)) {
-          return t_bool();
-        }
-        // An unsuffixed literal is read at the other operand's width, so
-        // `n == 3` holds whatever integer type `n` has (the E041 rule
-        // below says the same).
-        if (is_integer(lt) && is_integer(rt)
-            && (int_literal_tree(b.left) || int_literal_tree(b.right))) {
-          return t_bool();
-        }
-        return t_unknown("equality op `" + b.op + "` requires same-typed operands");
-      }
-      if (b.op == "&&" || b.op == "||") {
-        if (type_eq(lt, t_bool()) && type_eq(rt, t_bool())) {
-          return t_bool();
-        }
-        return t_unknown("logical op `" + b.op + "` requires bool operands");
-      }
-      return t_unknown("unknown binary op:" + b.op);
-    },
-    ast.ExprUnary(u) => {
-      var ot: typeinfo.Type = check_expr(u.operand, s);
-      if (u.op == "-") {
-        if (is_integer(ot)) {
-          return ot;
-        }
-        if (is_float(ot)) {
-          return ot;
-        }
-        // Composite operator overload (#2706): `-a` on a struct / enum is
-        // `a.neg()`, the unary sibling of the binary arm above.
-        var novt: typeinfo.Type = s.unop_overload_ret(u.op, ot);
-        if (!is_unknown(novt)) {
-          return novt;
-        }
-        return t_unknown("unary `-` requires i32 or f64 operand");
-      }
-      if (u.op == "!") {
-        if (type_eq(ot, t_bool())) {
-          return t_bool();
-        }
-        return t_unknown("unary `!` requires bool operand");
-      }
-      // `x as T` desugars to the unary op `as_<T>`. The result type
-      // is the target type (matching the Go checker, which returns
-      // n.Target even when the cast is invalid). Unrecognised target
-      // names (wider ints u32 / i64 / …) resolve to unknown, which is
-      // conservatively accepted downstream.
-      if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-        return type_from_name(slice_unchecked(u.op, 3, u.op.len()));
-      }
-      if (u.op == "try_") {
-        return try_success_type(s, ot);
-      }
-      // `x as? T` is `Option[T]`; E059 / E060 police the operand and target.
-      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
-        return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
-      }
-      return t_unknown("unknown unary op:" + u.op);
-    },
+    ast.ExprIdent(id) => { return check_ident_expr(id, s); },
+    ast.ExprBinary(b) => { return check_binary_expr(b, s); },
+    ast.ExprUnary(u) => { return check_unary_expr(u, s); },
     ast.ExprCall(c) => {
       return check_call_expr(c, s);
     },
@@ -5052,265 +4800,12 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       }
       return t_tuple(elems);
     },
-    ast.ExprArray(a) => {
-      if (a.elements.len() == 0) {
-        // Parser settlement (the destination's element type) and embed
-        // expansion both stamp a literal's element type, which is authoritative.
-        if (a.elem_ty.len() > 0) { return t_array(s.resolve_type(a.elem_ty)); }
-        return t_array(t_unknown("empty array literal"));
-      }
-      // An unsuffixed literal takes a concrete sibling's type, as in
-      // call_diags_array's E034 rule.
-      var first: typeinfo.Type = check_expr(a.elements[0], s);
-      var first_lit: i32 = numeric_literal_kind(a.elements[0]);
-      var i: i32 = 1;
-      while (i < a.elements.len()) {
-        var et: typeinfo.Type = check_expr(a.elements[i], s);
-        var lit: i32 = numeric_literal_kind(a.elements[i]);
-        // A mismatch is call_diags_array's E034; the literal keeps its
-        // first element's type, as native types it.
-        if (!literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
-          first = et;
-          first_lit = lit;
-        }
-        i = i + 1;
-      }
-      return t_array(first);
-    },
-    ast.ExprIndex(x) => {
-      var at: typeinfo.Type = check_expr(x.array, s);
-      var it: typeinfo.Type = check_expr(x.index, s);
-      if (!is_integer(it)) {
-        return t_unknown("array index must be i32");
-      }
-      match (at) {
-        typeinfo.TypeArray(ta) => {
-          return ta.elem;
-        },
-        typeinfo.TypeString(_) => {
-          // String indexing yields the byte as `u8`, the byte type
-          // (#5629) — same semantics as the production Fern pipeline.
-          // This is what lets `s[i].is_ascii_digit()` find the
-          // classifiers, which are declared on a u8 receiver.
-          return t_u8();
-        },
-        _ => {
-          return t_unknown("can only index into an array or string");
-        }
-      }
-      return t_unknown("unreachable index arm");
-    },
-    ast.ExprSlice(sl) => {
-      var at: typeinfo.Type = check_expr(sl.array, s);
-      var st: typeinfo.Type = check_expr(sl.start, s);
-      var et: typeinfo.Type = check_expr(sl.end, s);
-      if (!is_integer(st)) {
-        return t_unknown("slice start must be i32");
-      }
-      if (!is_integer(et)) {
-        return t_unknown("slice end must be i32");
-      }
-      match (at) {
-        typeinfo.TypeArray(_) => {
-          // A window of an array, or of another window, is a `[T]` view.
-          return as_view(at);
-        },
-        typeinfo.TypeString(_) => {
-          // `s[a:b]` on a string is bounds- and codepoint-boundary-checked
-          // (#5634), so it yields `Option[str]`. The unchecked byte slice
-          // keeps its `string` type under `slice_unchecked`.
-          var slcoa: typeinfo.Type[] = [t_str()];
-          return t_union_g("Option", slcoa);
-        },
-        _ => {
-          return t_unknown("can only slice array or string");
-        }
-      }
-      return t_unknown("unreachable slice arm");
-    },
-    ast.ExprStructLit(sl) => {
-      // Look up the struct decl. Verify the literal's
-      // fields cover the declared shape — same field
-      // names, in declaration order, with matching types.
-      var ssig: StructSig = s.lookup_struct(sl.type_name);
-      if (ssig.name.len() == 0) {
-        return t_unknown("undefined struct: " + sl.type_name);
-      }
-      if (sl.has_base) {
-        // Struct-update `Name { ...base, f: v }`: the base
-        // supplies the un-overridden fields, so completeness
-        // and declaration-order are relaxed — a subset of
-        // overrides is legal. The base must itself be a value
-        // of the same struct type. Each override must name a
-        // declared field with a matching type.
-        var bt: typeinfo.Type = check_expr(sl.base, s);
-        if (!type_eq(bt, t_struct(sl.type_name))) {
-          return t_unknown("struct " + sl.type_name + " update base type mismatch");
-        }
-        var ui: i32 = 0;
-        while (ui < sl.field_names.len()) {
-          var uname: string = sl.field_names[ui];
-          var found: boolean = false;
-          var ufi: i32 = 0;
-          while (ufi < ssig.field_names.len()) {
-            if (ssig.field_names[ufi] == uname) {
-              found = true;
-              var uft: typeinfo.Type = check_expr(sl.field_values[ui], s);
-              // A field whose declared type erases a type
-              // parameter to unknown — bare (`Box[T] { v: T }`) or
-              // nested (`Wrapper[T] { items: T[] }`) — is an
-              // opaque generic field; any value is acceptable, so
-              // skip rather than mis-flag a mismatch (#4346 piece
-              // 2, mirrors the opaque-param skips elsewhere).
-              if (!type_contains_unknown(ssig.field_types[ufi])
-                  && !settles_to(sl.field_values[ui], ssig.field_types[ufi], s)
-                  && !coercible(uft, ssig.field_types[ufi], s)) {
-                return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
-              }
-            }
-            ufi = ufi + 1;
-          }
-          if (!found) {
-            return t_unknown("struct " + sl.type_name + " has no field `" + uname + "`");
-          }
-          ui = ui + 1;
-        }
-        return t_struct(sl.type_name);
-      }
-      if (sl.field_names.len() != ssig.field_names.len()) {
-        return t_unknown("struct " + sl.type_name + " field count mismatch");
-      }
-      // Field ORDER is free — a literal may write the declared fields in
-      // any order. Resolve each written name against the declaration and
-      // check its value against THAT field's type. The count matched
-      // above, so "every declared field written exactly once" follows
-      // from no name repeating and none being undeclared.
-      var swritten: boolean[] = [];
-      var sdi: i32 = 0;
-      while (sdi < ssig.field_names.len()) {
-        swritten = swritten.append(false);
-        sdi = sdi + 1;
-      }
-      var sli: i32 = 0;
-      while (sli < sl.field_names.len()) {
-        var sfi: i32 = field_index(ssig, sl.field_names[sli]);
-        if (sfi < 0) {
-          return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
-        }
-        if (swritten[sfi]) {
-          return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` written twice");
-        }
-        swritten = swritten.with(sfi, true);
-        var ft: typeinfo.Type = check_expr(sl.field_values[sli], s);
-        // An opaque generic field — bare (`Box[T] { v: T }`, T →
-        // unknown) or nested (`items: T[]` → array<unknown>) — accepts
-        // any value; skip the check (#4346 piece 2).
-        //
-        // The value is judged AGAINST the declared field type, by the
-        // same pair every other destination uses: an unsuffixed literal
-        // settles to the field's width, and a member widens to a
-        // union-typed field. Tag-blind equality alone refused both, and
-        // refusing collapsed the whole literal to unknown (#9042).
-        if (!type_contains_unknown(ssig.field_types[sfi])
-            && !settles_to(sl.field_values[sli], ssig.field_types[sfi], s)
-            && !coercible(ft, ssig.field_types[sfi], s)) {
-          return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
-        }
-        sli = sli + 1;
-      }
-      if (ssig.type_params.len() == 0) { return t_struct(sl.type_name); }
-      var largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
-      if (lit_uninferable_param(sl, ssig, largs).len() > 0) {
-        return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
-      }
-      if (lit_field_clash(sl, ssig, largs, s) >= 0) {
-        return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
-      }
-      return typeinfo.TypeStruct { name: sl.type_name, args: largs };
-    },
-    ast.ExprFieldAccess(fa) => {
-      // A qualified UNIT variant `Color.Red` in VALUE position is not a field
-      // read at all — the object is a bare ENUM NAME, not a value — so it has
-      // to be resolved before the object is checked as one. Same rule as the
-      // constructor form above.
-      var vqu: string = qual_variant_union(fa, s);
-      if (vqu.len() > 0) {
-        return t_union(vqu);
-      }
-      var ot: typeinfo.Type = check_expr(fa.obj, s);
-      match (ot) {
-        typeinfo.TypeStruct(sn) => {
-          var fsig: StructSig = s.lookup_struct(sn.name);
-          if (fsig.name.len() == 0) {
-            return t_unknown("undefined struct: " + sn.name);
-          }
-          var fai: i32 = 0;
-          while (fai < fsig.field_names.len()) {
-            if (fsig.field_names[fai] == fa.field) {
-              // Generic field substitution (#4346 piece 2): when
-              // the receiver carries concrete instantiation args
-              // (`Box[i32]`) substitute the struct's type
-              // parameters with them throughout the field's
-              // declared spelling — so a bare type-param field
-              // (`v: T` → i32), a nested one (`items: T[]` →
-              // i32[], `kv: (K, V)` → (i32, string), `m:
-              // Map[string, T]` → map<string, i32>) all resolve
-              // to the instantiated field type rather than the
-              // erased unknown.
-              if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
-                var fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
-                return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs.names, s.unions.names);
-              }
-              return fsig.field_types[fai];
-            }
-            fai = fai + 1;
-          }
-          return t_unknown("struct " + sn.name + " has no field `" + fa.field + "`");
-        },
-        typeinfo.TypeTuple(tt) => {
-          // Tuple field is `.0` / `.1` / … — parse the
-          // digit string back to an i32 index.
-          var idx: i32 = digit_string_to_i32(fa.field);
-          if (idx < 0 || idx >= tt.elements.len()) {
-            return t_unknown("tuple index `" + fa.field + "` out of range");
-          }
-          return tt.elements[idx];
-        },
-        _ => {
-          return t_unknown("can only field-access a struct or tuple");
-        }
-      }
-      return t_unknown("unreachable field-access arm");
-    },
-    ast.ExprLambda(lm) => {
-      // Resolve param + ret types through the existing
-      // struct + union tables. The body is type-checked
-      // in a derived scope where params are bound. Free
-      // idents in the body still resolve against the
-      // surrounding scope (lexical capture).
-      var pts: typeinfo.Type[] = [];
-      for param in lm.params {
-        pts = pts.append(s.resolve_param(param));
-      }
-      var rt: typeinfo.Type = lambda_ret_type(lm, s);
-      // Walk the body for side-effect checks. The body's
-      // returns are checked against the lambda's own
-      // ret_type (when one is declared), not the enclosing
-      // function's.
-      var body_scope: Scope = lambda_body_scope(lm, s);
-      check_block(lm.body, body_scope);
-      // A lambda that spells no result returns what its body returns: the
-      // first value-carrying `return`, typed in the scope at that statement.
-      // A body returning nothing keeps the empty annotation's reading.
-      if (lm.ret_type.len() == 0) {
-        var (returned, at) = first_returned(lm.body, body_scope);
-        if (!bare_return(returned)) {
-          var inferred: typeinfo.Type = check_expr(returned, at);
-          if (!is_unknown(inferred)) { rt = inferred; }
-        }
-      }
-      return t_func_own(pts, lambda_owns(lm), rt);
-    },
+    ast.ExprArray(a) => { return check_array_expr(a, s); },
+    ast.ExprIndex(x) => { return check_index_expr(x, s); },
+    ast.ExprSlice(sl) => { return check_slice_expr(sl, s); },
+    ast.ExprStructLit(sl) => { return check_struct_lit_expr(sl, s); },
+    ast.ExprFieldAccess(fa) => { return check_field_access_expr(fa, s); },
+    ast.ExprLambda(lm) => { return check_lambda_expr(lm, s); },
     ast.ExprMapLit(_) => {
       // ExprMapLit is the formatter's written form of `Map { … }`; the compile
       // parse desugars every map literal to its `map_new(…).insert(…)` chain,
@@ -5329,6 +4824,542 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
   }
   return t_unknown("unhandled Expr variant");
 }
+
+function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
+  // `()` — the unit value. Its payload is the constant 0 the parser
+  // records, so the spelling is what tells it from a written `0`; native
+  // types its UnitLit `void` the same way.
+  if (parser.is_unit_literal(n)) {
+    return t_void();
+  }
+  if (n.is_float) {
+    return typeinfo.TypeFloat { width: 64, polymorphic: true };
+  }
+  // A SUFFIX names the type outright. Without this every integer
+  // literal typed i32, and check_call_expr's if-expression arm — which
+  // types the desugared IIFE from its branches' common type — handed
+  // irlower `c.ty = "i32"` for `if (c) { big_u64 } else { 0u64 }`.
+  // expr_is_u64 trusts that tag before its structural walk, so the
+  // chained `>>` selected the SIGNED shift: wrong once bit 63 is set,
+  // with no trap and no diagnostic. parser.if_expr_rt and mono_infer
+  // are the sibling literal classifiers.
+  if (n.suffix == "i64") {
+    return t_i64();
+  }
+  if (n.suffix == "u64") {
+    return t_u64();
+  }
+  if (n.suffix == "u32") {
+    return t_u32();
+  }
+  if (n.suffix == "u8") {
+    return t_u8();
+  }
+  // An `i32` suffix names i32 even past i32-max, where the magnitude rule
+  // below would call the literal i64 and the assignment would fail E003
+  // instead of the range check's E047. parser.if_expr_rt and
+  // parser.mono_infer read ANY suffix before that rule for the same reason.
+  if (n.suffix == "i32") {
+    return t_i32();
+  }
+  // `'x'` — the lexer tags a character literal with the type name
+  // rather than a numeric suffix, since `char` has no suffix form.
+  if (n.suffix == "char") {
+    return t_char();
+  }
+  // A magnitude past i32-max names i64 with no suffix to say so.
+  // parser.if_expr_rt and parser.mono_infer are the sibling literal
+  // classifiers; all three have to agree or a width is lost between them.
+  if (parser.literal_is_i64(n.text)) {
+    return t_i64();
+  }
+  return t_i32();
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
+  var bound: typeinfo.Type = s.lookup(id.name);
+  if (!is_unknown(bound)) {
+    return bound;
+  }
+  // Fallback (#4346 piece 2): a bare no-payload enum variant used as
+  // a value types to its enum's union. A local of the same name
+  // shadows (handled above by the successful lookup). Payload
+  // variants reach the checker as calls (`Some(3)`) / struct
+  // literals and carry a backing struct with an `__ev` field, so we
+  // resolve ONLY when the variant carries no payload — exactly a
+  // unit variant like `Red` under `enum Color { Red, Green }`.
+  // Builtin Option/Result variants aren't registered as unions here,
+  // so they stay unknown (their generic payloads are a separate
+  // slice).
+  if (s.variant_ambiguous(id.name)) {
+    return t_unknown("ambiguous variant `" + id.name + "`");
+  }
+  var un: string = union_of_variant(id.name, s.unions);
+  if (un.len() > 0 && !variant_carries_payload(s, id.name)) {
+    return t_union(un);
+  }
+  // Builtin no-payload variants (`None`, `JNull`, the IoError set)
+  // aren't in the declared-union table but the front-end injects them
+  // (#4346 piece 2). Restricted to the no-payload set so a payload
+  // builtin (`Some` / `Ok` / …) stays unknown here and is typed at
+  // its constructor call in check_call_expr — resolving it bare would
+  // mistype a `Some(3)` callee as a value.
+  if (is_nopayload_builtin_variant(id.name)) {
+    return t_union(mx_builtin_enum_of(id.name));
+  }
+  // A top-level `const` reaches the parser as a zero-parameter FuncDecl
+  // carrying `is_const`, so it lands in the SIG table rather than the value
+  // scope, and a bare reference to one found nothing here. The const flag is
+  // what separates it from a bare function VALUE of the same shape, which
+  // types as a function rather than as its return type.
+  var csig: FuncSig = s.lookup_sig(id.name);
+  if (csig.is_const) {
+    return csig.ret_type;
+  }
+  // A bare NON-const function name used as a VALUE (`apply(mk)`,
+  // `var g = mk;`) types as its signature's function type — the
+  // call-site half of #5986's fn typing: with fn-typed params resolving
+  // to TypeFunc, an unknown-typed named-function argument would read as
+  // a mismatch and untype the call it feeds. Only for a name with NO
+  // binding at all: a binding typed opaquely-unknown (a builtin variant
+  // payload, a generic) still SHADOWS the function table — lookup's
+  // unknown return conflates the two, and resolving the shadowed name
+  // to the function turned `Some(pair) => pair.0` into an E043 inside
+  // std the moment a user function was named `pair`.
+  if (csig.name.len() > 0 && !s.is_bound(id.name)) {
+    return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
+  }
+  return bound;
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
+  // A named-argument marker survives only on a call fill_default_args
+  // refused (E077 / E004 already reported); its value is what the
+  // parameter check types, as native types the argument beside its name.
+  if (b.op == "__named_arg") { return check_expr(b.right, s); }
+  var lt: typeinfo.Type = check_expr(b.left, s);
+  var rt: typeinfo.Type = check_expr(b.right, s);
+  // `+` is overloaded across i32 (arithmetic) and string
+  // (concatenation). Other arithmetic ops are i32-only.
+  if (b.op == "+") {
+    if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
+      return t_string();
+    }
+    if (is_integer(lt) && is_integer(rt)) {
+      return int_result(lt, rt, b.left, b.right);
+    }
+    if (float_operands_agree(lt, rt)) {
+      return float_result(lt, rt);
+    }
+    // Composite operator overload (#2706): `a + b` on a struct / enum is
+    // `a.add(b)` and evaluates to that method's declared return type.
+    var povt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
+    if (!is_unknown(povt)) {
+      return povt;
+    }
+    return t_unknown("`+` operands type mismatch");
+  }
+  // Saturating arithmetic (#5542) clamps instead of wrapping;
+  // integer-only, so there is no string or float form. `<<|` is
+  // the shift member — same operand rule as `<<`.
+  if (b.op == "+|" || b.op == "-|" || b.op == "*|" || b.op == "<<|") {
+    if (is_integer(lt) && is_integer(rt)) {
+      return int_result(lt, rt, b.left, b.right);
+    }
+    return t_unknown("`" + b.op + "` operands must both be integers");
+  }
+  // Checked arithmetic (#5542) yields `Option[T]` — integer-only,
+  // no string or float form. The element carries the operands' own
+  // width, so `a %? b` on i64 is `Option[i64]`.
+  if (b.op == "+?" || b.op == "-?" || b.op == "*?" || b.op == "/?" || b.op == "%?" || b.op == "<<?" || b.op == ">>?") {
+    if (is_integer(lt) && is_integer(rt)) {
+      var chkoa: typeinfo.Type[] = [int_result(lt, rt, b.left, b.right)];
+      return t_union_g("Option", chkoa);
+    }
+    return t_unknown("`" + b.op + "` operands must both be integers");
+  }
+  if (b.op == "-" || b.op == "*" || b.op == "/" || b.op == "%") {
+    if (is_integer(lt) && is_integer(rt)) {
+      return int_result(lt, rt, b.left, b.right);
+    }
+    // `%` on floats isn't supported — interp surfaces
+    // VErr; checker is lenient and just rejects it.
+    if (b.op != "%" && float_operands_agree(lt, rt)) {
+      return float_result(lt, rt);
+    }
+    // Composite operator overload (#2706), the `+` arm's sibling.
+    var aovt: typeinfo.Type = s.binop_overload_ret(b.op, lt);
+    if (!is_unknown(aovt)) {
+      return aovt;
+    }
+    return t_unknown("arithmetic op `" + b.op + "` requires matching i32 or f64 operands");
+  }
+  // Bitwise expressions retain their operand type. Without this a u32
+  // mask becomes unknown and a following wide literal loses its context.
+  if (b.op == "&" || b.op == "|" || b.op == "^") {
+    if (is_integer(lt) && is_integer(rt)) {
+      return int_result(lt, rt, b.left, b.right);
+    }
+    return t_unknown("bitwise operands must both be integers");
+  }
+  if (b.op == "<<" || b.op == ">>") {
+    if (is_integer(lt) && is_integer(rt)) { return lt; }
+    return t_unknown("shift operands must both be integers");
+  }
+  if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
+    if (is_integer(lt) && is_integer(rt)) {
+      return t_bool();
+    }
+    if (float_operands_agree(lt, rt)) {
+      return t_bool();
+    }
+    // String ordering is byte-wise lexicographic with a length
+    // tiebreak, lowered to the `str_cmp` op — a primitive, like
+    // `==` on strings, not an `Ord` dispatch.
+    if (type_eq(lt, t_string()) && type_eq(rt, t_string())) {
+      return t_bool();
+    }
+    return t_unknown("comparison op `" + b.op + "` requires matching i32, f64 or string operands");
+  }
+  if (b.op == "==" || b.op == "!=") {
+    if (float_operands_agree(lt, rt)) { return t_bool(); }
+    if (type_eq(lt, rt) && !is_unknown(lt)) {
+      return t_bool();
+    }
+    // An unsuffixed literal is read at the other operand's width, so
+    // `n == 3` holds whatever integer type `n` has (the E041 rule
+    // below says the same).
+    if (is_integer(lt) && is_integer(rt)
+        && (int_literal_tree(b.left) || int_literal_tree(b.right))) {
+      return t_bool();
+    }
+    return t_unknown("equality op `" + b.op + "` requires same-typed operands");
+  }
+  if (b.op == "&&" || b.op == "||") {
+    if (type_eq(lt, t_bool()) && type_eq(rt, t_bool())) {
+      return t_bool();
+    }
+    return t_unknown("logical op `" + b.op + "` requires bool operands");
+  }
+  return t_unknown("unknown binary op:" + b.op);
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
+  var ot: typeinfo.Type = check_expr(u.operand, s);
+  if (u.op == "-") {
+    if (is_integer(ot)) {
+      return ot;
+    }
+    if (is_float(ot)) {
+      return ot;
+    }
+    // Composite operator overload (#2706): `-a` on a struct / enum is
+    // `a.neg()`, the unary sibling of the binary arm above.
+    var novt: typeinfo.Type = s.unop_overload_ret(u.op, ot);
+    if (!is_unknown(novt)) {
+      return novt;
+    }
+    return t_unknown("unary `-` requires i32 or f64 operand");
+  }
+  if (u.op == "!") {
+    if (type_eq(ot, t_bool())) {
+      return t_bool();
+    }
+    return t_unknown("unary `!` requires bool operand");
+  }
+  // `x as T` desugars to the unary op `as_<T>`. The result type
+  // is the target type (matching the Go checker, which returns
+  // n.Target even when the cast is invalid). Unrecognised target
+  // names (wider ints u32 / i64 / …) resolve to unknown, which is
+  // conservatively accepted downstream.
+  if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
+    return type_from_name(slice_unchecked(u.op, 3, u.op.len()));
+  }
+  if (u.op == "try_") {
+    return try_success_type(s, ot);
+  }
+  // `x as? T` is `Option[T]`; E059 / E060 police the operand and target.
+  if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+    return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
+  }
+  return t_unknown("unknown unary op:" + u.op);
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
+  if (a.elements.len() == 0) {
+    // Parser settlement (the destination's element type) and embed
+    // expansion both stamp a literal's element type, which is authoritative.
+    if (a.elem_ty.len() > 0) { return t_array(s.resolve_type(a.elem_ty)); }
+    return t_array(t_unknown("empty array literal"));
+  }
+  // An unsuffixed literal takes a concrete sibling's type, as in
+  // call_diags_array's E034 rule.
+  var first: typeinfo.Type = check_expr(a.elements[0], s);
+  var first_lit: i32 = numeric_literal_kind(a.elements[0]);
+  var i: i32 = 1;
+  while (i < a.elements.len()) {
+    var et: typeinfo.Type = check_expr(a.elements[i], s);
+    var lit: i32 = numeric_literal_kind(a.elements[i]);
+    // A mismatch is call_diags_array's E034; the literal keeps its
+    // first element's type, as native types it.
+    if (!literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
+      first = et;
+      first_lit = lit;
+    }
+    i = i + 1;
+  }
+  return t_array(first);
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
+  var at: typeinfo.Type = check_expr(x.array, s);
+  var it: typeinfo.Type = check_expr(x.index, s);
+  if (!is_integer(it)) {
+    return t_unknown("array index must be i32");
+  }
+  match (at) {
+    typeinfo.TypeArray(ta) => {
+      return ta.elem;
+    },
+    typeinfo.TypeString(_) => {
+      // String indexing yields the byte as `u8`, the byte type
+      // (#5629) — same semantics as the production Fern pipeline.
+      // This is what lets `s[i].is_ascii_digit()` find the
+      // classifiers, which are declared on a u8 receiver.
+      return t_u8();
+    },
+    _ => {
+      return t_unknown("can only index into an array or string");
+    }
+  }
+  return t_unknown("unreachable index arm");
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
+  var at: typeinfo.Type = check_expr(sl.array, s);
+  var st: typeinfo.Type = check_expr(sl.start, s);
+  var et: typeinfo.Type = check_expr(sl.end, s);
+  if (!is_integer(st)) {
+    return t_unknown("slice start must be i32");
+  }
+  if (!is_integer(et)) {
+    return t_unknown("slice end must be i32");
+  }
+  match (at) {
+    typeinfo.TypeArray(_) => {
+      // A window of an array, or of another window, is a `[T]` view.
+      return as_view(at);
+    },
+    typeinfo.TypeString(_) => {
+      // `s[a:b]` on a string is bounds- and codepoint-boundary-checked
+      // (#5634), so it yields `Option[str]`. The unchecked byte slice
+      // keeps its `string` type under `slice_unchecked`.
+      var slcoa: typeinfo.Type[] = [t_str()];
+      return t_union_g("Option", slcoa);
+    },
+    _ => {
+      return t_unknown("can only slice array or string");
+    }
+  }
+  return t_unknown("unreachable slice arm");
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
+  // Look up the struct decl. Verify the literal's
+  // fields cover the declared shape — same field
+  // names, in declaration order, with matching types.
+  var ssig: StructSig = s.lookup_struct(sl.type_name);
+  if (ssig.name.len() == 0) {
+    return t_unknown("undefined struct: " + sl.type_name);
+  }
+  if (sl.has_base) {
+    // Struct-update `Name { ...base, f: v }`: the base
+    // supplies the un-overridden fields, so completeness
+    // and declaration-order are relaxed — a subset of
+    // overrides is legal. The base must itself be a value
+    // of the same struct type. Each override must name a
+    // declared field with a matching type.
+    var bt: typeinfo.Type = check_expr(sl.base, s);
+    if (!type_eq(bt, t_struct(sl.type_name))) {
+      return t_unknown("struct " + sl.type_name + " update base type mismatch");
+    }
+    var ui: i32 = 0;
+    while (ui < sl.field_names.len()) {
+      var uname: string = sl.field_names[ui];
+      var found: boolean = false;
+      var ufi: i32 = 0;
+      while (ufi < ssig.field_names.len()) {
+        if (ssig.field_names[ufi] == uname) {
+          found = true;
+          var uft: typeinfo.Type = check_expr(sl.field_values[ui], s);
+          // A field whose declared type erases a type
+          // parameter to unknown — bare (`Box[T] { v: T }`) or
+          // nested (`Wrapper[T] { items: T[] }`) — is an
+          // opaque generic field; any value is acceptable, so
+          // skip rather than mis-flag a mismatch (#4346 piece
+          // 2, mirrors the opaque-param skips elsewhere).
+          if (!type_contains_unknown(ssig.field_types[ufi])
+              && !settles_to(sl.field_values[ui], ssig.field_types[ufi], s)
+              && !coercible(uft, ssig.field_types[ufi], s)) {
+            return t_unknown("struct " + sl.type_name + " field `" + uname + "` type mismatch");
+          }
+        }
+        ufi = ufi + 1;
+      }
+      if (!found) {
+        return t_unknown("struct " + sl.type_name + " has no field `" + uname + "`");
+      }
+      ui = ui + 1;
+    }
+    return t_struct(sl.type_name);
+  }
+  if (sl.field_names.len() != ssig.field_names.len()) {
+    return t_unknown("struct " + sl.type_name + " field count mismatch");
+  }
+  // Field ORDER is free — a literal may write the declared fields in
+  // any order. Resolve each written name against the declaration and
+  // check its value against THAT field's type. The count matched
+  // above, so "every declared field written exactly once" follows
+  // from no name repeating and none being undeclared.
+  var swritten: boolean[] = [];
+  var sdi: i32 = 0;
+  while (sdi < ssig.field_names.len()) {
+    swritten = swritten.append(false);
+    sdi = sdi + 1;
+  }
+  var sli: i32 = 0;
+  while (sli < sl.field_names.len()) {
+    var sfi: i32 = field_index(ssig, sl.field_names[sli]);
+    if (sfi < 0) {
+      return t_unknown("struct " + sl.type_name + " has no field `" + sl.field_names[sli] + "`");
+    }
+    if (swritten[sfi]) {
+      return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` written twice");
+    }
+    swritten = swritten.with(sfi, true);
+    var ft: typeinfo.Type = check_expr(sl.field_values[sli], s);
+    // An opaque generic field — bare (`Box[T] { v: T }`, T →
+    // unknown) or nested (`items: T[]` → array<unknown>) — accepts
+    // any value; skip the check (#4346 piece 2).
+    //
+    // The value is judged AGAINST the declared field type, by the
+    // same pair every other destination uses: an unsuffixed literal
+    // settles to the field's width, and a member widens to a
+    // union-typed field. Tag-blind equality alone refused both, and
+    // refusing collapsed the whole literal to unknown (#9042).
+    if (!type_contains_unknown(ssig.field_types[sfi])
+        && !settles_to(sl.field_values[sli], ssig.field_types[sfi], s)
+        && !coercible(ft, ssig.field_types[sfi], s)) {
+      return t_unknown("struct " + sl.type_name + " field `" + sl.field_names[sli] + "` type mismatch");
+    }
+    sli = sli + 1;
+  }
+  if (ssig.type_params.len() == 0) { return t_struct(sl.type_name); }
+  var largs: typeinfo.Type[] = struct_lit_args(sl, ssig, s);
+  if (lit_uninferable_param(sl, ssig, largs).len() > 0) {
+    return t_unknown("struct " + sl.type_name + " has a type argument nothing binds");
+  }
+  if (lit_field_clash(sl, ssig, largs, s) >= 0) {
+    return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
+  }
+  return typeinfo.TypeStruct { name: sl.type_name, args: largs };
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Type {
+  // A qualified UNIT variant `Color.Red` in VALUE position is not a field
+  // read at all — the object is a bare ENUM NAME, not a value — so it has
+  // to be resolved before the object is checked as one. Same rule as the
+  // constructor form above.
+  var vqu: string = qual_variant_union(fa, s);
+  if (vqu.len() > 0) {
+    return t_union(vqu);
+  }
+  var ot: typeinfo.Type = check_expr(fa.obj, s);
+  match (ot) {
+    typeinfo.TypeStruct(sn) => {
+      var fsig: StructSig = s.lookup_struct(sn.name);
+      if (fsig.name.len() == 0) {
+        return t_unknown("undefined struct: " + sn.name);
+      }
+      var fai: i32 = 0;
+      while (fai < fsig.field_names.len()) {
+        if (fsig.field_names[fai] == fa.field) {
+          // Generic field substitution (#4346 piece 2): when
+          // the receiver carries concrete instantiation args
+          // (`Box[i32]`) substitute the struct's type
+          // parameters with them throughout the field's
+          // declared spelling — so a bare type-param field
+          // (`v: T` → i32), a nested one (`items: T[]` →
+          // i32[], `kv: (K, V)` → (i32, string), `m:
+          // Map[string, T]` → map<string, i32>) all resolve
+          // to the instantiated field type rather than the
+          // erased unknown.
+          if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
+            var fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
+            return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs.names, s.unions.names);
+          }
+          return fsig.field_types[fai];
+        }
+        fai = fai + 1;
+      }
+      return t_unknown("struct " + sn.name + " has no field `" + fa.field + "`");
+    },
+    typeinfo.TypeTuple(tt) => {
+      // Tuple field is `.0` / `.1` / … — parse the
+      // digit string back to an i32 index.
+      var idx: i32 = digit_string_to_i32(fa.field);
+      if (idx < 0 || idx >= tt.elements.len()) {
+        return t_unknown("tuple index `" + fa.field + "` out of range");
+      }
+      return tt.elements[idx];
+    },
+    _ => {
+      return t_unknown("can only field-access a struct or tuple");
+    }
+  }
+  return t_unknown("unreachable field-access arm");
+  return t_unknown("unhandled Expr variant");
+}
+
+function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  // Resolve param + ret types through the existing
+  // struct + union tables. The body is type-checked
+  // in a derived scope where params are bound. Free
+  // idents in the body still resolve against the
+  // surrounding scope (lexical capture).
+  var pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(s.resolve_param(param));
+  }
+  var rt: typeinfo.Type = lambda_ret_type(lm, s);
+  // Walk the body for side-effect checks. The body's
+  // returns are checked against the lambda's own
+  // ret_type (when one is declared), not the enclosing
+  // function's.
+  var body_scope: Scope = lambda_body_scope(lm, s);
+  check_block(lm.body, body_scope);
+  // A lambda that spells no result returns what its body returns: the
+  // first value-carrying `return`, typed in the scope at that statement.
+  // A body returning nothing keeps the empty annotation's reading.
+  if (lm.ret_type.len() == 0) {
+    var (returned, at) = first_returned(lm.body, body_scope);
+    if (!bare_return(returned)) {
+      var inferred: typeinfo.Type = check_expr(returned, at);
+      if (!is_unknown(inferred)) { rt = inferred; }
+    }
+  }
+  return t_func_own(pts, lambda_owns(lm), rt);
+  return t_unknown("unhandled Expr variant");
+}
+
 
 // check_stmt returns the updated scope (StmtVar binds a new name)
 // and the inferred type of the contained expression, packaged so
