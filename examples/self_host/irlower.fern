@@ -64376,8 +64376,9 @@ function fnfld_lookup(binds: string[], name: string): string {
 // which the struct[]/enum[]-field admission ("sarr:", #7067) reuses — the read
 // rule below is the same question for both, so one walk feeds both halves.
 // Marks a field unsafe when:
-//   - it is READ anywhere except as a bare `.len()` receiver — an indexed
-//     read (`x.f[i]`), an iteration (`for s in x.f`), a bare copy, a method
+//   - it is READ anywhere except as a bare `.len()` receiver, or an element
+//     `x.f[i]` read as a binary operand or a borrowing method's receiver — any
+//     other indexed read, an iteration (`for s in x.f`), a bare copy, a method
 //     receiver, or a call argument all create/bind an element or buffer
 //     alias the deep free could dangle;
 //   - a struct-literal stores a NON-element-fresh value into a string[]
@@ -64401,21 +64402,33 @@ function fnfld_lookup(binds: string[], name: string): string {
 // `<struct>.<string[] field>[i].<read-only method>` — an ELEMENT borrowed for one
 // call and never bound. str_borrowing_method is the method set.
 function strarrfld_transient_elem_recv(cfa: ast.ExprFieldAccess, structs: StructTab, binds: string[]): boolean {
-    if (!str_borrowing_method(cfa.field)) { return false; }
-    match (cfa.obj) {
-        ast.ExprIndex(ix) => {
-            match (ix.array) {
-                ast.ExprFieldAccess(ffa) => {
-                    var oty: string = fnfld_obj_type(ffa.obj, structs, binds);
-                    if (oty.len() == 0) { return false; }
-                    return decl_field_type(structs, oty, ffa.field) == "string[]";
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
+    return str_borrowing_method(cfa.field) && strarrfld_elem_read(cfa.obj, structs, binds);
+}
+
+// strarrfld_elem_read: `e` is `x.f[i]` for a `string[]` field `f` of a struct
+// whose type fnfld_obj_type resolves.
+function strarrfld_elem_read(e: ast.Expr, structs: StructTab, binds: string[]): boolean {
+    if let ast.ExprIndex(ix) = e {
+        if let ast.ExprFieldAccess(ffa) = ix.array {
+            var oty: string = fnfld_obj_type(ffa.obj, structs, binds);
+            return oty.len() > 0 && decl_field_type(structs, oty, ffa.field) == "string[]";
+        }
     }
     return false;
+}
+
+// strarrfld_scan_operand: a binary operand or a borrowing method's receiver. An
+// `x.f[i]` there is read once and never bound — the transient position
+// strarr_expr_unsafe grants a string[] local's `xs[i]` — so only the index and
+// the holder are walked.
+function strarrfld_scan_operand(e: ast.Expr, structs: StructTab, binds: string[], str_fresh: string[], strarr_producers: string[], forwarders: string[], acc: string[]): string[] {
+    if (!strarrfld_elem_read(e, structs, binds)) { return strarrfld_scan(e, structs, binds, str_fresh, strarr_producers, forwarders, acc); }
+    var a: string[] = acc;
+    if let ast.ExprIndex(ix) = e {
+        a = strarrfld_scan(ix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
+        if let ast.ExprFieldAccess(ffa) = ix.array { a = strarrfld_scan(ffa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); }
+    }
+    return a;
 }
 
 // strarrfld_fwd_param_own: `name` is an `own` parameter of `fn` — a struct it
@@ -64642,16 +64655,7 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
                         // for a string[] LOCAL, which this scan did not draw for a
                         // FIELD. Skip marking the receiver field; keep walking the
                         // index expression and everything beneath the field.
-                        match (cfa.obj) {
-                            ast.ExprIndex(cix) => {
-                                a = strarrfld_scan(cix.index, structs, binds, str_fresh, strarr_producers, forwarders, a);
-                                match (cix.array) {
-                                    ast.ExprFieldAccess(ffa2) => { a = strarrfld_scan(ffa2.obj, structs, binds, str_fresh, strarr_producers, forwarders, a); },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
+                        a = strarrfld_scan_operand(cfa.obj, structs, binds, str_fresh, strarr_producers, forwarders, a);
                     } else if (cfa.field == "len") {
                         // `x.f.len()` is the other tolerated borrow: skip marking
                         // the receiver FIELD, but keep walking beneath it.
@@ -64668,7 +64672,7 @@ function strarrfld_scan(e: ast.Expr, structs: StructTab, binds: string[], str_fr
             for arg in c.args { a = strarrfld_scan(arg, structs, binds, str_fresh, strarr_producers, forwarders, a); }
             return a;
         },
-        ast.ExprBinary(b) => { return strarrfld_scan(b.right, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan(b.left, structs, binds, str_fresh, strarr_producers, forwarders, a)); },
+        ast.ExprBinary(b) => { return strarrfld_scan_operand(b.right, structs, binds, str_fresh, strarr_producers, forwarders, strarrfld_scan_operand(b.left, structs, binds, str_fresh, strarr_producers, forwarders, a)); },
         ast.ExprUnary(u) => { return strarrfld_scan(u.operand, structs, binds, str_fresh, strarr_producers, forwarders, a); },
         ast.ExprIndex(ix) => {
             a = strarrfld_elem_src_marks(ix.array, structs, binds, forwarders, a);
