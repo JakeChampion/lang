@@ -2013,7 +2013,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   `init_is_owned_string`, so no double-dec). `map_new_k` zeroes `vis@28` (a
   freelist-recycled box carries stale bytes); the grow rehash copies value
   pointers unchanged, so value rc is stable across resize. Works for every
-  K/V combo (i32-keyed/string-valued via `map_new_i32`, string-keyed/string-
+  K/V combo (i32-keyed/string-valued via `__map_new_i32`, string-keyed/string-
   valued via `map_new` — both kis + vis release independently). Coverage:
   `TestSelfHostRcMapGrowWasm` gains map-str-value-released, map-str-value-
   literal-clean, map-str-value-overwrite, map-str-key-and-value, and map-str-
@@ -4391,10 +4391,10 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   bug 1 (first-insert vis flag).** The wasm IR path leaked a `Map[i32, string]`'s
   values even though it routes the free to `$__fern_map_release` (which
   deep-releases the value column when the box's `vis@28` flag is set). BUG 1
-  (fixed here): a `Map{…}` literal desugars to `map_new_i32().insert(k0,v0)
+  (fixed here): a `Map{…}` literal desugars to `__map_new_i32().insert(k0,v0)
   .insert(k1,v1)…`, and irlower computes the wasm `vis` flag on each `op_map_set`
   from the RECEIVER-derived map value type. The FIRST insert's receiver is the
-  bare `map_new_i32()` call, whose value type isn't inferred yet (defaults to
+  bare `__map_new_i32()` call, whose value type isn't inferred yet (defaults to
   i32), so a string first value emitted **vis=0** — the map never retained it and
   `$__fern_map_release` never freed it (a wat probe showed vis = 0,1 across a
   two-entry string map instead of 1,1). This is also a latent **correctness** bug:

@@ -124,8 +124,8 @@ function main(): i32 { return used([1, 2]); }
 			"refuses.\n%s", got, want, shakenReport)
 	}
 	// The census has to measure the module the COMPILER lowers, which is
-	// `ircore.lift_lambdas(parser.module_with_builtins(merged))` in every real
-	// driver. It once hand-rolled a prefix of that and skipped
+	// `lift_lambdas_typed(parser.module_with_builtins_typed(merged))` on the
+	// CLI's typed route. It once hand-rolled a prefix of that and skipped
 	// `hoist_local_funcs_module`, so a self-recursive nested `function` — which
 	// that pass lifts to a top-level declaration — was measured as a binding
 	// production has already removed, and its calls charged to
@@ -150,8 +150,8 @@ function main(): i32 { return used([1, 2]); }
 	pm, pp := countIn(prepassReport, "measured"), countIn(prepassReport, "produced")
 	if pp != pm {
 		t.Errorf("produced %d of %d: the census is measuring a module the production "+
-			"prepass would have rewritten. Every real driver lowers "+
-			"ircore.lift_lambdas(parser.module_with_builtins(merged)); this driver has to "+
+			"prepass would have rewritten. The CLI lowers "+
+			"lift_lambdas_typed(parser.module_with_builtins_typed(merged)); this driver has to "+
 			"run the same prepass or it reports the instrument's refusals as the "+
 			"boundary's.\n%s", pp, pm, prepassReport)
 	}
