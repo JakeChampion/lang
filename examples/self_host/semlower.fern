@@ -238,10 +238,10 @@ function live_reg(r: Rows): irlower.SigReg {
 // not it.
 // A dyn dispatch reaches every implementation its chain names, so each is a
 // callee the same way.
-function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: parser.FuncDecl[]): string {
+function escaping_callee(r: irlower.LowerResult, reg: irlower.SigReg, funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): string {
     for o in r.ops {
         if (o.kind_tag == 147) {  // dyn_dispatch
-            for arm in semsource.dyn_arms(funcs, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
+            for arm in semsource.dyn_arms(funcs, impls, ir.dyn_dispatch_method(o.str), ir.dyn_dispatch_traits(o.str)) {
                 if (!irlower.sig_reg_has_exact(reg, arm)) { return arm; }
             }
         }
@@ -449,7 +449,7 @@ function prune(r: Rows, mod: parser.Module, built: semsource.Built): Rows {
         var i: i32 = 0;
         while (i < r.body.len()) {
             if (r.keep[i]) {
-                var bad: string = escaping_callee(r.body[i], reg, mod.funcs);
+                var bad: string = escaping_callee(r.body[i], reg, mod.funcs, mod.impls);
                 if (bad.len() > 0) { bad = "calls " + bad + ", which the AST lowering defines"; }
                 else { bad = ast_value_call(r.called[i], values); }
                 if (bad.len() == 0) { bad = ast_built_value(r, i); }
