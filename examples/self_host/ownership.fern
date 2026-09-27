@@ -28,6 +28,7 @@
 import "./ssa";
 import "./ssasem";
 import "./semtypes";
+import "./util";
 
 // One row per produced symbol: whether each parameter leaves the frame.
 // `lends` says a slot the row leaves uncounted may still be kept as a borrow in
@@ -35,11 +36,33 @@ import "./semtypes";
 // reference cannot keep one.
 pub struct Escapes { name: string, bits: boolean[], lends: boolean }
 
-pub function find(rows: Escapes[], name: string): i32 {
-    var i: i32 = 0;
-    while (i < rows.len()) {
+// Rows by name, chained per hash bucket in ascending row order. A round
+// rewrites a row's bits and never its name, so one index built over the
+// finished rows serves every round.
+pub struct Index { head: i32[], next: i32[] }
+
+pub function index(rows: Escapes[]): Index {
+    var nb: i32 = rows.len() * 2 + 1;
+    var head: i32[] = [];
+    while (head.len() < nb) { head = head.append(0 - 1); }
+    var next: i32[] = [];
+    while (next.len() < rows.len()) { next = next.append(0 - 1); }
+    var k: i32 = rows.len() - 1;
+    while (k >= 0) {
+        var b: i32 = util.hash_bucket(rows[k].name, nb);
+        next = next.with(k, head[b]);
+        head = head.with(b, k);
+        k = k - 1;
+    }
+    return Index { head: head, next: next };
+}
+
+// The first row named `name`, or -1.
+pub function find(rows: Escapes[], ix: Index, name: string): i32 {
+    var i: i32 = ix.head[util.hash_bucket(name, ix.head.len())];
+    while (i >= 0) {
         if (rows[i].name == name) { return i; }
-        i = i + 1;
+        i = ix.next[i];
     }
     return 0 - 1;
 }
@@ -50,8 +73,8 @@ pub function find(rows: Escapes[], name: string): i32 {
 // has a fixed row, its contract's own modes. That is the conservative direction here, and only here: a caller
 // deciding what to REWRITE must ask `find` first, because "no row" means
 // "this symbol keeps the mode it declared", not "count it".
-pub function consumed(rows: Escapes[], name: string, at: i32): boolean {
-    var i: i32 = find(rows, name);
+pub function consumed(rows: Escapes[], ix: Index, name: string, at: i32): boolean {
+    var i: i32 = find(rows, ix, name);
     if (i < 0) { return true; }
     if (at < 0 || at >= rows[i].bits.len()) { return true; }
     return rows[i].bits[at];
@@ -125,12 +148,12 @@ function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
 // A dyn call has no row, and needs none: semsource admits one only where
 // every implementation lends every operand, and those keep the modes they
 // declared (`semsource.dyn_arms`).
-function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
+function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
     if (ssasem.is_dyn_call(ins.str)) { return out; }
     var next: boolean[] = out;
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ins.str, i)) { next = carry(next, a, ins.args[i]); }
+        if (ssasem.reference(f.values[ins.args[i]]) && consumed(rows, ix, ins.str, i)) { next = carry(next, a, ins.args[i]); }
         i = i + 1;
     }
     return next;
@@ -145,8 +168,8 @@ function indirect_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, in
     return next;
 }
 
-function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
-    if (ins.kind_tag == ssasem.call()) { return call_carried(out, f, a, ins, rows); }
+function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+    if (ins.kind_tag == ssasem.call()) { return call_carried(out, f, a, ins, rows, ix); }
     if (ins.kind_tag == ssasem.call_value()) { return indirect_carried(out, f, a, ins); }
     var next: boolean[] = out;
     if (builds_out(ins.kind_tag)) {
@@ -179,25 +202,25 @@ function instruction_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis,
 // So a parameter with a value of its own in a lent slot is not counted. The
 // container stays borrowed, nobody drops it, and the callee's borrow stays
 // good — which is what happened before this pass existed.
-function lent_values(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[]): boolean[] {
-    var at: i32 = find(rows, ins.str);
+function lent_values(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
+    var at: i32 = find(rows, ix, ins.str);
     if (at >= 0 && !rows[at].lends) { return out; }
     var next: boolean[] = out;
     var i: i32 = 0;
     while (i < ins.args.len()) {
-        if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ins.str, i)) { next = carry(next, a, ins.args[i]); }
+        if (ssasem.reference(f.values[ins.args[i]]) && !consumed(rows, ix, ins.str, i)) { next = carry(next, a, ins.args[i]); }
         i = i + 1;
     }
     return next;
 }
 
-function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts {
-            if (ins.kind_tag == ssasem.call()) { out = lent_values(out, f, a, ins, rows); }
+            if (ins.kind_tag == ssasem.call()) { out = lent_values(out, f, a, ins, rows, ix); }
         }
     }
     return out;
@@ -206,12 +229,12 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[
 // The values this frame lets out, under the current round's answers. A
 // returned view reads the parameter it is anchored to without taking its unit,
 // so its caller keeps the argument alive and the parameter stays lent.
-function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
     for b in f.graph.blocks {
-        for ins in b.insts { out = instruction_carried(out, f, a, ins, rows); }
+        for ins in b.insts { out = instruction_carried(out, f, a, ins, rows, ix); }
         if (b.term.kind_tag == 1 && b.term.value >= 0) {
             if (semtypes.holds_view(f.values[b.term.value])) { out = out.with(b.term.value, true); }
             else { out = carry(out, a, b.term.value); }
@@ -226,11 +249,11 @@ function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): bo
 // The analysis is the caller's to hold rather than this function's to make:
 // it does not depend on `rows`, and remaking it every round cost 23% of the
 // whole compiler's build time when it was made here.
-pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[]): boolean[] {
+pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
     // A function this boundary cannot analyse keeps every declared mode.
     if (!a.ok) { return all_true(f.params.len()); }
-    var carried: boolean[] = carried_values(f, a, rows);
-    var lent: boolean[] = lent_out(f, a, rows);
+    var carried: boolean[] = carried_values(f, a, rows, ix);
+    var lent: boolean[] = lent_out(f, a, rows, ix);
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.params.len()) {
