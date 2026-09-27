@@ -72,6 +72,17 @@ The probe's last-byte read is also the regression test for the SSA lift
 masking usize arithmetic to 32 bits; `TestLiftPointerWidthArithmeticIsAnAddress`
 in `internal/ssa` pins the lift half on its own.
 
+`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same four native
+legs, `TestArm64DarwinBytesFloor` on Apple Silicon and `TestBytesFloorWasm`
+under wasmtime: a byte array filled through its data pointer and shortened
+by `__arr_set_len`, and an inline and a heap string read through
+`__str_bytes` with scratch to spill into and without. The self-host twins
+are `TestSelfHostBytesFloorX86_64` and `TestSelfHostBytesFloorArm64`, on a
+literal array since the self-host keeps a byte array one word per element.
+The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
+gated by every socket, serve, fetch and udp test that was already on the
+builtins, on every backend.
+
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
 inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
 timed-out, empty, negative, invalid and duplicate descriptors, the lowest

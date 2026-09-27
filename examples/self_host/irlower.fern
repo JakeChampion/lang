@@ -12289,6 +12289,27 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!su.ok) { return su; }
         return su.emit(ir.op_raw_store8());
     }
+    // __str_bytes(s, scratch) — the string's data pointer, as __raw_data reads
+    // it: a self-host string is never inline, so the scratch is evaluated and
+    // not used.
+    if (cid.name == "__str_bytes" && c.args.len() == 2) {
+        var sb: LowerState = lower_expr(c.args[0], s);
+        if (!sb.ok) { return sb; }
+        sb = sb.emit(ir.op_const_i32(0));
+        sb = sb.emit(ir.op_raw_load_ptr());
+        sb = lower_expr(c.args[1], sb);
+        if (!sb.ok) { return sb; }
+        return sb.emit(ir.op_drop());
+    }
+    // __arr_set_len(a, n) — the length is slot 0 of the box.
+    if (cid.name == "__arr_set_len" && c.args.len() == 2) {
+        var al: LowerState = lower_expr(c.args[0], s);
+        if (!al.ok) { return al; }
+        al = al.emit(ir.op_const_i32(0));
+        al = lower_expr(c.args[1], al);
+        if (!al.ok) { return al; }
+        return al.emit(ir.op_raw_store_ptr());
+    }
     if (cid.name == "__store_i32" && c.args.len() == 2) {
         var si: LowerState = lower_expr(c.args[0], s);
         if (!si.ok) { return si; }

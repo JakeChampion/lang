@@ -864,13 +864,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemset {
 		g.emitMemsetRuntime()
 	}
-	if g.usesTcp {
-		g.emitTcpRecvRuntime()
-		g.emitTcpSendRuntime()
-	}
-	if g.usesUdp {
-		g.emitUdpSendRuntime()
-	}
 	if g.usesPoll {
 		g.emitPollRuntime()
 	}
@@ -6326,224 +6319,6 @@ func (g *generator) emitEnvRuntime() {
 	g.emit("mov x0, #1")
 	g.emit("ret")
 	g.sizeDirective("__memcmp_n_env")
-	g.line(".ltorg")
-}
-
-// emitTcpRecvRuntime emits `__fern_tcp_recv(fd, max)` —
-// reads up to `max` bytes from the socket fd into a fresh
-// `u8[]` in the __alloc_u8 box shape (cap = max, len = the
-// actual byte count; the zero-fill makes the len-shrink
-// defined). EOF / error → length 0. max <= 0 returns the
-// shared empty sentinel untouched — its static header must
-// never receive the post-read len store.
-//
-// Frame: 48 bytes — fp/lr (16) + callee-save x19/x20 (16) +
-// callee-save x21 (8) + 8 bytes pad for 16-byte sp alignment.
-// x21 holds the data pointer across the `read` syscall; it's
-// AAPCS64-callee-save so the syscall preserves it for us, but
-// we still save the inbound value in the prologue so the
-// caller's x21 round-trips intact.
-func (g *generator) emitTcpRecvRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_recv")
-	g.typeDirective("__fern_tcp_recv")
-	g.label("__fern_tcp_recv")
-	g.emit("stp x29, x30, [sp, #-48]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("str x21, [sp, #32]")
-	g.emit("mov x19, x0") // x19 = fd
-	g.emit("mov x20, x1") // x20 = max
-	g.emit("cmp w20, #0")
-	g.emit("b.gt .Ltcp_recv_alloc")
-	g.emit("mov w0, #0")
-	g.emit("bl __alloc_u8") // the shared empty sentinel
-	g.emit("b .Ltcp_recv_ret")
-	g.label(".Ltcp_recv_alloc")
-	g.emit("mov w0, w20")
-	g.emit("bl __alloc_u8")
-	g.emit("mov x21, x0") // x21 = data ptr
-	g.emit("mov x0, x19")
-	g.emit("mov x1, x21")
-	g.emit("mov x2, x20")
-	g.syscall("read")
-	g.emit("cmp x0, #0")
-	g.emit("csel x0, x0, xzr, ge")
-	g.emitArrayLenStore("w0", "x21") // len = actual count (cap stays max)
-	g.emit("mov x0, x21")
-	g.label(".Ltcp_recv_ret")
-	g.emit("ldr x21, [sp, #32]")
-	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #48")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_recv")
-	g.line(".ltorg")
-}
-
-// emitTcpSendRuntime emits one socket send with MSG_NOSIGNAL.
-// Returns accepted bytes or -errno; callers retain any unsent suffix.
-func (g *generator) emitTcpSendRuntime() {
-	g.line("")
-	g.line(".global __fern_tcp_send")
-	g.typeDirective("__fern_tcp_send")
-	g.label("__fern_tcp_send")
-	send := func() {
-		if g.darwin {
-			g.emit("mov x3, #524288") // Darwin MSG_NOSIGNAL
-		} else {
-			g.emit("mov x3, #16384") // Linux MSG_NOSIGNAL
-		}
-		g.emit("mov x4, #0") // destination is already connected
-		g.emit("mov x5, #0")
-		g.syscall("sendto")
-	}
-	if ast.UseTwoWordStrings(8) {
-		// x0 = fd, x1 = data, x2 = len.
-		g.emit("stp x29, x30, [sp, #-48]!")
-		g.emit("mov x29, sp")
-		g.emit("mov w3, w0")                     // w3 = fd
-		g.emitStrLen2W("w4", "x2")               // w4 = byte length
-		g.emitStrDataPtr2W("x1", "x1", "x2", 16) // x1 = byte ptr
-		g.emit("mov w0, w3")                     // x0 = fd
-		g.emit("mov x2, x4")                     // x2 = byte length
-		send()
-		g.emit("ldp x29, x30, [sp], #48")
-		g.emit("ret")
-		g.sizeDirective("__fern_tcp_send")
-		g.line(".ltorg")
-		return
-	}
-	// Legacy single-pointer.
-	g.emit("stp x29, x30, [sp, #-32]!")
-	g.emit("mov x29, sp")
-	g.emitStrLen("w2", "x1")
-	g.emitStrDataPtr("x1", "x1", 16)
-	send()
-	g.emit("ldp x29, x30, [sp], #32")
-	g.emit("ret")
-	g.sizeDirective("__fern_tcp_send")
-	g.line(".ltorg")
-}
-
-// emitUdpSendRuntime emits `__fern_udp_send(host, port, data)`: one datagram
-// to a dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host
-// that is not four decimal octets. On a datagram socket connect only records
-// the peer, so connect-then-write sends it. The octets are parsed straight into
-// sin_addr. Frame: x19 fd, x20 port then the result, x21/x22 the data words,
-// host scratch at x29+48, data scratch at x29+64, sockaddr_in at x29+80.
-func (g *generator) emitUdpSendRuntime() {
-	g.line("")
-	g.line(".global __fern_udp_send")
-	g.typeDirective("__fern_udp_send")
-	g.label("__fern_udp_send")
-	g.emit("stp x29, x30, [sp, #-96]!")
-	g.emit("mov x29, sp")
-	g.emit("stp x19, x20, [sp, #16]")
-	g.emit("stp x21, x22, [sp, #32]")
-	twoWord := ast.UseTwoWordStrings(8)
-	if twoWord {
-		// x0/x1 = host, x2 = port, x3/x4 = data.
-		g.emit("mov x20, x2")
-		g.emit("mov x21, x3")
-		g.emit("mov x22, x4")
-		g.emitStrLen2W("w10", "x1")
-		g.emitStrDataPtr2W("x9", "x0", "x1", 48)
-	} else {
-		// x0 = host, x1 = port, x2 = data.
-		g.emit("mov x20, x1")
-		g.emit("mov x21, x2")
-		g.emitStrLen("w10", "x0")
-		g.emitStrDataPtr("x9", "x0", 48)
-	}
-	g.emit("mov w11, #0") // index into host
-	g.emit("mov w12, #0") // the octet so far
-	g.emit("mov w13, #0") // octets completed
-	g.emit("mov w14, #0") // digits in this octet
-	g.label(".Ludp_scan")
-	g.emit("cmp w11, w10")
-	g.emit("b.ge .Ludp_end")
-	g.emit("ldrb w16, [x9, w11, uxtw]")
-	g.emit("cmp w16, #46") // '.'
-	g.emit("b.ne .Ludp_digit")
-	g.emit("cbz w14, .Ludp_bad")
-	g.emit("cmp w13, #3")
-	g.emit("b.ge .Ludp_bad")
-	g.emit("add x17, x29, #84")
-	g.emit("strb w12, [x17, w13, uxtw]")
-	g.emit("add w13, w13, #1")
-	g.emit("mov w12, #0")
-	g.emit("mov w14, #0")
-	g.emit("add w11, w11, #1")
-	g.emit("b .Ludp_scan")
-	g.label(".Ludp_digit")
-	g.emit("sub w16, w16, #48")
-	g.emit("cmp w16, #9")
-	g.emit("b.hi .Ludp_bad") // unsigned: below '0' wraps high too
-	g.emit("mov w17, #10")
-	g.emit("madd w12, w12, w17, w16")
-	g.emit("add w14, w14, #1")
-	g.emit("cmp w12, #255")
-	g.emit("b.gt .Ludp_bad")
-	g.emit("add w11, w11, #1")
-	g.emit("b .Ludp_scan")
-	g.label(".Ludp_end")
-	g.emit("cmp w13, #3")
-	g.emit("b.ne .Ludp_bad")
-	g.emit("cbz w14, .Ludp_bad")
-	g.emit("strb w12, [x29, #87]")
-	if g.darwin {
-		// BSD sockaddr_in: a length byte, then a one-byte family. XNU
-		// rewrites the length from namelen; the family byte is the one that
-		// matters, since a datagram connect gets no AF_UNSPEC fix-up and
-		// in_pcbladdr answers EAFNOSUPPORT. The TCP helpers above survive the
-		// Linux shape only because XNU's TCP paths tolerate family 0.
-		g.emit("mov w0, #16")
-		g.emit("strb w0, [x29, #80]")
-		g.emit("mov w0, #2")
-		g.emit("strb w0, [x29, #81]")
-	} else {
-		g.emit("mov w0, #2")
-		g.emit("strh w0, [x29, #80]") // sin_family = AF_INET
-	}
-	g.emit("rev16 w0, w20") // htons(port)
-	g.emit("strh w0, [x29, #82]")
-	g.emit("str xzr, [x29, #88]") // sin_zero
-	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
-	g.emit("mov x0, #2")
-	g.emit("mov x1, #2")
-	g.emit("mov x2, #0")
-	g.syscall("socket")
-	g.emit("cmp x0, #0")
-	g.emit("b.lt .Ludp_done")
-	g.emit("mov x19, x0")
-	g.emit("add x1, x29, #80")
-	g.emit("mov x2, #16")
-	g.syscall("connect")
-	g.emit("cmp x0, #0")
-	g.emit("b.lt .Ludp_close")
-	if twoWord {
-		g.emitStrLen2W("w2", "x22")
-		g.emitStrDataPtr2W("x1", "x21", "x22", 64)
-	} else {
-		g.emitStrLen("w2", "x21")
-		g.emitStrDataPtr("x1", "x21", 64)
-	}
-	g.emit("mov x0, x19")
-	g.syscall("write")
-	g.label(".Ludp_close")
-	g.emit("mov x20, x0") // the result, kept across close
-	g.emit("mov x0, x19")
-	g.syscall("close")
-	g.emit("mov x0, x20")
-	g.emit("b .Ludp_done")
-	g.label(".Ludp_bad")
-	g.emit("mov x0, #-3")
-	g.label(".Ludp_done")
-	g.emit("ldp x21, x22, [sp, #32]")
-	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #96")
-	g.emit("ret")
-	g.sizeDirective("__fern_udp_send")
 	g.line(".ltorg")
 }
 
@@ -15711,14 +15486,6 @@ type generator struct {
 	crc32StepSeq int
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
-	// usesTcp pulls in the full TCP socket runtime
-	// (__fern_tcp_listen / __fern_tcp_accept / __fern_tcp_recv
-	// / __fern_tcp_send / __fern_tcp_close). Gated on call-
-	// site reachability so non-server programs don't pay for
-	// the socket boilerplate.
-	usesTcp bool
-	// usesUdp pulls in __fern_udp_send alone.
-	usesUdp bool
 	// usesPoll pulls in `__fern_poll(fds, timeout_ms)` — the std/task
 	// reactor's readiness multiplexer (ppoll(2) on Linux; -1 stub on
 	// Darwin pending kqueue).
@@ -17259,6 +17026,24 @@ func (g *generator) emitRawPokeIntrinsic(name string) bool {
 		default:
 			g.emit("str x1, [x0]")
 		}
+	case "__str_bytes":
+		g.pop() // scratch (on top)
+		g.emit("mov x2, x0")
+		if ast.UseTwoWordStrings(8) {
+			g.pop() // the string's length word
+			g.emit("mov x1, x0")
+			g.pop() // its data word
+			g.emitStrBytes2W()
+		} else {
+			g.pop() // the string
+			g.emitStrBytes()
+		}
+		g.push()
+	case "__arr_set_len":
+		g.pop() // n (on top)
+		g.emit("mov x1, x0")
+		g.pop() // the array's data pointer
+		g.emit("stur w1, [x0, #-4]")
 	case "__syscall3", "__syscall4", "__syscall5", "__syscall6":
 		// The operands sit on the stack in call order, number first, so
 		// the last argument is on top: pop the arguments into x5..x1,
@@ -17935,6 +17720,43 @@ func (g *generator) emitStrLen(dstW, srcX string) {
 	// Extract length from bits 1..3 of the low byte.
 	g.emit("ubfx %s, %s, #1, #3", dstW, regW(srcX))
 	g.label(doneLbl)
+}
+
+// emitStrBytes is `__str_bytes(s, scratch)` on the one-word SSO seam, with
+// the string in x0 and scratch in x2: a heap string (bit 0 clear) is its
+// own data pointer; an inline one is spilled to the bytes at x2 and
+// answered as the byte past its tag, or as 0 when x2 is 0.
+func (g *generator) emitStrBytes() {
+	done := g.freshLabel("strbytes_done")
+	none := g.freshLabel("strbytes_none")
+	g.emit("tbz x0, #0, %s", done)
+	g.emit("cbz x2, %s", none)
+	g.emit("str x0, [x2]")
+	g.emit("add x0, x2, #1")
+	g.emit("b %s", done)
+	g.label(none)
+	g.emit("mov x0, #0")
+	g.label(done)
+}
+
+// emitStrBytes2W is the same on the two-word seam, with the data word in
+// x0, the length word in x1 and scratch in x2: a heap string's data word is
+// its data pointer; an inline one (bit 63 of the length word) has its
+// bytes across both words, which are spilled to the sixteen bytes at x2
+// the way emitStrDataPtr2W spills them to the frame, or answers 0 when x2
+// is 0.
+func (g *generator) emitStrBytes2W() {
+	done := g.freshLabel("strbytes2w_done")
+	none := g.freshLabel("strbytes2w_none")
+	g.emit("tbz x1, #63, %s", done)
+	g.emit("cbz x2, %s", none)
+	g.emit("str x0, [x2]")
+	g.emit("str x1, [x2, #8]")
+	g.emit("mov x0, x2")
+	g.emit("b %s", done)
+	g.label(none)
+	g.emit("mov x0, #0")
+	g.label(done)
 }
 
 // emitStrLenStore writes the i32 length in srcW to the 4-byte
@@ -20497,17 +20319,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "udp_send":
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect", "tcp_listen_with", "tcp_socket_ctl", "tcp_recv", "tcp_send", "udp_send":
 			target = "__fern_" + target
-			g.usesUdp = true
-		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect", "tcp_listen_with", "tcp_socket_ctl":
-			target = "__fern_" + target
-		case "tcp_recv", "tcp_send":
-			target = "__fern_" + target
-			g.usesTcp = true
-			// __fern_tcp_recv calls __alloc_u8 for its read buffer.
-			g.usesAlloc = true
-			g.usesAllocU8 = true
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"
 			g.usesWasmPollableDrop = true

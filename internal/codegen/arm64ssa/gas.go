@@ -1458,9 +1458,8 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"read_dir":                    emitReadDirHelper,
 	"read_dir_all":                emitReadDirAllHelper,
 	"__fern_io_error":             emitIoErrorHelper,
-	"tcp_recv":                    emitTcpRecvHelper,
-	"tcp_send":                    emitTcpSendHelper,
-	"udp_send":                    emitUdpSendHelper,
+	"__str_bytes":                 emitStrBytesHelper,
+	"__arr_set_len":               emitArrSetLenHelper,
 	"__syscall3":                  emitSyscallHelper(3),
 	"__syscall4":                  emitSyscallHelper(4),
 	"__syscall5":                  emitSyscallHelper(5),
@@ -3171,146 +3170,6 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpRecvHelper writes tcp_recv(fd, max) → u8[]: read up to max bytes from
-// the socket fd into a fresh u8[] in the __alloc_u8 box shape (16-byte header;
-// cap@-12, rc=1@-8, len@-4). len = the actual byte count; 0 on EOF/error.
-// max <= 0 skips the read and returns the box empty. Leaf: bump-allocates
-// inline (like random_bytes) and read's svc preserves every register but x0,
-// so fd/max/data survive without spills. x0=fd, x1=max.
-func emitTcpRecvHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_recv"))
-	w("\tmov x9, x0") // fd
-	w("\tcmp w1, #0")
-	w("\tcsel w10, w1, wzr, gt") // n = max, clamped to >= 0
-	// A u8[] box: 16-byte header + n data bytes.
-	emitAllocBlock(w, "x4", "x10", 16)
-	w("\tadd x11, x4, #16")      // data ptr (past 16-byte header)
-	w("\tstur w10, [x11, #-12]") // cap = n
-	w("\tmov w7, #1")
-	w("\tstur w7, [x11, #-8]")  // rc = 1
-	w("\tstur wzr, [x11, #-4]") // len = 0 until the read lands
-	w("\tcbz w10, .Lssa_tcpr_ret")
-	// read(fd, data, n)
-	w("\tmov x0, x9")
-	w("\tmov x1, x11")
-	w("\tmov x2, x10")
-	w("\tmov x8, #63") // read
-	w("\tsvc #0")
-	// len = max(result, 0); errors and EOF leave the box empty.
-	w("\tcmp x0, #0")
-	w("\tcsel x0, x0, xzr, ge")
-	w("\tstur w0, [x11, #-4]")
-	w(".Lssa_tcpr_ret:")
-	w("\tmov x0, x11") // return data ptr
-	w("\tret")
-}
-
-// emitTcpSendHelper sends with MSG_NOSIGNAL, returning accepted bytes or -errno.
-// x0=fd, x1=data (single-word string; length at [data-4]).
-func emitTcpSendHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_send"))
-	w("\tldur w2, [x1, #-4]") // byte length
-	w("\tmov x3, #16384")     // MSG_NOSIGNAL
-	w("\tmov x4, #0")
-	w("\tmov x5, #0")
-	w("\tmov x8, #206") // sendto (x0=fd, x1=data already in place)
-	w("\tsvc #0")
-	w("\tret")
-}
-
-// emitUdpSendHelper writes udp_send(host, port, data) → i32: one datagram to a
-// dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host that is
-// not four decimal octets. On a datagram socket connect only records the peer,
-// so connect-then-write sends it. The octets are parsed straight into sin_addr.
-// x0=host, w1=port, x2=data; x19 = fd, x20 = port then the result, x21 = data.
-func emitUdpSendHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("udp_send"))
-	w("\tstp x29, x30, [sp, #-64]!")
-	w("\tmov x29, sp")
-	w("\tstp x19, x20, [sp, #16]")
-	w("\tstr x21, [sp, #32]")
-	w("\tmov x20, x1")
-	w("\tmov x21, x2")
-	w("\tldur w10, [x0, #-4]") // host length
-	w("\tmov w11, #0")         // index into host
-	w("\tmov w12, #0")         // the octet so far
-	w("\tmov w13, #0")         // octets completed
-	w("\tmov w14, #0")         // digits in this octet
-	w(".Lssa_udps_scan:")
-	w("\tcmp w11, w10")
-	w("\tb.ge .Lssa_udps_end")
-	w("\tldrb w16, [x0, w11, uxtw]")
-	w("\tcmp w16, #46") // '.'
-	w("\tb.ne .Lssa_udps_digit")
-	w("\tcbz w14, .Lssa_udps_bad")
-	w("\tcmp w13, #3")
-	w("\tb.ge .Lssa_udps_bad")
-	w("\tadd x17, x29, #52")
-	w("\tstrb w12, [x17, w13, uxtw]")
-	w("\tadd w13, w13, #1")
-	w("\tmov w12, #0")
-	w("\tmov w14, #0")
-	w("\tadd w11, w11, #1")
-	w("\tb .Lssa_udps_scan")
-	w(".Lssa_udps_digit:")
-	w("\tsub w16, w16, #48")
-	w("\tcmp w16, #9")
-	w("\tb.hi .Lssa_udps_bad") // unsigned: below '0' wraps high too
-	w("\tmov w17, #10")
-	w("\tmadd w12, w12, w17, w16")
-	w("\tadd w14, w14, #1")
-	w("\tcmp w12, #255")
-	w("\tb.gt .Lssa_udps_bad")
-	w("\tadd w11, w11, #1")
-	w("\tb .Lssa_udps_scan")
-	w(".Lssa_udps_end:")
-	w("\tcmp w13, #3")
-	w("\tb.ne .Lssa_udps_bad")
-	w("\tcbz w14, .Lssa_udps_bad")
-	// sockaddr_in at x29+48 { family=AF_INET, port=htons(port), addr, zero }.
-	w("\tstrb w12, [x29, #55]")
-	w("\tmov w0, #2")
-	w("\tstrh w0, [x29, #48]")
-	w("\trev16 w0, w20")
-	w("\tstrh w0, [x29, #50]")
-	w("\tstr xzr, [x29, #56]")
-	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
-	w("\tmov x0, #2")
-	w("\tmov x1, #2")
-	w("\tmov x2, #0")
-	w("\tmov x8, #198") // socket
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_udps_ret")
-	w("\tmov x19, x0")
-	w("\tadd x1, x29, #48")
-	w("\tmov x2, #16")
-	w("\tmov x8, #203") // connect
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_udps_close")
-	w("\tmov x0, x19")
-	w("\tmov x1, x21")
-	w("\tldur w2, [x21, #-4]")
-	w("\tmov x8, #64") // write
-	w("\tsvc #0")
-	w(".Lssa_udps_close:")
-	w("\tmov x20, x0") // the result, kept across close
-	w("\tmov x0, x19")
-	w("\tmov x8, #57") // close
-	w("\tsvc #0")
-	w("\tmov x0, x20")
-	w("\tb .Lssa_udps_ret")
-	w(".Lssa_udps_bad:")
-	w("\tmov x0, #-3")
-	w(".Lssa_udps_ret:")
-	w("\tldr x21, [sp, #32]")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #64")
-	w("\tret")
-}
-
 // emitWasmTimerPollableHelper writes wasm_timer_pollable(ns) → i32: on native
 // there's no pollable to make for a deadline (the timeout is poll(2)'s argument),
 // so it returns -1 — an fd poll(2) ignores. Lets std/async's with_deadline append
@@ -4549,7 +4408,6 @@ var heapUsingHelpers = map[string]bool{
 	"read_dir":                        true,
 	"read_dir_all":                    true,
 	"random_bytes":                    true,
-	"tcp_recv":                        true,
 	"poll":                            true,
 	"open_writer":                     true,
 	"__method_Writer_write":           true,

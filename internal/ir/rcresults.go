@@ -509,6 +509,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_lc_report": true,
 	"__memcpy":         true, "__memset": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__http_entry": true,
+	"__str_bytes": true, "__arr_set_len": true,
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,

@@ -3419,6 +3419,27 @@ function store_u8(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_raw_store8());
 }
 
+// __str_bytes(s, scratch): the string's data pointer, slot 0 of its box, as
+// __raw_data reads it. A self-host string is never inline, so the scratch
+// operand is dropped unread.
+function str_bytes(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_raw_load_ptr());
+}
+
+// __arr_set_len(a, n): the length is slot 0 of the box.
+function arr_set_len(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_raw_store_ptr());
+}
+
 // The raw-memory escape hatches. The byte load has no op of its own: it is the
 // two-operand raw load at a constant zero offset, which is also what keeps the
 // address at full pointer width.
@@ -3447,6 +3468,8 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__load_i64") { return Lowered { found: true, r: emit(r, ir.op_load_i64()) }; }
     if (ins.str == "__load_ptr") { return Lowered { found: true, r: emit(r, ir.op_load_ptr()) }; }
     if (ins.str == "__store_u8") { return Lowered { found: true, r: store_u8(r, ins) }; }
+    if (ins.str == "__str_bytes") { return Lowered { found: true, r: str_bytes(r, ins) }; }
+    if (ins.str == "__arr_set_len") { return Lowered { found: true, r: arr_set_len(r, ins) }; }
     if (ins.str == "__store_i32") { return Lowered { found: true, r: emit(r, ir.op_store_i32()) }; }
     if (ins.str == "__store_i64") { return Lowered { found: true, r: emit(r, ir.op_store_i64()) }; }
     if (ins.str == "__store_ptr") { return Lowered { found: true, r: emit(r, ir.op_store_ptr()) }; }

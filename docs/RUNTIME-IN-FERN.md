@@ -377,16 +377,30 @@ How each backend reaches a helper:
 
 The socket helpers `__fern_tcp_listen`, `__fern_tcp_listen_with`,
 `__fern_tcp_connect`, `__fern_tcp_accept`, `__fern_tcp_local_port`,
-`__fern_tcp_close`, `__fern_tcp_pollable` and `__fern_tcp_socket_ctl` are
-Fern bodies over `__syscall3` and `__syscall5` (#9853): four hand-written
+`__fern_tcp_close`, `__fern_tcp_pollable`, `__fern_tcp_socket_ctl`,
+`__fern_tcp_recv`, `__fern_tcp_send` and `__fern_udp_send` are Fern bodies
+over `__syscall3`, `__syscall5` and `__syscall6` (#9853): four hand-written
 copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone, and the two
 controls never had any.
+
+The last three needed the **bytes floor**: `__str_bytes(s, scratch)` is
+the address of a string's bytes for the length `s.len()` reports, and
+`__arr_set_len(a, n)` shortens a fresh `u8[]` from `__alloc_u8` to the
+bytes a read filled. A string a backend carries inline in its word (x86-64
+and arm64's stack backends, and wasm) has no address until it is spilled,
+so the caller passes sixteen bytes of scratch it keeps alive while it reads
+through the answer, or 0 to be told the string is inline (the answer is
+then 0); a heap string, which is every string on the SSA backends, is
+answered from where it is. The stack backends emit both as inline arms on
+their SSO seams (`emitStrBytes`, and the two-word `emitStrBytes2W` on
+arm64), the SSA backends as leaf helpers, wasm as bodies over its
+`(data, len)` pair, and the self-host lowers them onto `__raw_data` and the
+length slot of its box. `tcp_send` sends a heap string from where it is;
+only an inline one borrows sixteen bytes for the call.
 The x86-64 stack backend records a raw syscall whose number is a literal
 (`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
 allowlist stays exact through them; a number computed at run time is refused
-under `FERN_SANDBOX=1`. `tcp_recv`, `tcp_send` and `udp_send` stay
-hand-written until the floor can hand a body a string's or an array's bytes
-without going through the SSO seam.
+under `FERN_SANDBOX=1`.
 
 A Fern helper is a function, not a provided callee: it has no row in
 `verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and

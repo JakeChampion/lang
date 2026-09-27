@@ -224,7 +224,10 @@ func TestSyscallSetMatchesEmittedAsm(t *testing.T) {
 // stopped culling, this would silently widen every future filter.
 func TestSyscallSetIsProgramSpecific(t *testing.T) {
 	_, minimal := emitAsmAndSyscalls(t, `function main(): i32 { return 0; }`)
-	for _, banned := range []int{sysExecve, sysFork, sysSocket, sysGetrandom} {
+	// socket (41) is a Fern body's literal now (internal/fernrt), so it is
+	// no longer a constant of this package; the number is what the filter
+	// sees.
+	for _, banned := range []int{sysExecve, sysFork, 41, sysGetrandom} {
 		for _, n := range minimal {
 			if n == banned {
 				t.Errorf("a do-nothing program's syscall set contains %d; the set should be program-specific, not the language's whole surface (got %v)", banned, minimal)

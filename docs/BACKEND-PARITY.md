@@ -133,13 +133,16 @@ like any other syscall, and refuses a program whose number is a run-time
 operand, which the seccomp allowlist cannot cover.
 
 On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
-`tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable` and
-`tcp_socket_ctl` are one Fern body each in `internal/fernrt` over this
-floor, on x86-64-linux, arm64-linux and arm64-darwin and on both backends
-of each ISA (the sockaddr's leading `sin_len` byte and the option numbers
-are the Darwin differences); wasm keeps its wasi:sockets bodies, and the
-interpreter its Go ones. `tcp_recv`, `tcp_send` and `udp_send` are still
-hand-written per backend.
+`tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,
+`tcp_socket_ctl`, `tcp_recv`, `tcp_send` and `udp_send` are one Fern body
+each in `internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
+arm64-darwin and on both backends of each ISA (the sockaddr's leading
+`sin_len` byte, the option numbers and `MSG_NOSIGNAL` are the Darwin
+differences); wasm keeps its wasi:sockets bodies, and the interpreter its
+Go ones. The bytes floor the last three are written on, `__str_bytes` and
+`__arr_set_len`, is provided on every native backend, on wasm and by the
+self-host (`docs/RUNTIME-IN-FERN.md`); the interpreter has no floor, as it
+has none of the raw floor.
 
 `tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
 arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4

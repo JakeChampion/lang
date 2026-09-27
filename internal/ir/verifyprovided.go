@@ -233,6 +233,8 @@ var providedSigs = map[string]providedSig{
 	"__load_u8":                       {1, rWord},
 	"__load_ptr":                      {1, rWord},
 	"__store_u8":                      {2, rVoid},
+	"__str_bytes":                     {3, rWord},
+	"__arr_set_len":                   {2, rVoid},
 	"__syscall3":                      {4, rWord},
 	"__syscall4":                      {5, rWord},
 	"__syscall5":                      {6, rWord},
