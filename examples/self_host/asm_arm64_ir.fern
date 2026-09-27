@@ -9704,7 +9704,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
         exit(1);
         return "";
     }
-    var g: string = emit_module_ir_gated_sub(ircore.lift_lambdas(tm), darwin, sub);
+    var g: string = emit_module_ir_gated_sub(ircore.sub_lifted(sub, tm), darwin, sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
