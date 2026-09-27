@@ -52,6 +52,22 @@ function main(): i32 {
 			want: 15,
 		},
 		{
+			// An empty seed binds nothing; the combinator's A comes from
+			// the lambda (#10499).
+			name: "fold seeded with an empty array",
+			src: `function fold_arr[T, A](xs: T[], init: A, f: (A, T) => A): A {
+    var acc: A = init;
+    for x in xs { acc = f(acc, x); }
+    return acc;
+}
+function main(): i32 {
+    var xs: i32[] = [4, 5, 6];
+    var ys: i32[] = fold_arr(xs, [], (a: i32[], n: i32): i32[] => { return a.append(n * 2); });
+    return ys.len() * 10 + ys[2];
+}`,
+			want: 42,
+		},
+		{
 			name: "filter then count via len",
 			src: `function filter_arr[T](xs: T[], keep: (T) => boolean): T[] {
     var out: T[] = [];
