@@ -20611,23 +20611,23 @@ function lower_stmt_grow_exempt_inner(st: ast.Stmt, s: LowerState): LowerState {
 function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
-        ast.StmtVar(v) =>{
+        ast.StmtVar(v) => {
             var sv: LowerState = lower_stmt_var(v, s);
             sv = mark_var_bound(v, sv);
             sv = emit_own_lift_retain(v, sv);
             sv = seed_snapshot_local(v, sv);
             return release_last_use_source(v, sv);
         },
-        ast.StmtAssign(a) =>{
+        ast.StmtAssign(a) => {
             if (call_owns_arg(a.value, a.target, s)) { return lower_own_rebind(a, s); }
             return settle_var_counted(a, lower_stmt_assign(a, s));
         },
         ast.StmtReturn(r) => { return lower_stmt_return(r, s); },
         ast.StmtIf(iff) => { return lower_stmt_if(iff, s); },
         ast.StmtWhile(wh) => { return lower_stmt_while(wh, s); },
-        ast.StmtFor(fr) =>{ return lower_stmt_for(fr, s); },
+        ast.StmtFor(fr) => { return lower_stmt_for(fr, s); },
         ast.StmtExpr(es) => { return lower_stmt_expr(es, s); },
-        ast.StmtMatch(m) =>{ return lower_stmt_match(m, s); },
+        ast.StmtMatch(m) => { return lower_stmt_match(m, s); },
         ast.StmtBreak(b) => {
             // br out to the target loop's exit block. b.tag is the relative loop
             // depth (0 = innermost; a labeled `break outer` was resolved to its

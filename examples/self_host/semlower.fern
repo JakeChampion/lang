@@ -773,7 +773,7 @@ function first_name(mod: parser.Module): string {
 // The module an emit path gates and emits, so a caller can produce the
 // substitution against the same normalisation and the same order. The x86-64
 // and arm64 paths spell it this way; the wasm one has its own
-// (wasm_ir.route_normalized), which its caller asks for instead.
+// (wasm_ir.route_normalized_typed), which its caller asks for instead.
 pub function gated_module(mod: parser.Module): parser.Module {
     return parser.infer_ret_types_module(ircore.script_normalized(mod));
 }

@@ -4886,7 +4886,6 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
     return t_i64();
   }
   return t_i32();
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
@@ -4943,7 +4942,6 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
     return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
   }
   return bound;
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
@@ -5056,7 +5054,6 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
     return t_unknown("logical op `" + b.op + "` requires bool operands");
   }
   return t_unknown("unknown binary op:" + b.op);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
@@ -5098,7 +5095,6 @@ function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
     return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
   }
   return t_unknown("unknown unary op:" + u.op);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
@@ -5125,7 +5121,6 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     i = i + 1;
   }
   return t_array(first);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
@@ -5150,7 +5145,6 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
     }
   }
   return t_unknown("unreachable index arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
@@ -5180,7 +5174,6 @@ function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
     }
   }
   return t_unknown("unreachable slice arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
@@ -5282,7 +5275,6 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
     return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
   }
   return typeinfo.TypeStruct { name: sl.type_name, args: largs };
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Type {
@@ -5338,7 +5330,6 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
     }
   }
   return t_unknown("unreachable field-access arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
@@ -5369,7 +5360,6 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
     }
   }
   return t_func_own(pts, lambda_owns(lm), rt);
-  return t_unknown("unhandled Expr variant");
 }
 
 

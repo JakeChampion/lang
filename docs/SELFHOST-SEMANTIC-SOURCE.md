@@ -2270,8 +2270,8 @@ passes. The rest is shared and stays, or moves into a module of its own:
 - the layout and RC-body helpers the backends read;
 - the two `FnSigs` fields the emit reads (`borrowable_params`,
   `strfld_ok_types`) and the admissions behind them;
-- the AST-to-AST lambda lift (`lift_lambdas`), which the typed path runs
-  first;
+- the AST-to-AST lambda lift (`lift_lambdas_typed`), which the typed path
+  runs first;
 - the dumps the driver programs print.
 
 `regrow_sigs`, `consume_sigs` and `ssarc.caller_sigs` exist only so an
