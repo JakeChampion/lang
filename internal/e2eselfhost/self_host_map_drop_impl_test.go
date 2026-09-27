@@ -79,7 +79,35 @@ function main(): i32 {
 }
 `
 
-func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
+// mapColumnsSrc reads a map's key, value and boolean columns through
+// core/map's snapshot builders. They build a typed array rather than writing
+// an array header by hand, so the self-host gets an array in its own layout
+// (header and 8-byte slots) rather than native's (#9608).
+const mapColumnsSrc = `import "core/map";
+function main(): i32 {
+    var h: usize = map_new_impl(4, 0, 0);
+    var i: i32 = 0;
+    while (i < 20) {
+        h = __map_set_impl(h, (i * 3) as usize, (i * 7) as usize);
+        i = i + 1;
+    }
+    var ks: i32[] = __map_i32_column(h, 0);
+    var vs: i32[] = __map_i32_column(h, __ptr_width());
+    var bs: boolean[] = __map_bool_column(h, __ptr_width());
+    var s: i32 = ks.len() + vs.len() + bs.len();
+    i = 0;
+    while (i < ks.len()) {
+        s = s + ks[i] + vs[i];
+        if (bs[i]) { s = s + 1; }
+        i = i + 1;
+    }
+    __map_drop_impl(h);
+    if (s == 1979) { return 0; }
+    return 3;
+}
+`
+
+func TestSelfHostRunsCoreMapFunctions(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the CLI driver takes host filesystem paths as argv")
@@ -96,6 +124,7 @@ func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 		{"handle", mapDropImplReuseSrc},
 		{"map_new_impl", mapNewImplReuseSrc},
 		{"set_get", mapSetGetSrc},
+		{"columns", mapColumnsSrc},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			caseDir := t.TempDir()

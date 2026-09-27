@@ -162,7 +162,7 @@ function main(): i32 {
     while (j < seen.len()) { acc = acc + seen[j].get_or("k", 0); j = j + 1; }
     return acc + __rc_underflow_count() * 100;
 }`,
-			want: 6, allocs: 37, frees: 22,
+			want: 6, allocs: 36, frees: 21,
 		},
 		{
 			// A string VALUE column. The clone shares the column's pointers
