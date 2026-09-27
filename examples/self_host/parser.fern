@@ -1923,7 +1923,7 @@ function parse_map_lit(p: Par): (ast.Expr, Par) {
         if (kk < 0) { kk = map_key_kind_of_expr(mlk[kki]); }
         kki = kki + 1;
     }
-    var ctor: string = if (kk == 1) { "map_new_i32" } else { "map_new" };
+    var ctor: string = if (kk == 1) { "__map_new_i32" } else { "map_new" };
     var cargs: ast.Expr[] = [];
     cargs = cargs.append(e_number("8", "", false));
     // Positioned at the literal, like the ExprMapLit the verbatim parse keeps:
@@ -1943,7 +1943,7 @@ function parse_map_lit(p: Par): (ast.Expr, Par) {
 
 // map_ann_key_kind reads a map DECLARATION's key kind out of its type
 // annotation — 1 for `Map[i32, …]`, 0 for `Map[string, …]`, -1 for anything
-// else (not a map, or a struct/enum key, which map_new/map_new_i32 cannot
+// else (not a map, or a struct/enum key, which map_new/__map_new_i32 cannot
 // spell — those keep whatever the construction site chose). The "i32," /
 // "string," spelling is parse_type_name's canonical join (", " between
 // generic args, no space after `[`); irlower's annotated-`map_new` path
@@ -8582,7 +8582,7 @@ pub function builtin_function_names(): string[] {
         // `a.len()` and `len(a)`. The Go checker only accepts `a.len()` and
         // reports E001 on `len(a)`, so this is a deliberate leniency vs Go,
         // like the `bool`/`boolean` one; not differentially tested.)
-        "map_new", "map_new_i32", "strbuf_append", "strbuf_reset",
+        "map_new", "__map_new_i32", "strbuf_append", "strbuf_reset",
         "strbuf_take", "string_from_bytes_unchecked", "slice_unchecked", "chr", "len",
         // the capacity-carrying string builder (#8773): a handle is the
         // address of its own control block, so any number are live at once.

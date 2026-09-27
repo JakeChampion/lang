@@ -3953,7 +3953,7 @@ pub function (s: LowerState) slot_map_type(name: string): string {
 // string keys, -1 if `e` is not a map. Unlike map_type_of (which only types a
 // map LOCAL slot), this recognises the chained map-construction expressions a
 // `Map { k: v, … }` literal desugars to: `map_new[_i32](n).insert(k0,v0)
-// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `map_new_i32` (i32),
+// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `__map_new_i32` (i32),
 // and an `.insert` / `.set` / `.delete` mutator returns the same map — so the
 // kind propagates up the chain. Lets `.insert` on a map-typed call result lower
 // through the IR (#2884 follow-up: Map literals), not just on a bare local.
@@ -3968,7 +3968,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (cid.name == "map_new" && c.args.len() == 1) { return 0; }
-                    if (cid.name == "map_new_i32" && c.args.len() == 1) { return 1; }
+                    if (cid.name == "__map_new_i32" && c.args.len() == 1) { return 1; }
                     return 0 - 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -4012,7 +4012,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
 }
 
 // map_lit_ctor_root reports whether `e` is a `Map { … }` literal's desugared
-// constructor chain: a bare `map_new` / `map_new_i32` call, or an `.insert` /
+// constructor chain: a bare `map_new` / `__map_new_i32` call, or an `.insert` /
 // `.set` / `.delete` on one. A map LOCAL's chain roots at an IDENT instead, and
 // its declared `Map[K, V]` is authoritative, so that answers false.
 function map_lit_ctor_root(e: ast.Expr): boolean {
@@ -4020,7 +4020,7 @@ function map_lit_ctor_root(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    return (cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1;
+                    return (cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
                     if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
@@ -4243,7 +4243,7 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
 // $__fern_map_set retains a pointer value and $__fern_map_release deep-releases
 // it. Mirrors the wasm AST path's `is_string_expr || struct || array` check. Used
 // at the insert-lowering sites IN ADDITION to the receiver-derived map value
-// type, because the FIRST insert of a chain (`map_new_i32().insert(k, v)`) has a
+// type, because the FIRST insert of a chain (`__map_new_i32().insert(k, v)`) has a
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
@@ -12290,11 +12290,11 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!vctor.ok) { return vctor; }
         return vctor.emit(ir.op_struct_make(cid.name, c.args.len(), cdecl));
     }
-    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
+    if ((cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1) {
         var mn: LowerState = lower_expr(c.args[0], s);
         if (!mn.ok) { return mn; }
         var mkk: i32 = 0;
-        if (cid.name == "map_new_i32") { mkk = 1; }
+        if (cid.name == "__map_new_i32") { mkk = 1; }
         return mn.emit(ir.op_map_new(mkk, ""));
     }
     // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
@@ -14393,7 +14393,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
     // differing only past that field collapsed. meqfn was already right here;
     // only the kind was wrong.
     // The KEY EXPRESSION overrides a scalar/string key tag. `map_new` and
-    // `map_new_i32` are the only two constructor spellings, so a COMPOSITE
+    // `__map_new_i32` are the only two constructor spellings, so a COMPOSITE
     // (struct / enum) key has none and a `Map { … }` literal's desugared
     // chain bases itself on `map_new` — the STRING one — which is what the
     // tag is recovered from here. A struct / enum literal names its own
@@ -15082,7 +15082,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // lowers (recursively, so the inner inserts lower the same way)
     // to a map on the stack; op_map_set consumes [map, key, value]
     // and returns the map. The key kind comes from expr_map_kind
-    // (map_new vs map_new_i32 at the chain's base). Read methods on
+    // (map_new vs __map_new_i32 at the chain's base). Read methods on
     // a map-literal expression aren't needed — the literal binds to
     // a typed local, and reads go through the map-local path above.
     if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
@@ -22583,7 +22583,7 @@ match (v.init) {
     ast.ExprCall(mc) => {
         match (mc.callee) {
             ast.ExprIdent(mcid) => {
-                if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                if ((mcid.name == "map_new" || mcid.name == "__map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                     // The legacy shorthand tag, asked for the same way the rest
                     // of the lowering asks: an integer key is the integer
                     // column whatever it is spelled. The annotated-constructor
@@ -23149,7 +23149,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprCall(mnc) => {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                    if ((mnid.name == "map_new" || mnid.name == "__map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                         var kkind: i32 = 0 - 1;
                         var kt2: string = map_key_of(v.type_name);
                         // The same question map_key_kind_of answers everywhere
@@ -24369,7 +24369,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
 // a struct name on `m = m.insert(k, P { … })` / `.set(…)`. The unannotated binding
-// `var m = map_new_i32(n)` has no insert to read a value type from, so it records
+// `var m = __map_new_i32(n)` has no insert to read a value type from, so it records
 // `Map[K, i32]`; when the first insert arrives as a separate assignment the slot
 // would keep that tag forever and a later `var p = m.get_or(…)` could not recover
 // P — the read bailed the function. Fact-only: both tags are
@@ -39307,7 +39307,7 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], param
 
 // reclaimable_names_of = fresh-bound struct names that never escape.
 // is_fresh_map_init: an init producing a FRESH map value — a `map_new()` /
-// `map_new_i32()` call, or a `Map { … }` literal (which desugars to
+// `__map_new_i32()` call, or a `Map { … }` literal (which desugars to
 // `map_new[_i32](n).insert(k0,v0).insert(…)`, a `.insert()` method chain whose root
 // is the map_new call). A bare-ident (`var m2 = m1`) or a map-returning call is NOT
 // fresh here (an alias / an un-owned move), so it is left to leak — conservative.
@@ -39315,7 +39315,7 @@ function is_fresh_map_init(e: ast.Expr): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") { return is_fresh_map_init(fa.obj); }
                     return false;
@@ -39556,7 +39556,7 @@ function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
@@ -72504,7 +72504,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             if (c.args.len() != 1) { return false; }
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 _ => { return false; }
             }
         },
@@ -72517,7 +72517,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
 // except for the chain base of a `Map { … }` literal, where it builds the box
 // from the `Map[K, V]` in hand instead of from the constructor's NAME.
 //
-// `map_new` / `map_new_i32` are the only two spellings, and the parser picks
+// `map_new` / `__map_new_i32` are the only two spellings, and the parser picks
 // between them without types: a struct / enum key has no spelling at all and a
 // key set it cannot classify falls back to `map_new` — the STRING one either
 // way. The generic constructor arm reads the kind off that callee name, so the
