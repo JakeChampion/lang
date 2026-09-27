@@ -90,7 +90,7 @@ function main(): i32 {
     var v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
-}`, 17, 1, 0, 6, 6, true, false},
+}`, 17, 1, 0, 5, 5, true, false},
 
 	// The donor and the recipient are different TYPES and the same number of
 	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
