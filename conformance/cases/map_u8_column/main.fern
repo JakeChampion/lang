@@ -1,7 +1,7 @@
 import "core/map";
 // A `u8` map column read back through keys() and values(). The stride of the
 // result array is a property of the TYPE, and the runtime tag cannot see it:
-// a `u8` key and an `i32` key are both keyKind 0, so `__map_column` wrote both
+// a `u8` key and an `i32` key are both keyKind 0, so the i32 column writer wrote both
 // at its 4-byte destStride while the result was bound to a `u8[]`, whose
 // elements stride 1. Twelve entries read at stride 1 out of a buffer written
 // at stride 4 land inside the first three, and native summed 3 where every
