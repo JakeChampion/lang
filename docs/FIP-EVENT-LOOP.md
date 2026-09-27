@@ -152,26 +152,20 @@ the annotation, and the capacity constants are `fip` functions. It is worth
 knowing before starting, because it means a data plane cannot borrow one
 formatting helper from a library that is not annotated.
 
-### Threading `own` state is not ergonomic, and the diagnostic does not say why
+### Threading `own` state through an intermediate local (#9541 — FIXED)
 
-An intermediate local silently loses ownership:
+An intermediate local handed over at its last use used to be E051:
 
 ```fern
 var t: i64[] = s.with(0, 1i64);
-return bump(t);                  // E051: argument to owned parameter must be an owned value
+return bump(t);                  // was E051; a move now
 ```
 
-So must every step write back to the owned parameter itself:
-
-```fern
-s = s.with(0, 1i64);
-return bump(s);                  // fine
-```
-
-That is the idiom the whole `fip` variant is written in, and it is discoverable
-only by trying. E051 says an owned argument must be "a fresh construction or
-another `own` parameter" and does not mention that a reassigned owned parameter
-still qualifies, which is the thing the reader needs.
+so every step had to write back to the owned parameter itself
+(`s = s.with(0, 1i64); return bump(s);`). E051 now admits a local at the
+position where it dies, by the same analysis the IR moves it by
+(`checker.CallArgDeaths`), and both spellings compile. A local still read after
+the call, or handed over inside a loop, stays E051.
 
 ### Reading an array field inside the update that rewrites it cost a full copy (#9605 — FIXED)
 
@@ -245,6 +239,6 @@ workload fits — the path is exercised by the prefill, which overflows the
 - Allocation count unchanged over millions of events: yes — the gate drives
   1.28M per run and the count is exactly 0, not merely bounded.
 - Baseline/FBIP/FIP throughput and latency: the table above.
-- Compiler/library gaps documented: #9602 and #9605, both since FIXED (the
-  sections above are kept as the record of what the first measurement found),
-  plus the E051 ergonomics note, which stands.
+- Compiler/library gaps documented: #9602, #9605 and the E051 ergonomics note
+  (#9541), all since FIXED (the sections above are kept as the record of what
+  the first measurement found).
