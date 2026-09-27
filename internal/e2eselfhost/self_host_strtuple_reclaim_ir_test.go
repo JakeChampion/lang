@@ -42,7 +42,8 @@ var strTupleReclaimCases = []struct {
     return 0;
 }`, 0},
 	// Bare `.to_string()` element (the ExprCall producer arm).
-	{"str-tuple-tostring-churn", `function main(): i32 {
+	{"str-tuple-tostring-churn", `import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var w: i32 = 0;
     while (w < 200) { var t: (i32, string) = (w, w.to_string()); acc = (acc + t.1.len()) % 251; w = w + 1; }
@@ -101,7 +102,8 @@ var strTupleReclaimCases = []struct {
 }`, 0},
 	// ESCAPE negative: the tuple is returned — ownership moves out, nothing
 	// freed, values exact (no dangle in the caller's reads).
-	{"str-tuple-escape-safe", `function mk(i: i32): (i32, string) {
+	{"str-tuple-escape-safe", `import "std/i32";
+function mk(i: i32): (i32, string) {
     var t: (i32, string) = (i, "v" + i.to_string());
     return t;
 }
@@ -115,7 +117,8 @@ function main(): i32 {
 	// EXTRACTION negative: `keep = t.1` pulls the owned string out — the
 	// annotated escape gate rejects the credit (string is pointer-shaped), so
 	// the extracted alias stays valid after the rebind (leak-safe, no UAF).
-	{"str-tuple-extract-escape-safe", `function main(): i32 {
+	{"str-tuple-extract-escape-safe", `import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var keep: string = "";
     var w: i32 = 0;

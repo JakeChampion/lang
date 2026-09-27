@@ -3267,14 +3267,11 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
     return out;
 }
 
-// A discarded call result is a value nothing reads; the unit planner
-// releases it at the call.
+// A discarded result is a value nothing reads; the unit planner releases it
+// where it is made. Only a call may be void.
 function discard(e: ast.Expr, s: State): State {
-    match (e) {
-        ast.ExprCall(c) => { return call(e, c, s, true, t_void()).s; },
-        _ => { return fail(s, "unsupported statement"); }
-    }
-    return s;
+    if let ast.ExprCall(c) = e { return call(e, c, s, true, t_void()).s; }
+    return expr(e, s, typeinfo.unchecked()).s;
 }
 
 function stmt(st: ast.Stmt, s: State): State {
