@@ -20,15 +20,15 @@ var charMethodCases = []struct {
 	src  string
 	exit int
 }{
-	{"to_lower", "function main(): i32 { var c: u8 = 65; return c.to_ascii_lower() as i32; }", 97},
-	{"to_lower-noop", "function main(): i32 { var c: u8 = 53; return c.to_ascii_lower() as i32; }", 53},
-	{"to_upper", "function main(): i32 { var c: u8 = 122; return c.to_ascii_upper() as i32; }", 90},
-	{"is_digit", "function main(): i32 { var c: u8 = 53; if (c.is_ascii_digit()) { return 1; } return 0; }", 1},
-	{"is_digit-false", "function main(): i32 { var c: u8 = 65; if (c.is_ascii_digit()) { return 1; } return 0; }", 0},
-	{"is_alpha-upper", "function main(): i32 { var c: u8 = 90; if (c.is_ascii_alpha() && c.is_ascii_upper() && !c.is_ascii_lower()) { return 1; } return 0; }", 1},
-	{"is_hex-alnum", "function main(): i32 { var c: u8 = 102; if (c.is_ascii_hex_digit() && c.is_ascii_alnum()) { return 1; } return 0; }", 1},
-	{"punct-neither", "function main(): i32 { var c: u8 = 35; if (c.is_ascii_alnum() || c.is_ascii_hex_digit()) { return 1; } return 0; }", 0},
-	{"to_ascii_string", "function main(): i32 { var c: u8 = 65; return c.to_ascii_string()[0] as i32; }", 65},
+	{"to_lower", "import \"std/i32\"; function main(): i32 { var c: u8 = 65; return c.to_ascii_lower() as i32; }", 97},
+	{"to_lower-noop", "import \"std/i32\"; function main(): i32 { var c: u8 = 53; return c.to_ascii_lower() as i32; }", 53},
+	{"to_upper", "import \"std/i32\"; function main(): i32 { var c: u8 = 122; return c.to_ascii_upper() as i32; }", 90},
+	{"is_digit", "import \"std/i32\"; function main(): i32 { var c: u8 = 53; if (c.is_ascii_digit()) { return 1; } return 0; }", 1},
+	{"is_digit-false", "import \"std/i32\"; function main(): i32 { var c: u8 = 65; if (c.is_ascii_digit()) { return 1; } return 0; }", 0},
+	{"is_alpha-upper", "import \"std/i32\"; function main(): i32 { var c: u8 = 90; if (c.is_ascii_alpha() && c.is_ascii_upper() && !c.is_ascii_lower()) { return 1; } return 0; }", 1},
+	{"is_hex-alnum", "import \"std/i32\"; function main(): i32 { var c: u8 = 102; if (c.is_ascii_hex_digit() && c.is_ascii_alnum()) { return 1; } return 0; }", 1},
+	{"punct-neither", "import \"std/i32\"; function main(): i32 { var c: u8 = 35; if (c.is_ascii_alnum() || c.is_ascii_hex_digit()) { return 1; } return 0; }", 0},
+	{"to_ascii_string", "import \"std/i32\"; function main(): i32 { var c: u8 = 65; return c.to_ascii_string()[0] as i32; }", 65},
 }
 
 // TestSelfHostCharMethodsX86_64 compiles the char-method programs with
@@ -88,19 +88,14 @@ func TestSelfHostSortX86_64(t *testing.T) {
 
 // TestSelfHostCharMethodsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostCharMethodsArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	cli := buildSelfHostCLI(t)
 	for _, tc := range charMethodCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}

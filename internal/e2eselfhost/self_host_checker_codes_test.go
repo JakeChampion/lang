@@ -2086,6 +2086,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-str-bad", "function f(c: Cell[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		// Every integer and float width is a scalar element, as natively.
+		{"cell-annot-scalars-ok", "function f(a: (i32, Cell[f32]), b: Cell[u8], c: Cell[usize]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E051 self-reassign move admission (#4873 step 0): a LOCAL passed
 		// exactly once, directly, in an `own` position of its OWN
 		// reassignment's RHS is a transfer — admitted by both checkers

@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -61,37 +60,17 @@ function f(): i32 { var a: E = A([1, 2]); var t: i32 = 0; match (a) { A(_) => { 
 function main(): i32 { return f(); }`, 0},
 }
 
-// TestSelfHostEnumCrossReuseIRX86_64 routes each case through the self-hosted x86-64
-// IR driver, pinned to the "ir" path, and runs it — asserting the embedded value
-// check plus __rc_underflow_count() == 0.
-func TestSelfHostEnumCrossReuseIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+// TestSelfHostEnumCrossReuseIR runs each case through the self-host CLI on
+// x86-64, asserting the embedded value check plus __rc_underflow_count() == 0.
+func TestSelfHostEnumCrossReuseIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	for _, tc := range enumCrossReuseIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
+			src := tc.src
+			for _, target := range []string{"x86-64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}

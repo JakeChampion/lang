@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -33,38 +29,14 @@ import (
 // which asserts the rc accounting balances exactly rather than merely that the
 // heap survived.
 func TestSelfHostAppendBorrowedParamWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping wasm-IR borrowed-param e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range selfHostAppendBorrowedCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "bp_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src + "\n"
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}

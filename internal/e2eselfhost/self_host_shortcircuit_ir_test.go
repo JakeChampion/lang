@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,42 +77,18 @@ func TestSelfHostShortCircuitIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostShortCircuitIRWasm runs the same cases through the wasm IR backend
-// (wasm_ir_run -ir): the short-circuit block/br_if shape must produce the same
+// TestSelfHostShortCircuitIRWasm runs the same cases through the self-host CLI
+// on wasm32-wasi: the short-circuit block/br_if shape must produce the same
 // values and trap-avoidance on the stack-machine backend.
 func TestSelfHostShortCircuitIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host short-circuit wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range shortCircuitIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "sc_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("short-circuit wasm IR %q = %d, want %d", tc.name, code, tc.expected)
+			src := tc.src
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.expected {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.expected, stderr)
+				}
 			}
 		})
 	}

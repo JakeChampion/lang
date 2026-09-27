@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -15,38 +11,14 @@ import (
 // type-driven tuple deep-drop resolves without any dedicated runtime helper. Case
 // table shared with the x86-64 leg.
 func TestSelfHostOptTupReclaimWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping opttup-reclaim wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range optTupReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("%s = %d, want %d (98 = option leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, got, tc.want)
+			src := tc.src + "\n"
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d (98 = option leaked; 99 = over-release/underflow; 97 = value corrupted)\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}

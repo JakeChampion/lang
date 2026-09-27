@@ -52,7 +52,7 @@ var auditBuiltinCases = []struct {
 	// (len@0, elem*8+8) and answered 2; irlower desugars it to a
 	// byte-index counted loop (#2822 / #2834), and asm_run is IR-or-error
 	// now, so 'A'+'B' = 131 is what it computes.
-	{"for-in-string", `function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + b; } return s; }`, 131},
+	{"for-in-string", `function main(): i32 { var s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
 }
 
 // Known self-host gaps surfaced by this audit (2026-06-12) — held out of
@@ -101,23 +101,14 @@ func TestSelfHostAuditBuiltinsX86_64(t *testing.T) {
 
 // TestSelfHostAuditBuiltinsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostAuditBuiltinsArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range auditBuiltinCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}
