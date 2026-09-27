@@ -777,7 +777,7 @@ same code(s) the Go checker does — restricted to
   runtime's FNV-hash / open-addressing compare supports). The check folds
   into the existing scope-threaded `call_diags` pass (no new wiring): when a
   call's callee is `<base>.insert(...)` whose `<base>` is the literal's base
-  constructor (`mlit_is_base` — a bare `map_new` / `map_new_i32` call), that
+  constructor (`mlit_is_base` — a bare `map_new` / `__map_new_i32` call), that
   first `insert`'s key argument is typed and, if it isn't i32/string, E045
   is reported at the key — matching the Go checker, which checks
   `MapLit.Entries[0].Key`. Recognising the desugared chain (rather than a

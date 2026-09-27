@@ -2306,7 +2306,7 @@ function mlit_entries_settle(e: ast.Expr, want: typeinfo.TypeMap, s: Scope): boo
 }
 
 // mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
-// it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
+// it: an `.insert(k, v)` chain bottoming out at the `map_new` / `__map_new_i32`
 // base. The literal's own key check (the first insert, above) reports E045 for
 // it already, so the destination check skips these and the two do not both
 // fire — native skips its MapLit destinations for the same reason. A bare
@@ -9772,7 +9772,7 @@ function suffix_range_stmts(stmts: ast.Stmt[]): util.Diag[] {
 // (method / closure arity + argument types are left to later slices).
 // mlit_is_base reports whether an expression is the base constructor call
 // of a desugared map literal — `map_new(n)` (string keys) or
-// `map_new_i32(n)` (integer keys), which the parser's parse_map_lit emits
+// `__map_new_i32(n)` (integer keys), which the parser's parse_map_lit emits
 // before chaining `.insert(k, v)` per entry. Used to find a map literal's
 // FIRST `.insert` (whose object is this base) so its key type can be
 // checked (E045).
@@ -9797,7 +9797,7 @@ function mlit_is_base(e: ast.Expr): boolean {
 
 // is_map_new_name reports whether `name` is one of the empty-map constructors.
 function is_map_new_name(name: string): boolean {
-  return name == "map_new" || name == "map_new_i32";
+  return name == "map_new" || name == "__map_new_i32";
 }
 
 // unsettled_int_literal: is `e` an integer literal that has not been pinned to a
@@ -10822,7 +10822,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // it here rather than leaving it to codegen, and so does this. A map
       // LITERAL needs no arm of its own: the compile parse desugars
       // `Map { … }` to one of these two constructors, which is also why
-      // map_new_i32 is named here although native has no such spelling.
+      // __map_new_i32 is named here although native has no such spelling.
       // Reported at every site and thinned to the first by check_module,
       // matching native's one diagnostic per program.
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
