@@ -343,8 +343,9 @@ declaration and lowered IR and emits it through the same function emitter it
 uses for user code. One source, lowered per target. There is no bootstrap
 circularity on this side — Go compiles the source — so the only constraint is
 the one the self-host has: a body may reach only the provided-callee floor
-(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, …) and never an
-operation that lowers to a call of the helper it implements.
+(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, `__store_u8`,
+`__syscall3` … `__syscall6`, …) and never an operation that lowers to a
+call of the helper it implements.
 `TestHelpersCallOnlyTheFloorOrEachOther` pins that.
 
 How each backend reaches a helper:

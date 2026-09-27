@@ -2062,6 +2062,7 @@ var pokeInline = map[string]struct {
 	mnem  string
 	wide  bool
 	store bool
+	byte  bool
 	off   int64
 }{
 	"__load_i32":  {mnem: "mov"},
@@ -2072,6 +2073,7 @@ var pokeInline = map[string]struct {
 	"__store_i32": {mnem: "mov", store: true},
 	"__store_i64": {mnem: "mov", wide: true, store: true},
 	"__store_ptr": {mnem: "mov", wide: true, store: true},
+	"__store_u8":  {mnem: "mov", store: true, byte: true},
 	"__ptr_width": {},
 }
 
@@ -2115,6 +2117,9 @@ func inlinePokeLines(in Inst, numAlloc int) ([]string, bool) {
 		addr := materialise(in.ArgLocs[0], s0)
 		val := materialise(in.ArgLocs[1], s1)
 		// Void, so there is no result to place and no width to fix.
+		if form.byte {
+			return append(out, fmt.Sprintf("mov byte ptr %s, %s", memRef(reg(addr), form.off), reg8n(val))), true
+		}
 		return append(out, fmt.Sprintf("mov %s, %s", memRef(reg(addr), form.off), operand(val))), true
 	case form.mnem == "movzx":
 		if len(in.ArgLocs) != 1 {
@@ -2404,6 +2409,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_send":                        emitTcpSendHelper,
 	"udp_send":                        emitUdpSendHelper,
 	"tcp_close":                       emitTcpCloseHelper,
+	"__syscall3":                      emitSyscallHelper(3),
+	"__syscall4":                      emitSyscallHelper(4),
+	"__syscall5":                      emitSyscallHelper(5),
+	"__syscall6":                      emitSyscallHelper(6),
 	"tcp_pollable":                    emitIdentityHelper("tcp_pollable"),
 	"wasm_timer_pollable":             emitConstHelper("wasm_timer_pollable", -1),
 	"wasm_pollable_drop":              emitConstHelper("wasm_pollable_drop", 0),

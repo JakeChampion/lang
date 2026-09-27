@@ -1466,6 +1466,10 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"tcp_send":                    emitTcpSendHelper,
 	"udp_send":                    emitUdpSendHelper,
 	"tcp_close":                   emitTcpCloseHelper,
+	"__syscall3":                  emitSyscallHelper(3),
+	"__syscall4":                  emitSyscallHelper(4),
+	"__syscall5":                  emitSyscallHelper(5),
+	"__syscall6":                  emitSyscallHelper(6),
 	"tcp_pollable":                emitTcpPollableHelper,
 	"poll":                        emitPollHelper,
 	"isatty":                      emitIsattyHelper,
@@ -11163,6 +11167,7 @@ var pokeInline = map[string]struct {
 	"__store_i32": {mnem: "str", store: true},
 	"__store_i64": {mnem: "str", wide: true, store: true},
 	"__store_ptr": {mnem: "str", wide: true, store: true},
+	"__store_u8":  {mnem: "strb", store: true},
 	"__ptr_width": {},
 }
 

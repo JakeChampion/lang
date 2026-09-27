@@ -10422,11 +10422,13 @@ function syscall_op(arity: i32): ir.Op {
 }
 
 // expr_is_usize reports an address-valued expression: a `usize` local, a
-// raw-floor intrinsic that returns an address, or an `as usize` cast.
+// raw-floor intrinsic that returns an address, an `as usize` cast, or an
+// offset of one.
 pub function expr_is_usize(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprIdent(id) => { return s.is_usize_slot(s.slot_of(id.name)) || id.ty == "usize"; },
         ast.ExprUnary(u) => { return u.op == "as_usize"; },
+        ast.ExprBinary(b) => { return b.ty == "usize" || ((b.op == "+" || b.op == "-") && expr_is_usize(b.left, s)); },
         ast.ExprCall(c) => {
             if (c.ty == "usize") { return true; }
             match (c.callee) {
@@ -10901,6 +10903,9 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     // The blocked-signal set is a 64-bit mask, read back whole.
                     if (cid.name == "signal_mask") { return 64; }
                     if (cid.name == "__load_i64") { return 64; }
+                    // The kernel answers a machine word: an address or a
+                    // signed -errno, read whole.
+                    if (syscall_arity(cid.name) > 0) { return 64; }
                     // The bump high-water mark is i64 (the arena is 16 GiB, so
                     // it passes 2^31 on a long run). Width-tracking it matters
                     // most for `__heap_bump_bytes() as i32` — the shape every
@@ -11297,6 +11302,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     if (cid.name == "rlimit_nofile") { return lower_expr(e, s); }
                     if (cid.name == "signal_mask") { return lower_expr(e, s); }
                     if (cid.name == "__load_i64") { return lower_expr(e, s); }
+                    if (syscall_arity(cid.name) > 0) { return lower_expr(e, s); }
                     // The bump high-water mark is an i64 value: the normal call
                     // path emits op_heap_bump_bytes and pushes the full-width
                     // result, where the width-32 sign-extend below would drop it
@@ -12274,6 +12280,14 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         var lp: LowerState = lower_expr(c.args[0], s);
         if (!lp.ok) { return lp; }
         return lp.emit(ir.op_load_ptr());
+    }
+    if (cid.name == "__store_u8" && c.args.len() == 2) {
+        var su: LowerState = lower_expr(c.args[0], s);
+        if (!su.ok) { return su; }
+        su = su.emit(ir.op_const_i32(0));
+        su = lower_expr(c.args[1], su);
+        if (!su.ok) { return su; }
+        return su.emit(ir.op_raw_store8());
     }
     if (cid.name == "__store_i32" && c.args.len() == 2) {
         var si: LowerState = lower_expr(c.args[0], s);
@@ -16943,6 +16957,12 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     var ek: string = kind;
     var left_u32: boolean = expr_is_u32(b.left, s);
     var right_u32: boolean = expr_is_u32(b.right, s);
+    // An address operand makes the op pointer-width: the natives compute
+    // it in the full register and wasm32 in an i32, and it never takes the
+    // i32 wrap below, which sign-extended `base + n` from 32 bits and so
+    // faulted on any mapping above 2 GiB (#10454). Addresses compare and
+    // divide unsigned, as u32 does.
+    var addr: boolean = expr_is_usize(b.left, s) || expr_is_usize(b.right, s);
     if (b.op == ">>" && left_u32) { ek = "shr_u"; }
     // u32 ORDERING compares need the UNSIGNED IR kind (lt_u/le_u/gt_u/
     // ge_u): a u32 value ≥ 2^31 is signed-negative in a 32-bit slot, so a
@@ -16950,7 +16970,7 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // to_unsigned_kind path u64 uses (#2904); the wasm backend then emits
     // i32.*_u and asm_ir emits setb/seta — both correct for a u32. eq/ne
     // are sign-agnostic and pass through. (#2917)
-    if ((left_u32 || right_u32) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
+    if ((left_u32 || right_u32 || addr) && (kind == "lt_s" || kind == "le_s" || kind == "gt_s" || kind == "ge_s")) {
         ek = to_unsigned_kind(kind);
     }
     // u32 DIVISION / REMAINDER must be unsigned too: a u32 numerator >=
@@ -16959,10 +16979,12 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // to be right because its 64-bit reg held the value zero-extended).
     // Remap div_s/rem_s -> div_u/rem_u when either operand is u32, the
     // same way u64 does (#2904); add/sub/mul stay sign-agnostic. (#3204+)
-    if ((left_u32 || right_u32) && (kind == "div_s" || kind == "rem_s")) {
+    if ((left_u32 || right_u32 || addr) && (kind == "div_s" || kind == "rem_s")) {
         ek = to_unsigned_kind(kind);
     }
-    var res: LowerState = s2.emit(ir.op_bin(ek, 0, false));
+    var bin_w: i32 = 0;
+    if (addr) { bin_w = ir.width_ptr(); }
+    var res: LowerState = s2.emit(ir.op_bin(ek, bin_w, false));
     var res_u32: boolean = left_u32 || right_u32;
     if (res_u32 && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
         res = res.emit(ir.op_u32_wrap());
@@ -16986,7 +17008,7 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // (res_u32 false, sub_kind ""), and the i64 / f64 dispatches
     // returned earlier, so this fires only for a true i32 op.
     // op_int_cast("i32") is the signed sibling of op_u32_wrap.
-    if (!res_u32 && sub_kind == "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
+    if (!addr && !res_u32 && sub_kind == "" && (kind == "add" || kind == "sub" || kind == "mul" || kind == "shl")) {
         res = res.emit(ir.op_int_cast("i32"));
     }
     return res;

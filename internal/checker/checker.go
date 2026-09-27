@@ -4120,6 +4120,28 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},
 	}
+	// `__store_u8(addr, v)` — one byte, the low eight bits of v; the
+	// sockaddr and option bytes the socket helpers write.
+	c.info.FuncSigs["__store_u8"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__syscall3(nr, a, b, c)` … `__syscall6(nr, a, …, f)` — the native
+	// runtime's syscall floor, the same names and shapes the self-host's
+	// asmcore helpers are written on: the number and arguments are
+	// machine words, signed so a negative errno reads as one, and the
+	// result is the kernel's word unchanged (-errno on every target; the
+	// arm64-darwin emitter negates the carry-flagged error itself). Native
+	// only: wasm has no kernel and refuses the callee; the interpreter
+	// implements every builtin in Go and never reaches it.
+	wordT := ast.NumberType{Width: 64, Signed: true}
+	for n := 3; n <= 6; n++ {
+		params := []ast.Type{ast.NumberType{}}
+		for i := 0; i < n; i++ {
+			params = append(params, wordT)
+		}
+		c.info.FuncSigs[fmt.Sprintf("__syscall%d", n)] = &ast.FuncType{Params: params, Result: wordT}
+	}
 	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
 	// Address AND value are usize so the full 8-byte pointer
 	// shape survives on natives. On wasm32 both collapse to i32

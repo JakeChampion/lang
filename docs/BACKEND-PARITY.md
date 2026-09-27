@@ -109,24 +109,31 @@ isolation (docs/TOOLCHAIN-SELF-HOSTING.md).
 
 ## Internal networking syscall floor
 
-The self-host runtime's `__syscall6` (#9853, #4451) passes a syscall number
-and six machine-word operands. It is an internal runtime intrinsic, registered
-beside `__syscall3` through `__syscall5`, rather than a public language builtin.
-It adds no public capability or platform-table entry. Networking APIs built on
-it still need their own capability and target classifications in both compilers.
+`__syscall3` through `__syscall6` (#9853, #4451) pass a syscall number and
+three to six machine-word operands and return the kernel's word, negative
+errno on failure on every target. `__store_u8(addr, v)` writes the low byte
+of `v`. Both compilers lower the same names, so a socket primitive is one
+Fern body per compiler rather than assembly per backend. They are runtime
+intrinsics with a `__` prefix, not public builtins: `internal/platforms`
+gates them under the `syscall` capability only the hosted-native profile
+grants, they carry no package capability, and networking APIs built on them
+still need their own classifications.
 
-| Target | `__syscall6` |
-| --- | --- |
-| x86-64-linux | `syscall`, sixth argument in `r9` |
-| arm64-linux | `svc #0`, sixth argument in `x5` |
-| arm64-darwin | `svc #0x80`, sixth argument in `x5`, negative errno on failure |
-| wasm32-wasi | Rejected by the self-host wasm drivers; use WASI imports |
-| wasm32-wasi-http | No raw syscalls; self-host target remains unavailable (#6636) |
-| interp / Go frontend | Internal self-host intrinsic, not a public builtin |
+| Target | Go compiler | self-host |
+| --- | --- | --- |
+| x86-64-linux, stack machine | inline `syscall`, sixth argument in `r9` | `syscall`, sixth argument in `r9` |
+| x86-64-linux, `-backend ssa` | `fn___syscallN` helper: shifts the C-ABI registers one down, seventh operand from the stack | same |
+| arm64-linux, both backends | `svc #0`, number in `x8` | `svc #0`, sixth argument in `x5` |
+| arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated | `svc #0x80`, negative errno on failure |
+| wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
+| interp | never reached: refused with the target, not at run time | — |
 
-File-backed mapping tests read distinct bytes at a nonzero offset, then unmap
-and close. The offset exercises the sixth argument; a bad descriptor checks
-the error result. The Darwin test executes in the Apple Silicon lane.
+`FERN_SANDBOX=1` refuses a program that reaches the floor on x86-64: the
+number is a run-time operand, so the seccomp allowlist cannot cover it.
+
+The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
+and closes, pins the errno of a bad descriptor, and round-trips bytes through
+the byte store. The Darwin legs run in the Apple Silicon lane.
 
 The self-host's `poll(fds, timeout_ms)` now reaches `kqueue`/`kevent` on
 arm64-darwin, replacing its unconditional `-1` stub. It ignores negative fds

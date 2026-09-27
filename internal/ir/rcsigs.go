@@ -249,6 +249,9 @@ var rcInertBuiltins = map[string]bool{
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
 	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	// The syscall floor hands machine words to the kernel and gets one
+	// back; nothing on either side is a counted Fern object.
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
 	"__popcount32": true, "__popcount64": true, "__round_f64": true,
@@ -542,7 +545,8 @@ var rcInert = map[string]bool{
 	"__fern_writer_truncate": true,
 	"__fern_writer_write":    true, "__http_entry": true, "__load_i32": true,
 	"__load_i64": true, "__load_ptr": true, "__load_u8": true, "__memcpy": true,
-	"__memset": true, "__method_string_as_bytes": true,
+	"__store_u8": true,
+	"__memset":   true, "__method_string_as_bytes": true,
 	"__network_handle": true, "__ptr_width": true, "__slice_idx": true,
 	"__slice_idx_1": true, "__slice_idx_4": true, "__slice_idx_8": true,
 	"__slice_make": true, "__slice_range": true, "__store_i32": true,

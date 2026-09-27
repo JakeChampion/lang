@@ -17436,15 +17436,48 @@ func (g *generator) emitRawPokeIntrinsic(name string) bool {
 			g.emit("ldr x0, [x0]")
 		}
 		g.push()
-	case "__store_i32", "__store_i64", "__store_ptr":
+	case "__store_i32", "__store_i64", "__store_ptr", "__store_u8":
 		g.pop() // value (on top) → x0
 		g.emit("mov x1, x0")
 		g.pop() // addr → x0
-		if name == "__store_i32" {
+		switch name {
+		case "__store_i32":
 			g.emit("str w1, [x0]")
-		} else {
+		case "__store_u8":
+			g.emit("strb w1, [x0]")
+		default:
 			g.emit("str x1, [x0]")
 		}
+	case "__syscall3", "__syscall4", "__syscall5", "__syscall6":
+		// The operands sit on the stack in call order, number first, so
+		// the last argument is on top: pop the arguments into x5..x1,
+		// then the first into x0, park it in x9 while the number comes
+		// off into the kernel's register, and restore it. Linux takes the
+		// number in x8 and answers -errno in x0; XNU takes it in x16 and
+		// flags an error in the carry bit with the errno positive, which
+		// the negate turns into the Linux shape every caller reads.
+		n := int(name[len(name)-1] - '0')
+		for i := n - 1; i >= 1; i-- {
+			g.pop()
+			g.emit("mov x%d, x0", i)
+		}
+		g.pop() // first argument → x0
+		g.emit("mov x9, x0")
+		g.pop() // number → x0
+		if g.darwin {
+			g.emit("mov x16, x0")
+			g.emit("mov x0, x9")
+			g.emit("svc #0x80")
+			lbl := g.freshLabel("sysc_ok")
+			g.emit("b.cc %s", lbl)
+			g.emit("neg x0, x0")
+			g.label(lbl)
+		} else {
+			g.emit("mov x8, x0")
+			g.emit("mov x0, x9")
+			g.emit("svc #0")
+		}
+		g.push()
 	case "__ptr_width":
 		g.emit("mov x0, #8")
 		g.push()

@@ -508,7 +508,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_putchar": true, "__fern_exit": true, "__free": true,
 	"__fern_lc_report": true,
 	"__memcpy":         true, "__memset": true, "__store_i32": true,
-	"__store_i64": true, "__store_ptr": true, "__http_entry": true,
+	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__http_entry": true,
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
@@ -523,6 +523,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_sqrt_f64": true, "__fern_trunc_f64": true,
 
 	// i64.
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,
 	"__fern_heap_alloc_count": true,
 	"__fern_idiv_s64":         true, "__fern_idiv_u64": true, "__fern_irem_s64": true,

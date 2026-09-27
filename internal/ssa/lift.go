@@ -672,9 +672,19 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		// -360517687 where the interpreter and both native
 		// backends return -360517664 — a value that is not even
 		// representable in f32 (the ulp at that magnitude is 32).
+		//
+		// A usize op carries WidthPtr, and on a 64-bit target that is an
+		// address: 64 bits wide, and address-ness for ResolveWidths to carry
+		// on to whatever is derived from it. Left at the i32 default, a
+		// usize cast from an i64 (a syscall's return, a loaded word) had its
+		// offsets sign-extended from 32 bits — a mapping above 2 GiB read
+		// through `base + n` faulted, while `base` alone still worked
+		// because nothing had narrowed it.
 		switch {
 		case op.Width == 64:
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+		case op.Width == ir.WidthPtr && l.in.PtrW == 8:
+			l.cur.Ops[len(l.cur.Ops)-1].Width, l.cur.Ops[len(l.cur.Ops)-1].Addr = 64, true
 		case op.Width == 32 && isFloatArith(kind):
 			l.cur.Ops[len(l.cur.Ops)-1].Width = 32
 		}
