@@ -15911,7 +15911,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
-			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+			if err := b.pushMapKey(n.Args[1], n.TypeArgs[0]); err != nil {
 				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
@@ -15981,6 +15981,9 @@ func (b *builder) callBody(n *ast.Call) error {
 				if err := b.expr(a); err != nil {
 					return err
 				}
+				if ai == 1 {
+					b.emitIntoMapSlot(n.TypeArgs[0])
+				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
 			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
@@ -16032,6 +16035,9 @@ func (b *builder) callBody(n *ast.Call) error {
 				}
 				if err := b.expr(a); err != nil {
 					return err
+				}
+				if ai == 1 {
+					b.emitIntoMapSlot(n.TypeArgs[0])
 				}
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
@@ -16094,7 +16100,7 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
-			b.emitF32ToMapSlot(n.TypeArgs[1])
+			b.emitIntoMapSlot(n.TypeArgs[1])
 			b.emitMapCall("__method_Map_get_or", 3, n.TypeArgs[0])
 			b.emitMapSlotToF32(n.TypeArgs[1])
 			// Map[K, string].get_or native single-word retain: the
@@ -16573,8 +16579,8 @@ func (b *builder) callBody(n *ast.Call) error {
 		if toOwnParam && ai < exitArg {
 			b.teeOperandDrop(b.loweredValueType(a))
 		}
-		if ai == 2 && (id.Name == "__method_Map_set" || id.Name == "__method_Map_get_or") && len(n.TypeArgs) >= 2 {
-			b.emitF32ToMapSlot(n.TypeArgs[1])
+		if st := mapSlotArgType(id.Name, ai, n.TypeArgs); st != nil {
+			b.emitIntoMapSlot(st)
 		}
 	}
 	b.pendingDrops = b.pendingDrops[:dropMark]
@@ -23421,7 +23427,7 @@ func (b *builder) pushMapMethodArg(arg ast.Expr, t ast.Type, shouldBox bool, slo
 	if err := b.expr(arg); err != nil {
 		return err
 	}
-	b.emitF32ToMapSlot(t)
+	b.emitIntoMapSlot(t)
 	return nil
 }
 
@@ -23432,15 +23438,64 @@ func isF32(t ast.Type) bool {
 	return ok && f.NormalWidth() == 32
 }
 
-// emitF32ToMapSlot turns the f32 on top of the stack into the bit pattern the
-// map runtime's integer slot holds, and emitMapSlotToF32 turns a slot word the
-// runtime hands back into the f32 again. Both are identities for any other
-// type. The SSA backends hold a float as an f64 and wasm types the operand,
-// so without them an f32 reaches the slot as the wrong bits or not at all.
-func (b *builder) emitF32ToMapSlot(t ast.Type) {
+// emitIntoMapSlot turns the K or V on top of the stack into the word the map
+// runtime's pointer-wide slot holds, and emitMapSlotToF32 turns a slot word the
+// runtime hands back into an f32 again. An f32 crosses as its bit pattern: the
+// SSA backends hold a float as an f64 and wasm types the operand. On a 64-bit
+// target a narrower integer or a boolean is widened as `as usize` widens it,
+// because the runtime compares key slots at full width and a 32-bit value's
+// upper half depends on the instruction that produced it (#10442).
+func (b *builder) emitIntoMapSlot(t ast.Type) {
 	if isF32(t) {
 		b.emit(Op{Kind: OpReinterpretI32F32})
+		return
 	}
+	if b.ptrW != 8 {
+		return
+	}
+	switch n := t.(type) {
+	case ast.NumberType:
+		if n.IsPointerWidth() || n.NormalWidth() == 64 {
+			return
+		}
+		if n.IsSigned() {
+			b.emit(Op{Kind: OpExtendI32S})
+		} else {
+			b.emit(Op{Kind: OpExtendI32U})
+		}
+	case ast.BoolType:
+		b.emit(Op{Kind: OpExtendI32U})
+	}
+}
+
+// mapSlotArgType is the key or value type argument `ai` of a Map method crosses
+// into the runtime's slot as, or nil for any other argument.
+func mapSlotArgType(name string, ai int, typeArgs []ast.Type) ast.Type {
+	if len(typeArgs) < 2 {
+		return nil
+	}
+	switch name {
+	case "__method_Map_set", "__method_Map_get_or":
+		if ai == 2 {
+			return typeArgs[1]
+		}
+	case "__method_Map_has", "__method_Map_get", "__method_Map_delete":
+	default:
+		return nil
+	}
+	if ai == 1 {
+		return typeArgs[0]
+	}
+	return nil
+}
+
+// pushMapKey pushes an unboxed key the way the runtime's slot holds it.
+func (b *builder) pushMapKey(k ast.Expr, kType ast.Type) error {
+	if err := b.expr(k); err != nil {
+		return err
+	}
+	b.emitIntoMapSlot(kType)
+	return nil
 }
 
 func (b *builder) emitMapSlotToF32(t ast.Type) {
@@ -23524,7 +23579,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 		if keyCell, err = b.boxIntoCellSlot(n.Args[1], kType, "__map_set_kbox"); err != nil {
 			return err
 		}
-	} else if err := b.expr(n.Args[1]); err != nil {
+	} else if err := b.pushMapKey(n.Args[1], kType); err != nil {
 		return err
 	}
 	boxV := isWideScalar(vType) || isStringForBoxing(vType, b.ptrW)
@@ -23626,7 +23681,7 @@ func (b *builder) emitNativeStringKeyMapSet(n *ast.Call, kType ast.Type) error {
 	b.emitMapLenLoad(mapSlot)
 	b.emit(Op{Kind: OpStoreLocal, I32: preLen})
 	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
-	if err := b.expr(n.Args[1]); err != nil {
+	if err := b.pushMapKey(n.Args[1], kType); err != nil {
 		return err
 	}
 	keySlot := b.allocSlot()
@@ -23637,7 +23692,7 @@ func (b *builder) emitNativeStringKeyMapSet(n *ast.Call, kType ast.Type) error {
 		return err
 	}
 	if len(n.TypeArgs) >= 2 {
-		b.emitF32ToMapSlot(n.TypeArgs[1])
+		b.emitIntoMapSlot(n.TypeArgs[1])
 	}
 	b.emitMapCall("__method_Map_set", 3, kType)
 	b.freeDiscardedSetKey(keySlot, preLen)
@@ -23728,7 +23783,7 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 		}
 		if ok {
 			keyTmp, keyTmpType = slot, tt
-		} else if err := b.expr(n.Args[1]); err != nil {
+		} else if err := b.pushMapKey(n.Args[1], kType); err != nil {
 			return err
 		}
 	}
@@ -23873,7 +23928,7 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 		if err := b.expr(n.Args[i]); err != nil {
 			return err
 		}
-		b.emitF32ToMapSlot(vType)
+		b.emitIntoMapSlot(vType)
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: methodName, I32: argCount})
 	if methodName == "__method_Map_get_or" {
@@ -23945,7 +24000,7 @@ func (b *builder) emitMapDeleteReturningTuple(n *ast.Call, kType ast.Type) error
 			return err
 		}
 	} else {
-		if err := b.expr(n.Args[1]); err != nil {
+		if err := b.pushMapKey(n.Args[1], kType); err != nil {
 			return err
 		}
 	}
@@ -24045,7 +24100,7 @@ func (b *builder) emitWideMapGetOr(n *ast.Call, kType, vType ast.Type) error {
 		if err != nil {
 			return err
 		}
-	} else if err := b.expr(n.Args[1]); err != nil {
+	} else if err := b.pushMapKey(n.Args[1], kType); err != nil {
 		return err
 	}
 	valCell, err := b.boxIntoCellSlot(n.Args[2], vType, "__map_or_box")
