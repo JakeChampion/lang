@@ -1334,14 +1334,30 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
 }
 
 // mark_enum_field_alias records that local `name` was bound from a DIRECT enum
-// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
-// alias of the source struct's enum box (#6121). Storing it into a container
-// then needs the same Perceus dup the direct read gets, because
-// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
-// reclaimed. Appended rather than pre-scanned: the bind always precedes the
-// store, and enum_field_read_type needs the slot types the scan does not have.
+// struct field read (`var tmp: N = first.node`), which shares the source
+// struct's enum box (#6121). Storing it into a container makes the container
+// one more owner, so the store takes the same Perceus dup the direct read gets.
+// Appended rather than pre-scanned: the bind always precedes the store, and
+// enum_field_read_type needs the slot types the scan does not have.
 pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
+}
+
+// credit_enum_field_alias grants the counted alias bound at `site`, which
+// collect_enum_field_alias_sites admitted, the release the source struct gives
+// the same box. The alias is never a sole owner, so both are rc-gated: the
+// __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the struct's
+// field release deep-drops (enum_arr_elems_walk_ok), else the box-only dec of
+// "SCENUMS:", because any other payload may have reached the box uncounted.
+// Whichever owner releases last does the payload work, in either order.
+function credit_enum_field_alias(s: LowerState, site: string, ety: string): LowerState {
+    var rn: string[] = s.frame.reclaimable_names;
+    if (enum_arr_elems_walk_ok(s.frame.structs, ety)) {
+        rn = rn.append("RCENUM:" + site).append("RCENUMS:" + site);
+    } else {
+        rn = rn.append("SCENUMS:" + site);
+    }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: rn } };
 }
 
 // is_enum_field_alias reports whether `name` carries the mark above. Rebinding
@@ -22063,15 +22079,19 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
     // drops), else the payload leaks each iteration — the consuming-match reclaim is
     // top-level-only, so it never covers a loop-local (#4357).
+    // An enum-field alias carries alias_inc: its dup lands before the gated drop,
+    // so an old box equal to the new one only loses the alias's previous count.
     if (slot_is_reclaimable_rcenum(sb, slot)) {
+        if (vt.alias_inc) { sb = sb.retain_tos("enum-field-alias"); }
         return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
     }
-    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`):
-    // the re-declaration must release the box it supersedes. A shallow dec is the
-    // whole release — every payload is a scalar — so emit_arr_store's cow-guarded
-    // do_dec branch is exactly right, the same one a scalar-tuple rebind takes.
+    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`), or
+    // an enum-field alias taking the box-only release: the re-declaration must
+    // release the box it supersedes, with a shallow dec. Fresh, that is
+    // emit_arr_store's cow-guarded do_dec branch, the one a scalar-tuple rebind
+    // takes; an alias's alias_inc makes the dec unconditional.
     if (slot_is_reclaimable_scenum(sb, slot)) {
-        return emit_arr_store(sb, slot, false, true);
+        return emit_arr_store(sb, slot, vt.alias_inc, true);
     }
     match (v.init) {
         ast.ExprTuple(dtl) => {
@@ -22659,10 +22679,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
-    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
-    // the source struct's enum box (#6121). No dup here — an alias that never
-    // escapes must not outlive the struct — only the mark, so a later container
-    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    // `var tmp: N = first.node` (node: N, N an enum) shares the source struct's
+    // enum box. The bind's dup and release are the VarTypes classification's
+    // (#10310); the mark makes a later container store of `tmp` retain exactly as
+    // the direct `[first.node]` read does (#6121).
     if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
@@ -23394,6 +23414,15 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // requires (it reads is_arr_slot), and the alias-inc block below
             // retains the buffer so the slot's exit-sweep dec balances (#7208).
             if (nested_arr_field_read_type(v.init, se) != "") { is_arr = true; }
+            // A DIRECT enum field read the frame can release is a counted alias
+            // (#10310): the source struct releases its own count, so the alias
+            // needs one too. The dup and the credit land together or not at all.
+            var efty: string = enum_field_read_type(v.init, se);
+            var efsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+            if (efty != "" && reclaim_has(se.frame.reclaimable_names, "EALIAS:", efsite)) {
+                alias_inc = true;
+                se = credit_enum_field_alias(se, efsite, efty);
+            }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
             // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
@@ -29444,16 +29473,18 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
 // struct slot whose only rc-tracked fields are DIRECT enum fields (struct_enum_deep_
 // reinit_eligible: scalar + droppable-enum fields only) and DEEP-drops the OLD box:
 // for each enum field it extracts the field's enum box into a scratch local and runs
-// emit_enum_variant_drops on it (runtime variant dispatch → drop the variant's rc
-// payload, then free the enum box), THEN __fern_rc_dec frees the struct box itself.
+// emit_enum_variant_drops_gated on it (runtime variant dispatch → drop the variant's
+// rc payload, then dec the enum box), THEN __fern_rc_dec frees the struct box itself.
 // Unlike the array-only __field_reclaim path (emit_field_reclaim_store), this reclaims
 // the enum field's VARIANT PAYLOAD — the leak the shallow k_enum exit-drop leaves.
 //
 // SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
 // fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
-// enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
-// inc). A non-fresh (aliased) enum field is rejected at the gate and takes the leak-
-// safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
+// enum box + its payload starts out owned by the struct box alone (rc=1, no
+// construction alias-inc). A counted enum-field alias (`var g = h.e`, #10310) can
+// share the box afterwards, so the payload walk is __fern_rc_is_unique-gated. A
+// non-fresh (aliased) enum field is rejected at the gate and takes the leak-safe
+// shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
 // the fresh literal makes old != new implicit, so no separate cow guard is needed.
 // The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
 // fault on a null box) — a fresh literal always sets it, but the guard is defensive.
@@ -29483,7 +29514,7 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_bin("ne", 0, false));                                    // enum box != 0
             st = st.emit(ir.op_if(0));
-            st = emit_enum_variant_drops(st, etmp, ft);                                 // deep-drop payload + free enum box (zeroes etmp)
+            st = emit_enum_variant_drops_gated(st, etmp, ft, [], true);                 // deep-drop payload if unique, dec enum box (zeroes etmp)
             st = st.emit(ir.op_end());
         }
         fi = fi + 1;
@@ -32843,12 +32874,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rej = rej + 1;
     }
-    // Sweepable ALL-SCALAR enum locals ("SCENUMS:"): the final value's box, freed
-    // with the same shallow dec the rebind uses. emit_scalar_enum_box_free zeroes
+    // Sweepable ALL-SCALAR enum locals and box-only enum-field aliases
+    // ("SCENUMS:"): the final value's box, released with the shallow dec the
+    // rebind uses. emit_scalar_enum_box_free zeroes
     // the slot afterwards, so a second sweep on another return edge is a no-op.
+    // moved_elided is excluded for the rc-enum loop's reason above.
     var sej: i32 = st.frame.n_params;
     while (sej < st.locals.len()) {
-        if (!slot_list_has(keeps, sej) && slot_is_reclaimable_scenum(st, sej)) {
+        if (!slot_list_has(keeps, sej) && !slot_list_has(st.frame.moved_elided, sej) && slot_is_reclaimable_scenum(st, sej)) {
             st = emit_scalar_enum_box_free(st, sej);
         }
         sej = sej + 1;
@@ -33080,6 +33113,9 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // otherwise the box just handed to the caller is double-freed. The
             // sweep's struct loop skips slots in this keeps list.
             if (slot_is_reclaimable_struct(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // Enum move-on-return: a returned "SCENUMS:" / "RCENUMS:" local hands
+            // its count to the caller, so its exit sweep must not release it.
+            if ((slot_is_reclaimable_scenum(s, sl) || slot_is_reclaimable_rcenum_sweep(s, sl)) && !slot_list_has(out, sl)) { out = out.append(sl); }
             // String move-on-return (#2649): a returned reclaimable-string LOCAL
             // (an accumulator whose intermediates were freed by the consume-rebind)
             // is MOVED OUT to the caller — keep it from the exit string sweep so the
@@ -36442,6 +36478,47 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], 
         }
     }
     return a;
+}
+
+// collect_enum_field_alias_sites tags "EALIAS:" the `var g = h.e` enum-field
+// aliases this frame may release (#10310): never reassigned, since the assign
+// path has no alias release, and not escaping by either the plan, which forgives
+// a counted sink, or the enum-field walk, which needs no type for `h` — the plan
+// taints an alias of a source it cannot type, such as a method receiver, though
+// the dup makes the alias an owner. Only a tagged alias is dup'd and credited;
+// any other stays the uncounted borrow it was.
+function collect_enum_field_alias_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (enum_field_alias_candidate(v.init, structs) && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                    var site: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
+                    if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
+                    if (esc_ok) { a = a.append("EALIAS:" + site); }
+                }
+            },
+            ast.StmtIf(iff) => { a = collect_enum_field_alias_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_enum_field_alias_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_enum_field_alias_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_enum_field_alias_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_enum_field_alias_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// enum_field_alias_candidate: `e` may be a struct field read (`h.e`) — the AST
+// cannot type it, so a qualified variant (`E.B`) and a tuple element are the
+// only field accesses it rules out.
+function enum_field_alias_candidate(e: ast.Expr, structs: StructTab): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { return !util.is_all_digits(fa.field) && variant_enum_owner(structs, fa.field) == ""; },
+        _ => { return false; }
+    }
 }
 
 function collect_fresh_rcenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
@@ -42579,6 +42656,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
+    out = collect_enum_field_alias_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -48905,6 +48983,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
+// or an enum-field alias taking the box-only release (credit_enum_field_alias),
 // credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
 // reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
 // block-scoped local on block exit, and a lookup that refuses those would miss
@@ -69155,8 +69234,10 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
             // return-transfer retain), and the tuple's deep drop releases its
             // own claim, so the destination owns its reference. Map elements
             // stay tainted (their slot drop deep-frees the value column).
-            // The STRUCT-source half of native's arm is deliberately not
-            // ported — the conservative taint is the documented cut.
+            // Of the STRUCT-source half only a DIRECT enum field is ported: the
+            // enum-field alias bind dups it (#10310). Every other struct field
+            // read keeps the conservative taint.
+            if (decl_is_enum(structs, rc_fe_expr_type(e, types_n, types_t, structs))) { return false; }
             if (util.is_all_digits(fa.field)) {
                 match (fa.obj) {
                     ast.ExprIdent(_) => {
