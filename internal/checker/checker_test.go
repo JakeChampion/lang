@@ -925,6 +925,33 @@ func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
 	}
 }
 
+// A generic struct literal whose fields contradict each other has no
+// instantiation, so E043 is its only diagnostic: the local it initialises
+// reads as untyped, as it does for an unbound parameter (E040) and on the
+// self-host. It used to take its first field's instantiation, which every use
+// of the local then reported again (#10453).
+func TestClashingGenericStructLiteralDoesNotCascade(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } function take1(x: Same[i64]): i32 { return 1; } "
+	for _, body := range []string{
+		`var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q);`,
+		`var y: i64 = 5; var q = Same { a: 1, b: y }; var z: string = q; return 0;`,
+		`var y: i64 = 5; var xs = [Same { a: 1, b: y }]; return take1(xs[0]);`,
+	} {
+		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
+		if err == nil {
+			t.Errorf("%s: accepted, want E043", body)
+			continue
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, `field "b": expected i32, got i64`) {
+			t.Errorf("%s: want the field clash, got: %v", body, err)
+		}
+		if n := strings.Count(msg, "\n") + 1; n != 1 {
+			t.Errorf("%s: want only the field clash, got %d diagnostics: %v", body, n, err)
+		}
+	}
+}
+
 // TestGenericCallLiteralBoundTSettlesByPosition covers #10176: a type
 // parameter only untyped literals bind stays open until the position reading
 // the call settles it. A destination names its width, through a field read of
