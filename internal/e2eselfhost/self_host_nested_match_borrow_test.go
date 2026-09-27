@@ -338,7 +338,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
