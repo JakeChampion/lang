@@ -697,7 +697,19 @@ function drop_children(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, 
     return r;
 }
 
+// A nominal type with children is released by its own helper: the inline
+// test-walk-release is ~20 emitted lines a site, and the self-host assembles
+// every line it emits.
 function drop_value(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
+    if (outlined_release(t, f)) { return helper(r, slot, release_helper_name(t)); }
+    return drop_value_inline(r, slot, t, scratch, f);
+}
+
+function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
+    return named(t) != "" && has_children(t, f);
+}
+
+function drop_value_inline(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irlower.LowerResult {
     if (has_children(t, f)) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -1356,7 +1368,7 @@ pub function release_helper_name(t: typeinfo.Type): string { return "__sem_relea
 function release_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: release_helper_name(t) };
-    r = drop_value(r, 0, t, 1, f);
+    r = drop_value_inline(r, 0, t, 1, f);
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_return());
     return r;
@@ -1418,9 +1430,13 @@ function optimized_helper(h: irlower.LowerResult): irlower.LowerResult {
 // iterating it also reaches the types the bodies themselves call.
 pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
     var out: irlower.LowerResult[] = [];
-    for rec in f.records { if (has_children(rec.ty, f)) { out = out.append(one_helper(rec.ty, f)); } }
-    for e in f.enums { if (has_children(e.ty, f)) { out = out.append(one_helper(e.ty, f)); } }
-    for v in boxed_columns(f) { out = out.append(release_helper(v, f)); }
+    for rec in f.records {
+        if (has_children(rec.ty, f)) { out = util.append_all(out, [one_helper(rec.ty, f), release_helper(rec.ty, f)]); }
+    }
+    for e in f.enums {
+        if (has_children(e.ty, f)) { out = util.append_all(out, [one_helper(e.ty, f), release_helper(e.ty, f)]); }
+    }
+    for v in boxed_columns(f) { if (!outlined_release(v, f)) { out = out.append(release_helper(v, f)); } }
     return out;
 }
 
