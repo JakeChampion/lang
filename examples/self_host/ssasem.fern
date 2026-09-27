@@ -21,8 +21,9 @@ pub struct Func {
     // (dyn type, concrete) for every record and enum implementing the type's
     // whole trait set; a dyn release dispatches on its box's shape over these.
     dyns: EnvRow[],
-    // The builtin names the module declares as free functions: a call to one
-    // is an ordinary call, never the builtin's op.
+    // The builtin names the module's own declarations take over
+    // (semsource.shadowed_builtins): a call to one is an ordinary call, never
+    // the builtin's op.
     shadows: string[]
 }
 
