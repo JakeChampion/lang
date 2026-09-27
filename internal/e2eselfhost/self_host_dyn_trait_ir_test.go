@@ -103,6 +103,9 @@ var dynTraitIRCases = []struct {
 	{"downcast-string-owner-miss",
 		`import "std/string";
 struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: Self): i32; } impl Tag for Named { function t(self: Self): i32 { return self.s.len(); } } impl Tag for Plain { function t(self: Self): i32 { return self.n; } } function probe(d: dyn Tag): i32 { match (d as? Plain) { Some(p) => { return p.n; }, None => { return 100 + d.t(); } } } function main(): i32 { var a: i32 = probe(Named { s: "ab" + "cd" }); var b: i32 = probe(Plain { n: 7 }); return a - 100 + b * 10; }`, 74},
+	// A downcast bound to an annotated local rather than matched in place.
+	{"downcast-binding",
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function radius(s: dyn Shape): i32 { var o: Option[Circle] = s as? Circle; match (o) { Some(c) => { return c.r; }, None => { return 0; } } } function main(): i32 { return radius(Circle { r: 6 }) + radius(Rect { w: 2, h: 3 }) * 10; }`, 6},
 	{"downcast-array-count",
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function count(xs: dyn Shape[]): i32 { var n: i32 = 0; for x in xs { match (x as? Circle) { Some(c) => { n = n + 1; }, None => { } } } return n; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }, Circle { r: 1 }]; return count(xs); }`, 2},
 

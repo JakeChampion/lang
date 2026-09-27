@@ -162,7 +162,7 @@ function work(k: i32): i32 {
 function main(): i32 { return 0; }`, 8)
 	// Only `outer` drops (reinit + sweep); `inner` is held uncounted by
 	// outer's value column and must not be reclaimed by its own name.
-	if got := countCallPrefix(p2, "work", "__fern_map_drop"); got != 2 {
+	if got := countCallPrefix(p2, "work", "__map_drop_impl"); got != 2 {
 		t.Errorf("a nested-Map value's source must stay tainted: want 2 map drops (outer only), got %d:\n%s", got, p2)
 	}
 }

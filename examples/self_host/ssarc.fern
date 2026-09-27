@@ -2096,7 +2096,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     // loaded; its result is the unit the callee returns. A runtime builtin
     // is its own op, pushing the value its contract names or the dummy a
     // statement op pushes, so the store below takes either.
-    if (ins.kind_tag == ssasem.call()) { r = call_site(r, ins); }
+    if (ins.kind_tag == ssasem.call()) { r = call_site(r, f, ins); }
     // A verified copy already has its single operand on the stack.
     r = emit(r, ir.op_store_local(ins.result));
     r = took(r, p, ins);
@@ -2736,7 +2736,8 @@ function dyn_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_dyn_dispatch(ssasem.dyn_call_method(ins.str), ssasem.dyn_call_traits(ins.str), ins.args[0], ins.args.len()));
 }
 
-function call_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+function call_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    if (util.index_of_str(f.shadows, ins.str) >= 0) { return emit(r, ir.op_call_direct(ins.str, ins.args.len())); }
     if (ins.str == "print") {
         // The payload, then the newline, as the AST lowering writes it.
         r = emit(r, ir.op_print_str());
@@ -3003,6 +3004,20 @@ function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: false, r: r };
 }
 
+// __fern_box_free(data, size): the raw free of the rc'd block that starts 8
+// bytes before `data` and is `size + 8` long, as irlower lowers it.
+function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(8));
+    r = emit(r, ir.op_bin("sub", 0, false));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_const_i32(8));
+    r = emit(r, ir.op_bin("add", 0, false));
+    return emit(r, ir.op_free());
+}
+
 // The raw-memory escape hatches. The byte load has no op of its own: it is the
 // two-operand raw load at a constant zero offset, which is also what keeps the
 // address at full pointer width.
@@ -3010,6 +3025,7 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__alloc") { return Lowered { found: true, r: emit(r, ir.op_alloc()) }; }
     if (ins.str == "__alloc_u8") { return Lowered { found: true, r: emit(r, ir.op_alloc_u8()) }; }
     if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
+    if (ins.str == "__fern_box_free") { return Lowered { found: true, r: box_free(r, ins) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
     if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
     if (ins.str == "__heap_alloc_count") { return Lowered { found: true, r: emit(r, ir.op_heap_alloc_count()) }; }
