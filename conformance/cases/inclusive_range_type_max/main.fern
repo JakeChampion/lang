@@ -1,0 +1,36 @@
+// An inclusive range whose HIGH is its type's maximum ends after HIGH, rather
+// than wrapping back to the minimum and running forever (#10359). A range at
+// the minimum, empty ranges, and `continue` / `break` at the maximum too.
+// The narrower and wider widths are TestInclusiveRangeAtTypeMaxEnds.
+function main(): i32 {
+    var n: i32 = 0;
+    var top: i32 = 2147483647;
+    var seen: i32 = 0;
+    for w in 2147483646..=top { n = n + 1; seen = w; }   // 2
+    if (seen != 2147483647) { return 1; }
+    for x in 2147483647..=2147483647 { n = n + 1; }      // 1 -> 3
+    var lo: i32 = -2147483647 - 1;
+    for m in lo..=lo { n = n + 1; }                      // 1 -> 4
+    for e in top..=2147483646 { n = n + 100; }           // empty
+    for e2 in 9..=3 { n = n + 100; }                     // empty
+    var c: i32 = 0;
+    for k in 2147483640..=top {
+        if (k < 2147483645) { continue; }
+        if (k == 2147483647) { c = c + 1000; continue; }
+        c = c + 1;                                        // 2147483645, 2147483646
+    }
+    if (c != 1002) { return 2; }
+    var d: i32 = 0;
+    for k2 in 2147483645..=top {
+        d = d + 1;
+        if (k2 == 2147483646) { break; }
+    }
+    if (d != 2) { return 3; }
+    outer: for p in 2147483646..=top {
+        for q in 0..=3 {
+            if (q == 1) { continue outer; }
+            n = n + 1;                                    // q = 0 twice -> 6
+        }
+    }
+    return n;                                             // 6
+}

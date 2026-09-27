@@ -365,6 +365,7 @@ if_expr_array                                        0
 if_let                                               0
 if_let_pattern_forms                                 0
 inclusive_range                                      0
+inclusive_range_type_max                             0
 indirect_call_owned_param                            0
 inline_hints                                         0
 insert_dedup                                         0
