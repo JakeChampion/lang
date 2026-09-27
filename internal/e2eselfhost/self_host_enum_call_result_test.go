@@ -107,10 +107,12 @@ func TestSelfHostEnumCallResultWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumCallResultSrc, "mk_", enumCallResultWant, true)
 }
 
-// A callee handing back a borrowed parameter or a parameter's field is not an
-// "ENUM:" member: its result is the lender's box, uncounted. The AST lowering
-// leaks the lent local, which escapes into a call that is not borrowable, so
-// these rows hold the answer and the underflow detector only (#10410).
+// A callee handing back a borrowed parameter, or a borrowed struct parameter's
+// enum field, is an "ENUM:" member too: the return retains what it hands back,
+// so the result carries the caller's count (#10410). A lend at such a position
+// is a counted store, so the lender keeps its own release, and a temporary
+// argument there is released after the call. The last rows put a handback
+// result in each temporary position.
 const enumCallHandbackSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
@@ -122,6 +124,7 @@ function hb_sc_param(e: Sc): Sc { return e; }
 function hb_rc_param(e: Rc): Rc { return e; }
 function hb_sc_field(h: HS): Sc { return h.e; }
 function hb_rc_field(h: HR): Rc { return h.e; }
+function hb_rc_fwd(e: Rc): Rc { return hb_rc_param(e); }
 function main(): i32 {
     var t: i32 = 0;
     var r: i32 = 0;
@@ -134,9 +137,18 @@ function main(): i32 {
         var hr: HR = HR { e: RA([k_of(r + 1), 1]), n: 1 };
         var c: Sc = hb_sc_field(hs);
         var d: Rc = hb_rc_field(hr);
+        var f: Rc = hb_rc_fwd(b0);
         var junk: Sc = SA(k_of(1000 + r));
         var junkr: Rc = RA([k_of(1000 + r), 2]);
-        t = t + sval(a) + rval(b) + sval(c) + rval(d) + sval(a0) + rval(b0) + (sval(junk) + rval(junkr)) * 0;
+        t = t + sval(a) + rval(b) + sval(c) + rval(d) + rval(f) + sval(a0) + rval(b0) + (sval(junk) + rval(junkr)) * 0;
+        t = t + sval(hb_sc_param(SA(k_of(r + 2)))) + rval(hb_rc_param(RA([k_of(r + 2), 1])));
+        t = t + rval(hb_rc_fwd(RA([k_of(r + 3), 1])));
+        match (hb_rc_param(b0)) { RA(v) => { t = t + v[0]; }, RB => { t = t + 100; } }
+        match (hb_sc_field(hs)) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
+        hb_sc_param(a0);
+        hb_rc_field(hr);
+        var junk2: Rc = RA([k_of(2000 + r), 2]);
+        t = t + rval(junk2) * 0;
         r = r + 1;
     }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -145,8 +157,136 @@ function main(): i32 {
 `
 
 // Interpreter-confirmed.
-const enumCallHandbackWant = 24
+const enumCallHandbackWant = 66
 
 func TestSelfHostEnumCallHandbackX86_64(t *testing.T) {
-	checkEnumFieldAlias(t, "x86-64-linux", enumCallHandbackSrc, "hb_", enumCallHandbackWant, false)
+	checkEnumFieldAlias(t, "x86-64-linux", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+}
+
+func TestSelfHostEnumCallHandbackSanitizeX86_64(t *testing.T) {
+	checkEnumFieldAliasSanitized(t, enumCallHandbackSrc, "hb_", enumCallHandbackWant)
+}
+
+func TestSelfHostEnumCallHandbackArm64(t *testing.T) {
+	checkEnumFieldAlias(t, "arm64-linux", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+}
+
+func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm enum call handback")
+	}
+	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, "hb_", enumCallHandbackWant, true)
+}
+
+// A local lent to a handback callee and then returned (#10443). The AST
+// lowering credited the local's release while the returned result was the same
+// box uncounted, so the churned box was read back: 93 instead of 3.
+const enumHandbackReturnSrc = `enum Sc { SA(i32), SB }
+function k_of(x: i32): i32 { return x; }
+function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+function hb_sc_param(e: Sc): Sc { return e; }
+function mk(r: i32): Sc {
+    var a0: Sc = SA(k_of(r));
+    var a: Sc = hb_sc_param(a0);
+    return a;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        var x: Sc = mk(r);
+        var junk: Sc = SA(k_of(1000 + r));
+        t = t + sval(x) + sval(junk) * 0;
+        r = r + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`
+
+// Interpreter-confirmed.
+const enumHandbackReturnWant = 3
+
+func TestSelfHostEnumHandbackReturnX86_64(t *testing.T) {
+	checkEnumFieldAlias(t, "x86-64-linux", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+}
+
+func TestSelfHostEnumHandbackReturnSanitizeX86_64(t *testing.T) {
+	checkEnumFieldAliasSanitized(t, enumHandbackReturnSrc, "hb_", enumHandbackReturnWant)
+}
+
+func TestSelfHostEnumHandbackReturnArm64(t *testing.T) {
+	checkEnumFieldAlias(t, "arm64-linux", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+}
+
+func TestSelfHostEnumHandbackReturnWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm enum handback return")
+	}
+	checkEnumFieldAlias(t, "wasm32-wasi", enumHandbackReturnSrc, "hb_", enumHandbackReturnWant, true)
+}
+
+// An "ENUM:" member's result in each temporary position: an argument, a match
+// scrutinee and a discarded call, for a callee returning a ctor and one
+// returning a local, with scalar and rc payloads. Each position released
+// nothing before, apart from a scalar-payload argument and an "RCE:" ctor
+// callee's argument and rc-payload scrutinee.
+const enumCallTempSrc = `enum Sc { SA(i32), SB }
+enum Rc { RA(i32[]), RB }
+function k_of(x: i32): i32 { return x; }
+function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
+function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
+function mk_sc_local(r: i32): Sc {
+    var m: Sc = SA(k_of(r));
+    return m;
+}
+function mk_rc_local(r: i32): Rc {
+    var m: Rc = RA([k_of(r), 1]);
+    return m;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) {
+        t = t + sval(mk_sc_ctor(r)) + rval(mk_rc_ctor(r)) + sval(mk_sc_local(r)) + rval(mk_rc_local(r));
+        match (mk_sc_ctor(r + 1)) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
+        match (mk_rc_ctor(r + 1)) { RA(v) => { t = t + v[0]; }, RB => { t = t + 100; } }
+        match (mk_sc_local(r + 2)) { SA(v) => { t = t + v; }, SB => { t = t + 100; } }
+        match (mk_rc_local(r + 2)) { RA(v) => { t = t + v[0]; }, RB => { t = t + 100; } }
+        mk_sc_ctor(r);
+        mk_rc_ctor(r);
+        mk_sc_local(r);
+        mk_rc_local(r);
+        var junk: Sc = SA(k_of(1000 + r));
+        var junkr: Rc = RA([k_of(1000 + r), 2]);
+        t = t + (sval(junk) + rval(junkr)) * 0;
+        r = r + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`
+
+// Interpreter-confirmed.
+const enumCallTempWant = 42
+
+func TestSelfHostEnumCallTempX86_64(t *testing.T) {
+	checkEnumFieldAlias(t, "x86-64-linux", enumCallTempSrc, "mk_", enumCallTempWant, true)
+}
+
+func TestSelfHostEnumCallTempSanitizeX86_64(t *testing.T) {
+	checkEnumFieldAliasSanitized(t, enumCallTempSrc, "mk_", enumCallTempWant)
+}
+
+func TestSelfHostEnumCallTempArm64(t *testing.T) {
+	checkEnumFieldAlias(t, "arm64-linux", enumCallTempSrc, "mk_", enumCallTempWant, true)
+}
+
+func TestSelfHostEnumCallTempWasm(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping wasm enum call temporaries")
+	}
+	checkEnumFieldAlias(t, "wasm32-wasi", enumCallTempSrc, "mk_", enumCallTempWant, true)
 }
