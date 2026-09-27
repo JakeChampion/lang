@@ -41,7 +41,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -101,8 +101,9 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
-// own, or through a buffer it hands on unbracketed to a callee whose row says
-// that position may grow. A with on a buffer the plan did not admit copies,
+// own, through an append whose receiver a phi or an earlier append carries
+// from the parameter (ssarc's links grow those in place), or through a buffer
+// it hands on unbracketed to a callee whose row says that position may grow. A with on a buffer the plan did not admit copies,
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]): GrowRow[] {
@@ -115,6 +116,12 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
             var field: i32 = 0 - 1;
             if (p.grows[ins.result] >= 0) { root = p.grows[ins.result]; field = p.grow_fields[ins.result]; }
             else if (ins.kind_tag == ssasem.with()) { continue; }
+            if (field < 0) {
+                for param in carried_params(f, defs, root) {
+                    if (!p.owned[param]) { out = with_row(out, callee, defs[param].imm, 0 - 1); }
+                }
+                continue;
+            }
             if (defs[root].kind_tag != 6 || p.owned[root]) { continue; }
             out = with_row(out, callee, defs[root].imm, field);
         }
@@ -133,6 +140,26 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
             }
             i = i + 1;
         }
+    }
+    return out;
+}
+
+// The parameters whose box `v` may be, through phis and the receivers of
+// appends.
+function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
+    var out: i32[] = [];
+    var seen: boolean[] = bits(f.graph.nvals);
+    var work: i32[] = [v];
+    var k: i32 = 0;
+    while (k < work.len()) {
+        var w: i32 = work[k];
+        k = k + 1;
+        if (w < 0 || seen[w]) { continue; }
+        seen = seen.with(w, true);
+        var d: ssa.SInst = defs[w];
+        if (d.kind_tag == 6) { out = out.append(w); }
+        else if (d.kind_tag == ssasem.append()) { work = work.append(d.args[0]); }
+        else if (d.kind_tag == 8) { for a in d.args { work = work.append(a); } }
     }
     return out;
 }
@@ -160,7 +187,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -571,7 +598,7 @@ function is_record(t: typeinfo.Type): boolean {
 function projection(kind: i32): boolean {
     return kind == 7 || kind == ssasem.array_get() || kind == ssasem.tuple_get() || kind == ssasem.record_get()
         || kind == ssasem.variant_get() || kind == ssasem.variant_up() || kind == ssasem.variant_as()
-        || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.dyn_up();
+        || kind == ssasem.slice() || kind == ssasem.str_as() || kind == ssasem.dyn_up() || kind == ssasem.dyn_as();
 }
 
 // Whether reading `arg` reads `w`: the value itself, or one anchored to it.
@@ -1264,6 +1291,9 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     if (!analysis.ok) { return bad(analysis.why); }
     var grows: i32[] = [];
     var grow_fields: i32[] = [];
+    // Per append or with result: whether its receiver is read after it, by
+    // this block or on the way out, directly or through a dependent.
+    var kept: boolean[] = bits(f.graph.nvals);
     var vi0: i32 = 0;
     while (vi0 < f.graph.nvals) { grows = grows.append(0 - 1); grow_fields = grow_fields.append(0 - 1); vi0 = vi0 + 1; }
     var steps: Step[] = [];
@@ -1279,6 +1309,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
                 var ins: ssa.SInst = b.insts[pos];
                 if (ins.kind_tag != 6 && ins.kind_tag != 8) {
                     var dead: i32[] = [];
+                    if ((ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with()) && live[ins.args[0]]) { kept = kept.with(ins.result, true); }
                     if (owned[ins.result] && !live[ins.result]) { dead = dead.append(ins.result); }
                     live = live.with(ins.result, false);
                     for arg in ins.args {
@@ -1319,7 +1350,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var literal: boolean[] = literals(f);
     why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads };
+    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept };
 }
 
 function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][]): string {

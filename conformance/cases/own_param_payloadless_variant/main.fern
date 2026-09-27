@@ -12,9 +12,9 @@ enum Span { Empty, Wide(i32[]) }
     }
 }
 
-// A plain local of enum type is still a borrow, and stays refused; this case
-// pins the admission, not its absence, so the local is read rather than
-// transferred.
+// A local of enum type read after the call is still a borrow and refused (at
+// its last use it is a move, #9541); this case pins the admission, not its
+// absence, so the local is read rather than transferred.
 //
 // The census row for this fixture is 5, not 0: one per `Wide(payload)` handed
 // to `eat`, which is the enum-payload retention every enum fixture here

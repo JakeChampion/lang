@@ -457,7 +457,6 @@ var rcResultOperand = map[string]bool{
 	"__fern_arr_dec":      true,
 	"__fern_box_free":     true,
 	"__fern_cell_free":    true,
-	"__fern_map_drop":     true,
 	"__fern_closure_drop": true,
 	"__fern_drop_arr_ptr": true,
 	"__fern_drop_arr_str": true,
