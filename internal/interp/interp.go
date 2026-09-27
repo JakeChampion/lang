@@ -524,6 +524,9 @@ type Interp struct {
 	tcpListeners  map[int64]tcpListenerHandle
 	tcpConns      map[int64]tcpConnHandle
 	tcpNextHandle int64
+	// udpSocks maps a datagram socket's handle to its raw descriptor
+	// (udp.go); handles are numbered from tcpNextHandle like the rest.
+	udpSocks map[int64]int
 	// tcpNonblocking holds the connections tcp_socket_ctl put into
 	// non-blocking mode, which tcp_recv honours with a zero deadline.
 	tcpNonblocking map[int64]bool
@@ -1382,6 +1385,10 @@ func New() *Interp {
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
+	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
+	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
+	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
@@ -1522,6 +1529,9 @@ func builtinTcpClose(i *Interp, args []Value) (Value, error) {
 		delete(i.tcpListeners, int64(id))
 		return Number(0), nil
 	}
+	if r, ok := i.udpClose(int64(id)); ok {
+		return r, nil
+	}
 	return Number(-1), nil
 }
 
@@ -1638,6 +1648,9 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if op < 1 || op > 4 {
 		return Number(-22), nil
 	}
+	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
+		return r, nil
+	}
 	conn, ok := i.tcpConns[int64(id)].(*net.TCPConn)
 	if !ok {
 		return Number(-1), nil
@@ -1737,6 +1750,9 @@ func builtinTcpLocalPort(i *Interp, args []Value) (Value, error) {
 	id, ok := args[0].(Number)
 	if !ok {
 		return nil, fmt.Errorf("tcp_local_port: expected number arg, got %T", args[0])
+	}
+	if r, ok := i.udpLocalPort(int64(id)); ok {
+		return r, nil
 	}
 	var addr net.Addr
 	if ln, ok := i.tcpListeners[int64(id)]; ok {

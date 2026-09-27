@@ -10,15 +10,17 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// tcp_listen_with and tcp_socket_ctl (#9853) on every backend, raw and
-// through std/net's typed faces: one probe each over a loopback
-// connection, exit 42 iff every check holds.
+// tcp_listen_with and tcp_socket_ctl, then the datagram sockets (#9853),
+// on every backend, raw and through std/net's typed faces: one probe each
+// over loopback, exit 42 iff every check holds.
 var socketProbes = []struct {
 	name string
 	src  func() string
 }{
 	{"raw", e2eharness.SocketCtlProbe},
 	{"std_net", e2eharness.NetSocketOptsProbe},
+	{"udp", e2eharness.UdpSocketProbe},
+	{"std_net_udp", e2eharness.NetUdpProbe},
 }
 
 func TestSocketCtlInterp(t *testing.T) {

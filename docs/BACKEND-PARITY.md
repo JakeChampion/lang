@@ -134,7 +134,8 @@ operand, which the seccomp allowlist cannot cover.
 
 On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
 `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,
-`tcp_socket_ctl`, `tcp_recv`, `tcp_send` and `udp_send` are one Fern body
+`tcp_socket_ctl`, `tcp_recv`, `tcp_send`, `udp_send`, `udp_bind`,
+`udp_connect`, `udp_sendto` and `udp_recvfrom` are one Fern body
 each in `internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
 arm64-darwin and on both backends of each ISA (the sockaddr's leading
 `sin_len` byte, the option numbers and `MSG_NOSIGNAL` are the Darwin
@@ -156,6 +157,29 @@ target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
 both compilers' wasm socket bodies read the byte the result's shape names,
 so a refused bind or dial reports its errno rather than whatever the area
 held.
+
+The datagram sockets (#9853) are `udp_bind(host_be, port)` (a socket bound
+to the IPv4 address packed in network order, 0 for every address and port
+0 for one the host picks, or -errno), `udp_connect(fd, host_be, port)`
+(fix the peer: 0 or -errno), `udp_sendto(fd, host_be, port, data)` (one
+datagram to host:port, or to the peer when both are 0: the bytes accepted,
+or -errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
+`buf`, up to its length, the sender's four address bytes and then its port,
+high byte first, into a `from` of six bytes or more: the byte count, or
+-errno). `tcp_close` and `tcp_local_port` take a datagram socket too, and
+std/net wraps the four as `udp_socket`, `set_peer`, `send_to`, `send`,
+`recv_from`, `recv`, `local_port` and `close`. The same on every target,
+with these divergences: on wasm a datagram "fd" is the tcp record with a
+kind word of 2 or 3 at offset 12, `tcp_socket_ctl` on one answers
+`-ENOTSUP` for every op (wasi:sockets 0.2 has no keep-alive, shutdown or
+blocking mode on a udp socket), a `udp_connect` that the host refuses
+leaves the socket without streams until the next one succeeds, and
+`udp_recvfrom` blocks on the incoming stream's pollable where the natives
+block in recvfrom(2), so `set_nonblocking` has no udp arm there; on Darwin
+a `udp_sendto` naming an address on a connected socket is refused with
+`EISCONN` where Linux sends it, so a connected socket sends with a zero
+address on every target; and the interpreter keeps a raw descriptor per
+datagram socket, so its errnos are the host's like the natives'.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

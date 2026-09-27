@@ -475,13 +475,29 @@ func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 1)
 
-	// $retptr = alloc(36); local-address($sock, $retptr).
+	// $retptr = alloc(36); local-address($sock, $retptr), through the
+	// udp method when the record is a datagram socket's.
 	body = inst.InstI32Const(body, 36)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, localAddress)
+	query := func(body []byte, method uint32) []byte {
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 2)
+		return inst.InstCall(body, method)
+	}
+	if udpLocalAddress, ok := idxs["wasi_sockets_udp_local_address"]; ok {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, udpRecordBare)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = query(body, udpLocalAddress)
+		body = inst.InstElse(body)
+		body = query(body, localAddress)
+		body = inst.InstEnd(body)
+	} else {
+		body = query(body, localAddress)
+	}
 
 	// Err arm: return -errno.
 	body = inst.InstLocalGet(body, 2)
@@ -871,23 +887,39 @@ func emitStreamErrorDrop(body []byte, idxs map[string]uint32, ret uint32) []byte
 // with live children ("resource has children" error), so the
 // stream slots must be released before their owning socket.
 //
-// Offset 12 records whether the socket owns streams. Every u32 resource
-// handle, including zero, is valid; handle values cannot encode absence.
+// Offset 12 records whether the socket owns streams, and marks a datagram
+// socket (wasi_udp.go), whose resources drop through the udp imports.
+// Every u32 resource handle, including zero, is valid; handle values
+// cannot encode absence.
 func buildTcpCloseBody(idxs map[string]uint32) []byte {
 	var body []byte
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 12)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 4)
-	body = inst.InstCall(body, idxs["wasi_io_input_stream_drop"])
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 8)
-	body = inst.InstCall(body, idxs["wasi_io_output_stream_drop"])
-	body = inst.InstEnd(body)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+	tcp := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstCall(body, idxs["wasi_io_input_stream_drop"])
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstCall(body, idxs["wasi_io_output_stream_drop"])
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		return inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+	}
+	if udpClose, ok := idxs["__fern_udp_close"]; ok {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, udpRecordBare)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstCall(body, udpClose)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
+	body = tcp(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__free"])
@@ -1034,6 +1066,15 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	body = opIs(body, 3)
+	body = inst.InstI32Const(body, -58)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// A datagram record (wasi_udp.go) has neither control either.
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 12)
+	body = inst.InstI32Const(body, udpRecordBare)
+	body = numeric.InstI32GeU(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstI32Const(body, -58)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)

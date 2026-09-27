@@ -310,3 +310,7 @@ reader_splice=330
 raw_splice_pipe=331
 tcp_listen_with=332
 tcp_socket_ctl=333
+udp_bind=334
+udp_connect=335
+udp_sendto=336
+udp_recvfrom=337

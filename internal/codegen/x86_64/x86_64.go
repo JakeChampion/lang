@@ -4006,6 +4006,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_socket_ctl"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
+		case "udp_bind":
+			target = "__fern_udp_bind"
+		case "udp_connect":
+			target = "__fern_udp_connect"
+		case "udp_sendto":
+			target = "__fern_udp_sendto"
+		case "udp_recvfrom":
+			target = "__fern_udp_recvfrom"
 		case "poll":
 			target = "__fern_poll"
 		case "timer_fd":

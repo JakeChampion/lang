@@ -567,6 +567,8 @@ var rcResultNonPointer = map[string]bool{
 
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,
+	"__fern_udp_bind": true, "__fern_udp_connect": true,
+	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true,
 	"__fern_tcp_local_port": true,
 

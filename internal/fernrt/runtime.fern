@@ -146,15 +146,15 @@ function __sys_read(): i32 {
     if (target_os() == "darwin") { return 3; }
     return 63;
 }
-function __sys_write(): i32 {
-    if (target_arch() == "x86-64") { return 1; }
-    if (target_os() == "darwin") { return 4; }
-    return 64;
-}
 function __sys_sendto(): i32 {
     if (target_arch() == "x86-64") { return 44; }
     if (target_os() == "darwin") { return 133; }
     return 206;
+}
+function __sys_recvfrom(): i32 {
+    if (target_arch() == "x86-64") { return 45; }
+    if (target_os() == "darwin") { return 29; }
+    return 207;
 }
 function __sys_fcntl(): i32 {
     if (target_arch() == "x86-64") { return 72; }
@@ -265,14 +265,20 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     return 0 - 22;
 }
 
+// connect(2) to the IPv4 address packed in network order: 0 or -errno.
+function __connect_v4(fd: i64, host_be: i32, port: i32): i64 {
+    var sa: usize = __sockaddr_in(port, host_be);
+    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
+    __free(sa, 16);
+    return r;
+}
+
 // __fern_tcp_connect(host_be, port) is a socket connected to the IPv4
 // address packed in network order, or -errno with the socket closed again.
 function __fern_tcp_connect(host_be: i32, port: i32): i32 {
     var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
     if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_in(port, host_be);
-    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
-    __free(sa, 16);
+    var r: i64 = __connect_v4(fd, host_be, port);
     if (r < 0) {
         __syscall3(__sys_close(), fd, 0, 0);
         return r as i32;
@@ -320,23 +326,81 @@ function __fern_tcp_recv(fd: i32, max: i32): u8[] {
     return buf;
 }
 
-// sendto(fd, p, n, MSG_NOSIGNAL) on a connected socket: the bytes accepted,
-// or -errno.
-function __send_bytes(fd: i32, p: usize, n: i32): i32 {
-    return __syscall6(__sys_sendto(), fd as i64, p as i64, n as i64, __msg_nosignal(), 0, 0) as i32;
+// sendto(fd, p, n, MSG_NOSIGNAL, sa, salen): the bytes accepted, or -errno.
+// A zero sa sends to the connected peer.
+function __sendto_bytes(fd: i32, p: usize, n: i32, sa: usize, salen: i32): i32 {
+    return __syscall6(__sys_sendto(), fd as i64, p as i64, n as i64, __msg_nosignal(), sa as i64, salen as i64) as i32;
 }
 
-// __fern_tcp_send(fd, s) writes s's bytes to a connected socket. A string
-// carried inline in its words has no address until it is spilled, so that
-// case borrows sixteen bytes for the call; a heap string is sent from where
-// it is.
-function __fern_tcp_send(fd: i32, s: string): i32 {
+// __send_str(fd, s, sa, salen) sends s's bytes. A string carried inline in
+// its words has no address until it is spilled, so that case borrows
+// sixteen bytes for the call; a heap string is sent from where it is.
+function __send_str(fd: i32, s: string, sa: usize, salen: i32): i32 {
     var p: usize = __str_bytes(s, 0 as usize);
-    if (p != (0 as usize)) { return __send_bytes(fd, p, s.len()); }
+    if (p != (0 as usize)) { return __sendto_bytes(fd, p, s.len(), sa, salen); }
     var scratch: usize = __alloc(16);
-    var r: i32 = __send_bytes(fd, __str_bytes(s, scratch), s.len());
+    var r: i32 = __sendto_bytes(fd, __str_bytes(s, scratch), s.len(), sa, salen);
     __free(scratch, 16);
     return r;
+}
+
+// __fern_tcp_send(fd, s) writes s's bytes to a connected socket.
+function __fern_tcp_send(fd: i32, s: string): i32 {
+    return __send_str(fd, s, 0 as usize, 0);
+}
+
+// __fern_udp_bind(host_be, port) is a datagram socket bound to the IPv4
+// address packed in network order (0 for every address, port 0 for one the
+// kernel picks), or -errno with the socket closed again.
+function __fern_udp_bind(host_be: i32, port: i32): i32 {
+    var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_in(port, host_be);
+    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, 16);
+    __free(sa, 16);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
+}
+
+// __fern_udp_connect(fd, host_be, port) fixes a datagram socket's peer:
+// 0 or -errno.
+function __fern_udp_connect(fd: i32, host_be: i32, port: i32): i32 {
+    return __connect_v4(fd as i64, host_be, port) as i32;
+}
+
+// __fern_udp_sendto(fd, host_be, port, data) is one datagram to host:port,
+// or to the connected peer when both are zero: the bytes accepted, or
+// -errno.
+function __fern_udp_sendto(fd: i32, host_be: i32, port: i32, data: string): i32 {
+    if (host_be == 0 && port == 0) { return __send_str(fd, data, 0 as usize, 0); }
+    var sa: usize = __sockaddr_in(port, host_be);
+    var r: i32 = __send_str(fd, data, sa, 16);
+    __free(sa, 16);
+    return r;
+}
+
+// __fern_udp_recvfrom(fd, buf, from) reads one datagram into buf, up to its
+// length: the datagram's byte count (an empty datagram is 0), or -errno.
+// When from holds at least six bytes it receives the sender's address in
+// network order followed by the port, high byte first.
+function __fern_udp_recvfrom(fd: i32, buf: u8[], from: u8[]): i32 {
+    var sa: usize = __alloc(20);
+    __store_i32(sa + 16, 16);
+    var n: i64 = __syscall6(__sys_recvfrom(), fd as i64, (buf as usize) as i64, buf.len() as i64, 0, sa as i64, (sa + 16) as i64);
+    if (n >= 0 && from.len() >= 6) {
+        var f: usize = from as usize;
+        __store_u8(f, __load_u8(sa + 4));
+        __store_u8(f + 1, __load_u8(sa + 5));
+        __store_u8(f + 2, __load_u8(sa + 6));
+        __store_u8(f + 3, __load_u8(sa + 7));
+        __store_u8(f + 4, __load_u8(sa + 2));
+        __store_u8(f + 5, __load_u8(sa + 3));
+    }
+    __free(sa, 20);
+    return n as i32;
 }
 
 // __fern_udp_send(host, port, data) is one datagram to host:port from an
@@ -369,19 +433,8 @@ function __fern_udp_send(host: string, port: i32, data: string): i32 {
     host_be = host_be | (octet << 24);
     var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
     if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_in(port, host_be);
-    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
-    __free(sa, 16);
-    if (r >= 0) {
-        var p: usize = __str_bytes(data, 0 as usize);
-        if (p != (0 as usize)) {
-            r = __syscall3(__sys_write(), fd, p as i64, data.len() as i64);
-        } else {
-            var scratch: usize = __alloc(16);
-            r = __syscall3(__sys_write(), fd, __str_bytes(data, scratch) as i64, data.len() as i64);
-            __free(scratch, 16);
-        }
-    }
+    var r: i32 = __connect_v4(fd, host_be, port) as i32;
+    if (r >= 0) { r = __send_str(fd as i32, data, 0 as usize, 0); }
     __syscall3(__sys_close(), fd, 0, 0);
-    return r as i32;
+    return r;
 }

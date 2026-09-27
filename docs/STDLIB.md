@@ -1087,8 +1087,25 @@ The socket controls are typed faces over the descriptor builtins
 
 On wasm, `set_nodelay` and `set_nonblocking` answer `Other(58)` (`ENOTSUP`):
 wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
-The rest of the socket verbs (`recv` / `send` over owned buffers, UDP,
-Unix-domain sockets, IPv6 listeners) arrive with the primitives that make
+
+The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
+`udp_sendto` and `udp_recvfrom`, on the same descriptors:
+
+- `udp_socket(addr)` — a socket bound to a `SocketAddr` (port 0 lets the
+  host pick), receiving from any peer until `set_peer(sock, peer)` fixes
+  one. An IPv6 address is refused with `Other(address_family_errno())`
+  until the primitives take one.
+- `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
+  or to the fixed peer: the bytes accepted.
+- `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the
+  caller's `u8[]`, up to its length: the byte count, with the sender as a
+  `SocketAddr` from `recv_from`. A non-blocking socket with nothing queued
+  answers `WouldBlock`.
+- `local_port(sock)` and `close(sock)` — the bound port, and the release,
+  of a socket of either kind.
+
+The stream verbs on a TCP connection (`recv` / `send` over owned buffers),
+Unix-domain sockets and IPv6 listeners arrive with the primitives that make
 them honest on every address family; until then `std/tcp` is the accept
 loop and `std/fetch` the client.
 

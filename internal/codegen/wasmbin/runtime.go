@@ -941,16 +941,27 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// resource-has-children rule.
 					needs.add("__fern_tcp_close")
 				case "__fern_udp_send":
-					needs.add("__free")
-					// (host, port, data) → i32 — one-shot UDP
-					// datagram (create → bind → connect → send →
-					// drop). Parses the IPv4 host literal and
-					// SSO-normalizes the data string.
-					needs.add("__fern_alloc")
-					needs.add("__network_handle")
-					needs.add("__fern_str_len")
-					needs.add("__fern_str_byte")
+					// (host, port, data) → i32 — one-shot UDP datagram:
+					// parses the IPv4 host literal, then udp_bind →
+					// udp_sendto → tcp_close, which its edges pull in.
 					needs.add("__fern_udp_send")
+				case "__fern_udp_bind":
+					// (host_be, port) → i32 — a bound datagram socket
+					// record, or -errno.
+					needs.add("__fern_udp_bind")
+				case "__fern_udp_connect":
+					// (rec, host_be, port) → i32 — 0 or -errno.
+					needs.add("__fern_udp_connect")
+				case "__fern_udp_sendto":
+					// (rec, host_be, port, data) → i32 — the bytes
+					// accepted, or -errno. SSO-normalizes the data.
+					needs.add("__fern_udp_sendto")
+				case "__fern_udp_recvfrom":
+					// (rec, buf, from) → i32 — the datagram's bytes
+					// copied into buf, or -errno. The host places the
+					// received list in this heap through cabi_realloc.
+					needs.add("cabi_realloc")
+					needs.add("__fern_udp_recvfrom")
 				case "__slice_make":
 					needs.add("__fern_alloc")
 					needs.add("__fern_alloc_rc1")
@@ -1232,9 +1243,16 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_tcp_local_port":  {"__fern_wasi_socket_errno"},
 	"__fern_tcp_listen_with": {"__fern_wasi_socket_errno"},
 	"__fern_tcp_socket_ctl":  {"__fern_wasi_socket_errno"},
-	"__fern_udp_send":        {"__fern_wasi_socket_errno"},
-	"__fern_read_file":       {"__fern_utf8_valid"},
-	"__fern_str_copy":        {"__fern_alloc_rc1"},
+	"__fern_udp_send":        {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
+	// A bound datagram socket is closed through udp_close, so it comes
+	// with the socket and tcp_close gains its datagram arm.
+	"__fern_udp_bind":     {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close"},
+	"__fern_udp_close":    {"__free"},
+	"__fern_udp_connect":  {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
+	"__fern_udp_sendto":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte"},
+	"__fern_udp_recvfrom": {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
+	"__fern_read_file":    {"__fern_utf8_valid"},
+	"__fern_str_copy":     {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
@@ -2911,6 +2929,41 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildUdpSendBody,
+	},
+	"__fern_udp_bind": {
+		// (host_be, port) → i32 — a datagram socket record bound to
+		// the packed IPv4 address, or -errno. See wasi_udp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpBindBody,
+	},
+	"__fern_udp_close": {
+		// (rec) → i32 (always 0). Drops the streams and the socket and
+		// releases the record; tcp_close's datagram arm.
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpCloseBody,
+	},
+	"__fern_udp_connect": {
+		// (rec, host_be, port) → i32 — 0 once the record's streams
+		// are fixed to the peer, or -errno.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpConnectBody,
+	},
+	"__fern_udp_sendto": {
+		// (rec, host_be, port, data_data, data_len) → i32 — the bytes
+		// accepted, or -errno. A zero address sends to the peer.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpSendtoBody,
+	},
+	"__fern_udp_recvfrom": {
+		// (rec, buf, from) → i32 — one datagram into the u8[] at buf,
+		// its sender into the u8[] at from: the byte count, or -errno.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildUdpRecvfromBody,
 	},
 	"__fern_open_reader": {
 		// (path_data, path_len) → i32 — heap-form

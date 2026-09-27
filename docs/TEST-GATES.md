@@ -110,8 +110,9 @@ as data and pin its Linux, Darwin and WASI errno lists to
 `internal/strerror` row for row, and the `NetError` variant order to the
 errno-name list.
 
-`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run two probes over a loopback
-connection: `e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
+`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run four probes over loopback,
+two on the socket controls and two on the datagram sockets:
+`e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
 `tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
 listener on Linux, no-delay and keep-alive, a non-blocking read that
 answers empty, a write-side shutdown the peer reads as EOF, the `-EINVAL`
@@ -119,8 +120,16 @@ of an unknown op, and the wasm `-ENOTSUP` answers), and
 `e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
 `set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
 `AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
-the closed port report. Both check the received bytes, not only their
-count. `TestSelfHostSocketCtl` compiles both with the production self-host
+the closed port report; `e2eharness.UdpSocketProbe` on the raw `udp_bind`,
+`udp_sendto`, `udp_recvfrom` and `udp_connect` (two sockets on host-picked
+ports, a datagram whose bytes and sender the receiver reads back, a reply
+through a connected socket, a short buffer that truncates, the refused
+second bind of a held port, the would-block of a non-blocking receive, and
+the close of both), and `e2eharness.NetUdpProbe` through std/net's
+`udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
+`local_port` and `close`, plus the `AddrInUse`, the refused IPv6 address
+and the `WouldBlock`. All four check the received bytes, not only their
+count. `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486);
