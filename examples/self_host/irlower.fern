@@ -24185,7 +24185,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         struct_ty: struct_ty,
         opt_ty: opt_ty,
     };
-    if (own_alias_src < 0 && se.own_handback_src_of(v).len() > 0) { own_alias_src = se.slot_of(se.own_handback_src_of(v)); }
+    if (own_alias_src < 0) {
+        var hsrc: string = se.own_handback_src_of(v);
+        if (hsrc.len() > 0) { own_alias_src = se.slot_of(hsrc); }
+    }
     var bound: LowerState = bind_var_slot(v, s, se, vt);
     if (own_alias_src < 0 || !bound.ok) { return bound; }
     return bind_own_handback(bound, bound.slot_of(v.name), own_alias_src);
