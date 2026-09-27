@@ -87,18 +87,17 @@ function free_bounded[U: Show](x: U): i32 { return 0; }
 function free_plain(x: i32): i32 { return x; }
 `
 
-	// The compile-path parse spells every type variable `0_<name>` (#10370).
-	const want = "Box[0_T].rank\t0_T=Ord\n" +
-		"Box[0_T].make\t0_T=Ord\n" +
-		"Box[0_T].tag\t0_U=Show,0_T=Ord\n" +
-		"Box[0_T].show\t0_T=Ord\n" +
+	const want = "Box[T].rank\tT=Ord\n" +
+		"Box[T].make\tT=Ord\n" +
+		"Box[T].tag\tU=Show,T=Ord\n" +
+		"Box[T].show\tT=Ord\n" +
 		"Plain.name\t<none>\n" +
-		"Box[0_T].name\t0_T=Ord\n" +
+		"Box[T].name\tT=Ord\n" +
 		"Plain.bump\t<none>\n" +
-		"free_bounded\t0_U=Show\n" +
+		"free_bounded\tU=Show\n" +
 		"free_plain\t<none>\n" +
 		"Plain.hello\t<none>\n" +
-		"Box[0_T].hello\t0_T=Ord\n"
+		"Box[T].hello\tT=Ord\n"
 
 	cmd := exec.Command(bin)
 	cmd.Stdin = strings.NewReader(src)
