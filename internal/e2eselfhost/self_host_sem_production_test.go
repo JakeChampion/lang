@@ -2268,12 +2268,10 @@ function main(): i32 {
     return r.ops.len() % 100 + r.name.len();
 }
 `},
-	// A `str` binding in a module that declares a generic struct. The parser
-	// erases `str` to `string` at parse time and records the view-ness on the
-	// declaration's `is_str`; the struct monomorphiser rewrote every `var`
-	// annotation in every body and dropped that flag, so the checker typed
-	// the binding `string` against a `str` value and every function holding
-	// one refused. Produces 0 of 2 with the flag dropped.
+	// A `str` binding in a module that declares a generic struct. The struct
+	// monomorphiser rewrites every `var` annotation in every body; when that
+	// lost the binding's view-ness, the checker typed it `string` against a
+	// `str` value and every function holding one refused, producing 0 of 2.
 	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
 	// array arm and an empty array literal as an arm's value are both
 	// refused by the AST lowering ("immediately-invoked value block"), and
@@ -4178,7 +4176,7 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// f64 it is, as a container of one does, so `Some(3.14)?` has a concrete
 	// union to test and unwrap (conformance f64_tryop_widen).
 	// An unannotated map literal takes its columns from its entries (#10208):
-	// the checker types the desugared `map_new_i32(n).insert(k, v)` chain, and
+	// the checker types the desugared `__map_new_i32(n).insert(k, v)` chain, and
 	// the chain's head takes that type where no destination names one.
 	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
 function main(): i32 {

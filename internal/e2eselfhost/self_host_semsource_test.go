@@ -839,7 +839,7 @@ function main(): i32 {
     // The production pipeline injects the front end's own enum variants
     // (IoError, JsonValue) as declarations before the lambda lift runs;
     // without them a Result's error arm names a union nothing declares.
-    var mod = irlower.lift_lambdas(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
+    var mod = irlower.lift_lambdas_typed(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) }))));
     // Every declaration in order, then every instance the templates were
     // produced at.
     var built = semsource.build_module(mod);
@@ -3789,10 +3789,12 @@ function main(): i32 {
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
     var parsed = parser.parse_module(lexer.tokenize(src));
-    var mod = irlower.lift_lambdas(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
+    // The typed lowering reads typed; the AST lowering reads its erasure.
+    var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
+    var mod = parser.erase_str_module(typed);
     var tab = irlower.struct_tab(mod.structs);
     var base = ircore.wp_fn_sigs(mod.funcs, tab);
-    var built = semsource.build_module(mod);
+    var built = semsource.build_module(typed);
     var bodies: irlower.LowerResult[] = [];
     var helpers: irlower.LowerResult[] = [];
     var skipped: irlower.LowerResult = irlower.LowerResult { ok: false, why: "", ops: [], n_locals: 0, n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_from_decl() };
