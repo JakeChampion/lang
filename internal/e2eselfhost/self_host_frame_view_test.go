@@ -87,28 +87,42 @@ function main(): i32 {
 const frameViewNative = "100000\n600100\n10539000\n200200\n"
 
 func TestSelfHostFrameViews(t *testing.T) {
+	runSemanticProgram(t, "frameview", frameViewProgram,
+		[]string{"has_prefix", "copy_tail", "count_a", "reads", "wrapped", "scan", "scan_rounds", "copy_rounds", "read_rounds", "wrapped_rounds"},
+		map[string]string{
+			"arm64-linux":     frameViewNative,
+			"x86-64-linux":    frameViewNative,
+			"x86-64-sanitize": frameViewNative,
+			"wasm32-wasi":     "100300\n600200\n10539400\n200200\n",
+		})
+}
+
+// runSemanticProgram lowers every function of `program` but main through the
+// semantic path, runs it on each target in `wants` (x86-64-sanitize is the
+// x86-64 emit under FERN_SANITIZE), and checks its output starts with that
+// target's want and its allocations balance.
+func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "semsource_rc.fern"), []byte(semsourceRCDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	program := filepath.Join(dir, "program.fern")
-	if err := os.WriteFile(program, []byte(frameViewProgram), 0o644); err != nil {
+	path := filepath.Join(dir, "program.fern")
+	if err := os.WriteFile(path, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "semsource_rc.fern", "semsource-rc")
-	for _, tc := range []struct{ target, want string }{
-		{"arm64-linux", frameViewNative},
-		{"x86-64-linux", frameViewNative},
-		{"x86-64-sanitize", frameViewNative},
-		{"wasm32-wasi", "100300\n600200\n10539400\n200200\n"},
-	} {
-		t.Run(tc.target, func(t *testing.T) {
-			emitTarget, mode := tc.target, "FERN_LEAKCHECK=1"
-			if tc.target == "x86-64-sanitize" {
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "x86-64-sanitize", "wasm32-wasi"} {
+		want, ok := wants[target]
+		if !ok {
+			continue
+		}
+		t.Run(target, func(t *testing.T) {
+			emitTarget, mode := target, "FERN_LEAKCHECK=1"
+			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, program)
+			cmd := runX86_64Bin(runner, driver, emitTarget, path)
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
@@ -116,17 +130,17 @@ func TestSelfHostFrameViews(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"has_prefix", "copy_tail", "count_a", "reads", "wrapped", "scan", "scan_rounds", "copy_rounds", "read_rounds", "wrapped_rounds"} {
-				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
-					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
+			for _, fn := range produced {
+				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") {
+					t.Fatalf("%s was not produced:\n%s", fn, diagnostics.String())
 				}
 			}
-			got, err := physicalRCRun(t, gcc, runner, dir, "frameview", tc.target, output).CombinedOutput()
+			got, err := physicalRCRun(t, gcc, runner, dir, name, target, output).CombinedOutput()
 			if err != nil {
 				t.Fatalf("program: %v\n%s", err, got)
 			}
-			if !strings.HasPrefix(string(got), tc.want) {
-				t.Fatalf("program output:\n%s\nwant it to start:\n%s", got, tc.want)
+			if !strings.HasPrefix(string(got), want) {
+				t.Fatalf("program output:\n%s\nwant it to start:\n%s", got, want)
 			}
 			var allocs, frees, live int64
 			if _, err := fmtSscan(leakSummaryLine(string(got)), &allocs, &frees, &live); err != nil {
