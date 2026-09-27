@@ -1869,6 +1869,7 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"rangei-i32-max", `function main(): i32 { var c = 0; for i in 2147483646..=2147483647 { c = c + 1; } return c; }`, 2},
 		{"rangei-i32-max-break", `function main(): i32 { var c = 0; for i in 2147483645..=2147483647 { c = c + 1; if (i == 2147483646) { break; } } return c; }`, 2},
 		{"rangei-i32-min", `function main(): i32 { var lo: i32 = -2147483647 - 1; var c = 0; for i in lo..=lo { c = c + 1; } return c; }`, 1},
+		{"range-i32-min", `function main(): i32 { var lo: i32 = -2147483647 - 1; var c = 0; for i in lo..(lo + 1) { c = c + 1; } return c; }`, 1},
 		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
 		// field (struct_get at successive indices), not just the first. The
 		// legacy AST x86-64 emitter binds only field 0, so these go in the

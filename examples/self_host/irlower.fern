@@ -9278,7 +9278,9 @@ pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
 // `__range(LOW, HIGH)` call) to a counted loop over the half-open interval, or
 // the closed interval `[LOW, HIGH]` for the inclusive `__range_incl` form
 // (`for i in LOW..=HIGH`). HIGH is bound once into a hidden local (so
-// `for i in 0..f()` calls f() once). LOW / HIGH are i32 exprs. The inclusive
+// `for i in 0..f()` calls f() once). LOW / HIGH are i32 exprs, and each add /
+// sub on the counter is narrowed to 32 bits as lower_binary narrows an i32
+// `+` / `-`, so a bound at i32's minimum or maximum wraps. The inclusive
 // form runs on a flag rather than `i <= hi`, which never fails at the type's
 // maximum (#10359) — lower_range_incl_for. Split out of lower_stmt's StmtFor
 // arm so that arm stays small (oversized functions miscompile on the native
@@ -9312,6 +9314,7 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
     if (!rs.ok) { return rs; }
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("sub", 0, false));   // i = LOW - 1
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
     rs = rs.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
     rs = rs.emit(ir.op_loop(0));                // depth 0 = continue/header
@@ -9319,6 +9322,7 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
     // cond: i < hi ; exit when NOT.
     rs = rs.emit(ir.op_load_local(islot));
@@ -9361,6 +9365,7 @@ function lower_range_incl_for(var_name: string, r_lo: ast.Expr, r_hi: ast.Expr, 
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("sub", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
     rs = rs.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
     rs = rs.emit(ir.op_loop(0));                // depth 0 = continue/header
@@ -9370,6 +9375,7 @@ function lower_range_incl_for(var_name: string, r_lo: ast.Expr, r_hi: ast.Expr, 
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_load_local(hislot));
