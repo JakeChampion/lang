@@ -58,12 +58,12 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 		{"option-as-i32-assign", "function find(i: i32): Option[i32] { if (i > 0) { return Some(i); } return None; }\nfunction main(): i32 { var x = 1; x = find(3); return 0; }"},
 		// Bare-map_new chain with a key-kind mismatch (native E038/E003 class):
 		// a NUMBER key dispatched through the string-keyed map_new() chain
-		// (and the map_new_i32 mirror) used to pass check and
+		// (and the __map_new_i32 mirror) used to pass check and
 		// miscompile — the emitted binary SIGSEGV'd. check_map_new_chain now
 		// rejects both directions; a kind-CONSISTENT chain (the Map{…} literal
 		// desugar) stays accepted — see the accept case below.
 		{"mapnew-chain-num-key", "function main(): i32 { var mm: Map[i32, i32] = map_new(8).insert(1, 10); return mm.len(); }"},
-		{"mapnew-i32-chain-str-key", `function main(): i32 { var mm: Map[string, i32] = map_new_i32(8).insert("a", 1); return mm.len(); }`},
+		{"mapnew-i32-chain-str-key", `function main(): i32 { var mm: Map[string, i32] = __map_new_i32(8).insert("a", 1); return mm.len(); }`},
 		{"mapnew-chain-num-key-deep", "function main(): i32 { var mm: Map[i32, i32] = map_new(8).insert(1, 10).insert(2, 20); return mm.len(); }"},
 	}
 	for _, tc := range rejects {
@@ -83,7 +83,7 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 
 	t.Run("accept-map-literal-desugar", func(t *testing.T) {
 		// The Map{…} literal desugars to the SAME chain shape with a
-		// kind-consistent ctor (map_new_i32 for number keys) — it must stay
+		// kind-consistent ctor (__map_new_i32 for number keys) — it must stay
 		// accepted and correct (the chain gate flags only mismatched kinds).
 		out, errOut, code := run(t, `function main(): i32 { var m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
 		if code != 0 {
