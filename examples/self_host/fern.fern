@@ -1939,13 +1939,15 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 // behind it is linked by the CLI alone: linking it from the three backend
 // modules cost the eight drivers that carry one 6.7-10.2% of their bytes for a
 // flag they never read.
-function cli_substitution(full: parser.Module, target: string): ircore.Sub {
+function cli_substitution(typed: parser.Module, target: string): ircore.Sub {
     if (!semlower.sem_ir_on()) { return ircore.no_sub(); }
-    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas(full));
-    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized(full); }
-    var stab: irlower.StructTab = irlower.struct_tab(im.structs);
+    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas_typed(typed));
+    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized_typed(typed); }
+    // The typed lowering reads im; the AST lowering's tables read its erasure.
+    var lowered: parser.Module = parser.erase_str_module(im);
+    var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);
     util.arr_push_cliff_report("sem:gated", 0);
-    var sub: ircore.Sub = semlower.substitution(im, stab, ircore.wp_fn_sigs(im.funcs, stab));
+    var sub: ircore.Sub = semlower.substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
     return ircore.Sub { ...sub, rt_lower: semlower.runtime_bodies };
 }
 
@@ -2380,13 +2382,14 @@ function run(): i32 {
         return 2;
     }
 
-    var full: parser.Module = parser.module_with_builtins(merged);
+    var typed: parser.Module = parser.module_with_builtins_typed(merged);
+    var full: parser.Module = parser.erase_str_module(typed);
     // The typed semantic lowering, unless FERN_SEM_IR= turns it off. It is produced
     // HERE and threaded into whichever emit path runs, so the pipeline behind
     // it is linked by the CLI and not by every driver that links a backend
     // (docs/SELFHOST-SEMANTIC-SOURCE.md). Off, this is ircore.no_sub() and the
     // emit paths behave exactly as they did.
-    var sub: ircore.Sub = cli_substitution(full, target);
+    var sub: ircore.Sub = cli_substitution(typed, target);
     var out_asm: string = "";
     var emit_text: boolean = emit == "asm";
     if (target == "arm64-linux") {

@@ -31,16 +31,15 @@ import (
 // so its `rebind` scope exercises only the clean spelling. A row added there
 // would not have caught it either.
 //
-// TWO SHAPES STAY REFUSED, and each holds a live ALIAS of the box the rebind
-// orphans, so the credit must not reach it. They keep their leak and assert
-// their exit code only, never balance. If one starts balancing, a gate that
-// declines it has stopped firing:
+// ONE SHAPE STAYS REFUSED: `alias_into_container` appends the old value to a
+// live `S[]` before the rebind, so releasing at the rebind would free a box the
+// container still points at. It keeps its leak and asserts its exit code only,
+// never balance. If it starts balancing, the gate that declines it has stopped
+// firing.
 //
-//   - `alias_into_container`: the old value is appended to a live `S[]` before
-//     the rebind, so releasing at the rebind would free a box the container
-//     still points at.
-//   - `field_moved_out`: `var held: string = s.name` carries a field out of the
-//     box the rebind orphans; the deep drop would free a live buffer.
+// `field_moved_out` balances: `var held: string = s.name` takes its own count
+// on the field (#10371), so the deep drop of the orphaned box leaves `held`
+// live, and its readback after `churn` proves it.
 //
 // A `return` is not such an alias, so `rebind_then_return` balances: nothing
 // reads the orphaned box after the rebind, and the returned one is the
@@ -88,8 +87,8 @@ type freshRetRebindCase struct {
 	src  string
 	want int
 	// balance: the run must end at live_bytes 0 with allocs == frees. False for
-	// the two aliasing shapes the credit is refused for — they keep their
-	// leak, and asserting balance would pin the wrong behaviour.
+	// the aliasing shape the credit is refused for — it keeps its leak, and
+	// asserting balance would pin the wrong behaviour.
 	balance bool
 }
 
@@ -191,8 +190,8 @@ function round(i: i32): i32 {
 			want: 56,
 		},
 		{
-			// REFUSED: a field is carried out of the box the rebind orphans, so
-			// the deep drop would free a buffer `held` still reads.
+			// A field carried out of the box the rebind orphans holds its own
+			// count, so the deep drop leaves the buffer `held` still reads.
 			name: "field_moved_out",
 			src: freshRetRebindDecl + `function round(i: i32): i32 {
     var s: S = mk(i);
@@ -202,7 +201,7 @@ function round(i: i32): i32 {
     if (held.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 56,
+			want: 56, balance: true,
 		},
 		{
 			// The local escapes, but the box the rebind orphans is dead at that
@@ -227,7 +226,7 @@ function round(i: i32): i32 {
 }
 
 // TestSelfHostFreshRetRebindX86_64 — a fresh-ret-call struct local keeps its
-// reclaim credit across a rebind, with the two aliasing shapes still refused.
+// reclaim credit across a rebind, with the aliasing shape still refused.
 func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

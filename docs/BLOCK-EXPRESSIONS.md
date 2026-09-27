@@ -138,7 +138,7 @@ Backend support:
 - Workaround deletion in the self-host tree: the "declare a temp, then a
   statement-`match`/`if` to assign it" contortion is now written directly
   as an `if`/`match` *expression* (e.g. `parse_map_lit`'s `map_new` /
-  `map_new_i32` ctor selection in `parser.fern`).
+  `__map_new_i32` ctor selection in `parser.fern`).
 
 ## Control-flow inside a value-position block (`#4522`)
 
