@@ -1929,12 +1929,12 @@ function epoll_watch_src(t: string): string {
 // op 5 wants back in `arg`. Linux blocks the signal and puts a signalfd in
 // the set with -signal beside the descriptor in the event's data word;
 // Darwin ignores the signal (a zeroed 32-byte act with SIG_IGN at 0) and
-// records each delivery through EVFILT_SIGNAL (-3).
+// records each delivery through EVFILT_SIGNAL (-6).
 function signal_watch_src(t: string): string {
     if (t == "arm64-darwin") {
         return "if (op == 4) { var act: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(act, z, 0); z = z + 1; } __raw_store8(act, 0, 1); __syscall4(" + sysno(t, "sigaction") + ", fd as i64, act as i64, 0, 8); "
-            + "var ch: usize = __raw_scratch(32); var sig_fd: i32 = fd; var sig_filter: i32 = 0 - 3; var sig_flags: i32 = 5; " + kevent_change_src("ch", "sig_fd", "sig_filter", "sig_flags") + " return __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; } "
-            + "if (op == 5) { var ch2: usize = __raw_scratch(32); var del_fd: i32 = fd; var del_filter: i32 = 0 - 3; var del_flags: i32 = 2; " + kevent_change_src("ch2", "del_fd", "del_filter", "del_flags") + " __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch2 as i64, 1, 0, 0, 0); "
+            + "var ch: usize = __raw_scratch(32); var sig_fd: i32 = fd; var sig_filter: i32 = 0 - 6; var sig_flags: i32 = 5; " + kevent_change_src("ch", "sig_fd", "sig_filter", "sig_flags") + " return __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; } "
+            + "if (op == 5) { var ch2: usize = __raw_scratch(32); var del_fd: i32 = fd; var del_filter: i32 = 0 - 6; var del_flags: i32 = 2; " + kevent_change_src("ch2", "del_fd", "del_filter", "del_flags") + " __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch2 as i64, 1, 0, 0, 0); "
             + "var act2: usize = __raw_scratch(32); var z2: i32 = 0; while (z2 < 32) { __raw_store8(act2, z2, 0); z2 = z2 + 1; } return __syscall4(" + sysno(t, "sigaction") + ", fd as i64, act2 as i64, 0, 8) as i32; } ";
     }
     var data_at: string = "8";
@@ -1978,7 +1978,7 @@ function kqueue_wait_src(t: string): string {
         + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * 32; var ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
         + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
         + "var fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
-        + "if (__raw_load8(buf, e + 8) == 253) { ready = 1; fd = 0 - fd; } "
+        + "if (__raw_load8(buf, e + 8) == 250) { ready = 1; fd = 0 - fd; } "
         + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
         + "var buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }

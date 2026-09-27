@@ -239,12 +239,17 @@ function main(): i32 {
     var a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(5); }
     if (tcp_socket_ctl(c, 5, 0) != 0) { return fail(6); }
-    if (tcp_send(c, "hi") != 2) { return fail(7); }
+    // Blocking again for the exchange: loopback delivery is not synchronous
+    // on every kernel, so a non-blocking read of the reply could find
+    // nothing queued yet. wasm has no blocking mode to switch back to, and
+    // its tcp_recv waits regardless.
+    if (target_os() != "wasi" && tcp_socket_ctl(c, 3, 0) != 0) { return fail(7); }
+    if (tcp_send(c, "hi") != 2) { return fail(8); }
     var got: u8[] = tcp_recv(a, 16);
-    if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(8); }
-    if (tcp_send(a, "yo") != 2) { return fail(9); }
+    if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(9); }
+    if (tcp_send(a, "yo") != 2) { return fail(10); }
     var back: u8[] = tcp_recv(c, 16);
-    if (back.len() != 2 || back[0] != 121u8) { return fail(10); }
+    if (back.len() != 2 || back[0] != 121u8) { return fail(11); }
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
@@ -252,9 +257,9 @@ function main(): i32 {
     if (c2 >= 0) {
         var r: i32 = settle(c2);
         tcp_close(c2);
-        if (r != 0 - econnrefused()) { return fail(11); }
+        if (r != 0 - econnrefused()) { return fail(12); }
     } else if (c2 != 0 - econnrefused()) {
-        return fail(12);
+        return fail(13);
     }
     print("ok");
     return 42;
