@@ -79,7 +79,7 @@ func TestMapF32ValuesOnEveryBackend(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if !c.runnable {
-				t.Fatalf("no way to run %s binaries on this host", c.target)
+				t.Skipf("no way to run %s binaries on this host", c.target)
 			}
 			bin := filepath.Join(t.TempDir(), "prog")
 			args := []string{"-target", c.target}
