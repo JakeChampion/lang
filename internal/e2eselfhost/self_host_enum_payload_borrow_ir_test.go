@@ -196,10 +196,10 @@ function main(): i32 {
 // array still pointed at — the identical use-after-free #6049 fixed for the
 // direct spelling, one indirection away, on all three backends.
 //
-// The bind takes no dup: an alias that never escapes must not outlive the
-// struct. The mark travels with the name (mark_enum_field_alias) and the retain
-// happens at the store, so the balance is exactly the direct read's — field
-// rc 1 → store dup 2 → __struct_drop_<T> 1 → the container keeps it.
+// The mark travels with the name (mark_enum_field_alias) and the retain happens
+// at the store, so the container holds its own count exactly as with the direct
+// read. The bind's own dup and release are #10310's
+// (self_host_enum_field_alias_count_test.go).
 //
 // Every case churns after the struct dies so a freed block is really recycled;
 // without that the stale pointer still reads plausible data (97 = value read
