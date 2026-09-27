@@ -27,9 +27,9 @@ import (
 //	H_call_result_into_local        0     0    the shape this issue is about
 //	I_call_result_into_param        0     0    already exempt (self-reassign shape)
 //	L_two_calls_via_param           0     0
-//	J_nested_call_arg              49    44
-//	K_two_calls_via_local          49    44
-//	M_call_then_inline_append      49    44
+//	J_nested_call_arg              49    45
+//	K_two_calls_via_local          49    45
+//	M_call_then_inline_append      49    45
 //
 // J/K/M COPY, AND ARE PINNED THAT WAY DELIBERATELY. They read 0 between the #6048
 // port and the counted identity return
@@ -81,9 +81,9 @@ var growSoleCases = []growSoleCase{
 	// releases before the outer append, so the buffer reads as shared and copies.
 	// Native copies here too (49). Pinned at what both compilers now do — see the
 	// header for why 0 is not reachable until the argument-temp slice lands.
-	{"J_nested_call_arg", `function g(b: i32[], v: i32): i32[] { return f(f(b, v), v + 1); }`, 2, 44},
-	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 44},
-	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 44},
+	{"J_nested_call_arg", `function g(b: i32[], v: i32): i32[] { return f(f(b, v), v + 1); }`, 2, 45},
+	{"K_two_calls_via_local", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return f(t, v + 1); }`, 2, 45},
+	{"M_call_then_inline_append", `function g(b: i32[], v: i32): i32[] { var t: i32[] = f(b, v); return t.append(v + 1); }`, 2, 45},
 
 	// LOOP negative: `b` is textually read once, but the read sits inside a loop, so
 	// it is many DYNAMIC reads and the next iteration would observe the previous

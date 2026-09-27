@@ -1928,8 +1928,9 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 
 // cli_substitution produces the semantic lowering for whichever emit path the
 // target selects, against the SAME normalisation that path gates on — the
-// register backends' (semlower.gated_module) after the lambda lift their emit
-// entries do before it, and wasm's own (wasm_ir.route_normalized_typed), which lifts
+// register backends' (semlower.gated_module) after the lambda lift, which it
+// hands over (Sub.lifted) so their emit entries read it erased rather than
+// lifting again, and wasm's own (wasm_ir.route_normalized_typed), which lifts
 // inside and takes the unlifted module as its emit entry does. Lifting once
 // more before it renames every local of an already-lifted body, so what it
 // produced would not be the bodies the emit path lowers. Off (FERN_SEM_IR set
@@ -1941,8 +1942,12 @@ function package_violations(merged: parser.Module, pkgs: caps.Pkg[]): boolean {
 // flag they never read.
 function cli_substitution(typed: parser.Module, target: string): ircore.Sub {
     if (!semlower.sem_ir_on()) { return ircore.no_sub(); }
-    var im: parser.Module = semlower.gated_module(ircore.lift_lambdas_typed(typed));
-    if (util.str_has_prefix(target, "wasm")) { im = wasm_ir.route_normalized_typed(typed); }
+    if (util.str_has_prefix(target, "wasm")) { return substitution_of(wasm_ir.route_normalized_typed(typed)); }
+    var lifted: parser.Module = ircore.lift_lambdas_typed(typed);
+    return ircore.Sub { ...substitution_of(semlower.gated_module(lifted)), lifted: lifted, has_lifted: true };
+}
+
+function substitution_of(im: parser.Module): ircore.Sub {
     // The typed lowering reads im; the AST lowering's tables read its erasure.
     var lowered: parser.Module = parser.erase_str_module(im);
     var stab: irlower.StructTab = irlower.struct_tab(lowered.structs);

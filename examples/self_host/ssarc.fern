@@ -260,10 +260,13 @@ function map_key_fns(t: typeinfo.Type): string {
     return k + ".hash|" + k + ".eq";
 }
 
-// The map ops' widekind: 1 for an i64 or u64 value column, which wasm keeps
-// in cells of their own; the register backends ignore it.
-function map_widekind(t: typeinfo.Type): i32 {
-    if (ssasem.wide_map_value(ssasem.map_value(t))) { return 1; }
+// The map ops' widekind: 1 for an i64 or u64 value column and 2 for a float
+// one, which wasm keeps in cells of their own; the register backends ignore it.
+function map_widekind(t: typeinfo.Type): i32 { return value_widekind(ssasem.map_value(t)); }
+
+function value_widekind(v: typeinfo.Type): i32 {
+    if (ssasem.wide_map_value(v)) { return 1; }
+    if (ssasem.float_map_value(v)) { return 2; }
     return 0;
 }
 
@@ -1019,7 +1022,8 @@ function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
 // The slots a construction claims, or -1 where it is not one a token can be
 // spent at. An array construction is excluded for the reason a dying array is:
 // what it asks the allocator for is a capacity.
-function recipient_slots(f: ssasem.Func, ins: ssa.SInst): i32 {
+function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 {
+    if (p.constants[ins.result] != "") { return 0 - 1; }
     if (ins.kind_tag == ssasem.tuple_new()) { return tuple_elements(f.values[ins.result]).len(); }
     if (ins.kind_tag == ssasem.record_new()) { return reuse_slots(f.values[ins.result], f); }
     return 0 - 1;
@@ -1036,12 +1040,12 @@ function recipient_slots(f: ssasem.Func, ins: ssa.SInst): i32 {
 // the compiler's own sources, that reading pairs 287 where this one pairs 390.
 struct Claims { counts: i32[], last: i32[] }
 
-function block_claims(f: ssasem.Func, b: ssa.SBlock): Claims {
+function block_claims(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): Claims {
     var counts: i32[] = [];
     var last: i32[] = [];
     var pos: i32 = 0;
     while (pos < b.insts.len()) {
-        var c: i32 = recipient_slots(f, b.insts[pos]);
+        var c: i32 = recipient_slots(f, p, b.insts[pos]);
         if (c >= 0) {
             var at: i32 = util.index_of_i32(counts, c);
             if (at < 0) { counts = counts.append(c); last = last.append(pos); }
@@ -1065,7 +1069,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
     // answers too: with it set every construction allocates, so a program's
     // observable behaviour can be compared against its own reusing build.
     var off: boolean = irlower.reuse_layer_disabled();
-    var claims_tab: Claims = block_claims(f, b);
+    var claims_tab: Claims = block_claims(f, p, b);
     var pending: i32 = 0 - 1;
     var pending_at: i32 = 0 - 1;
     var pos: i32 = 0;
@@ -1076,7 +1080,7 @@ function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
         var ins: ssa.SInst = b.insts[pos];
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-            var claims: i32 = recipient_slots(f, ins);
+            var claims: i32 = recipient_slots(f, p, ins);
             if (off) { pending = 0 - 1; }
             else {
                 if (claims >= 0 && pending >= 0
@@ -2092,6 +2096,15 @@ function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     return r;
 }
 
+// A construction the plan found constant is a static box: its operands were
+// loaded for the ordinary construction and are dropped unread.
+function static_box(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irlower.LowerResult {
+    for a in ins.args { r = emit(r, ir.op_drop()); }
+    var name: string = ins.str;
+    if (ins.kind_tag == ssasem.record_new()) { name = record_name(f.values[ins.result]); }
+    return emit(r, ir.op_const_struct(name, ins.args.len(), slice_unchecked(words, 1, words.len()) + ""));
+}
+
 function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5 || k == ssasem.zero(); }
 
 function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irlower.StructTab, defer0: boolean, link: Link): irlower.LowerResult {
@@ -2109,7 +2122,9 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
     if (constant_op(ins.kind_tag)) { r = constant(r, f, ins); }
     if (ssasem.scalar_op(ins.kind_tag)) { r = scalar(r, f, ins); }
-    if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
+    if (ins.kind_tag == ssasem.slice() && p.frame_views[ins.result]) { r = emit(r, ir.op_str_slice_frame(0)); }
+    else if (p.constants[ins.result] != "") { r = static_box(r, f, ins, p.constants[ins.result]); }
+    else if (container_op(ins.kind_tag)) { r = container(r, f, ins, structs); }
     // A call's counted parameters were supplied before its operands were
     // loaded; its result is the unit the callee returns. A runtime builtin
     // is its own op, pushing the value its contract names or the dummy a
@@ -2657,7 +2672,7 @@ function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     } else if (ins.kind_tag == ssasem.mapiter_key()) {
         r = emit(r, ir.op_mapiter_key());
     } else if (ins.kind_tag == ssasem.mapiter_value()) {
-        r = emit(r, ir.op_mapiter_value(ssasem.wide_map_value(semtypes.map_iter_value(f.values[ins.args[0]]))));
+        r = emit(r, ir.op_mapiter_value(value_widekind(semtypes.map_iter_value(f.values[ins.args[0]]))));
     } else {
         r = emit(r, ir.op_mapiter_advance());
     }
@@ -2788,6 +2803,7 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     var value: i32 = box + 5;
     r = reserve(r, value + 1);
     if (map_widekind(t) == 1) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(value) }; }
+    if (map_widekind(t) == 2) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(value) }; }
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
@@ -3732,6 +3748,23 @@ function without_rows(rows: string[], name: string, prefixes: string[]): string[
     return out;
 }
 
+// A frame view's three words sit above every other slot, which is only known
+// once the body is lowered, so `instruction` marks the op and this gives each
+// its own words.
+function place_views(own r: irlower.LowerResult): irlower.LowerResult {
+    var ops: ir.Op[] = r.ops;
+    var next: i32 = r.n_locals;
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (ops[i].kind_tag == ir.op_str_slice().kind_tag && ops[i].i32_imm > 0) {
+            ops = ops.with(i, ir.op_str_slice_frame(next));
+            next = next + 3;
+        }
+        i = i + 1;
+    }
+    return irlower.LowerResult { ...r, ops: ops, n_locals: next };
+}
+
 // `structs` is the declaration table the backends read a construction's field
 // store widths from; the physical lowering names a declaration by index, as
 // the AST lowering does.
@@ -3747,6 +3780,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     var steps: i32[][] = ssaunits.step_index(p);
     var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
     if (e.why != "") { return empty(e.why); }
+    e = Emit { ...e, r: place_views(e.r) };
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };
 }

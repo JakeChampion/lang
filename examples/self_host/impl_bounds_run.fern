@@ -13,6 +13,7 @@
 import "./lexer";
 import "./parser";
 import "./rundriver";
+import "./util";
 
 function bound_at(bt: string[], i: i32): string {
     if (i < bt.len()) { return bt[i]; }
@@ -39,7 +40,7 @@ function main(): i32 {
         var fd: parser.FuncDecl = mod.funcs[i];
         var label: string = fd.name;
         if (fd.receiver_type.len() > 0) { label = fd.receiver_type + "." + fd.name; }
-        print(label + "\t" + pairs_of(fd));
+        print(util.show_type_vars(label + "\t" + pairs_of(fd)));
         i = i + 1;
     }
     return 0;

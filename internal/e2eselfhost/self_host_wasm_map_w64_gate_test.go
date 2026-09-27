@@ -38,7 +38,8 @@ function main(): i32 {
         ir.op_map_get_or(1, "", 1),
         ir.op_map_values(0, 1),
         ir.op_map_iter(1),
-        ir.op_mapiter_value(true),
+        ir.op_mapiter_value(1),
+        ir.op_mapiter_value(2),
     ];
     var missing: i32 = 0;
     var bit: i32 = 1;

@@ -201,6 +201,49 @@ function main(): i32 {
 }
 `
 
+// genericPositionsBigLiteralProgram pins #10176: a generic call's type
+// parameter that only untyped literals bind settles in every position reading
+// it — an unannotated `var`, a scrutinee, a comparison, an annotated `u64`
+// destination, a destination reached through a field read of the result, and
+// arithmetic beside a wide literal. Before, the comparison was E041 and the
+// field read truncated 2^62 to 0 on the native backends. A correct run exits
+// 63.
+const genericPositionsBigLiteralProgram = `
+function both[T](a: T, b: T): (T, T) { return (a, b); }
+function pick[T](a: T, b: T): Option[T] { return Some(b); }
+function id[T](a: T): T { return a; }
+function main(): i32 {
+  var c = 0;
+  var q = both(1, 4611686018427387904);
+  if (q.1 == 4611686018427387904) { c = c + 1; }
+  match (pick(1, 4611686018427387904)) { Some(v) => { if (v == 4611686018427387904) { c = c + 2; } }, None => { } }
+  if (both(1, 4611686018427387904).1 == 4611686018427387904) { c = c + 4; }
+  var x: (u64, u64) = both(1, 4611686018427387904);
+  if (x.1 / 1000000000000000000 == 4 && x.0 == 1) { c = c + 8; }
+  var z: i64 = both(1, 4611686018427387904).1;
+  if (z / 1000000000000000000 == 4) { c = c + 16; }
+  if (id(1) + 4294967296 == 4294967297) { c = c + 32; }
+  return c;
+}
+`
+
+// arrayArgumentStructLiteralProgram: an array argument's parameter is the
+// destination of its literal's elements, as an annotated `var` is. Each
+// `Same` literal is a Same[i64], so the first reads `3` at i64 beside the i64
+// `y` and the second holds 2^32. Before, the elements were typed on their
+// own, as Same[i32], and the call was refused as E038. A correct run exits 3.
+const arrayArgumentStructLiteralProgram = `
+struct Same[T] { a: T, b: T }
+function take(xs: Same[i64][]): i32 {
+  var s: i64 = xs[0].a + xs[0].b + xs[1].b;
+  return (s - 8589934592) as i32;
+}
+function main(): i32 {
+  var y: i64 = 4294967296;
+  return take([Same { a: 3, b: y }, Same { a: 1, b: 4294967296 }]);
+}
+`
+
 func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	run := func(src string, want int, what string) {
@@ -222,6 +265,8 @@ func TestInterpUnannotatedBigLiteralWidens(t *testing.T) {
 	run(genericScrutineeBigLiteralProgram, 9, "big-literal generic call as scrutinee")
 	run(annotatedGenericBigLiteralProgram, 63, "big-literal annotated generic call")
 	run(arrayDestinationGenericProgram, 15, "annotated array destination generic call")
+	run(genericPositionsBigLiteralProgram, 63, "literal-bound generic call in every position")
+	run(arrayArgumentStructLiteralProgram, 3, "struct literals in an array argument")
 }
 
 func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
@@ -251,6 +296,12 @@ func TestX86_64UnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64(t, annotatedGenericBigLiteralProgram); code != 63 {
 		t.Errorf("x86-64 big-literal annotated generic call: exit = %d, want 63", code)
+	}
+	if _, code := compileAndRunX86_64(t, genericPositionsBigLiteralProgram); code != 63 {
+		t.Errorf("x86-64 literal-bound generic call in every position: exit = %d, want 63", code)
+	}
+	if _, code := compileAndRunX86_64(t, arrayArgumentStructLiteralProgram); code != 3 {
+		t.Errorf("x86-64 struct literals in an array argument: exit = %d, want 3", code)
 	}
 }
 
@@ -282,6 +333,12 @@ func TestArm64UnannotatedBigLiteralWidens(t *testing.T) {
 	if _, code := compileAndRunArm64(t, annotatedGenericBigLiteralProgram); code != 63 {
 		t.Errorf("arm64 big-literal annotated generic call: exit = %d, want 63", code)
 	}
+	if _, code := compileAndRunArm64(t, genericPositionsBigLiteralProgram); code != 63 {
+		t.Errorf("arm64 literal-bound generic call in every position: exit = %d, want 63", code)
+	}
+	if _, code := compileAndRunArm64(t, arrayArgumentStructLiteralProgram); code != 3 {
+		t.Errorf("arm64 struct literals in an array argument: exit = %d, want 3", code)
+	}
 }
 
 func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
@@ -311,5 +368,11 @@ func TestWASMUnannotatedBigLiteralWidens(t *testing.T) {
 	}
 	if code := runWasm(t, annotatedGenericBigLiteralProgram); code != 63 {
 		t.Errorf("wasm big-literal annotated generic call: exit = %d, want 63", code)
+	}
+	if code := runWasm(t, genericPositionsBigLiteralProgram); code != 63 {
+		t.Errorf("wasm literal-bound generic call in every position: exit = %d, want 63", code)
+	}
+	if code := runWasm(t, arrayArgumentStructLiteralProgram); code != 3 {
+		t.Errorf("wasm struct literals in an array argument: exit = %d, want 3", code)
 	}
 }

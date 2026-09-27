@@ -899,6 +899,113 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	}
 }
 
+// TestArrayArgumentIsItsElementsDestination: an array parameter is the
+// destination its argument's literal elements are read at, as an annotated
+// `var` is. `take([Same { a: 1, b: 2 }])` was E038, the literal typed Same[i32]
+// on its own, and a field an i64 settles clashed with the literal-bound `a` as
+// E043 (#10270). Without a destination the first field still binds T.
+func TestArrayArgumentIsItsElementsDestination(t *testing.T) {
+	const decls = "struct Same[T] { a: T, b: T } function take(xs: Same[i64][]): i32 { return xs.len(); } "
+	for _, body := range []string{
+		`return take([Same { a: 1, b: 2 }]);`,
+		`var y: i64 = 5; return take([Same { a: 1, b: y }]);`,
+	} {
+		if err := checkSource(t, decls+"function main(): i32 { "+body+" }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", body, err)
+		}
+	}
+	for _, c := range []struct{ body, want string }{
+		{`return take([Same { a: 1, b: "x" }]);`, `field "b": expected i64, got string`},
+		{`var y: i64 = 5; var q = Same { a: 1, b: y }; return 0;`, `field "b": expected i32, got i64`},
+	} {
+		err := checkSource(t, decls+"function main(): i32 { "+c.body+" }")
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got: %v", c.body, c.want, err)
+		}
+	}
+}
+
+// TestGenericCallLiteralBoundTSettlesByPosition covers #10176: a type
+// parameter only untyped literals bind stays open until the position reading
+// the call settles it. A destination names its width, through a field read of
+// the result too; a comparison or arithmetic with no typed side takes the
+// default, i64 when a literal has no i32 reading. `if (both(1, 2^62).1 ==
+// 2^62)` was E041, `var z: i64 = both(1, 2^62).1` truncated the value to 0,
+// and an i32 destination settled nothing, so `var x: i32 = id(2^32 + 2)` ran
+// as 2 where the bare literal is E047.
+func TestGenericCallLiteralBoundTSettlesByPosition(t *testing.T) {
+	const big = "4611686018427387904"
+	const decls = "struct Box[T] { v: T } function box[T](v: T): Box[T] { return Box { v: v }; } " +
+		"function both[T](a: T, b: T): (T, T) { return (a, b); } " +
+		"function pick[T](a: T, b: T): Option[T] { return Some(b); } " +
+		"function id[T](a: T): T { return a; } "
+	accepted := []string{
+		`var q = both(1, ` + big + `); if (q.1 == ` + big + `) { return 7; }`,
+		`match (pick(1, ` + big + `)) { Some(v) => { if (v == ` + big + `) { return 7; } }, None => { } }`,
+		`if (both(1, ` + big + `).1 == ` + big + `) { return 7; }`,
+		`var x: (u64, u64) = both(1, ` + big + `);`,
+		`var z: i64 = both(1, ` + big + `).1;`,
+		`var z: u64 = both(1, 2).1;`,
+		`var b: Box[u64] = box(1);`,
+		`var v: u64 = box(1).v;`,
+		`if (id(1) == ` + big + `) { return 7; }`,
+		`if (id(1) == id(` + big + `)) { return 7; }`,
+		`var x: i64 = id(1) + 1;`,
+		`var y: u64 = 3 as u64; if (id(1) < y) { return 7; }`,
+	}
+	for _, src := range accepted {
+		if err := checkSource(t, decls+"function main(): i32 { "+src+" return 0; }"); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", src, err)
+		}
+	}
+	rejected := []struct{ src, want string }{
+		{`var x: i32 = id(4294967298);`, "does not fit in i32"},
+		{`var x: u8 = id(300);`, "does not fit in u8"},
+		{`var z: i32 = both(1, ` + big + `).1;`, "does not fit in i32"},
+	}
+	for _, c := range rejected {
+		err := checkSource(t, decls+"function main(): i32 { "+c.src+" return 0; }")
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: want an error containing %q, got: %v", c.src, c.want, err)
+		}
+	}
+
+	// The settle restamps the call itself, so lowering reads the same width.
+	stamped := []struct {
+		body string
+		call func(ast.Stmt) *ast.Call
+		want ast.NumberType
+	}{
+		{`var x: (u64, u64) = both(1, ` + big + `);`, func(st ast.Stmt) *ast.Call { return st.(*ast.Var).Init.(*ast.Call) }, ast.NumberType{Width: 64}},
+		{`var z: i64 = both(1, ` + big + `).1;`, func(st ast.Stmt) *ast.Call {
+			return st.(*ast.Var).Init.(*ast.FieldAccess).Target.(*ast.Call)
+		}, ast.NumberType{Width: 64, Signed: true}},
+		{`if (both(1, ` + big + `).1 == ` + big + `) { return 7; }`, func(st ast.Stmt) *ast.Call {
+			return st.(*ast.If).Cond.(*ast.Binary).Left.(*ast.FieldAccess).Target.(*ast.Call)
+		}, ast.NumberType{Width: 64, Signed: true}},
+	}
+	for _, c := range stamped {
+		prog, err := parser.Parse(decls + "function main(): i32 { " + c.body + " return 0; }")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("%s: %v", c.body, err)
+		}
+		main := prog.Funcs[len(prog.Funcs)-1]
+		call := c.call(main.Body.Stmts[0])
+		got, ok := call.TypeArgs[0].(ast.NumberType)
+		if !ok || got.NormalWidth() != c.want.NormalWidth() || got.IsSigned() != c.want.IsSigned() || got.Polymorphic {
+			t.Errorf("%s: T = %#v, want %s", c.body, call.TypeArgs[0], c.want)
+		}
+		for _, a := range call.Args {
+			if lit, ok := a.(*ast.NumberLit); ok && lit.Width != c.want.NormalWidth() {
+				t.Errorf("%s: literal %s settled at width %d, want %d", c.body, lit.Raw, lit.Width, c.want.NormalWidth())
+			}
+		}
+	}
+}
+
 // A comparison's result is a boolean, so nothing outside it ever settles its
 // operands: two polymorphic sides take the default at the comparison itself,
 // and a wide literal on either side makes that default i64 (#8668) instead of
