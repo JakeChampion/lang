@@ -61,6 +61,25 @@ the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
 P0's persistent worker-owned reactor remains separate work.
 
+## std/net addresses and errors
+
+`TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
+`TestNetAddrArm64` run one probe (`e2eharness.NetAddrProbe`) through
+std/net's address and error layer: IPv4 and IPv6 text parsing with the
+rejections RFC 4291 requires, RFC 5952 canonical rendering, the bracketed
+`[v6]:port` form, the loopback / private / link-local / multicast /
+unspecified predicates, IPv4-mapped unwrapping, the `Eq` / `Display` /
+`error.Error` adoptions, and the errno table the compile target selects.
+`TestSelfHostNetAddr` compiles the same probe with the production
+self-host driver for x86-64, arm64 and wasm under strict IR with complete
+semantic lowering required; `TestSelfHostArm64DarwinNetAddr` runs it on
+Apple Silicon. `TestNetErrnoTablesMatchStrerror` and
+`TestNetErrorVariantsFollowErrnoList` (`internal/stdlib`) read the module
+as data and pin its Linux, Darwin and WASI errno lists to
+`internal/strerror` row for row, and the `NetError` variant order to the
+errno-name list. These gates cover text and tables only: no socket is
+opened, so they say nothing about what a primitive reports at runtime.
+
 ## HTTP Content-Length parsing
 
 `TestHttpContentLength*`, `TestArm64DarwinHTTPContentLength`,

@@ -221,9 +221,7 @@ function main(): i32 {
 }
 `, 17, true},
 	// An array field's length as a returned element, and a nested-array field
-	// as one, refused the callee on the AST leg (#10318). The nested rows still
-	// leak there (tupleFieldSharePins): nothing releases a T[][] a record or a
-	// tuple holds (#10397).
+	// as one, refused the callee on the AST leg (#10318).
 	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
 function mk(k: i32): (i32, i32, i32) {
     var r: Ints = Ints { n: k, ys: [k, 1] };
@@ -246,7 +244,7 @@ function main(): i32 {
     mk(4);
     return t.0 + t.1[0][0] + t.1[1][1] + t.1.len();
 }
-`, 11, false},
+`, 11, true},
 	{"callee_local_nested_strarr", `struct Grid { n: i32, rows: string[][] }
 function mk(k: i32): (i32, string[][]) {
     var r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
@@ -310,7 +308,7 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, stderr)
 				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, stderr, pin, "#10397")
+					assertLeakPinned(t, stderr, pin, "#9556")
 				}
 				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
 				if exit != tc.want || forArrStructSanitizerFault(stderr, tupleFieldShareBalanced(tc.name, tc.balanced, lw.name)) {
@@ -367,7 +365,7 @@ func TestSelfHostTupleFieldShareArm64(t *testing.T) {
 				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, eb.String())
 				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, eb.String(), pin, "#10397")
+					assertLeakPinned(t, eb.String(), pin, "#9556")
 				}
 			})
 		}
@@ -390,7 +388,7 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 				if tupleFieldShareBalanced(tc.name, tc.balanced, lw.name) {
 					assertBalancedCensus(t, stderr)
 				} else if pin, ok := tupleFieldSharePins[tc.name][lw.name]; ok {
-					assertLeakPinned(t, stderr, pin, "#10397")
+					assertLeakPinned(t, stderr, pin, "#9556")
 				}
 			})
 		}
@@ -398,9 +396,9 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 }
 
 // tupleFieldSharePins: rows that still leak on a leg, by row and lowering,
-// compared exactly. Nothing releases a T[][] a record or a tuple holds (#10397).
+// compared exactly. An AST main never releases a tuple it destructures out of a
+// call (#9556).
 var tupleFieldSharePins = map[string]map[string][2]int64{
-	"callee_local_nested":        {"ast": {10, 4}, "ast_callees": {10, 4}, "ast_main": {10, 4}},
 	"callee_local_nested_strarr": {"ast": {5, 1}, "ast_callees": {5, 1}, "ast_main": {5, 1}},
 }
 
