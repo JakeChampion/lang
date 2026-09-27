@@ -276,7 +276,18 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
 // all of it was most of this pass. Membership is the only question
 // asked, so a chain's order carries no meaning and a new name is pushed at
 // the front of its bucket.
-struct RefSet { names: string[], head: i32[], next: i32[] }
+pub struct RefSet { names: string[], head: i32[], next: i32[] }
+
+// body_refs is the set of names `fd`'s body spells, and refs_name whether
+// `fd` is one the set reaches — the two halves of the shake's reachability,
+// for a caller walking a call graph function by function (ambient.fern).
+pub function body_refs(fd: parser.FuncDecl): RefSet {
+    return refset_of(ts_func_names(fd, []));
+}
+
+pub function refs_name(rs: RefSet, fd: parser.FuncDecl): boolean {
+    return ts_kept_name(fd, rs);
+}
 
 function ts_buckets(): i32 { return 4093; }
 

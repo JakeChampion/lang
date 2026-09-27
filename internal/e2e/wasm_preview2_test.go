@@ -1903,10 +1903,12 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 // wasi:http handler that also print()s — exercising TCP/http + CLI-stream
 // mixing. ComposeHttpHandler surfaces wasi:cli/stdout.get-stdout and
 // reuses the body's output-stream.blocking-write-and-flush lowering for
-// the log write. A successful 200 from a print-ing handler proves the
-// stdout path is wired (a broken stdout handle would trap mid-request);
-// the component is also checked to import wasi:cli/stdout, and the log
-// line is verified in wasmtime's captured stdout.
+// the log write. The handler logs through its bag (`plat.log`, which is
+// `eprint`: a handler reaching `print` around the bag is E080), so a
+// successful 200 proves the stderr path is wired (a broken handle would
+// trap mid-request); the component is also checked to import
+// wasi:cli/stderr, and the log line is verified in wasmtime's captured
+// stderr.
 func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("preview-2 toolchain not exercised on windows")
@@ -1929,9 +1931,10 @@ func TestWasmPreview2HttpHandlerLoggingAdapterFree(t *testing.T) {
 	srcPath := filepath.Join(dir, "logger.fern")
 	src := `
 import "std/http";
+import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    print(f"LOGLINE {req.method} {req.path}");
+    plat.log(f"LOGLINE {req.method} {req.path}");
     return http.http_response_ok("logged");
 }
 `
@@ -1956,8 +1959,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	if err != nil {
 		t.Fatalf("wasm-tools component wit failed: %v\n%s", err, wit)
 	}
-	if !bytes.Contains(wit, []byte("wasi:cli/stdout")) {
-		t.Errorf("expected wasi:cli/stdout import in the logging handler, got:\n%s", wit)
+	if !bytes.Contains(wit, []byte("wasi:cli/stderr")) {
+		t.Errorf("expected wasi:cli/stderr import in the logging handler, got:\n%s", wit)
 	}
 
 	addr := net.JoinHostPort("127.0.0.1", itoa(port))
@@ -1996,18 +1999,20 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	if string(body) != "logged" {
 		t.Errorf("/ping body = %q; want %q", string(body), "logged")
 	}
-	// The print() lands on wasmtime serve's captured stdout (prefixed
-	// per-stream). Give it a moment to flush, then confirm the log line.
+	// The log line lands on wasmtime serve's captured stderr (prefixed
+	// per-stream). Give it a moment to flush, then confirm it.
 	time.Sleep(200 * time.Millisecond)
-	if !bytes.Contains(sout.Bytes(), []byte("LOGLINE GET /ping")) {
-		t.Errorf("expected log line in server stdout, got:\n%s", sout.String())
+	if !bytes.Contains(serr.Bytes(), []byte("LOGLINE GET /ping")) {
+		t.Errorf("expected log line in server stderr, got:\n%s", serr.String())
 	}
 }
 
 // TestWasmPreview2HttpHandlerClockAdapterFree exercises an HTTP handler
-// that also uses now() / monotonic_ns() / random — the standalone CLI
-// capabilities the wasi:http/proxy world `wasmtime serve` grants
-// (wasi:clocks + wasi:random). ComposeHttpHandler lowers them via the
+// that also uses the clocks and entropy through its bag (`plat.now_ms` /
+// `plat.elapsed_ns` / `plat.random_i32`, which are now_unix_ms /
+// monotonic_ns / random_i32) — the standalone CLI capabilities the
+// wasi:http/proxy world `wasmtime serve` grants (wasi:clocks +
+// wasi:random). ComposeHttpHandler lowers them via the
 // shared MemTramp / Structured path, so a handler that stamps a
 // timestamp composes adapter-free and serves. (env() / files are NOT
 // granted by the proxy world, so they still route to -wasi-adapter —
@@ -2036,11 +2041,12 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 	srcPath := filepath.Join(dir, "clock.fern")
 	src := `
 import "std/http";
+import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    var t: i64 = now_ns();
-    var m: i64 = monotonic_ns();
-    var r: i32 = random_i32();
+    var t: i64 = plat.now_ms();
+    var m: i64 = plat.elapsed_ns();
+    var r: i32 = plat.random_i32();
     if (t > 0) { return http.http_response_ok("clock-ok"); }
     return http.http_response_ok("no-clock");
 }
@@ -2098,17 +2104,20 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatalf("status=%d body=%q; want 200 \"clock-ok\" (stderr=%q)", resp.StatusCode, string(body), serr.String())
 	}
 
-	// env() is not granted by the wasi:http/proxy world `wasmtime serve`
+	// env is not granted by the wasi:http/proxy world `wasmtime serve`
 	// runs — the world has no `wasi:cli/environment` import, and a
-	// component carrying one fails to link at instantiation. So an
-	// env-using handler must be rejected, and it is rejected by the
-	// target capability gate at check time (E066, naming the source line)
-	// rather than by the composer after codegen.
+	// component carrying one fails to link at instantiation. So a handler
+	// reading the environment, through its bag (a bare `env()` is E080
+	// before any target is consulted), must be rejected, and it is
+	// rejected by the target capability gate at check time (E066, naming
+	// the builtin the bag method reaches) rather than by the composer
+	// after codegen.
 	envSrc := `
 import "std/http";
+import "std/platform";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    match (env("X")) { Some(_) => {}, None => {} }
+    match (plat.env("X")) { Some(_) => {}, None => {} }
     return http.http_response_ok("e");
 }
 `

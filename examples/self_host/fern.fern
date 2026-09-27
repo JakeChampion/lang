@@ -178,6 +178,7 @@ import "./literate";
 import "./ferndoc";
 import "./mvs";
 import "./treeshake";
+import "./ambient";
 import "./arm64_native";
 import "./x86_native";
 import "./elf";
@@ -574,6 +575,27 @@ function capability_violations(merged: parser.Module, target: string): boolean {
     // the flat pre-pass fired on a builtin only unreachable code reaches. This
     // returned true unconditionally, rejecting such a program with exit 1 and
     // no diagnostic printed at all, where native accepts it.
+    return vs.len() > 0;
+}
+
+// ambient_violations reports every host effect a handler reaches around its
+// `Platform` bag (E080 — ambient.fern), printing one diagnostic per
+// violation, and returns true when the program must be rejected. Target-
+// independent, so it runs on every check and every build, on the bundle
+// before the shake: a handler is judged on what its body reaches.
+function ambient_violations(merged: parser.Module): boolean {
+    var vs: ambient.Violation[] = ambient.enforce(merged);
+    var i: i32 = 0;
+    while (i < vs.len()) {
+        var v: ambient.Violation = vs[i];
+        var msg: string = "error[E080]: " + ambient.violation_message(v);
+        if (v.fn_module.len() == 0 && v.line > 0) {
+            eprint(util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ": " + msg + "\n");
+        } else {
+            eprint(msg + "\n");
+        }
+        i = i + 1;
+    }
     return vs.len() > 0;
 }
 
@@ -1428,6 +1450,7 @@ function check_bundle(b: Bundle, target: string, target_given: boolean): i32 {
     // what a dependency may reach is a property of the manifests, not of
     // what the program is being built for.
     if (package_violations(merged, pkgs)) { caps_violated = true; }
+    if (ambient_violations(merged)) { caps_violated = true; }
     if (mt.all_well_typed) {
         if (caps_violated) { return 1; }
         return 0;
@@ -2245,6 +2268,7 @@ function run(): i32 {
         // past its grant is refused before the program runs, not after it has
         // already opened the socket.
         if (package_violations(merged, pkgs)) { return 1; }
+        if (ambient_violations(merged)) { return 1; }
         // Evaluate via the tree-walking interpreter; the program's
         // result becomes the process exit code (VInt → its value,
         // VBool → 1/0), matching interp_run.fern. A non-i32/bool
@@ -2306,6 +2330,10 @@ function run(): i32 {
     // system, gating what a DEPENDENCY may reach rather than what the target
     // provides. Without it the self-host builds a program native refuses.
     if (package_violations(merged, pkgs)) { return 1; }
+
+    // The bag boundary (E080 — ambient.fern): a handler reaching a host
+    // effect around its `Platform`, on either compiler.
+    if (ambient_violations(merged)) { return 1; }
 
     // Constant-fold the program before codegen, on EVERY build. Native gates
     // no constant folding behind `-O` either — `internal/constfold` runs on

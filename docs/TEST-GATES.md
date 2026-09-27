@@ -92,6 +92,24 @@ the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
 the persistent reactor has its own gates below.
 
+### The bag boundary (E080)
+
+`internal/ambient` refuses a function handed a `Platform` that reaches a host
+effect around it, over the call graph `internal/effects` builds. Its unit
+tests pin the rule's shape: an effect through a helper is the handler's, a
+function value named in the body is followed, a call through a value the walk
+cannot name charges nothing, the bag's own methods are the route and not
+handlers, and the bag is found by type in any position.
+`TestCheckRefusesAmbientEffectInHandler` / `TestCheckAllowsEffectsThroughTheBag`
+in `cmd/fern` pin that a bare `-check` runs it (it is target-independent) and
+what the message carries: the chain and the bag method to call.
+`TestSelfHostAmbientEffectDifferentialX86_64` runs both compilers over the same
+programs and wants the same verdict, site, handler, builtin and capability from
+each; the chain is not compared, since the two walks order callees differently.
+What nothing gates: a lambda that takes a `Platform` is not a handler on either
+compiler, and the self-host resolves a method call by name alone, so a
+same-named method on another type is followed there and not by native.
+
 ## std/net addresses and errors
 
 `TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
