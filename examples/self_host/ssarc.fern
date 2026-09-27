@@ -2348,7 +2348,8 @@ function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // only while each supply naming it MOVES it into one of three places: the
 // receiver of an append, a link phi, or the return, which takes the unit that
 // is owed. A read that takes no unit is fine, since the box is live either
-// way. A drop, a hand-off, a retain or a steal is not, and neither is a
+// way. A loop's link reaches its phi by move only because `ssalive` counts a
+// phi's inputs on the incoming edge rather than as uses in its block. A drop, a hand-off, a retain or a steal is not, and neither is a
 // parameter the frame reads anywhere else: it is removed, and whatever
 // depended on it goes with it on the next round.
 function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
@@ -2363,7 +2364,7 @@ function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
         }
         bi = bi + 1;
     }
-    var roots: boolean[] = link_roots(f, p, idx);
+    var roots: boolean[] = link_roots(f, p);
     var changed: boolean = true;
     while (changed) {
         changed = false;
@@ -2388,34 +2389,17 @@ function is_array_type(t: typeinfo.Type): boolean {
     return false;
 }
 
-// The parameters a link may be owed on: borrowed arrays whose every use is
-// an append that defers its retain onto them or an input to a phi, so the
-// frame never reads one after its box may have grown.
-function link_roots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): boolean[] {
+// The parameters a link may be owed on: borrowed arrays the frame is done
+// with wherever a link of theirs may grow the box. A deferred append already
+// requires the parameter dead after it (`deferred_retain`), and a phi edge
+// requires it dead in the loop it enters (`Plan.entry_kept`), so any read of
+// it, a return of it included, happens before the box can grow.
+function link_roots(f: ssasem.Func, p: ssaunits.Plan): boolean[] {
     var ok: boolean[] = [];
     var v: i32 = 0;
     while (v < f.graph.nparams) {
-        ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]));
+        ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]) && !p.entry_kept[v]);
         v = v + 1;
-    }
-    for b in f.graph.blocks {
-        var pos: i32 = 0;
-        for ins in b.insts {
-            var i: i32 = 0;
-            for a in ins.args {
-                if (a >= 0 && a < f.graph.nparams && ok[a]) {
-                    var fits: boolean = ins.kind_tag == 8;
-                    if (ins.kind_tag == ssasem.append() && i == 0 && p.grows[ins.result] < 0) {
-                        fits = deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins);
-                    }
-                    if (!fits) { ok = ok.with(a, false); }
-                }
-                i = i + 1;
-            }
-            pos = pos + 1;
-        }
-        if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < f.graph.nparams) { ok = ok.with(b.term.value, false); }
-        if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < f.graph.nparams) { ok = ok.with(b.term.cond, false); }
     }
     return ok;
 }
@@ -2426,11 +2410,15 @@ function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[],
     var top: i32 = 0 - 2;
     var out: i32[] = state;
     for b in f.graph.blocks {
+        var pos: i32 = 0 - 1;
         for ins in b.insts {
+            pos = pos + 1;
             if (state[ins.result] == 0 - 1) { continue; }
             var root: i32 = top;
             if (ins.kind_tag == ssasem.append()) {
                 root = input_root(f, state, roots, ins.args[0]);
+                // Straight onto the parameter, the push must be the deferred one.
+                if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins)) { root = 0 - 1; }
             } else {
                 for a in ins.args {
                     var r0: i32 = input_root(f, state, roots, a);
@@ -3143,6 +3131,12 @@ function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: false, r: r };
 }
 
+function no_op_release(own r: irlower.LowerResult, operands: i32): irlower.LowerResult {
+    var i: i32 = 0;
+    while (i < operands) { r = emit(r, ir.op_drop()); i = i + 1; }
+    return emit(r, ir.op_const_i32(0));
+}
+
 // __fern_box_free(data, size): the raw free of the rc'd block that starts 8
 // bytes before `data` and is `size + 8` long, as irlower lowers it.
 function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
@@ -3166,6 +3160,14 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
     if (ins.str == "__fern_box_free") { return Lowered { found: true, r: box_free(r, ins) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
+    if (ins.str == "__map_hash_seed") { return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) }; }
+    // core/map's string and array-value releases stay no-ops, as irlower
+    // lowers them: the lent operands are dropped, nothing is released, and the
+    // dummy 0 a void call leaves is pushed.
+    if (ins.str == "__fern_str_dec") { return Lowered { found: true, r: no_op_release(r, 1) }; }
+    if (ins.str == "__fern_drop_arr_ptr" || ins.str == "__fern_arr_dec") {
+        return Lowered { found: true, r: no_op_release(r, 2) };
+    }
     if (ins.str == "__heap_bump_bytes") { return Lowered { found: true, r: emit(r, ir.op_heap_bump_bytes()) }; }
     if (ins.str == "__heap_alloc_count") { return Lowered { found: true, r: emit(r, ir.op_heap_alloc_count()) }; }
     if (ins.str == "__heap_mark") { return Lowered { found: true, r: emit(r, ir.op_heap_mark()) }; }

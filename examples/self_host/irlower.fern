@@ -280,6 +280,11 @@ pub struct LocalInfo {
     // a binding therefore takes NO transfer retain; retaining it leaves a second
     // claim with nothing to release it (#8070).
     moved_claim: boolean,
+    // own_handback: a flagged borrowed binding that took over a threaded `own`
+    // array parameter (bind_own_handback). A clear flag means it still holds
+    // the unit the caller passed, which a return hands back uncounted, as
+    // `return p` does.
+    own_handback: boolean,
     // var_bound / var_counted: bound by a `var` statement (not an own-lift,
     // whose bind buys the transfer claim), and whether the bound value is one
     // this frame provably holds a counted reference to. An `own` position
@@ -290,7 +295,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -842,9 +847,9 @@ pub struct LowerFrame {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
-    // map_clone_sites: the site keys (target@line:col) of the map self-reassigns
-    // `m = m.insert(k, v)` at which an alias of m may be live, so the store
-    // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
+    // map_clone_sites: the site keys of the map mutations (`m = m.insert(k, v)`,
+    // `m.without(k)`) at which an alias of m may be live, so the mutation
+    // clones instead of writing in place (map_clone_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
     // param that is neither `own` nor inferred-moved (a mutated capture's
@@ -959,6 +964,10 @@ pub struct LowerFrame {
     // passed directly, at the BIND rather than the argument — the field can be
     // released between the two.
     own_lift_sites: string[],
+    // own_handback_sites: the "line:col" keys of the top-level `var`s that
+    // take over a threaded `own` array parameter at its last use
+    // (own_handback_sites_of, bind_own_handback).
+    own_handback_sites: string[],
 }
 
 pub struct LowerState {
@@ -1340,14 +1349,30 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
 }
 
 // mark_enum_field_alias records that local `name` was bound from a DIRECT enum
-// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
-// alias of the source struct's enum box (#6121). Storing it into a container
-// then needs the same Perceus dup the direct read gets, because
-// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
-// reclaimed. Appended rather than pre-scanned: the bind always precedes the
-// store, and enum_field_read_type needs the slot types the scan does not have.
+// struct field read (`var tmp: N = first.node`), which shares the source
+// struct's enum box (#6121). Storing it into a container makes the container
+// one more owner, so the store takes the same Perceus dup the direct read gets.
+// Appended rather than pre-scanned: the bind always precedes the store, and
+// enum_field_read_type needs the slot types the scan does not have.
 pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
+}
+
+// credit_enum_field_alias grants the counted alias bound at `site`, which
+// collect_enum_field_alias_sites admitted, the release the source struct gives
+// the same box. The alias is never a sole owner, so both are rc-gated: the
+// __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the struct's
+// field release deep-drops (enum_arr_elems_walk_ok), else the box-only dec of
+// "SCENUMS:", because any other payload may have reached the box uncounted.
+// Whichever owner releases last does the payload work, in either order.
+function credit_enum_field_alias(s: LowerState, site: string, ety: string): LowerState {
+    var rn: string[] = s.frame.reclaimable_names;
+    if (enum_arr_elems_walk_ok(s.frame.structs, ety)) {
+        rn = rn.append("RCENUM:" + site).append("RCENUMS:" + site);
+    } else {
+        rn = rn.append("SCENUMS:" + site);
+    }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: rn } };
 }
 
 // is_enum_field_alias reports whether `name` carries the mark above. Rebinding
@@ -1524,7 +1549,7 @@ function borrowed_arr_param_slot(e: ast.Expr, s: LowerState): i32 {
         if (s.is_own_param(nm)) { return 0 - 1; }
         return sl;
     }
-    if (s.is_borrowed_arr_slot(sl)) { return sl; }
+    if (s.is_borrowed_arr_slot(sl) && !s.locals[sl].own_handback) { return sl; }
     return 0 - 1;
 }
 
@@ -1577,6 +1602,59 @@ pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
     if (slot < 0 || slot >= s.locals.len()) { return 0 - 1; }
     if (slot >= s.frame.n_params) { return s.locals[slot].arr_own_flag; }
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
+}
+
+// threaded_own_array_param: slot `slot` is an `own` array parameter whose unit
+// this frame does not consume. A pointer-element `own` array has no
+// element-unit protocol in this lowering, so the caller keeps the release of
+// the buffer it passed: a result that differs from it is released by the
+// caller's rebind, and an identical one is handed back uncounted. Such a
+// parameter is threaded like a reassigned borrowed one (ownflag_name): the
+// frame releases only the replacements it minted.
+function threaded_own_array_param(s: LowerState, slot: i32): boolean {
+    if (slot < 0 || slot >= s.frame.n_params || !s.is_arr_slot(slot)) { return false; }
+    if (!s.is_own_param(s.locals[slot].slot_name) || owned_scalar_array_slot(s, slot)) { return false; }
+    if (util.index_of_str(s.frame.sigs.own_positions, s.frame.cur_fn + "|" + util.i32_to_string(slot)) < 0) { return false; }
+    return !s.callee_consumes_own_array(s.frame.cur_fn, slot);
+}
+
+// is_own_handback_site: `v` is one of own_handback_sites_of's binds.
+pub function (s: LowerState) is_own_handback_site(v: ast.StmtVar): boolean {
+    return util.index_of_str(s.frame.own_handback_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0;
+}
+
+// bind_own_handback: `slot` was just bound at an own_handback_sites_of site from
+// `src`, a threaded `own` array parameter or a local that took one over. The
+// frame holds no count of src's unit, so the binding is a borrow carrying
+// src's ownership flag: while it still holds src's buffer the flag is src's,
+// and once it holds another the flag is set and a buffer src owned is
+// released, as a rebind of src would. src's flag is cleared. A return with the
+// flag clear hands the unit back uncounted (own_handback).
+function bind_own_handback(s: LowerState, slot: i32, src: i32): LowerState {
+    var st: LowerState = s.mark_borrowed_arr(slot, true);
+    var flag: i32 = st.locals.len();
+    st = st.add_local("$ownhb" + util.i32_to_string(slot));
+    st = LowerState { ...st, locals: st.locals.with(slot, LocalInfo { ...st.locals[slot], arr_own_flag: flag, own_handback: true }) };
+    var src_flag: i32 = st.ownflag_slot_of(src);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(src));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    if (src_flag >= 0) {
+        st = st.emit(ir.op_load_local(src_flag));
+        st = st.emit(ir.op_if(0));
+        st = st.release(src, "__fern_rc_dec", "own-handback-superseded");
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_else());
+    if (src_flag >= 0) { st = st.emit(ir.op_load_local(src_flag)); } else { st = st.emit(ir.op_const_i32(0)); }
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_end());
+    if (src_flag < 0) { return st; }
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(src_flag));
 }
 
 // mark_scalar_array_elems stamps a slot with the element representation its
@@ -14550,15 +14628,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         }
         return mgo;
     }
-    if (fa.field == "without" && c.args.len() == 1) {
-        // Functional delete: `m.without(k)` -> the map with k
-        // removed (reuses __fern_map_delete, like the AST path).
-        var mdel: LowerState = lower_expr(fa.obj, s);
-        if (!mdel.ok) { return mdel; }
-        mdel = lower_expr(c.args[0], mdel);
-        if (!mdel.ok) { return mdel; }
-        return mdel.emit(ir.op_map_delete(mkk2, meqfn, false, 0));
-    }
+    if (fa.field == "without" && c.args.len() == 1) { return lower_map_without(c, fa.obj, mtype, mkk2, meqfn, s); }
     if (fa.field == "cleared" && c.args.len() == 0) {
         // Functional clear: `m.cleared()` -> a fresh empty map
         // of the same key kind. Construction, not a clear op:
@@ -20838,7 +20908,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
             && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
             var rbl: LowerState = lower_expr(r.value, s);
             if (!rbl.ok) { return rbl; }
-            if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
+            if ((!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) && !s.locals[rps].own_handback) {
                 var rbf: i32 = rbl.ownflag_slot_of(rps);
                 if (rbf >= 0) {
                     rbl = rbl.emit(ir.op_load_local(rbf));
@@ -22146,15 +22216,19 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
     // drops), else the payload leaks each iteration — the consuming-match reclaim is
     // top-level-only, so it never covers a loop-local (#4357).
+    // An enum-field alias carries alias_inc: its dup lands before the gated drop,
+    // so an old box equal to the new one only loses the alias's previous count.
     if (slot_is_reclaimable_rcenum(sb, slot)) {
+        if (vt.alias_inc) { sb = sb.retain_tos("enum-field-alias"); }
         return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
     }
-    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`):
-    // the re-declaration must release the box it supersedes. A shallow dec is the
-    // whole release — every payload is a scalar — so emit_arr_store's cow-guarded
-    // do_dec branch is exactly right, the same one a scalar-tuple rebind takes.
+    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`), or
+    // an enum-field alias taking the box-only release: the re-declaration must
+    // release the box it supersedes, with a shallow dec. Fresh, that is
+    // emit_arr_store's cow-guarded do_dec branch, the one a scalar-tuple rebind
+    // takes; an alias's alias_inc makes the dec unconditional.
     if (slot_is_reclaimable_scenum(sb, slot)) {
-        return emit_arr_store(sb, slot, false, true);
+        return emit_arr_store(sb, slot, vt.alias_inc, true);
     }
     match (v.init) {
         ast.ExprTuple(dtl) => {
@@ -22742,10 +22816,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
-    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
-    // the source struct's enum box (#6121). No dup here — an alias that never
-    // escapes must not outlive the struct — only the mark, so a later container
-    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    // `var tmp: N = first.node` (node: N, N an enum) shares the source struct's
+    // enum box. The bind's dup and release are the VarTypes classification's
+    // (#10310); the mark makes a later container store of `tmp` retain exactly as
+    // the direct `[first.node]` read does (#6121).
     if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
@@ -23256,6 +23330,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // buffer. Mark the new slot's array-ness either way.
     var is_arr: boolean = false;
     var alias_inc: boolean = false;
+    var own_alias_src: i32 = 0 - 1;
     match (v.init) {
         ast.ExprArray(_) => { is_arr = true; },
         ast.ExprIdent(id) => {
@@ -23294,7 +23369,8 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // pair native cancels at this site. moves_local_at keys on the
                 // Var's own position, which is what move_sites_toplevel_of
                 // records and the rcplan moveSites diff pins against native.
-                if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
+                if (se.is_own_handback_site(v)) { own_alias_src = aid_slot; }
+                else if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
                 // Dead-alias cancellation (#4402 opt 1): a proven borrowed
                 // VIEW skips the retain; bind_var_slot elides the alias
                 // slot's sweep dec under the same predicate, and the
@@ -23477,6 +23553,15 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // requires (it reads is_arr_slot), and the alias-inc block below
             // retains the buffer so the slot's exit-sweep dec balances (#7208).
             if (nested_arr_field_read_type(v.init, se) != "") { is_arr = true; }
+            // A DIRECT enum field read the frame can release is a counted alias
+            // (#10310): the source struct releases its own count, so the alias
+            // needs one too. The dup and the credit land together or not at all.
+            var efty: string = enum_field_read_type(v.init, se);
+            var efsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+            if (efty != "" && reclaim_has(se.frame.reclaimable_names, "EALIAS:", efsite)) {
+                alias_inc = true;
+                se = credit_enum_field_alias(se, efsite, efty);
+            }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
             // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
@@ -24115,7 +24200,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         struct_ty: struct_ty,
         opt_ty: opt_ty,
     };
-    return bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0 && se.is_own_handback_site(v)) { own_alias_src = se.slot_of(own_handback_source(v.init, se)); }
+    var bound: LowerState = bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0 || !bound.ok) { return bound; }
+    return bind_own_handback(bound, bound.slot_of(v.name), own_alias_src);
 }
 
 // The tuple/struct destructuring bind: `var (a, b) = …`, reached when the
@@ -27137,10 +27225,6 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
 function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, val: ast.Expr, maptype: string, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var mc: string = "$mc" + util.i32_to_string(n);
-    var mck: string = "$mck" + util.i32_to_string(n);
-    var mcv: string = "$mcv" + util.i32_to_string(n);
-    var mci: string = "$mci" + util.i32_to_string(n);
-    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     // The receiver's box before the rebind: released at the end against the
     // holders of m's alias group (#7235) when the group owns its releases.
     var mslot: i32 = s.slot_of(target);
@@ -27153,6 +27237,49 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
         st = st.emit(ir.op_load_local(mslot));
         st = st.emit(ir.op_store_local(moldslot));
     }
+    st = lower_map_clone(mc, recv, maptype, st);
+    if (!st.ok) { return st; }
+    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
+    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
+    var mcref: ast.Expr = ast.ExprIdent { name: mc, line: 0, col: 0, ty: "" };
+    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
+    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    if (!st.ok || moldslot < 0) { return st; }
+    var msite: string = st.reclaim_site_key(mslot);
+    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+}
+
+// lower_map_without lowers the functional delete `recv.without(key)`, the map
+// with key removed and whether it was there. A receiver an alias still reads
+// (map_clone_sites, #9835) is cloned first, so the alias keeps the box it holds
+// whole; the removed entry is not released, since the clone shares its column
+// elements with that box.
+function lower_map_without(c: ast.ExprCall, recv: ast.Expr, maptype: string, keykind: i32, eqfn: string, s: LowerState): LowerState {
+    var st: LowerState = s;
+    if (util.index_of_str(s.frame.map_clone_sites, reclaim_site_key_of(ident_name_or_empty(recv), c.line, c.col)) >= 0) {
+        var mc: string = "$mc" + util.i32_to_string(s.locals.len());
+        st = lower_map_clone(mc, recv, maptype, s);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_load_local(st.slot_of(mc)));
+    } else {
+        st = lower_expr(recv, s);
+        if (!st.ok) { return st; }
+    }
+    st = lower_expr(c.args[0], st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_map_delete(keykind, eqfn, false, 0));
+}
+
+// lower_map_clone binds a fresh local `mc` of type `maptype` to a copy of the
+// map `recv`: a `map_new` and one insert per entry over snapshots of its
+// columns. The clone shares the column elements with `recv`, uncounted.
+function lower_map_clone(mc: string, recv: ast.Expr, maptype: string, s: LowerState): LowerState {
+    var n: i32 = s.locals.len();
+    var mck: string = "$mck" + util.i32_to_string(n);
+    var mcv: string = "$mcv" + util.i32_to_string(n);
+    var mci: string = "$mci" + util.i32_to_string(n);
+    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    var st: LowerState = s;
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
     st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
@@ -27174,15 +27301,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     var insargs: ast.Expr[] = [ast.ExprIndex { array: mckref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }, ast.ExprIndex { array: mcvref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }];
     var insexpr: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_args: [], ty: "" };
     var loopbody: ast.Stmt[] = [ast.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
-    st = lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
-    if (!st.ok) { return st; }
-    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
-    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
-    if (!st.ok || moldslot < 0) { return st; }
-    var msite: string = st.reclaim_site_key(mslot);
-    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+    return lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
@@ -29583,16 +29702,18 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
 // struct slot whose only rc-tracked fields are DIRECT enum fields (struct_enum_deep_
 // reinit_eligible: scalar + droppable-enum fields only) and DEEP-drops the OLD box:
 // for each enum field it extracts the field's enum box into a scratch local and runs
-// emit_enum_variant_drops on it (runtime variant dispatch → drop the variant's rc
-// payload, then free the enum box), THEN __fern_rc_dec frees the struct box itself.
+// emit_enum_variant_drops_gated on it (runtime variant dispatch → drop the variant's
+// rc payload, then dec the enum box), THEN __fern_rc_dec frees the struct box itself.
 // Unlike the array-only __field_reclaim path (emit_field_reclaim_store), this reclaims
 // the enum field's VARIANT PAYLOAD — the leak the shallow k_enum exit-drop leaves.
 //
 // SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
 // fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
-// enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
-// inc). A non-fresh (aliased) enum field is rejected at the gate and takes the leak-
-// safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
+// enum box + its payload starts out owned by the struct box alone (rc=1, no
+// construction alias-inc). A counted enum-field alias (`var g = h.e`, #10310) can
+// share the box afterwards, so the payload walk is __fern_rc_is_unique-gated. A
+// non-fresh (aliased) enum field is rejected at the gate and takes the leak-safe
+// shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
 // the fresh literal makes old != new implicit, so no separate cow guard is needed.
 // The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
 // fault on a null box) — a fresh literal always sets it, but the guard is defensive.
@@ -29622,7 +29743,7 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_bin("ne", 0, false));                                    // enum box != 0
             st = st.emit(ir.op_if(0));
-            st = emit_enum_variant_drops(st, etmp, ft);                                 // deep-drop payload + free enum box (zeroes etmp)
+            st = emit_enum_variant_drops_gated(st, etmp, ft, [], true);                 // deep-drop payload if unique, dec enum box (zeroes etmp)
             st = st.emit(ir.op_end());
         }
         fi = fi + 1;
@@ -33035,12 +33156,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rej = rej + 1;
     }
-    // Sweepable ALL-SCALAR enum locals ("SCENUMS:"): the final value's box, freed
-    // with the same shallow dec the rebind uses. emit_scalar_enum_box_free zeroes
+    // Sweepable ALL-SCALAR enum locals and box-only enum-field aliases
+    // ("SCENUMS:"): the final value's box, released with the shallow dec the
+    // rebind uses. emit_scalar_enum_box_free zeroes
     // the slot afterwards, so a second sweep on another return edge is a no-op.
+    // moved_elided is excluded for the rc-enum loop's reason above.
     var sej: i32 = st.frame.n_params;
     while (sej < st.locals.len()) {
-        if (!slot_list_has(keeps, sej) && slot_is_reclaimable_scenum(st, sej)) {
+        if (!slot_list_has(keeps, sej) && !slot_list_has(st.frame.moved_elided, sej) && slot_is_reclaimable_scenum(st, sej)) {
             st = emit_scalar_enum_box_free(st, sej);
         }
         sej = sej + 1;
@@ -33251,6 +33374,8 @@ function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]):
 //   - `return <arr-local>.append(e)`                      — receiver moved;
 //   - an enum-variant construction `return V(a, …)`       — each bare array-local
 //     payload arg is moved into the (leaking) enum box (#3720);
+//   - a bare returned enum local ("SCENUMS:" / "RCENUMS:") — its count goes to
+//     the caller;
 //   - a struct literal whose enum-typed field is built from such a construction
 //     (`return S { node: Many(items), … }`) — the array under the enum payload;
 //   - a returned pointer-shaped field of a reclaimable struct local
@@ -33272,6 +33397,9 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // otherwise the box just handed to the caller is double-freed. The
             // sweep's struct loop skips slots in this keeps list.
             if (slot_is_reclaimable_struct(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // Enum move-on-return: a returned "SCENUMS:" / "RCENUMS:" local hands
+            // its count to the caller, so its exit sweep must not release it.
+            if ((slot_is_reclaimable_scenum(s, sl) || slot_is_reclaimable_rcenum_sweep(s, sl)) && !slot_list_has(out, sl)) { out = out.append(sl); }
             // String move-on-return (#2649): a returned reclaimable-string LOCAL
             // (an accumulator whose intermediates were freed by the consume-rebind)
             // is MOVED OUT to the caller — keep it from the exit string sweep so the
@@ -34719,25 +34847,75 @@ function aliased_array_names_of(body: ast.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
-// --- map alias liveness at a self-reassign (#7235) ---------------------------
+// --- map alias liveness at a mutation (#7235) --------------------------------
 //
-// map_clone_insert_sites_of returns the site keys (target@line:col) of every map
-// self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)` at which an alias of
-// `m` may be LIVE, so the store must clone the map (lower_map_clone_insert)
-// rather than mutate the box the alias still reads. An alias is live at the
-// insert when it is created earlier in lowering order, anywhere inside a loop
-// enclosing the insert (the back edge carries an alias bound textually AFTER the
-// insert into the next iteration's insert), or inside a defer. An insert with no
-// alias live at it mutates in place; a `var q = m` bound afterwards shares the
+// map_clone_sites_of returns the site keys of every map mutation at which an
+// alias of the receiver `m` may be LIVE, so the mutation must clone the map
+// rather than write the box the alias still reads: a self-reassign
+// `m = m.insert(k, v)` / `m = m.set(k, v)` keyed target@line:col of the
+// assignment (lower_map_clone_insert), and a `m.without(k)` call keyed
+// m@line:col of the call (lower_map_without, #9835). An alias is live at
+// the mutation when it is created earlier in lowering order, anywhere inside a
+// loop enclosing the mutation (the back edge carries an alias bound textually
+// AFTER it into the next iteration), or inside a defer. A mutation with no
+// alias live at it writes in place; a `var q = m` bound afterwards shares the
 // mutated box, which is what the alias reads on native too.
 //
-// Alias positions are alias_idents_in_value's: a bare-ident bind or assignment
-// value, or a container-literal element. An alias inside an `if` arm counts for
-// everything after the `if`, whichever way the branch went.
+// Alias positions are mcis_alias_names': both names of a bare-ident bind or
+// assignment, and a container-literal element. An alias inside an `if` arm
+// counts for everything after the `if`, whichever way the branch went.
 struct MapCloneScan { seen: string[], sites: string[] }
 
-function map_clone_insert_sites_of(body: ast.Stmt[]): string[] {
+function map_clone_sites_of(body: ast.Stmt[]): string[] {
     return mcis_stmts(body, no_names(), MapCloneScan { seen: [], sites: [] }).sites;
+}
+
+// mcis_alias_names adds the names a binding of `name` to `value` makes aliases:
+// alias_idents_in_value's, and `name` itself when `value` is a bare ident, since
+// a mutation through the new name writes the box the old one reads too.
+function mcis_alias_names(name: string, value: ast.Expr, seen: string[]): string[] {
+    var out: string[] = alias_idents_in_value(value, seen);
+    if (ident_name_or_empty(value).len() > 0) { out = push_str_unique(out, name); }
+    return out;
+}
+
+// mcis_loop_aliases is alias_names_in_stmts over a loop body with the binders
+// mcis_alias_names adds, so the back edge carries both names of an alias.
+function mcis_loop_aliases(body: ast.Stmt[], acc: string[]): string[] {
+    function visit(st: ast.Stmt, own a: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return mcis_alias_names(v.name, v.init, a); },
+            ast.StmtAssign(x) => { return mcis_alias_names(x.target, x.value, a); },
+            _ => { return a; }
+        }
+    }
+    var out: string[] = util.append_all(no_names(), acc);
+    for st in body { out = astwalk.fold_stmt_spine(st, out, visit); }
+    return out;
+}
+
+// mcis_without_sites adds the site of every `m.without(k)` in `e` whose
+// receiver has an alias: one in `sc.seen` or in `loop_aliases`.
+function mcis_without_sites(e: ast.Expr, loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    var seen: string[] = sc.seen;
+    function visit(x: ast.Expr, own acc: string[]): string[] {
+        match (x) {
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprFieldAccess(fa) => {
+                        var rn: string = ident_name_or_empty(fa.obj);
+                        if (fa.field == "without" && c.args.len() == 1 && rn.len() > 0 && (util.index_of_str(seen, rn) >= 0 || util.index_of_str(loop_aliases, rn) >= 0)) {
+                            return acc.append(reclaim_site_key_of(rn, c.line, c.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        return acc;
+    }
+    return MapCloneScan { ...sc, sites: util.append_all(sc.sites, astwalk.fold_expr(e, no_names(), visit)) };
 }
 
 function mcis_stmts(stmts: ast.Stmt[], loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
@@ -34754,17 +34932,25 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             if (assign_is_self_two_arg_method(a) && (util.index_of_str(sc.seen, a.target) >= 0 || util.index_of_str(loop_aliases, a.target) >= 0)) {
                 acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
             }
-            return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
+            acc = MapCloneScan { ...acc, seen: mcis_alias_names(a.target, a.value, acc.seen) };
+            return mcis_without_sites(a.value, loop_aliases, acc);
         },
-        ast.StmtVar(v) => { return MapCloneScan { ...sc, seen: alias_idents_in_value(v.init, sc.seen) }; },
+        ast.StmtVar(v) => {
+            var acc: MapCloneScan = MapCloneScan { ...sc, seen: mcis_alias_names(v.name, v.init, sc.seen) };
+            return mcis_without_sites(v.init, loop_aliases, acc);
+        },
         ast.StmtIf(iff) => {
-            var acc: MapCloneScan = mcis_stmts(iff.then_body, loop_aliases, sc);
+            var acc: MapCloneScan = mcis_without_sites(iff.cond, loop_aliases, sc);
+            acc = mcis_stmts(iff.then_body, loop_aliases, acc);
             return mcis_stmts(iff.else_body, loop_aliases, acc);
         },
-        ast.StmtWhile(w) => { return mcis_stmts(w.body, alias_names_in_stmts(w.body, loop_aliases), sc); },
-        ast.StmtFor(f) => { return mcis_stmts(f.body, alias_names_in_stmts(f.body, loop_aliases), sc); },
+        ast.StmtWhile(w) => {
+            var wal: string[] = mcis_loop_aliases(w.body, loop_aliases);
+            return mcis_stmts(w.body, wal, mcis_without_sites(w.cond, wal, sc));
+        },
+        ast.StmtFor(f) => { return mcis_stmts(f.body, mcis_loop_aliases(f.body, loop_aliases), mcis_without_sites(f.iter, loop_aliases, sc)); },
         ast.StmtMatch(m) => {
-            var acc: MapCloneScan = sc;
+            var acc: MapCloneScan = mcis_without_sites(m.scrutinee, loop_aliases, sc);
             var k: i32 = 0;
             while (k < m.arms.len()) { acc = mcis_stmts(m.arms[k].body, loop_aliases, acc); k = k + 1; }
             return acc;
@@ -34774,9 +34960,9 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             return mcis_stmt(d.action, loop_aliases, acc);
         },
         // Spelled out rather than wildcarded: a statement kind with a body this
-        // walk skipped would leave an insert inside it mutating in place.
-        ast.StmtReturn(_) => { return sc; },
-        ast.StmtExpr(_) => { return sc; },
+        // walk skipped would leave a mutation inside it writing in place.
+        ast.StmtReturn(r) => { return mcis_without_sites(r.value, loop_aliases, sc); },
+        ast.StmtExpr(x) => { return mcis_without_sites(x.value, loop_aliases, sc); },
         ast.StmtBreak(_) => { return sc; },
         ast.StmtContinue(_) => { return sc; },
         ast.StmtUnknown(_) => { return sc; },
@@ -36634,6 +36820,47 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], 
         }
     }
     return a;
+}
+
+// collect_enum_field_alias_sites tags "EALIAS:" the `var g = h.e` enum-field
+// aliases this frame may release (#10310): never reassigned, since the assign
+// path has no alias release, and not escaping by either the plan, which forgives
+// a counted sink, or the enum-field walk, which needs no type for `h` — the plan
+// taints an alias of a source it cannot type, such as a method receiver, though
+// the dup makes the alias an owner. Only a tagged alias is dup'd and credited;
+// any other stays the uncounted borrow it was.
+function collect_enum_field_alias_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (enum_field_alias_candidate(v.init, structs) && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                    var site: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
+                    if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
+                    if (esc_ok) { a = a.append("EALIAS:" + site); }
+                }
+            },
+            ast.StmtIf(iff) => { a = collect_enum_field_alias_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_enum_field_alias_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_enum_field_alias_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_enum_field_alias_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_enum_field_alias_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// enum_field_alias_candidate: `e` may be a struct field read (`h.e`) — the AST
+// cannot type it, so a qualified variant (`E.B`) and a tuple element are the
+// only field accesses it rules out.
+function enum_field_alias_candidate(e: ast.Expr, structs: StructTab): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { return !util.is_all_digits(fa.field) && variant_enum_owner(structs, fa.field) == ""; },
+        _ => { return false; }
+    }
 }
 
 function collect_fresh_rcenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
@@ -42771,6 +42998,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
+    out = collect_enum_field_alias_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -49118,6 +49346,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
+// or an enum-field alias taking the box-only release (credit_enum_field_alias),
 // credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
 // reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
 // block-scoped local on block exit, and a lookup that refuses those would miss
@@ -60851,7 +61080,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -60986,7 +61215,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: [], own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs), own_handback_sites: [] }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -60995,14 +61224,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         if (s.locals[cpi].is_cell) { s = s.mark_cell_elem(cpi, s.locals[cpi].cell_elem); }
         cpi = cpi + 1;
     }
+    var ohb: string[] = own_handback_sites_of(fn, s);
+    s = LowerState { ...s, frame: LowerFrame { ...s.frame, own_handback_sites: ohb, grow_alias: grow_alias_names_of(fn, ohb) } };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
-    // A declared `own` param is excluded — the caller moved its reference in.
+    // A declared `own` param is excluded unless it is threaded
+    // (threaded_own_array_param) — otherwise the caller moved its reference in.
     var ofl_own: string[] = own_param_names_of(fn);
     var ofl_i: i32 = 0;
     while (ofl_i < s.frame.n_params) {
         var ofl_nm: string = s.locals[ofl_i].slot_name;
-        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0 && util.index_of_str(ofl_own, ofl_nm) < 0) {
+        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0
+            && (util.index_of_str(ofl_own, ofl_nm) < 0 || threaded_own_array_param(s, ofl_i))) {
             s = s.add_local(ownflag_name(ofl_nm));
             s = s.emit(ir.op_const_i32(0));
             s = s.emit(ir.op_store_local(s.slot_of(ownflag_name(ofl_nm))));
@@ -69376,8 +69609,10 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
             // return-transfer retain), and the tuple's deep drop releases its
             // own claim, so the destination owns its reference. Map elements
             // stay tainted (their slot drop deep-frees the value column).
-            // The STRUCT-source half of native's arm is deliberately not
-            // ported — the conservative taint is the documented cut.
+            // Of the STRUCT-source half only a DIRECT enum field is ported: the
+            // enum-field alias bind dups it (#10310). Every other struct field
+            // read keeps the conservative taint.
+            if (decl_is_enum(structs, rc_fe_expr_type(e, types_n, types_t, structs))) { return false; }
             if (util.is_all_digits(fa.field)) {
                 match (fa.obj) {
                     ast.ExprIdent(_) => {
@@ -71724,7 +71959,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         pi = pi + 1;
     }
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [], own_handback_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -72321,12 +72556,11 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // targets, so this is a gap to close rather than a rule of the language.
 //
 // FLOAT keys are listed even though E045 refuses every written float-key
-// spelling in both checkers now (#10009), because a written spelling is not
-// the only way one arrives: the self-host runs no diagnostic pass over a
-// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
-// generic reaches here with no diagnostic behind it (#10018). Native
-// re-checks its instantiations and reports; until the self-host does, this
-// is the only thing standing between that program and the string column.
+// spelling in both checkers (#10009), and the self-host checker re-checks the
+// instantiations of generic free functions as native does (#10018). A driver
+// that lowers without running the checker still reaches here with no
+// diagnostic behind it, and an instantiation the checker cannot bind is not
+// re-checked, so this is what stands between those and the string column.
 //
 // The COMPOSITES have no hash or equality to dispatch: a tuple, an array or a
 // slice is not a struct, so there is nothing for @derive(Eq) + @derive(Hash)
@@ -77759,23 +77993,53 @@ pub function (s: LowerState) callee_consumes_own_array(name: string, idx: i32): 
 // own_consumed_positions_of closes `seeds` — "fn|idx" rows for the `own`
 // array positions of bodies the semantic lowering produced, which consume
 // their buffer — over the free functions this lowering emits: one that
-// passes its own `own` array parameter to a consuming position in a dying
-// shape (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
+// passes its own `own` array parameter, or a local that took it over at its
+// last use (`var a = p`, `var a = g(p)`), to a consuming position in a dying shape
+// (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
 // the buffer when it returns, so its callers must transfer theirs too. A
 // row only ever gains, so the rounds converge.
 pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]): string[] {
     var out: string[] = seeds;
     var changed: boolean = out.len() > 0;
+    // Per function, the `own` array params and the locals that take one over at
+    // its last use (own_handback_bind), each paired with the param it stands for.
+    var owned_of: string[][] = [];
+    var param_of: string[][] = [];
+    if (changed) {
+        var ownpos: string[] = own_positions_of(funcs);
+        for fn in funcs {
+            var owned: string[] = [];
+            var stands: string[] = [];
+            if (fn.receiver_name.len() == 0) {
+                for p in fn.params {
+                    if (p.own && is_array_type_name(p.type_name)) { owned = owned.append(p.name); stands = stands.append(p.name); }
+                }
+            }
+            var k: i32 = 0;
+            while (owned.len() > 0 && k < fn.body.len()) {
+                match (fn.body[k]) {
+                    ast.StmtVar(v) => {
+                        var oi: i32 = util.index_of_str(owned, own_handback_bind(v.init, ownpos));
+                        if (oi >= 0 && astwalk.count_ident_expr(v.init, owned[oi]) == 1 && !named_after(fn.body, k, owned[oi])) {
+                            owned = owned.append(v.name);
+                            stands = stands.append(stands[oi]);
+                        }
+                    },
+                    _ => {}
+                }
+                k = k + 1;
+            }
+            owned_of = owned_of.append(owned);
+            param_of = param_of.append(stands);
+        }
+    }
     while (changed) {
         changed = false;
+        var fi: i32 = 0;
         for fn in funcs {
-            if (fn.receiver_name.len() > 0) { continue; }
-            var owned: string[] = [];
-            var pi: i32 = 0;
-            while (pi < fn.params.len()) {
-                if (fn.params[pi].own && is_array_type_name(fn.params[pi].type_name)) { owned = owned.append(fn.params[pi].name); }
-                pi = pi + 1;
-            }
+            var owned: string[] = owned_of[fi];
+            var stands: string[] = param_of[fi];
+            fi = fi + 1;
             if (owned.len() == 0) { continue; }
             var sole: string[] = grow_sole_exempt_names_of(fn);
             var passes: string[] = [];
@@ -77790,6 +78054,8 @@ pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]
                 var slot: i32 = util.digits_to_i32(slice_unchecked(entry, b1 + 1, b2));
                 var pname: string = slice_unchecked(entry, b2 + 1, entry.len()) + "";
                 if (cname.len() == 0 || cname[0] == b'@' || slot < 1) { continue; }
+                var oi: i32 = util.index_of_str(owned, pname);
+                if (oi >= 0) { pname = stands[oi]; }
                 if (util.index_of_str(out, cname + "|" + util.i32_to_string(slot - 1)) < 0) { continue; }
                 var at: i32 = 0;
                 while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
@@ -77802,6 +78068,27 @@ pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]
         }
     }
     return out;
+}
+
+// own_handback_bind is the registry-only reading of own_handback_source: the
+// bare ident a `var` initialiser hands over whole, itself or at a direct
+// callee's `own` position ("fn|idx" rows of `ownpos`).
+function own_handback_bind(init: ast.Expr, ownpos: string[]): string {
+    match (init) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprCall(c) => {
+            var cname: string = direct_call_callee_name(init);
+            var i: i32 = 0;
+            while (cname.len() > 0 && i < c.args.len()) {
+                var an: string = ident_name_or_empty(c.args[i]);
+                if (an.len() > 0 && util.index_of_str(ownpos, cname + "|" + util.i32_to_string(i)) >= 0) { return an; }
+                i = i + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 // consume_sigs installs the consuming `own` array positions the produced
@@ -78151,7 +78438,11 @@ function grow_alias_filter(names: string[], alias: string[]): string[] {
 // — and the two co-indexed buffers of the module-wide registry then grew
 // INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
 // longer than `rows` and a bucket chain pointing past the end of `rows`.
-pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+//
+// `owned_binds` are the top-level `var` sites ("line:col") that take over a
+// threaded `own` parameter at its last use (bind_own_handback): the caller
+// handed that buffer over to be grown, so the binding is no alias.
+pub function grow_alias_names_of(fn: parser.FuncDecl, owned_binds: string[]): string[] {
     var srcs: string[] = [];
     if (fn.receiver_name.len() > 0) { srcs = srcs.append(fn.receiver_name); }
     for p in fn.params { srcs = srcs.append(p.name); }
@@ -78159,10 +78450,88 @@ pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
     var grew: boolean = true;
     while (grew) {
         var before: i32 = out.len();
-        out = grow_alias_scan(fn.body, srcs, out);
+        for st in fn.body {
+            if (util.index_of_str(owned_binds, var_site_key(st)) < 0) { out = grow_alias_scan_stmt(st, srcs, out); }
+        }
         grew = out.len() > before;
     }
     return out;
+}
+
+// var_site_key is the "line:col" of a `var` statement, "" for any other.
+function var_site_key(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtVar(v) => { return util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col); },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// own_handback_sites_of lists the top-level `var` sites of `fn` whose value
+// takes over a threaded `own` array parameter p, or a local that already took
+// one over, at its last use: `var a = p`, or `var a = g(…, p, …)` with p at an
+// `own` position g does not consume, which hands p back uncounted when it keeps
+// it. p is named once in the initialiser and nowhere after.
+function own_handback_sites_of(fn: parser.FuncDecl, s: LowerState): string[] {
+    var out: string[] = [];
+    var names: string[] = [];
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        match (fn.body[k]) {
+            ast.StmtVar(v) => {
+                var src: string = own_handback_source(v.init, s);
+                if (src.len() > 0 && (util.index_of_str(names, src) >= 0 || threaded_own_array_param(s, s.slot_of(src)))
+                    && astwalk.count_ident_expr(v.init, src) == 1
+                    && !named_after(fn.body, k, src)) {
+                    out = out.append(var_site_key(fn.body[k]));
+                    names = names.append(v.name);
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// named_after: `name` appears in a statement of `stmts` after index `k`, as an
+// assignment target or anywhere in an expression, lambda bodies included.
+function named_after(stmts: ast.Stmt[], k: i32, name: string): boolean {
+    function at(n: ast.Expr, own hit: boolean): boolean {
+        if (hit) { return true; }
+        if let ast.ExprIdent(id) = n { return id.name == name; }
+        return false;
+    }
+    var j: i32 = k + 1;
+    while (j < stmts.len()) {
+        if (astwalk.count_ident_stmts([stmts[j]], name) > 0 || astwalk.fold_stmt(stmts[j], false, at)) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// own_handback_source names the bare ident `init` hands over whole: the ident
+// itself, or a call argument at an `own` array position the callee does not
+// consume. "" for anything else.
+function own_handback_source(init: ast.Expr, s: LowerState): string {
+    match (init) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprCall(c) => {
+            var cname: string = direct_call_callee_name(init);
+            if (cname.len() == 0) { return ""; }
+            var fslot: i32 = s.slot_of(cname);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var an: string = ident_name_or_empty(c.args[i]);
+                if (an.len() > 0 && call_arg_pos_owns(s, cname, fslot, i)
+                    && (fslot >= 0 || !s.callee_consumes_own_array(cname, i))) { return an; }
+                i = i + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 function grow_alias_scan(stmts: ast.Stmt[], srcs: string[], acc: string[]): string[] {
@@ -80905,7 +81274,7 @@ function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState 
 function emit_own_borrowed_param_arg(id: ast.ExprIdent, scalar_array_move: boolean, s: LowerState): LowerState {
     var sl: i32 = s.slot_of(id.name);
     if (sl < 0) { return s; }
-    if (sl < s.frame.n_params && s.is_own_param(id.name)) { return s; }
+    if (sl < s.frame.n_params && s.is_own_param(id.name) && s.ownflag_slot_of(sl) < 0) { return s; }
     if (s.is_arr_slot(sl)) {
         if (sl >= s.frame.n_params && !s.is_borrowed_arr_slot(sl)) { return s; }
         if (!scalar_array_move) { return s; }
