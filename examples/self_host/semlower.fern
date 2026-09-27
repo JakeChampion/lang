@@ -654,7 +654,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (r.keep[i]) {
-            sigs = ssarc.caller_sigs(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes, r.plans[i]);
+            sigs = ssarc.caller_rows(sigs, mod.funcs[i].name, built.decls[i].func, built.decls[i].modes, r.plans[i]);
             seeds = seeds.append(call_key(mod.funcs[i]) + "|"
                 + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, mod.funcs[i].receiver_type.len() > 0));
             if (mod.funcs[i].receiver_type.len() == 0) {
@@ -684,6 +684,7 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
         }
         at = at + 1;
     }
+    sigs = ssarc.bare_indexed(sigs);
     if (seeds.len() > 0) { sigs = irlower.regrow_sigs(sigs, lowered, structs, seeds); }
     if (consumed.len() > 0) { sigs = irlower.consume_sigs(sigs, lowered, consumed); }
     util.arr_push_cliff_report("sem:substituted", 0);
@@ -773,7 +774,7 @@ function first_name(mod: parser.Module): string {
 // The module an emit path gates and emits, so a caller can produce the
 // substitution against the same normalisation and the same order. The x86-64
 // and arm64 paths spell it this way; the wasm one has its own
-// (wasm_ir.route_normalized), which its caller asks for instead.
+// (wasm_ir.route_normalized_typed), which its caller asks for instead.
 pub function gated_module(mod: parser.Module): parser.Module {
     return parser.infer_ret_types_module(ircore.script_normalized(mod));
 }

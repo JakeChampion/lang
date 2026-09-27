@@ -405,6 +405,7 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
 // lift_prod_mem reads as "not a construction".
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     if (k == "struct_make") { return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv); }
+    if (k == "arr_make" && op.i32_imm == 0) { return lift_empty_arr(lv); }
     if (k == "arr_make") { return lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv); }
     if (k == "tuple_make") { return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv); }
     if (k == "opt_make") { return lift_opt_make_prod(op.i32_imm, true, lv); }
@@ -526,6 +527,18 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
         i = i + 1;
     }
     return LiftVals { nvals: nvals, stack: stack.append(box), insts: insts, ok: true };
+}
+
+// An empty array literal is allocated with the capacity its first push would
+// grow it to, and its length stored as zero, so building an array from `[]`
+// costs one allocation rather than a throwaway empty box and then the real one.
+function lift_empty_arr(lv: LiftVals): LiftVals {
+    var box: i32 = lv.nvals;
+    var zero: i32 = box + 1;
+    var insts: ssa.SInst[] = lv.insts.append(ssa.SInst { kind_tag: 48, result: box, args: [], imm: 4, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: 41, result: zero + 1, args: [box, zero], imm: 0, str: "" });
+    return LiftVals { nvals: zero + 2, stack: lv.stack.append(box), insts: insts, ok: true };
 }
 
 // lift_opt_make_prod builds the two-word Option box [tag@0, payload@8] the

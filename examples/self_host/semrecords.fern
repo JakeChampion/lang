@@ -1,6 +1,7 @@
 // Resolved nominal instances, separate from syntax and physical layouts.
 import "./typeinfo";
 import "./semtypes";
+import "./util";
 
 pub struct Field { name: string, ty: typeinfo.Type }
 pub struct Record { ty: typeinfo.Type, fields: Field[] }
@@ -104,18 +105,38 @@ function instance_error(a: Record, b: Record): string {
     return "";
 }
 
+function record_name(r: Record): string {
+    if let typeinfo.TypeStruct(s) = r.ty { return s.name; }
+    return "";
+}
+
+// Only two instances of one struct can collide or disagree, so a record is
+// compared with the earlier records of its name alone: chained per hash bucket,
+// in ascending order, which is the order the pairwise scan reported in.
 function records_error(records: Record[], enums: Enum[]): string {
+    var nb: i32 = records.len() * 2 + 1;
+    var head: i32[] = [];
+    var tail: i32[] = [];
+    while (head.len() < nb) { head = head.append(0 - 1); tail = tail.append(0 - 1); }
+    var next: i32[] = [];
     var i: i32 = 0;
     while (i < records.len()) {
         var record: Record = records[i];
         if (!semtypes.concrete(record.ty, false)) { return "unresolved record identity"; }
         if let typeinfo.TypeStruct(_) = record.ty {} else { return "non-nominal record identity"; }
-        var j: i32 = 0;
-        while (j < i) {
-            var why: string = instance_error(record, records[j]);
-            if (why != "") { return why; }
-            j = j + 1;
+        var name: string = record_name(record);
+        var b: i32 = util.hash_bucket(name, nb);
+        var j: i32 = head[b];
+        while (j >= 0) {
+            if (record_name(records[j]) == name) {
+                var clash: string = instance_error(record, records[j]);
+                if (clash != "") { return clash; }
+            }
+            j = next[j];
         }
+        next = next.append(0 - 1);
+        if (tail[b] < 0) { head = head.with(b, i); } else { next = next.with(tail[b], i); }
+        tail = tail.with(b, i);
         var why: string = fields_error(record.fields, records, enums);
         if (why != "") { return why; }
         i = i + 1;

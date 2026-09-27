@@ -32,6 +32,9 @@ var recursiveLocalCases = []struct {
 	{"capture-one", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 13},
 	{"capture-two", "function main(): i32 { var acc: i32 = 0; var step: i32 = 2; function go(n: i32): i32 { if (n <= 0) { return acc; } return step + go(n - 1); } return go(4); }", 8},
 	{"capture-2calls", "function main(): i32 { var base: i32 = 100; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(2) + f(3); }", 205},
+	// An arrow lambda naming its `var` reads the enclosing binding of that
+	// name, so it is not a recursive local and must not be lifted (#10383).
+	{"arrow-reads-outer", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; if (true) { var f = (x: i32): i32 => { return f(x) * 2; }; return f(3); } return 0; }", 8},
 	{"capture-inferred", "function main(): i32 { var base = 7; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 10},
 }
 
