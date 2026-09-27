@@ -2689,7 +2689,7 @@ function main(): i32 {
 			src     string
 			mustSay []string
 		}{
-			{"syscall-floor", "function main(): i32 { var r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "not supported on the wasm target"}},
+			{"syscall-floor", "function main(): i32 { var r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
 			{"raw-memory-floor", "function main(): i32 { var p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "not supported on the wasm target"}},
 			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", []string{"timer_fd", "E066", "pollfd"}},
 		} {

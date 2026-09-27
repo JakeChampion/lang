@@ -1575,7 +1575,7 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 		lc.Control = func(_, _ string, c syscall.RawConn) error {
 			var serr error
 			if err := c.Control(func(fd uintptr) {
-				serr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, soReusePort, 1)
+				serr = syscall.SetsockoptInt(int(fd), solSocket, soReusePort, 1)
 			}); err != nil {
 				return err
 			}
