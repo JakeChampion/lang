@@ -1047,9 +1047,8 @@ function main(): i32 {
     if (ssaunits.plan(fnMapFunc, [3]).why != "function value is not an element") { return 147; }
     // A map over 32-bit integer or boolean columns runs on core/map
     // (ssarc.routed_map): it is admitted, and dropped whole through
-    // __map_drop_impl. An integer key column beside a string value column
-    // stays on the runtime, freed through the _vs member of the free family;
-    // its ops carry key kind 1 and hand no key unit over.
+    // __map_drop_impl. A string value column runs there too, and its drop
+    // releases the column's strings through __map_drop_strcols_impl.
     var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
     var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
     if (!ssaunits.plan(intMapFunc, [3]).ok) { eprint(ssaunits.plan(intMapFunc, [3]).why); return 143; }
@@ -1068,7 +1067,7 @@ function main(): i32 {
     var dropIntStrLowered = ssarc.lower(dropIntStr, [3], ssaunits.plan(dropIntStr, [3]), irlower.struct_tab_empty(), []);
     if (!dropIntStrLowered.ok) { eprint(dropIntStrLowered.why); return 172; }
     var sawIntStrFree: boolean = false;
-    for o in dropIntStrLowered.ops { if (o.str == "__fern_map_free_vs") { sawIntStrFree = true; } }
+    for o in dropIntStrLowered.ops { if (o.str == "__map_drop_strcols_impl") { sawIntStrFree = true; } }
     if (!sawIntStrFree) { return 173; }
     // The free of a column of boxes takes the value's release as a second
     // argument, a function value the lowering also emits as a helper; an
