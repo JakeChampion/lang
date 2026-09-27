@@ -337,7 +337,12 @@
 # the checker's function-typed value local add the last ~8 KB. The other
 # eleven rows moved +1.9-4.2% of drift in the same run and keep their rows.
 # Number pasted from driver-sizes' own report.
-fern.fern 12968425
+# 2026-09-27 — fern.fern alone, 12968425 -> 13654985 (+5.3%). Main's own
+# drift since the last refresh is about +4.4%; the rest is the parser's
+# type-variable respelling pass and its printer inverse (#9577). The other
+# rows keep their numbers. Measured with FERN_WARM_DRIVER=fern.fern
+# FERN_DRIVER_SIZE_REPORT on the merged tree.
+fern.fern 13654985
 asm_load_run.fern 9264457
 asm_modload_run.fern 8836577
 asm_ir_run.fern 8584609

@@ -12,11 +12,9 @@ import (
 // variant without saying what it holds. The payload's checked type binds U
 // (semsource.settled_union), for Ok and Err as for Some.
 //
-// The string payload is pinned here rather than in the production rows: that
-// harness's oracle is the AST lowering, which misreads this shape through the
-// erased U (#10014). The oracle here is the interpreter — every `acc` below
-// was confirmed against `bin/fern -interp` — and the churn gate's own asserts:
-// produced whole, a flat heap over 1000 rounds, no rc underflow.
+// The oracle here is the interpreter — every `acc` below was confirmed against
+// `bin/fern -interp` — and the churn gate's own asserts: produced whole, a flat
+// heap over 1000 rounds, no rc underflow.
 var builtinUnionPayloadPrograms = []mapChurnProgram{
 	// `build(n)` is 1 + digits(n) for the Ok receiver's payload plus 1 for the
 	// Err receiver's fallback: 390 over 0..99 and 4890 over 0..999.
