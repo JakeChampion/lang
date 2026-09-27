@@ -13320,6 +13320,12 @@ function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   }
 }
 
+// A `+` is a fresh string only as concatenation (native's IsStringConcat).
+function ow_is_string_type(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeString(_) = t { return true; }
+  return false;
+}
+
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
     if (elem.mname == name) {
@@ -13514,7 +13520,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return true;
     },
     ast.ExprBinary(b) => {
-      return b.op == "+";
+      return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
     ast.ExprIdent(id) => {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
