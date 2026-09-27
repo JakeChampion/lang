@@ -856,10 +856,7 @@ Three layers were responsible, and the last one is the one worth reading:
   depend on, so it is fixed as a walk fix rather than left to the tag.
   `enum_ret_recordable` is the one rule the scalar return and both array
   returns ask, which is also where the `is_enum_like_name` type-VARIABLE
-  exclusion (#6441) now lives instead of being restated. Note its ORDERING
-  constraint: a one-letter enum name satisfies `irl_looks_type_var`, so the
-  enum arm has to run BEFORE the erased-generic branch that would otherwise
-  claim `E[]`, find no parameter spelled `E[]`, and record nothing.
+  exclusion (#6441) now lives instead of being restated.
 
 **And the checker had the hole under all of it.** A qualified UNIT variant
 `Color.Red` in VALUE position typed unknown: `check_call_expr` learned the

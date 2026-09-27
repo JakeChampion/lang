@@ -652,9 +652,10 @@ function main(): i32 {
 	// and `and[U](other: Result[U, E])` binds U from this very argument: the
 	// destination `Result[U, string]` named Ok without saying what it held, so
 	// the literal was refused ("unsupported variant literal"). The payload
-	// settles it now, for Ok and Err as it already did for Some. The payload is
-	// an i32 because the AST lowering, the oracle here, misreads a string one
-	// through the erased U and answers differently on each leg (#10014).
+	// settles it now, for Ok and Err as it already did for Some. A string
+	// payload reaches `unwrap_or` through the receiver's own binding of T,
+	// which the self-host checker used to leave unresolved, so the AST
+	// lowering read the result's length out of the wrong word (#10014).
 	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
 import "std/result";
 
@@ -666,7 +667,8 @@ function main(): i32 {
         var s: Result[i32, string] = r.and(Ok(i + 1));
         var e: Result[i32, string] = Err("no");
         var f: Result[i32, string] = e.and(Ok(i + 2));
-        t = t + s.unwrap_or(0) + f.unwrap_or(9);
+        var w: Result[string, string] = r.and(Ok("vw"));
+        t = t + s.unwrap_or(0) + f.unwrap_or(9) + w.unwrap_or("").len();
         i = i + 1;
     }
     return t % 7;
@@ -1566,6 +1568,61 @@ function main(): i32 {
         var f: (i32) => i32 = (if (i % 2 == 0) { ((x: i32) => x + base) } else { ((x: i32) => x * k) });
         var g: (i32) => i32 = (match (i % 3) { 0 => ((x: i32) => x - base), 1 => ((x: i32) => k), _ => ((x: i32) => x + 1) });
         t = t + f(2) % 11 + g(3) % 7;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	// The tuple and struct-pattern desugars yield an arm's value by storing it
+	// into the match's value local, not by returning it, so the hoist of a
+	// fn-valued value block has to count that store as an arm (#10333).
+	{name: "tuple-and-struct-match-of-capturing-lambdas", atLeast: 9, noLeak: true, src: `
+struct P { a: i32, b: i32 }
+function pick(p: P, base: i32): (i32) => i32 {
+    return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) };
+}
+function main(): i32 {
+    var base: i32 = 5;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: i32 = i;
+        var g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        var h: (i32) => i32 = pick(P { a: i % 3, b: i }, base);
+        t = t + g(3) % 7 + h(3) % 5;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	// A value block's result is typed from its checked tail, not the parser's
+	// syntactic guess, so a tail naming a local bound from a match still says
+	// the struct array it holds (#10332): lifted when the block captures
+	// nothing, inlined when it does, and a single struct as well as an array.
+	{name: "value-block-tail-local-struct-array", atLeast: 2, noLeak: true, src: `
+struct P { x: i32, y: i32 }
+function main(): i32 {
+    var ps = { var j = 1; var q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
+    return ps[0].x * 10 + ps[0].y;
+}`},
+	{name: "value-block-tail-local-struct", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var r = { var q = if (i % 2 == 0) { R{name: "a" + "b", n: i} } else { R{name: "c", n: 1} }; q };
+        t = t + r.n + r.name.len();
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var rs = { var q = if (i % 2 == 0) { [R{name: "a" + "b", n: i}] } else { [R{name: "c", n: 1}, R{name: "d", n: 2}] }; q };
+        t = t + rs[rs.len() - 1].n + rs[0].name.len();
         i = i + 1;
     }
     return t % 101;
@@ -3040,10 +3097,10 @@ function main(): i32 {
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
 	// copy-on-write gate see a second holder. The AST lowering borrows the
-	// receiver and writes the sole-held box in place, so the write shows
-	// through `m`, and its `without` writes an ALIASED receiver in place too
-	// (#9835).
-	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "63|", src: `
+	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
+	// `rest` all name one box (#9834); only the delete `snapshot` still reads
+	// through copies (#9835).
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "94|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
@@ -3167,7 +3224,9 @@ function main(): i32 {
 `},
 	// The same shape through the standard library: every ordmap method with a
 	// bounded key is that clone, and the tree under it is produced with it.
-	{name: "ordmap-bounded-method-clones", atLeast: 69, src: `
+	// 65 of 65: core/cmp's numeric `add` impls reach only i32 and u64 (and
+	// bigint); the f32, f64, i64 and u32 ones are unreachable.
+	{name: "ordmap-bounded-method-clones", atLeast: 65, src: `
 import "std/ordmap";
 function main(): i32 {
     var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();

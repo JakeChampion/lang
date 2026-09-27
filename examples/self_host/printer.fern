@@ -2798,8 +2798,10 @@ function decl_sep(out: string): string {
     return "\n";
 }
 
+// print_module prints a compile-path parse, so its type variables go back to
+// the names they were written as; `-fmt`'s verbatim parse never respells them.
 pub function print_module(mod: parser.Module): string {
-    return format_module(mod, [], [], [], [], []);
+    return format_module(parser.written_type_vars_module(mod), [], [], [], [], []);
 }
 
 // format_module is the `-fmt` entry point: the module, the comments the lexer
@@ -3536,14 +3538,18 @@ function check_enums(): i32 {
     // Generic parameters and `@must_consume` live on the EnumDecl, not on the
     // variant records, so they travel a different route out of the printer.
     var srcEG: string = "@must_consume\nenum Slot[T] { Full(T), Empty } function main(): i32 { return 0; }";
+    // The compile path respells the parameter, so the round trip must come
+    // back to that same spelling, and the printed text to the written one.
+    var modEG: parser.Module = parser.parse_module(lexer.tokenize(srcEG));
     var rtEG: parser.Module = roundtrip_module(srcEG);
     if (rtEG.enums.len() != 1) { return 224; }
     if (!rtEG.enums[0].must_consume) { return 225; }
     if (rtEG.enums[0].type_params.len() != 1) { return 226; }
-    if (rtEG.enums[0].type_params[0] != "T") { return 227; }
+    if (rtEG.enums[0].type_params[0] != modEG.enums[0].type_params[0]) { return 227; }
     var fgi: i32 = variant_decl_index(rtEG.structs, "Slot", "Full");
     if (fgi < 0) { return 228; }
-    if (rtEG.structs[fgi].fields[0].type_name != "T") { return 229; }
+    if (rtEG.structs[fgi].fields[0].type_name != modEG.enums[0].type_params[0]) { return 229; }
+    if (!util.contains(print_module(modEG), "enum Slot[T] { Full(T), Empty }")) { return 274; }
 
     // A multi-payload variant keeps every payload, in order.
     var srcEM: string = "enum Pair { Two(i32, string), Neither } function main(): i32 { return 0; }";

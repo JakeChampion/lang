@@ -131,6 +131,14 @@ var iifeFnArmCases = []struct {
 	{"sole-return-iife-capturing-arms", "function gen(n: i32): (i32) => i32 { return (if (n > 0) { ((x: i32) => (x + n)) } else { ((y: i32) => (y - n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32); return f(4i32) & 63i32; }", 9},
 	{"sole-return-matchexpr-capturing-arms", "enum S { A, B } function gen(n: i32, e: S): (i32) => i32 { return (match (e) { A => ((x: i32) => (x + n)), B => ((y: i32) => (y * n)) }); } function main(): i32 { var f: (i32) => i32 = gen(5i32, S.B); return f(4i32) & 63i32; }", 20},
 
+	// #10333 — the tuple, struct-pattern and nested-pattern match desugars
+	// yield each arm's value by storing it into the expression's value local
+	// (`__tm…_r = <lambda>`), not by `return`, so the hoist gate never saw a
+	// lambda arm and a capturing one reached lower_expr raw.
+	{"tuplematch-capturing-arms-in-loop", "function main(): i32 { var base: i32 = 5; var t: i32 = 0; var i: i32 = 0; while (i < 6) { var k: i32 = i; var g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) }); t = t + g(3) % 7; i = i + 1; } return t % 101; }", 9},
+	{"tuplematch-arm-captures-its-binder", "function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 4) { var h: (i32) => i32 = (match ((i % 2, i)) { (0, k) => ((x: i32) => x * k), _ => ((x: i32) => x) }); t = t + h(2); i = i + 1; } return t; }", 8},
+	{"structmatch-capturing-arms-returned", "struct P { a: i32, b: i32 } function pick(p: P, base: i32): (i32) => i32 { return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) }; } function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 6) { var g: (i32) => i32 = pick(P { a: i % 3, b: i }, 5); t = t + g(3); i = i + 1; } return t; }", 12},
+
 	// The arms hold an ARRAY of fn values rather than one. Same root cause — a
 	// capturing lambda in an un-hoisted arm is unreachable — but two more things
 	// have to hold for the result to be usable, which is why the rewrite is gated

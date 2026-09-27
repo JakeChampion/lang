@@ -26,7 +26,8 @@ func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 		{"nominal callable", `struct Node { value: i32 } function f(callback: (Node) => Node): i32 { var cb = (n: Node): Node => callback(n); return 0; }`, "callback:((Node) => Node);"},
 		{"nominal array", `enum Item { Value(i32), Empty } function f(items: Item[]): i32 { function cb(): i32 { return items.len(); } return 0; }`, "items:Item[];"},
 		{"opaque shadows global", `function f[T](opaque: T): i32 { var cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:unknown;"},
-		{"recursive binding", `function f(recur: str, outside: i64): i32 { var recur = (n: i32): i32 => { outside; return recur(n - 1); }; return 0; }`, "outside:i64;"},
+		{"recursive binding", `function f(recur: str, outside: i64): i32 { function recur(n: i32): i32 { outside; return recur(n - 1); } return 0; }`, "outside:i64;"},
+		{"arrow reads outer binding", `function f(recur: str, outside: i64): i32 { var recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:str;"},
 		{"global is not capture", `function f(): i32 { var cb = (): i32 => global(); return 0; } function global(): i32 { return 7; }`, ""},
 	}
 	var src strings.Builder
