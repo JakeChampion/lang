@@ -3474,6 +3474,17 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
 }
 
 pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
+    return bare_indexed(caller_rows(sg, name, f, modes, plan));
+}
+
+// `borrow_bare` indexes every row of `borrowable_params`: a caller applying
+// many functions' rows reindexes once, after the last.
+pub function bare_indexed(sg: irlower.FnSigs): irlower.FnSigs {
+    return irlower.FnSigs { ...sg, borrow_bare: irlower.borrow_reg_bare_index(sg.borrowable_params) };
+}
+
+// caller_sigs without the `borrow_bare` reindex; see bare_indexed.
+pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,
     // including the bare name. A row says the caller may release something;
@@ -3511,7 +3522,7 @@ pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
         cnt_struct_ret_fns: without_rows(sg.cnt_struct_ret_fns, name, [""]),
         cnt_handback_params: without_rows(sg.cnt_handback_params, name, [""]),
         param_counted: counted_rows(sg.param_counted, name, tiers),
-        borrowable_params: borrows, borrow_bare: irlower.borrow_reg_bare_index(borrows) };
+        borrowable_params: borrows };
 }
 
 // The AST caller's release of an argument it built follows the callee's

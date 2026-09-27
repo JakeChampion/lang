@@ -24,6 +24,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 		{"record-recursive-schema", `var node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
 		{"record-missing-schema", "records = [];", "missing record projection schema"},
 		{"record-duplicate-schema", "records = records.append(record);", "duplicate record schema"},
+		{"record-duplicate-schema-apart", `records = records.append(semrecords.Record { ty: typeinfo.TypeStruct { name: "Other", args: [] }, fields: [record.fields[1]] }); records = records.append(record);`, "duplicate record schema"},
 		{"record-unresolved-identity", `records = [semrecords.Record { ...record, ty: typeinfo.unchecked() }];`, "unresolved record identity"},
 		{"record-nonnominal-identity", `records = [semrecords.Record { ...record, ty: ia }];`, "non-nominal record identity"},
 		{"record-duplicate-field", `records = [semrecords.Record { ...record, fields: [record.fields[0], record.fields[0]] }];`, "duplicate record field name"},
