@@ -157,8 +157,8 @@ through a connected socket, a short buffer that truncates, the refused
 second bind of a held port, the would-block of a non-blocking receive, and
 the close of both), and `e2eharness.NetUdpProbe` through std/net's
 `udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
-`local_port` and `close`, plus the `AddrInUse`, the refused IPv6 address
-and the `WouldBlock`; `e2eharness.ConnectProbe` on `tcp_connect_with` and
+`local_port` and `close`, plus the `AddrInUse` and the `WouldBlock`;
+`e2eharness.ConnectProbe` on `tcp_connect_with` and
 control op 5 (a started connect settled by asking until it is no longer
 `-EINPROGRESS`, then accepted and used both ways, and the
 `-ECONNREFUSED` a connect to the closed port ends with, whether it fails

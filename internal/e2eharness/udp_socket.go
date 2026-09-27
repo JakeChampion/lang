@@ -29,12 +29,18 @@ function zeros(n: i32): u8[] {
 }
 
 function port_of(from: u8[]): i32 {
-    return ((from[4] as i32) << 8) | (from[5] as i32);
+    return ((from[17] as i32) << 8) | (from[18] as i32);
+}
+
+function eafnosupport(): i32 {
+    if (target_os() == "darwin") { return 47; }
+    if (target_os() == "wasi") { return 5; }
+    return 97;
 }
 
 function main(): i32 {
-    // 127.0.0.1 packed in network order: 127 | 1 << 24.
-    var lo: i32 = 16777343;
+    var lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+    var peer: u8[] = [];
     var a: i32 = udp_bind(lo, 0);
     if (a < 0) { return fail(1); }
     var pa: i32 = tcp_local_port(a);
@@ -45,22 +51,26 @@ function main(): i32 {
     if (pb <= 0 || pb == pa) { return fail(4); }
     if (udp_sendto(a, lo, pb, "ping") != 4) { return fail(5); }
     var buf: u8[] = zeros(16);
-    var from: u8[] = zeros(6);
+    var from: u8[] = zeros(19);
     if (udp_recvfrom(b, buf, from) != 4) { return fail(6); }
     if (buf[0] != 112u8 || buf[1] != 105u8 || buf[2] != 110u8 || buf[3] != 103u8) { return fail(7); }
-    if (from[0] != 127u8 || from[1] != 0u8 || from[2] != 0u8 || from[3] != 1u8) { return fail(8); }
+    if (from[0] != 4u8 || from[1] != 127u8 || from[2] != 0u8 || from[3] != 0u8 || from[4] != 1u8 || from[5] != 0u8) { return fail(8); }
     if (port_of(from) != pa) { return fail(9); }
     // b fixes a as its peer and answers without naming it.
     if (udp_connect(b, lo, pa) != 0) { return fail(10); }
-    if (udp_sendto(b, 0, 0, "pong!") != 5) { return fail(11); }
+    if (udp_sendto(b, peer, 0, "pong!") != 5) { return fail(11); }
     if (udp_recvfrom(a, buf, from) != 5 || buf[4] != 33u8) { return fail(12); }
     if (port_of(from) != pb) { return fail(13); }
     // A receive buffer shorter than the datagram keeps its first bytes.
     if (udp_sendto(a, lo, pb, "abcdef") != 6) { return fail(14); }
     var small: u8[] = zeros(4);
     if (udp_recvfrom(b, small, from) != 4 || small[3] != 100u8) { return fail(15); }
-    // The port a holds is refused to a second socket.
+    // The port a holds is refused to a second socket, and an address of
+    // neither family's length is refused before any socket exists.
     if (udp_bind(lo, pa) >= 0) { return fail(16); }
+    var odd: u8[] = [1u8, 2u8, 3u8];
+    if (udp_bind(odd, 0) != 0 - eafnosupport()) { return fail(20); }
+    if (udp_sendto(a, odd, pb, "x") != 0 - eafnosupport()) { return fail(21); }
     if (target_os() == "wasi") {
         // wasi:sockets has no blocking mode to switch off, on any socket.
         if (tcp_socket_ctl(a, 3, 1) != 0 - 58) { return fail(17); }
@@ -78,8 +88,8 @@ function main(): i32 {
 // NetUdpProbe is UdpSocketProbe through std/net's typed faces:
 // `udp_socket`, `local_port`, `send_to`, `recv_from`, `set_peer`, `send`,
 // `recv` and `close`, each answering a `Result` with the errno mapped, the
-// `AddrInUse` a second bind of a held port reports, the refusal of an IPv6
-// address, and the `WouldBlock` of a non-blocking receive. Same verdict
+// `AddrInUse` a second bind of a held port reports, and the `WouldBlock`
+// of a non-blocking receive. Same verdict
 // channel: exit 42 and "ok", or the first failing check.
 func NetUdpProbe() string {
 	return `import "core/int";
@@ -153,10 +163,6 @@ function main(): i32 {
         Ok(fd) => { return fail(14); },
         Err(e) => { if (!e.eq(net.AddrInUse)) { return fail(15); } },
     }
-    match (net.udp_socket(net.socket_addr(net.ipv6_loopback(), 0))) {
-        Ok(fd) => { return fail(16); },
-        Err(e) => { if (e.errno() != net.address_family_errno()) { return fail(17); } },
-    }
     if (target_os() == "wasi") {
         match (net.set_nonblocking(a, true)) {
             Ok(u) => { return fail(18); },
@@ -227,9 +233,8 @@ function settle(c: i32): i32 {
 }
 
 function main(): i32 {
-    // 127.0.0.1 packed in network order: 127 | 1 << 24.
-    var lo: i32 = 16777343;
-    var ln: i32 = tcp_listen_with(0, 4, false);
+    var lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+    var ln: i32 = tcp_listen_with(lo, 0, 4, false);
     if (ln < 0) { return fail(1); }
     var port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }

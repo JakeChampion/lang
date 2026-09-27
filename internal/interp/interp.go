@@ -1549,10 +1549,10 @@ var soReusePort = func() int {
 	return 15
 }()
 
-// builtinTcpListenWith is the interpreter's `tcp_listen_with(port, backlog,
-// reuse_port)`: SO_REUSEPORT goes on the socket before the bind, as the
-// native helper sets it; the backlog is Go's own (somaxconn), since the net
-// package does not take one.
+// builtinTcpListenWith is the interpreter's `tcp_listen_with(addr, port,
+// backlog, reuse_port)`: SO_REUSEPORT goes on the socket before the bind,
+// as the native helper sets it; the backlog is Go's own (somaxconn), since
+// the net package does not take one.
 // negErrno is the -errno a socket builtin answers for err: the errno it
 // wraps, or -1 when it wraps none.
 func negErrno(err error) Value {
@@ -1564,16 +1564,23 @@ func negErrno(err error) Value {
 }
 
 func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
-	if len(args) != 3 {
-		return nil, fmt.Errorf("tcp_listen_with: expected 3 args, got %d", len(args))
+	if len(args) != 4 {
+		return nil, fmt.Errorf("tcp_listen_with: expected 4 args, got %d", len(args))
 	}
-	port, ok := args[0].(Number)
-	if !ok {
-		return nil, fmt.Errorf("tcp_listen_with: expected number port arg, got %T", args[0])
+	ip, err := ipArg("tcp_listen_with", args[0])
+	if err != nil {
+		return nil, err
 	}
-	reuse, ok := args[2].(Bool)
+	if ip == nil {
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
+	}
+	port, ok := args[1].(Number)
 	if !ok {
-		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[2])
+		return nil, fmt.Errorf("tcp_listen_with: expected number port arg, got %T", args[1])
+	}
+	reuse, ok := args[3].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[3])
 	}
 	lc := net.ListenConfig{}
 	if reuse {
@@ -1587,7 +1594,7 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 			return serr
 		}
 	}
-	ln, err := lc.Listen(context.Background(), "tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
+	ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
 	if err != nil {
 		return negErrno(err), nil
 	}
@@ -1603,7 +1610,7 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 // builtinTcpConnect is the interpreter's `tcp_connect(host_be, port)`: the
 // packed network-order IPv4 address the native helpers take, dialled
 // through Go's net package. A connection handle, or -1.
-// builtinTcpConnectWith is `tcp_connect_with(host_be, port, nonblocking)`.
+// builtinTcpConnectWith is `tcp_connect_with(addr, port, nonblocking)`.
 // The interpreter has no non-blocking dial: it connects before answering,
 // so control op 5 reports the result at once and a refused dial is
 // reported here rather than there.
@@ -1611,7 +1618,55 @@ func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_connect_with: expected 3 args, got %d", len(args))
 	}
-	return builtinTcpConnect(i, args[:2])
+	ip, err := ipArg("tcp_connect_with", args[0])
+	if err != nil {
+		return nil, err
+	}
+	if ip == nil {
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
+	}
+	port, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_connect_with: expected number port arg, got %T", args[1])
+	}
+	return i.dialTcp(ip, int(port))
+}
+
+// ipArg reads a socket builtin's address argument: the u8[] of four or
+// sixteen network-order bytes as a net.IP, or nil for another length.
+func ipArg(name string, v Value) (net.IP, error) {
+	arr, ok := v.(Array)
+	if !ok {
+		return nil, fmt.Errorf("%s: expected u8[] addr arg, got %T", name, v)
+	}
+	if len(arr.E) != 4 && len(arr.E) != 16 {
+		return nil, nil
+	}
+	ip := make(net.IP, len(arr.E))
+	for k, e := range arr.E {
+		n, ok := e.(Number)
+		if !ok {
+			return nil, fmt.Errorf("%s: expected u8 in addr, got %T", name, e)
+		}
+		ip[k] = byte(n)
+	}
+	return ip, nil
+}
+
+// dialTcp connects to ip:port through the net package: a connection
+// handle, or -errno.
+func (i *Interp) dialTcp(ip net.IP, port int) (Value, error) {
+	conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(port)))
+	if err != nil {
+		return negErrno(err), nil
+	}
+	if i.tcpConns == nil {
+		i.tcpConns = map[int64]tcpConnHandle{}
+	}
+	i.tcpNextHandle++
+	id := i.tcpNextHandle
+	i.tcpConns[id] = conn
+	return Number(id), nil
 }
 
 func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
@@ -1627,18 +1682,7 @@ func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("tcp_connect: expected number port arg, got %T", args[1])
 	}
 	h := uint32(host)
-	ip := net.IPv4(byte(h), byte(h>>8), byte(h>>16), byte(h>>24))
-	conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
-	if err != nil {
-		return negErrno(err), nil
-	}
-	if i.tcpConns == nil {
-		i.tcpConns = map[int64]tcpConnHandle{}
-	}
-	i.tcpNextHandle++
-	id := i.tcpNextHandle
-	i.tcpConns[id] = conn
-	return Number(id), nil
+	return i.dialTcp(net.IPv4(byte(h), byte(h>>8), byte(h>>16), byte(h>>24)), int(port))
 }
 
 // builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,

@@ -88,7 +88,7 @@ pub function serve_options(): ServeOptions {
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
 // the read deadline chosen by the caller.
 pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
+    var listener: i32 = tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
@@ -138,7 +138,7 @@ pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Pla
 // tcp_serve_with_opts(port, opts, init, handler) — `tcp_serve_with` with
 // the listener and the read deadline chosen by the caller.
 pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
-    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
+    var listener: i32 = tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
@@ -201,6 +201,11 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8
 // __eagain() — EAGAIN as this target numbers it: what a non-blocking read
 // answers while nothing is queued. wasm's reads never block and use the
 // same answer.
+// 0.0.0.0: the serve loops listen on every IPv4 interface.
+function __every_v4(): u8[] {
+    return [0u8, 0u8, 0u8, 0u8];
+}
+
 function __eagain(): i32 {
     if (target_os() == "darwin") { return 35; }
     if (target_os() == "wasi") { return 6; }
@@ -511,7 +516,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
     // Listener FIRST, in the parent — the whole design hinges on
     // workers inheriting this fd rather than owning it.
     var opts: ServeOptions = serve_options();
-    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
+    var listener: i32 = tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
