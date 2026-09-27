@@ -93,7 +93,13 @@ struct State {
     impls: parser.ImplInfo[],
     // What a `?` failure edge runs before it returns: the defer desugar's
     // cleanup behind `__dfa_tryall` and `__dfa_tryerr` (parser.lower_defers_body).
-    try_cleanup: ast.Stmt[]
+    try_cleanup: ast.Stmt[],
+    // The pattern bindings read or written outside the arm that binds them
+    // (`escaping_bindings`), and the payload types the arms have shown for
+    // them so far, which `build` binds at the top of the body.
+    escaping: string[],
+    learned: string[],
+    learned_types: typeinfo.Type[]
 }
 
 struct Value { s: State, id: i32 }
@@ -2837,7 +2843,8 @@ function payloads(pv: ast.PatVariant, scrut: i32, fields: typeinfo.Type[], s: St
     while (k < names.len()) {
         if (names[k] != "_") {
             var v: Value = define(s, ssasem.variant_get(), [scrut], k, pv.type_name, fields[k]);
-            s = bind(v.s, names[k], v.id);
+            if (util.index_of_str(s.names, names[k]) >= 0) { s = replace(v.s, names[k], v.id); }
+            else { s = bind(v.s, names[k], v.id); }
         }
         k = k + 1;
     }
@@ -2997,6 +3004,28 @@ function match_stmt(m: ast.StmtMatch, s: State): State {
 
 struct Chain { arms: Arms, join: i32, count: i32 }
 
+// Record the payload type of each escaping binding this match's arms bind.
+function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner: string): State {
+    if (s.escaping.len() == s.learned.len()) { return s; }
+    var layout: i32 = union_layout(s, owner);
+    for a in m.arms {
+        if let ast.PatVariant(raw) = a.pattern {
+            var pv: ast.PatVariant = unqualified(raw, owner);
+            var shape: Payloads = arm_payloads(s, whole, pv.type_name, layout);
+            var names: string[] = [pv.binding];
+            for n in pv.extra_bindings { names = names.append(n); }
+            var k: i32 = 0;
+            while (k < names.len() && k < shape.types.len()) {
+                if (util.index_of_str(s.escaping, names[k]) >= 0 && util.index_of_str(s.learned, names[k]) < 0 && semtypes.concrete(shape.types[k], false)) {
+                    s = State { ...s, learned: s.learned.append(names[k]), learned_types: s.learned_types.append(shape.types[k]) };
+                }
+                k = k + 1;
+            }
+        }
+    }
+    return s;
+}
+
 // The arms of a match, tested in order, each ending on the join; `ty` is the
 // value a value block's arms carry to it, unchecked for a statement.
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
@@ -3008,6 +3037,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     if (owner == "" || union_layout(s, owner) == 0) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
     var closes: i32 = 0 - 1;
     if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
+    s = learn_escaping(m, s, s.values[scrut.id], owner);
     var join: i32 = s.next_block;
     s = State { ...s, next_block: join + 1 };
     var count: i32 = s.names.len();
@@ -3630,7 +3660,71 @@ function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Co
     return State { ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
         names: [], vals: [], scope: scope, result: result_type(fd, scope, binding, contracts), loops: [], contracts: contracts, calls: [],
         template: generic_decl(fd), binding: binding, requests: [], foreign: [], handers: handers, shadows: shadows,
-        name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body) };
+        name: name, modes: [], funcs: funcs, impls: impls, try_cleanup: try_cleanup(fd.body), escaping: escaping_bindings(fd.body), learned: [], learned_types: [] };
+}
+
+// Every read or write of a name, one entry per use.
+function name_uses(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtAssign(a) = st { return acc.append(a.target); }
+    return acc;
+}
+
+function ident_uses(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprIdent(id) = e { return acc.append(id.name); }
+    return acc;
+}
+
+function descend_all(e: ast.Expr): boolean { return true; }
+
+function uses_in(stmts: ast.Stmt[], own acc: string[]): string[] {
+    for st in stmts { acc = astwalk.fold_stmt_nodes(st, acc, name_uses, ident_uses, descend_all); }
+    return acc;
+}
+
+// Each pattern binding, as `=name`, then one entry per use of it inside the
+// arm that binds it.
+function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtMatch(m) = st {
+        for a in m.arms {
+            if let ast.PatVariant(pv) = a.pattern {
+                var local: string[] = uses_in(a.body, []);
+                if (a.has_guard) { local = astwalk.fold_expr_nodes(a.guard, local, name_uses, ident_uses, descend_all); }
+                var names: string[] = [pv.binding];
+                for n in pv.extra_bindings { names = names.append(n); }
+                for n in names {
+                    if (n == "" || n == "_") { continue; }
+                    acc = acc.append("=" + n);
+                    for u in local { if (u == n) { acc = acc.append(n); } }
+                }
+            }
+        }
+    }
+    return acc;
+}
+
+function keep_names(e: ast.Expr, own acc: string[]): string[] { return acc; }
+
+// The pattern bindings used outside the arm that binds them. Lexical
+// resolution gives every binding a symbol of its own, so such a use can only
+// be the defer desugar's replay of an action the arm armed.
+function escaping_bindings(body: ast.Stmt[]): string[] {
+    var local: string[] = [];
+    for st in body { local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all); }
+    if (local.len() == 0) { return []; }
+    var all: string[] = uses_in(body, []);
+    var out: string[] = [];
+    for d in local {
+        if (d.len() < 2 || d[0] != b'=') { continue; }
+        var n: string = slice_unchecked(d, 1, d.len()) + "";
+        if (util.index_of_str(out, n) < 0 && count_of(all, n) > count_of(local, n)) { out = out.append(n); }
+    }
+    return out;
+}
+
+function count_of(xs: string[], name: string): i32 {
+    var n: i32 = 0;
+    for x in xs { if (x == name) { n = n + 1; } }
+    return n;
 }
 
 // The desugar leaves the cleanup a `?` exit owes behind two always-false
@@ -4066,9 +4160,37 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
     // container carries the cursor exactly as far, so the whole result shape
     // is what has to be clear of one.
     if (semtypes.holds_map_iter(s.result)) { return refuse("cursor result escapes its map"); }
-    s = parameters(fd, s);
-    s = stmts(parser.elide_len_bounded_body(fd.body), s);
+    var body: ast.Stmt[] = parser.elide_len_bounded_body(fd.body);
+    s = learn_body(fd, body, s);
+    s = stmts(body, prebind(parameters(fd, s)));
     return complete(fd, s, name);
+}
+
+// The defer desugar replays an action at every exit the arming scope can
+// reach, after the arm that armed it has closed, and it cannot lift a pattern
+// binding the action names as it lifts a `var`: it runs before the checker, and
+// the binding has no written type. So the binding is bound here instead, at the
+// top of the body and at the zero of its payload type, as a lifted `var` is;
+// the arm replaces the slot. Each probe lowers the body until its first
+// refusal, which is past the match that shows the next type.
+function learn_body(fd: parser.FuncDecl, body: ast.Stmt[], s: State): State {
+    var known: i32 = 0 - 1;
+    while (s.learned.len() < s.escaping.len() && s.learned.len() > known) {
+        known = s.learned.len();
+        var probe: State = stmts(body, prebind(parameters(fd, s)));
+        s = State { ...s, learned: probe.learned, learned_types: probe.learned_types };
+    }
+    return s;
+}
+
+function prebind(s: State): State {
+    var i: i32 = 0;
+    while (i < s.learned.len()) {
+        var z: Value = define(s, ssasem.zero(), [], 0, "", s.learned_types[i]);
+        s = bind(z.s, s.learned[i], z.id);
+        i = i + 1;
+    }
+    return s;
 }
 
 // A declaration's contract is read from its checked scope and its parameter

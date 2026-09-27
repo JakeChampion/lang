@@ -206,7 +206,16 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
 // takes no unit.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
+enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
+@noinline
+function depth(t: Tree): i32 {
+    match (t) { Tip(_) => { return 1; }, Fork(l, r) => { return 1 + depth(l) + depth(r); } }
+}
+@noinline
+function bump(t: Tree): Tree {
+    match (t) { Tip(v) => { return Tip(v + 1); }, Fork(l, r) => { return Fork(bump(l), bump(r)); } }
+}
 @noinline
 function lends_to_builtin(r: Rec): i32 { return __count_byte(r.text, 97) + r.n; }
 @noinline
@@ -240,6 +249,10 @@ function main(): i32 {
     var seen: i32 = 0;
     while (j < 4) { seen = seen + lends_to_builtin(r); r = keep_or_new(r, j); j = j + 1; }
     if (seen != 4) { return 3; }
+    var t: Tree = Fork(Tip(1), Fork(Tip(2), Tip(3)));
+    if (depth(t) != 5) { return 4; }
+    t = bump(t);
+    if (depth(t) != 5) { return 5; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -313,5 +326,20 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(lends, recDrop) {
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
+	}
+	const treeDrop = "__sem_release_Tree"
+	rebuilt, ok := asmWholeFunc(string(asm), "bump")
+	if !ok {
+		t.Fatal("no __fn_bump in the emitted code")
+	}
+	if !strings.Contains(rebuilt, treeDrop) {
+		t.Fatalf("bump does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
+	}
+	walk, ok := asmWholeFunc(string(asm), "depth")
+	if !ok {
+		t.Fatal("no __fn_depth in the emitted code")
+	}
+	if strings.Contains(walk, treeDrop) {
+		t.Errorf("depth calls %s: a recursive walk whose result holds no reference was inferred COUNTED through its own recursive call", treeDrop)
 	}
 }

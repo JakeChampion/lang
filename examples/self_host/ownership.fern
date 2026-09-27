@@ -24,7 +24,11 @@
 // demoted once a round finds no escaping use. A least fixpoint would answer
 // "borrowed" for every recursive traversal, since the only use that carries
 // the parameter out is the recursive call whose own slot is counted only if
-// the parameter is — the cycle never starts from below.
+// the parameter is — the cycle never starts from below. That is right for a
+// walk that rebuilds (`std/pvec`'s `__pv_with_in` takes its child out of a
+// unique node), and wrong for one whose result holds no reference: nothing a
+// take frees can leave such a frame, so its own recursive call carries nothing
+// (#10352).
 import "./ssa";
 import "./ssasem";
 import "./semtypes";
@@ -150,6 +154,7 @@ function carry(out: boolean[], a: ssasem.Analysis, v: i32): boolean[] {
 // declared (`semsource.dyn_arms`).
 function call_carried(out: boolean[], f: ssasem.Func, a: ssasem.Analysis, ins: ssa.SInst, rows: Escapes[], ix: Index): boolean[] {
     if (ssasem.is_dyn_call(ins.str)) { return out; }
+    if (ins.str == f.graph.name && !ssasem.reference(f.result)) { return out; }
     var next: boolean[] = out;
     var i: i32 = 0;
     while (i < ins.args.len()) {

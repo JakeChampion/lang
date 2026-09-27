@@ -63730,12 +63730,9 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: Struc
     // registry, so a field built from `[wide(n), …]` is admitted on the same
     // terms as one built from inline concats. Walked only when some type
     // actually has a string[] field — it is linear in every body.
+    var has_strarr_fld: boolean = strarrfld_program_has_field(structs);
     var arr_str_fresh: string[] = [];
-    var wantsf: i32 = 0;
-    while (wantsf < structs.decls.len()) {
-        if (struct_has_strarr_field(structs, structs.decls[wantsf].name)) { arr_str_fresh = str_fresh_ret_fns_of(funcs); wantsf = structs.decls.len(); }
-        else { wantsf = wantsf + 1; }
-    }
+    if (has_strarr_fld) { arr_str_fresh = str_fresh_ret_fns_of(funcs); }
     // Whole-array PRODUCERS the field store gate may accept, on the same terms
     // the "STRARR:" registry admits them.
     var arr_producers: string[] = [];
@@ -63748,19 +63745,10 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: Struc
     // condition the partial-funcs paths already satisfy by passing [] funcs.
     var arr_fwd: string[] = strarrfld_forwarders_of(funcs, structs);
     for fn in funcs {
-        // Drop any producer name THIS frame shadows — a local or parameter of
-        // that name holds an unknown body, not the registered declaration.
-        // The frame's binders are collected once, not once per producer.
-        var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
-        var vis: string[] = [];
-        var vk: i32 = 0;
-        while (vk < arr_producers.len()) {
-            if (util.index_of_str(bound, arr_producers[vk]) < 0 && !fn_has_param_named(fn, arr_producers[vk])) {
-                vis = vis.append(arr_producers[vk]);
-            }
-            vk = vk + 1;
-        }
-        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, vis, arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
+        arr_unsafe = strarrfld_scan_stmts(fn.body, structs, strarrfld_fn_binds(fn, structs), arr_str_fresh, strarr_visible_producers(fn, arr_producers), arr_fwd, strarrfld_fwd_field_of(fn, structs), arr_unsafe);
+    }
+    if (has_strarr_fld) {
+        arr_unsafe = strarrfld_borrowed_elem_marks(funcs, structs, arr_str_fresh, arr_producers, arr_unsafe);
     }
     for sd in structs.decls {
         var at: string = sd.name;
@@ -65022,6 +65010,352 @@ function fn_has_param_named(fn: parser.FuncDecl, name: string): boolean {
 // strarrfld_fn_binds seeds the scan's type bindings for one function: its
 // receiver and every parameter, so `b.notes[0]` inside a method resolves to
 // "<Recv>.notes" instead of poisoning the bare name everywhere.
+// strarrfld_program_has_field: some struct declares a `string[]` field.
+function strarrfld_program_has_field(structs: StructTab): boolean {
+    for sd in structs.decls {
+        if (struct_has_strarr_field(structs, sd.name)) { return true; }
+    }
+    return false;
+}
+
+// strarr_visible_producers: the whole-array producers `fn` can call by name —
+// a local or parameter of a producer's name holds an unknown body, not the
+// registered declaration.
+function strarr_visible_producers(fn: parser.FuncDecl, producers: string[]): string[] {
+    var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    var vis: string[] = [];
+    for pn in producers {
+        if (!util.has_str(bound, pn) && !fn_has_param_named(fn, pn)) { vis = vis.append(pn); }
+    }
+    return vis;
+}
+
+// StrarrOwnSrc is what strarr_owned_value can prove ownership from: the
+// frame's fresh-string and producer registries, its owned locals, and its
+// struct-typed names (fnfld_bind pairs) for a field read's receiver.
+struct StrarrOwnSrc { str_fresh: string[], producers: string[], owned: string[], binds: string[], structs: StructTab }
+
+// strarr_owned_value: `e` hands over a `string[]` whose elements are owned by
+// its buffer — an element-fresh literal, a call to a visible producer, a local
+// in `owned`, or a holder's `string[]` field read, the counted share the
+// struct-literal gate already admits inline.
+function strarr_owned_value(e: ast.Expr, src: StrarrOwnSrc): boolean {
+    if let ast.ExprArray(al) = e {
+        for el in al.elements {
+            if (!strarr_value_is_fresh(el, src.str_fresh)) { return false; }
+        }
+        return true;
+    }
+    if let ast.ExprCall(c) = e { return util.has_str(src.producers, ident_name_or_empty(c.callee)); }
+    if let ast.ExprIdent(id) = e { return util.has_str(src.owned, id.name); }
+    if let ast.ExprFieldAccess(fa) = e {
+        if (ident_name_or_empty(fa.obj).len() == 0) { return false; }
+        return decl_field_type(src.structs, fnfld_obj_type(fa.obj, src.structs, src.binds), fa.field) == "string[]";
+    }
+    return false;
+}
+
+// strarr_owned_rebind: an assignment to an element-owned local keeps it one —
+// an owned value, or a self-append of a fresh element.
+function strarr_owned_rebind(a: ast.StmtAssign, src: StrarrOwnSrc): boolean {
+    if (strarr_owned_value(a.value, src)) { return true; }
+    if let ast.ExprCall(c) = a.value {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            return fa.field == "append" && ident_name_or_empty(fa.obj) == a.target && c.args.len() == 1
+                && strarr_value_is_fresh(c.args[0], src.str_fresh);
+        }
+    }
+    return false;
+}
+
+// strarr_local_owned_decls: how many `var name = …` declarations `stmts` holds,
+// or -1 when one of them, or an assignment to `name`, stores a value whose
+// elements the local would not own.
+function strarr_local_owned_decls(stmts: ast.Stmt[], name: string, src: StrarrOwnSrc): i32 {
+    var acc: StrarrDeclCount = StrarrDeclCount { name: name, src: src, n: 0 };
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_decl_count_step); }
+    return acc.n;
+}
+
+// StrarrDeclCount threads strarr_local_owned_decls' walk: the local, what its
+// ownership is proved from, and the declarations counted so far.
+struct StrarrDeclCount { name: string, src: StrarrOwnSrc, n: i32 }
+
+function strarr_decl_count_step(st: ast.Stmt, own acc: StrarrDeclCount): StrarrDeclCount {
+    if (acc.n < 0) { return acc; }
+    if let ast.StmtVar(v) = st {
+        if (v.name != acc.name) { return acc; }
+        if (!strarr_owned_value(v.init, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+        return StrarrDeclCount { ...acc, n: acc.n + 1 };
+    }
+    if let ast.StmtAssign(a) = st {
+        if (a.target == acc.name && !strarr_owned_rebind(a, acc.src)) { return StrarrDeclCount { ...acc, n: 0 - 1 }; }
+    }
+    return acc;
+}
+
+// StrarrOwnFrame is what strarrfld_borrowed_elem_marks knows about one body:
+// `params` is aligned with the function's parameters, naming each one whose
+// value is the caller's argument for the whole body ("" otherwise); `owned`
+// (in `src`) holds the locals whose every element is theirs. `stores` is the second pass's
+// parameter-store registry, empty on the first.
+struct StrarrOwnFrame { fnkey: string, params: string[], src: StrarrOwnSrc, stores: string[], store_fns: string[] }
+
+function strarr_own_frame_of(fn: parser.FuncDecl, structs: StructTab, str_fresh: string[], producers: string[], stores: string[], store_fns: string[]): StrarrOwnFrame {
+    var vis: string[] = strarr_visible_producers(fn, producers);
+    var bound: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    var assigned: string[] = body_assign_targets(fn.body);
+    var params: string[] = [];
+    for p in fn.params {
+        if (p.type_name == "string[]" && !util.has_str(bound, p.name) && !util.has_str(assigned, p.name)) { params = params.append(p.name); }
+        else { params = params.append(""); }
+    }
+    var src: StrarrOwnSrc = StrarrOwnSrc { str_fresh: str_fresh, producers: vis, owned: [], binds: strarr_frame_binds(fn, structs), structs: structs };
+    src = StrarrOwnSrc { ...src, owned: strarr_owned_locals(fn, bound, src) };
+    return StrarrOwnFrame { fnkey: fn.name, params: params, src: src, stores: stores, store_fns: store_fns };
+}
+
+// strarr_frame_binds: strarrfld_fn_binds plus every struct-typed local of `fn`,
+// name-level like the rest of the frame.
+function strarr_frame_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
+    var b: string[] = strarrfld_fn_binds(fn, structs);
+    for v in strarr_var_decls(fn.body, []) {
+        var vty: string = v.type_name;
+        if (vty.len() == 0) { vty = fnfld_lit_type(v.init); }
+        if (decl_is_struct(structs, vty)) { b = fnfld_bind(b, v.name, vty, structs); }
+    }
+    return b;
+}
+
+// strarr_owned_locals: the `string[]` locals of `fn` whose elements their own
+// buffer owns — every binder of the name a declaration, and every declaration
+// and assignment an owned value. An alias of an owned local is one too, so the
+// set grows to a fixed point.
+function strarr_owned_locals(fn: parser.FuncDecl, bound: string[], src: StrarrOwnSrc): string[] {
+    var cands: string[] = strarr_owned_candidates(fn);
+    var owned: string[] = [];
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for nm in cands {
+            if (!util.has_str(owned, nm)) {
+                var decls: i32 = strarr_local_owned_decls(fn.body, nm, StrarrOwnSrc { ...src, owned: owned });
+                if (decls > 0 && decls == strarr_count_of(bound, nm)) { owned = owned.append(nm); grew = true; }
+            }
+        }
+    }
+    return owned;
+}
+
+// strarr_owned_candidates: the locals of `fn` declared `string[]` or
+// unannotated, parameters and the receiver excluded.
+function strarr_owned_candidates(fn: parser.FuncDecl): string[] {
+    var cands: string[] = [];
+    for v in strarr_var_decls(fn.body, []) {
+        if ((v.type_name == "string[]" || v.type_name == "") && !util.has_str(cands, v.name)
+            && !fn_has_param_named(fn, v.name) && v.name != fn.receiver_name) { cands = cands.append(v.name); }
+    }
+    return cands;
+}
+
+function strarr_count_of(names: string[], nm: string): i32 {
+    var n: i32 = 0;
+    for b in names { if (b == nm) { n = n + 1; } }
+    return n;
+}
+
+// strarr_var_decls: every `var` declaration in `stmts`, lambda bodies aside.
+function strarr_var_decls(stmts: ast.Stmt[], own acc: ast.StmtVar[]): ast.StmtVar[] {
+    for st in stmts { acc = astwalk.fold_stmt_spine(st, acc, strarr_var_decl_step); }
+    return acc;
+}
+
+function strarr_var_decl_step(st: ast.Stmt, own acc: ast.StmtVar[]): ast.StmtVar[] {
+    if let ast.StmtVar(v) = st { return acc.append(v); }
+    return acc;
+}
+
+// strarr_frame_param_key: "<fn>#<index>" when `e` names one of the frame's
+// tracked parameters, else "".
+function strarr_frame_param_key(e: ast.Expr, fr: StrarrOwnFrame): string {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return ""; }
+    var j: i32 = 0;
+    while (j < fr.params.len()) {
+        if (fr.params[j] == nm) { return fr.fnkey + "#" + util.i32_to_string(j); }
+        j = j + 1;
+    }
+    return "";
+}
+
+function strarr_callee_key(c: ast.ExprCall): string {
+    if let ast.ExprIdent(id) = c.callee { return id.name; }
+    if let ast.ExprFieldAccess(fa) = c.callee { return fa.field; }
+    return "";
+}
+
+// strarr_own_node is one expression's contribution. First pass (no `stores`
+// yet): "st:<fn>#<j>|<T>.<f>" for a parameter stored bare into a `string[]`
+// field, "mk:<T>.<f>" for any other bare ident stored there whose elements
+// this frame does not own, and "ln:<callee>#<i>|<fn>#<j>" for a tracked
+// parameter passed on bare. Second pass: "bd:<callee>#<i>" for an argument
+// that reaches a storing parameter without owning its elements, and
+// "cl:" / "id:" occurrences of a storing function's name, to find one used as
+// a value (whose callers are unseen).
+function strarr_own_node(e: ast.Expr, own st: StrarrOwnAcc): StrarrOwnAcc {
+    var fr: StrarrOwnFrame = st.fr;
+    var a: string[] = st.out;
+    if let ast.ExprStructLit(sl) = e { a = strarr_own_struct_lit(sl, fr, a); }
+    if let ast.ExprCall(c) = e { a = strarr_own_call(c, fr, a); }
+    if let ast.ExprIdent(id) = e {
+        if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, id.name)) { a = a.append("id:" + id.name); }
+    }
+    if let ast.ExprLambda(lm) = e {
+        a = strarr_own_stmts(lm.body, StrarrOwnFrame { ...fr, fnkey: "", params: [], src: StrarrOwnSrc { ...fr.src, owned: [], binds: [] } }, a);
+    }
+    return StrarrOwnAcc { fr: fr, out: a };
+}
+
+function strarr_own_struct_lit(sl: ast.ExprStructLit, fr: StrarrOwnFrame, own a: string[]): string[] {
+    if (fr.store_fns.len() > 0) { return a; }
+    var i: i32 = 0;
+    while (i < sl.field_names.len()) {
+        if (decl_field_type(fr.src.structs, sl.type_name, sl.field_names[i]) == "string[]"
+            && ident_name_or_empty(sl.field_values[i]).len() > 0) {
+            var tf: string = sl.type_name + "." + sl.field_names[i];
+            var pk: string = strarr_frame_param_key(sl.field_values[i], fr);
+            if (pk.len() > 0) { a = a.append("st:" + pk + "|" + tf); }
+            else if (!strarr_owned_value(sl.field_values[i], fr.src)) { a = a.append("mk:" + tf); }
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function strarr_own_call(c: ast.ExprCall, fr: StrarrOwnFrame, own a: string[]): string[] {
+    var k: string = strarr_callee_key(c);
+    if (k.len() == 0) { return a; }
+    if (fr.store_fns.len() > 0 && util.has_str(fr.store_fns, ident_name_or_empty(c.callee))) { a = a.append("cl:" + k); }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        var ck: string = k + "#" + util.i32_to_string(i);
+        var pk: string = strarr_frame_param_key(c.args[i], fr);
+        if (fr.store_fns.len() == 0) {
+            if (pk.len() > 0) { a = a.append("ln:" + ck + "|" + pk); }
+        } else if (pk.len() == 0 && !strarr_owned_value(c.args[i], fr.src) && strarr_keyed_any(fr.stores, ck + "|")) {
+            a = a.append("bd:" + ck);
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+function strarr_not_lambda(e: ast.Expr): boolean {
+    if let ast.ExprLambda(_) = e { return false; }
+    return true;
+}
+
+// StrarrOwnAcc threads the frame through the fold beside the rows it collects.
+struct StrarrOwnAcc { fr: StrarrOwnFrame, out: string[] }
+
+// strarr_own_stmts folds strarr_own_node over `stmts`. A lambda body is folded
+// on its own with an empty frame: its parameters and locals are not the
+// enclosing function's.
+function strarr_own_stmts(stmts: ast.Stmt[], fr: StrarrOwnFrame, out: string[]): string[] {
+    var acc: StrarrOwnAcc = StrarrOwnAcc { fr: fr, out: out };
+    for st in stmts { acc = astwalk.fold_stmt_pruned(st, acc, strarr_own_node, strarr_not_lambda); }
+    return acc.out;
+}
+
+// strarr_keyed_any: some entry of `rows` starts with `pfx`.
+function strarr_keyed_any(rows: string[], pfx: string): boolean {
+    for r in rows {
+        if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) { return true; }
+    }
+    return false;
+}
+
+// strarr_keyed_values: the text after `pfx` of every entry of `rows` that
+// starts with it.
+function strarr_keyed_values(rows: string[], pfx: string): string[] {
+    var out: string[] = [];
+    for r in rows {
+        if (r.len() >= pfx.len() && slice_unchecked(r, 0, pfx.len()) == pfx) { out = out.append(slice_unchecked(r, pfx.len(), r.len()) + ""); }
+    }
+    return out;
+}
+
+// strarr_param_stores: "<fn>#<j>|<T>.<f>" for every parameter whose argument
+// reaches a `string[]` field bare — stored there, or passed on bare to a
+// parameter that is (`links`, least fixed point over forwarding chains).
+function strarr_param_stores(direct: string[], links: string[]): string[] {
+    var stores: string[] = direct;
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for ln in links {
+            var bar: i32 = 0;
+            while (ln[bar] != b'|') { bar = bar + 1; }
+            var callee: string = slice_unchecked(ln, 0, bar + 1) + "";
+            var caller: string = slice_unchecked(ln, bar + 1, ln.len()) + "";
+            for tf in strarr_keyed_values(stores, callee) {
+                var row: string = caller + "|" + tf;
+                if (!util.has_str(stores, row)) { stores = stores.append(row); grew = true; }
+            }
+        }
+    }
+    return stores;
+}
+
+// strarrfld_borrowed_elem_marks: the `string[]` fields a bare-ident store can
+// reach with elements it does not own (#10405). The struct-literal gate admits a
+// bare ident because the construction retains the BUFFER, but the element walk
+// also needs every element to be the array's: `names = names.append(item.name)`
+// holds boxes `item` still owns, and walking them from a field frees them under
+// it. A local proves that in its own frame (strarr_local_owned_decls); a
+// parameter at every call site, so its verdict moves there as a forwarder's does.
+// Each mark is the READ half only: the retained buffer still goes back through
+// "arrbuf:".
+function strarrfld_borrowed_elem_marks(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[], producers: string[], acc: string[]): string[] {
+    var none: string[] = [];
+    var first: string[] = [];
+    for fn in funcs { first = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, none, none), first); }
+    var stores: string[] = strarr_param_stores(strarr_keyed_values(first, "st:"), strarr_keyed_values(first, "ln:"));
+    var a: string[] = acc;
+    for tf in strarr_keyed_values(first, "mk:") { a = push_str_unique(a, tf); }
+    if (stores.len() == 0) { return a; }
+    var store_fns: string[] = strarr_store_fns(stores);
+    var second: string[] = [];
+    for fn in funcs { second = strarr_own_stmts(fn.body, strarr_own_frame_of(fn, structs, str_fresh, producers, stores, store_fns), second); }
+    for bk in strarr_keyed_values(second, "bd:") {
+        for tf in strarr_keyed_values(stores, bk + "|") { a = push_str_unique(a, tf); }
+    }
+    for fname in store_fns {
+        if (strarr_count_of(second, "id:" + fname) > strarr_count_of(second, "cl:" + fname)) {
+            for pf in strarr_keyed_values(stores, fname + "#") { a = push_str_unique(a, strarr_after_bar(pf)); }
+        }
+    }
+    return a;
+}
+
+// strarr_store_fns: the functions that own a storing parameter.
+function strarr_store_fns(stores: string[]): string[] {
+    var out: string[] = [];
+    for row in stores {
+        var h: i32 = 0;
+        while (row[h] != b'#') { h = h + 1; }
+        out = push_str_unique(out, slice_unchecked(row, 0, h) + "");
+    }
+    return out;
+}
+
+// strarr_after_bar: the text after the first `|` of a registry row.
+function strarr_after_bar(row: string): string {
+    var bar: i32 = 0;
+    while (row[bar] != b'|') { bar = bar + 1; }
+    return slice_unchecked(row, bar + 1, row.len()) + "";
+}
+
 function strarrfld_fn_binds(fn: parser.FuncDecl, structs: StructTab): string[] {
     var b: string[] = [];
     if (fn.receiver_name.len() > 0) {
