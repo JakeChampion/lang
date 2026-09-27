@@ -195,6 +195,17 @@ the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
 advancing to a scripted readiness or the timeout, interest bits selecting
 it, an unwatch dropping it). The serve loops run on the reactor, so every
 serve, fetch and handler-census gate below exercises it.
+`TestHeldConnectionsHeapBoundX86_64` and `TestSelfHostHeldConnectionsHeapBoundX86_64`
+are the per-held-connection bound of #9853: a serve loop whose handler
+answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
+the growth the second batch cost must be under 1 KiB per connection (the
+first batch carries the table's one-time growth, so the bound is on the
+second). The Go compiler's loop costs about 145 bytes per connection and
+the self-host's about 120. The twin compiles with the production driver:
+the per-module driver's older lowering keeps an array of arrays it cannot
+prove fresh, so the connection table it rebuilds per accept leaks there
+by that lowering's design, and a gate on it would measure the lowering
+rather than the loop.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
