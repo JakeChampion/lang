@@ -3424,8 +3424,8 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // lowering honours, in the AST registries' own vocabulary: one counted
 // reference whose container owns its children. Rows the caller's reading of
 // the callee's syntax recorded for the same result are replaced. Only the
-// shapes those registries can release get a row: a tuple's scalar-element
-// and string[] array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
+// shapes those registries can release get a row: a tuple's scalar-element,
+// string[], record-array and enum-array positions ("ARRF:"), an array result ("ARROWN:", whose shallow release
 // is exact for a retained buffer and at worst strands a fresh one's pointer
 // elements, #9187) and a box with no reference field or payload; every other
 // position keeps the AST caller's leak-mode floor.
@@ -3675,13 +3675,26 @@ function string_array(t: typeinfo.Type): boolean {
     return false;
 }
 
+// An array of a non-generic record or enum: each element is a box the buffer's
+// last owner releases.
+function box_array(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(a) = t {
+        if (a.view || semtypes.is_env(a.elem) || semtypes.is_cell(a.elem)) { return false; }
+        if let typeinfo.TypeStruct(r) = a.elem { return r.args.len() == 0; }
+        if let typeinfo.TypeUnion(u) = a.elem { return u.args.len() == 0; }
+    }
+    return false;
+}
+
 // One irlower ARRF: flag per element: '1' a scalar array (a buffer dec), '2' a
-// string[] (__fern_str_arr_free), '0' left to the leak-mode floor.
+// string[] (__fern_str_arr_free), '3' a record or enum array (the element walk
+// a record's field drop runs), '0' left to the leak-mode floor.
 function tuple_flags(tup: typeinfo.TypeTuple): string {
     var flags: string = "";
     for elem in tup.elements {
         if (scalar_array(elem)) { flags = flags + "1"; }
         else if (string_array(elem)) { flags = flags + "2"; }
+        else if (box_array(elem)) { flags = flags + "3"; }
         else { flags = flags + "0"; }
     }
     return flags;

@@ -1401,32 +1401,34 @@ pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     return s.is_enum_field_alias(nm);
 }
 
-// struct_alias_ident_escapes reports whether `e` is a bare ident naming a
-// BORROWED STRUCT PARAMETER. That box belongs to the caller, which releases it
-// itself, so a container storing it takes a second owner and the store has to
-// be COUNTED — the struct sibling of enum_alias_ident_escapes above.
+// box_param_ident_escapes reports whether `e` is a bare ident naming a
+// BORROWED STRUCT or ENUM PARAMETER. That box belongs to the caller, which
+// releases it itself, so a container storing it takes a second owner and the
+// store has to be COUNTED — the parameter sibling of enum_alias_ident_escapes
+// above.
 //
 // A LOCAL is deliberately excluded: one that escapes into a container has
 // already lost its reclaim credit to the escape walk, so nothing releases it
 // and the container holds the only reference; retaining there leaks instead of
 // balancing. An `own` parameter is excluded from the other side — the caller
 // transferred its reference rather than keeping one (#7853).
-pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
+pub function box_param_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     var nm: string = ident_name_or_empty(e);
     if (nm.len() == 0 || s.is_own_param(nm)) { return false; }
     var sl: i32 = s.slot_of(nm);
     if (sl < 0 || sl >= s.frame.n_params) { return false; }
-    return decl_is_struct(s.frame.structs, s.struct_type_of_slot(sl));
+    var ty: string = s.struct_type_of_slot(sl);
+    return decl_is_struct(s.frame.structs, ty) || decl_is_enum(s.frame.structs, ty);
 }
 
 // stored_elem_is_borrow reports whether an element value about to be stored in a
 // container is a reference some other owner releases — an indexed struct or
-// array element, a borrowed struct parameter, an enum alias, a field its struct's
+// array element, a borrowed struct or enum parameter, an enum alias, a field its struct's
 // drop releases, a caller-owned string element — so the store has to be counted. It is the
 // question lower_append_elem_value asks of a value, gathered so a call result
 // standing in for one of its arguments can ask it of the argument.
 function stored_elem_is_borrow(e: ast.Expr, s: LowerState): boolean {
-    return indexed_box_elem_escapes(e, s) || struct_alias_ident_escapes(e, s)
+    return indexed_box_elem_escapes(e, s) || box_param_ident_escapes(e, s)
         || enum_alias_ident_escapes(e, s) || counted_field_read_reaches_drop(e, s)
         || str_param_elem_escapes(e, s) || handback_result_of_borrow(e, s);
 }
@@ -1474,7 +1476,7 @@ function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
 // such a read bound (LocalInfo.str_caller_elem — `var e = p[i]`, `for e in p`,
 // an alias of either). The caller frees that array deep at its own exit, so a
 // container storing the element takes a second owner and the store must be
-// COUNTED: the string sibling of struct_alias_ident_escapes. A frame-built
+// COUNTED: the string sibling of box_param_ident_escapes. A frame-built
 // LOCAL array's element is deliberately not here: sharing one withdraws its deep
 // free (strarr_unsafe_for), so the container holds the only release.
 pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
@@ -1503,7 +1505,7 @@ function retain_caller_elem_handoff(s: LowerState, arg: ast.Expr, callee: string
 // indexed_box_elem_escapes reports whether `e` is an index read of a STRUCT or
 // ARRAY element — a box the source array's own release drops, whoever owns that
 // array — so a container storing it takes a second owner and the store must be
-// COUNTED: the indexed sibling of struct_alias_ident_escapes. A string element
+// COUNTED: the indexed sibling of box_param_ident_escapes. A string element
 // is not here (str_param_elem_escapes and the local deep-free withdrawal cover
 // it), nor an enum element, whose read is already balanced.
 pub function indexed_box_elem_escapes(e: ast.Expr, s: LowerState): boolean {
@@ -5059,6 +5061,14 @@ pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
     if (n < 3) { return false; }
     if (slice_unchecked(t, n - 2, n) != "[]") { return false; }
     return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
+}
+
+// is_box_elem_array_type: `t` is an array of a declared struct or enum, so each
+// element is an rc box the buffer's last owner releases.
+pub function is_box_elem_array_type(structs: StructTab, t: string): boolean {
+    if (!is_array_type_name(t)) { return false; }
+    var elem: string = slice_unchecked(t, 0, t.len() - 2) + "";
+    return decl_is_struct(structs, elem) || decl_is_enum(structs, elem);
 }
 
 // is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
@@ -16336,7 +16346,7 @@ function tuple_field_share_kind(e: ast.Expr): string {
 }
 
 // lower_expr_array lowers an array literal, choosing the element width from the tracked type.
-function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
+function lower_expr_array(arr: ast.ExprArray, s: LowerState, returning: boolean): LowerState {
     // i32 array literal → the high-level `arr_make n` op. Each element
     // expr is lowered (pushing its i32 value, element 0 deepest), then
     // `arr_make` allocates the array, initialises its rc/len header and
@@ -16412,20 +16422,15 @@ function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
                     if (sa.moves_local_at(eid.name, eid.line, eid.col)) { sa = sa.note_moved_elided(sa.slot_of(eid.name)); }
                     else { sa = sa.retain_tos("arrlit-arrstruct-elem"); }
                 }
+                // A returned literal hands a parameter back, as the tuple literal does.
+                else if (!(returning && box_param_ident_escapes(arr.elements[i], sa))
+                    && stored_elem_is_borrow(arr.elements[i], sa)) { sa = sa.retain_tos("arrlit-borrowed-elem"); }
             },
-            // A field read (`[first.node]`) aliases a box the source struct's
-            // __struct_drop_<T> releases — retain it so that release only
-            // drops the dup (#6049).
+            // A value another owner releases — a field read (`[first.node]`,
+            // #6049), an indexed box (`[ps[i]]`), a caller-owned string element
+            // — is the same counted store an append makes.
             _ => {
-                if (counted_field_read_reaches_drop(arr.elements[i], sa)) {
-                    sa = sa.retain_tos("arrlit-counted-field");
-                }
-                // `[p[i]]` over a string[] PARAMETER (str_param_elem_escapes);
-                // the local-routed form is an ident and takes the
-                // slot_is_rc_container retain above.
-                else if (str_param_elem_escapes(arr.elements[i], sa)) {
-                    sa = sa.retain_tos("arrlit-param-str-elem");
-                }
+                if (stored_elem_is_borrow(arr.elements[i], sa)) { sa = sa.retain_tos("arrlit-borrowed-elem"); }
             }
         }
         i = i + 1;
@@ -17770,7 +17775,7 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
         ast.ExprIdent(id) => { return lower_expr_ident(id, s); },
         ast.ExprBinary(b) => { return lower_expr_binary(b, e, s); },
         ast.ExprUnary(u) => { return lower_expr_unary(u, s); },
-        ast.ExprArray(arr) => { return lower_expr_array(arr, s); },
+        ast.ExprArray(arr) => { return lower_expr_array(arr, s, false); },
         ast.ExprTuple(tup) => { return lower_expr_tuple(tup, s, false); },
         ast.ExprIndex(ix) => { return lower_expr_index(ix, s); },
         ast.ExprSlice(slc) => { return lower_expr_slice(slc, s); },
@@ -20941,6 +20946,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     var se: LowerState = s;
     match (r.value) {
         ast.ExprTuple(rtup) => { se = lower_expr_tuple(rtup, s, true); },
+        ast.ExprArray(rarr) => { se = lower_expr_array(rarr, s, true); },
         _ => { se = lower_expr(r.value, s); }
     }
     if (!se.ok) { return se; }
@@ -21373,7 +21379,8 @@ function lower_stmt_expr(es: ast.StmtExpr, s: LowerState): LowerState {
                         // tuple temps): every return is a direct tuple literal,
                         // so the result is a fresh sole-owner box. Release
                         // the flagged positions (a counted buffer in EVERY
-                        // return — tuple_ret_arrfree_flags; '2' a string[])
+                        // return — tuple_ret_arrfree_flags; '2' a string[],
+                        // '3' a struct or enum array)
                         // then free the box; '0' positions (scalars,
                         // aliased idents, pointer elements) are left to their
                         // owners / the safe-leak floor.
@@ -21392,6 +21399,10 @@ function lower_stmt_expr(es: ast.StmtExpr, s: LowerState): LowerState {
                                     se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
                                     se = se.release_tos(dth, "discard-tupret-elem");     // release the counted buffer
                                     se = se.emit(ir.op_drop());
+                                } else if (dtrf[tck] == b'3') {
+                                    se = se.emit(ir.op_load_local(tcslot));
+                                    se = se.emit(ir.op_tuple_get(tck));
+                                    se = emit_box_elem_array_release(se, csv_nth(se.tuple_ret_type(dcid.name), tck));
                                 }
                                 tck = tck + 1;
                             }
@@ -21918,9 +21929,8 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // record the flagged positions as element kinds, so the "TUP:" sweep's
     // give-back (and the loop-rebind reclaim store) releases the counted buffers
     // the returned box holds before the box dec — the bound-result half of
-    // the #4365 discarded-call deep drop. Flag '1' is the arr-box __fern_rc_dec
-    // shape ('a'), flag '2' a string[] field read ('S'); everything else stays
-    // '.' (leak-mode floor).
+    // the #4365 discarded-call deep drop. arrf_flag_kind maps each flag to its
+    // kind; a '0' position stays '.' (leak-mode floor).
     //
     // Gated on "TUPELEMOK:" exactly like the literal-init kinds below: an
     // element extracted to a NEW owner in THIS body (`return r.1`,
@@ -22174,6 +22184,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                         _ => {}
                     }
                     var fk: string = tuple_field_share_kind(tinit.elements[tki]);
+                    if (fk == "a" && is_box_elem_array_type(sb.frame.structs, sb.tuple_elem_tag(slot, tki))) { fk = "b"; }
                     if (fk.len() > 0) { kc = fk; tkany = true; }
                     tk = tk + kc;
                     tki = tki + 1;
@@ -22494,16 +22505,16 @@ match (v.init) {
         match (tfc.callee) {
             ast.ExprIdent(tfcid) => {
                 var tff: string = tuple_ret_flags_of(sb.frame.sigs.tuple_fresh_ret_fns, tfcid.name);
-                if ((util.contains(tff, "1") || util.contains(tff, "2"))
-                    && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
-                    var tfk: string = "";
-                    var tfi: i32 = 0;
-                    while (tfi < tff.len()) {
-                        if (tff[tfi] == b'1') { tfk = tfk + "a"; }
-                        else if (tff[tfi] == b'2') { tfk = tfk + "S"; }
-                        else { tfk = tfk + "."; }
-                        tfi = tfi + 1;
-                    }
+                var tfk: string = "";
+                var tfany: boolean = false;
+                var tfi: i32 = 0;
+                while (tfi < tff.len()) {
+                    var tfc_kind: string = arrf_flag_kind(tff[tfi]);
+                    if (tfc_kind != ".") { tfany = true; }
+                    tfk = tfk + tfc_kind;
+                    tfi = tfi + 1;
+                }
+                if (tfany && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
                     sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + tfk);
                 }
             },
@@ -24862,34 +24873,18 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     else if (apelslot >= 0 && s.is_str_caller_elem_slot(apelslot)) {
                                         aps = aps.retain(apelslot, "append-param-str-elem");
                                     }
+                                    else if (box_param_ident_escapes(wc.args[0], aps)) {
+                                        aps = aps.retain(apelslot, "append-borrowed-param");
+                                    }
                                 },
-                                // A field read (`branches.append(nxt.node)`) escapes
-                                // the same way, against the release of the source
-                                // struct's __struct_drop_<T> (#6049). The inc is
-                                // emitted INLINE on the value already on the operand
-                                // stack (__fern_rc_inc returns its arg), so no reload.
+                                // A field read (`branches.append(nxt.node)`, #6049),
+                                // an indexed box, a caller-owned string element or a
+                                // call handing one back escapes the same way
+                                // (stored_elem_is_borrow). The inc is emitted INLINE
+                                // on the value already on the operand stack
+                                // (__fern_rc_inc returns its arg), so no reload.
                                 _ => {
-                                    if (counted_field_read_reaches_drop(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-counted-field");
-                                    }
-                                    // `xs.append(p[i])` over a string[] PARAMETER: the
-                                    // element belongs to the caller's array (see
-                                    // str_param_elem_escapes).
-                                    else if (str_param_elem_escapes(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-param-str-elem");
-                                    }
-                                    // `xs.append(ys[i])` over a struct or array
-                                    // element: ys's own release drops it, so the
-                                    // store is a second owner (indexed_box_elem_escapes).
-                                    else if (indexed_box_elem_escapes(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-indexed-elem");
-                                    }
-                                    // A call handing one of those back bare
-                                    // (handback_result_of_borrow): the result may be
-                                    // the argument's own box.
-                                    else if (handback_result_of_borrow(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-handback");
-                                    }
+                                    if (stored_elem_is_borrow(wc.args[0], aps)) { aps = aps.retain_tos("append-borrowed-elem"); }
                                 }
                             }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
@@ -29026,8 +29021,10 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32, alias_inc: boolea
 // eight bytes below the block — heap corruption, not a leak. `S` (a string[]
 // field the literal retained) is an arr-box too, but its elements are string
 // boxes, so it takes __fern_str_arr_free: the element walk when the buffer is
-// unique, the buffer dec otherwise. `t` is a struct box (the field drop, then the
-// box). `.` is a position the construction did not retain.
+// unique, the buffer dec otherwise. `b` is an array of struct or enum boxes
+// (emit_box_elem_array_release, element type from the slot's tuple tag). `t` is
+// a struct box (the field drop, then the box). `.` is a position the
+// construction did not retain.
 function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
     if (kinds.len() == 0) { return se; }
     var st: LowerState = se;
@@ -29040,6 +29037,10 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         if (kinds[ki] == b't') {
             st = emit_tup_struct_elem_release(st, slot, ki);
         }
+        else if (kinds[ki] == b'b') {
+            st = emit_load_tuple_path(st, slot, [ki]);
+            st = emit_box_elem_array_release(st, st.tuple_elem_tag(slot, ki));
+        }
         else if (kinds[ki] != b'.') {
             var helper: string = "__fern_rc_dec";
             if (kinds[ki] == b's') { helper = "__fern_str_free"; }
@@ -29051,6 +29052,28 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         ki = ki + 1;
     }
     return st.emit(ir.op_end());
+}
+
+// emit_box_elem_array_release consumes the array on the operand stack and
+// releases it as a record's drop releases a field of type `arrty`
+// (asmcore.struct_drop_field_ops): the element walk the type admits, under the
+// buffer's and each element's uniqueness, then the element boxes and the buffer.
+// A type without such a walk takes __fern_arrarr_free's box decs alone, and a
+// tag naming no struct or enum array the buffer dec alone.
+function emit_box_elem_array_release(se: LowerState, arrty: string): LowerState {
+    var scratch: string = "$bea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var bslot: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(bslot));
+    if (!is_box_elem_array_type(st.frame.structs, arrty)) {
+        return st.emit(ir.op_load_local(bslot)).emit(ir.op_call_direct("__fern_rc_dec", 1)).emit(ir.op_drop());
+    }
+    var elem: string = slice_unchecked(arrty, 0, arrty.len() - 2) + "";
+    if (decl_is_struct(st.frame.structs, elem) && nested_field_deep_drop_ok(st.frame.structs, elem)) {
+        return emit_arrstruct_deep_free(st, bslot, elem);
+    }
+    if (enum_arr_elems_walk_ok(st.frame.structs, elem)) { return emit_arrenum_deep_free(st, bslot, elem, true); }
+    return st.emit(ir.op_load_local(bslot)).emit(ir.op_call_direct("__fern_arrarr_free", 1)).emit(ir.op_drop());
 }
 
 // emit_tup_struct_elem_release: a struct-box element's release — the deep FIELD
@@ -29076,8 +29099,8 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
 // ASSIGN-form rebind may replay against a box a DIFFERENT writer filled, with at
 // least one such position.
 //
-// 'a' and 'S' qualify unconditionally — an array element's release is one
-// type-fixed rc-guarded call whichever writer stored it. 's' qualifies because it is only ever
+// 'a', 'S' and 'b' qualify unconditionally — an array element's release is a
+// type-fixed rc-guarded release whichever writer stored it. 's' qualifies because it is only ever
 // recorded under the "TUPSTRW:" writer agreement (assigns_str_pos_owned), which
 // is exactly the proof that every writer left a counted owned string there. 't'
 // does not: a struct position's release is a deep field drop keyed on the var
@@ -29086,7 +29109,7 @@ function tup_kinds_rebind_safe(kinds: string): boolean {
     var any: boolean = false;
     var i: i32 = 0;
     while (i < kinds.len()) {
-        if (kinds[i] == b'a' || kinds[i] == b'S' || kinds[i] == b's') { any = true; }
+        if (kinds[i] == b'a' || kinds[i] == b'S' || kinds[i] == b'b' || kinds[i] == b's') { any = true; }
         else if (kinds[i] != b'.') { return false; }
         i = i + 1;
     }
@@ -33301,7 +33324,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var aej: i32 = st.frame.n_params;
     while (aej < st.locals.len()) {
         if (!slot_list_has(keeps, aej) && slot_is_reclaimable_arrenum(st, aej)) {
-            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej));
+            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej), false);
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(aej));
         }
@@ -37127,7 +37150,8 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1 }; }
     if (!call_arg_borrowable(s, callee, ai)
         && !arr_param_counted_at(s.frame.sigs.param_counted, callee, ai)
-        && !struct_param_counted_at(s.frame.sigs.param_counted, callee, ai)) {
+        && !struct_param_counted_at(s.frame.sigs.param_counted, callee, ai)
+        && !enum_param_counted_at(s.frame.sigs.param_counted, callee, ai)) {
         return StructArgStash { state: s, slot: 0 - 1 };
     }
     var ty: string = "";
@@ -37149,7 +37173,7 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     var boxonly: boolean = false;
     if (ty.len() == 0) { boxonly = counted_ret_call_arg(arg, s); }
     if (ty.len() == 0 && !boxonly) {
-        var ety: string = fresh_enum_arg_type(s, arg, callee);
+        var ety: string = fresh_enum_arg_type(s, arg, callee, enum_param_counted_at(s.frame.sigs.param_counted, callee, ai));
         if (ety.len() == 0) { return StructArgStash { state: s, slot: 0 - 1 }; }
         var ean: string = "$lse" + util.i32_to_string(s.locals.len());
         var est: LowerState = s.add_local(ean);
@@ -37192,8 +37216,9 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
 // position the caller checked is enough. An rc-payload box's release is deep,
 // so it is admitted only where the callee returns no pointer at all and so
 // cannot hand a payload back uncounted — the gap the struct stash above closes
-// with its field-type set.
-function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): string {
+// with its field-type set — or where the position is `counted` ("ECNT:"), whose
+// callee only stores the parameter counted and never reads a payload out.
+function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string, counted: boolean): string {
     // A variant construction written at the call site (`f(Pr(Ok2(1), Ok2(2)))`)
     // is a sole-owned box whose payloads are fresh (fresh_scalar_enum_init /
     // fresh_rcpayload_enum_init), so it releases on the same terms as a fresh
@@ -37202,13 +37227,13 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     if (sctor.len() > 0) { return sctor; }
     var ctor: string = fresh_rcpayload_enum_init(arg, s.frame.structs, s.frame.sigs.str_fresh_ret_fns, [], false);
     if (ctor.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return ctor;
     }
     match (arg) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee); },
+                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee, counted); },
                 _ => { return ""; }
             }
         },
@@ -37217,11 +37242,11 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     return "";
 }
 
-function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string): string {
+function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string, counted: boolean): string {
     if (s.slot_of(name) >= 0) { return ""; }
     var rce: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name);
     if (rce.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return rce;
     }
     if (enum_fresh_ret_call(arg, s.frame.sigs.return_fresh_struct_ret_fns)) {
@@ -37401,9 +37426,8 @@ function len_recv_callees_stmt(st: ast.Stmt, acc: string[]): string[] {
 }
 
 // discarded_tuple_ret_flags: the "TUPRET:<callee>|<flags>" entry's flags for a
-// discarded call to `callee`, "" when none. Flag k = '1' means tuple element k
-// is a fresh scalar-element array buffer the StmtExpr deep-drop releases before
-// the box.
+// discarded call to `callee`, "" when none, in tuple_ret_arrfree_flags'
+// alphabet: the StmtExpr deep-drop releases each flagged element before the box.
 function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
     return tagged_value_of(s.frame.reclaimable_names, "TUPRET:", callee);
 }
@@ -39002,6 +39026,15 @@ pub function tuple_ret_flags_of(entries: string[], name: string): string {
     return "";
 }
 
+// arrf_flag_kind: the tuple element kind (emit_tup_elem_releases) an ARRF: flag
+// names — '1' a buffer dec, '2' a string[], '3' a struct or enum array.
+function arrf_flag_kind(flag: u8): string {
+    if (flag == b'1') { return "a"; }
+    if (flag == b'2') { return "S"; }
+    if (flag == b'3') { return "b"; }
+    return ".";
+}
+
 // tuple_ret_elem_shape: one returned tuple element's shape character — 'a' for
 // a direct array literal (a fresh buffer the box sole-owns), 'f' / 'S' for an
 // array / string[] field read the literal retained (tuple_field_share_kind), 's'
@@ -39080,7 +39113,7 @@ function tuple_ret_local_init_shape(stmts: ast.Stmt[], name: string): string {
 // identifier, so prefixed entries never collide with the bare-name
 // membership checks, and every backend that threads this one list into
 // lower_func gets all three credits.
-pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
     // A least fixpoint: a function joins once every return is a literal, a
     // frame-fresh local, or a call to a member — `drain` returning
     // `flush(w, b)` on its slow path joins the round after `flush`.
@@ -39111,7 +39144,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // read this function's own literals, so a function admitted through
             // a returned call records none: its discarded result stays leak-mode.
             if (!body_has_nonfresh_tuple_return(fn.body, fn.body, [])) {
-                var arrf: string = tuple_ret_arrfree_flags(fn);
+                var arrf: string = tuple_ret_arrfree_flags(fn, structs);
                 if (arrf.len() > 0) { out = out.append("ARRF:" + fn.name + "|" + arrf); }
             }
         }
@@ -39276,14 +39309,16 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 // one rc dec releases: a direct array literal (fresh, so the box sole-owns it)
 // where the return-type annotation types k a scalar-element array, or an array
 // field read the literal retained. It is '2' when every return holds a retained
-// string[] field read, released by __fern_str_arr_free. An IDENT there in any
+// string[] field read, released by __fern_str_arr_free, and '3' when every
+// return holds a retained field read of a struct or enum array
+// (emit_box_elem_array_release). An IDENT there in any
 // return aliases a live local and keeps the position '0'. Any 8-byte SCALAR element (i64 /
 // u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
 // wide scalar would shift the later positions on wasm's 4-byte slots. Pointer
 // elements (string / struct / nested tuple / Option) occupy uniform slots, so
 // they are safe as '0' (leak-mode) positions — only their own boxes leak,
 // exactly today's floor.
-function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
+function tuple_ret_arrfree_flags(fn: parser.FuncDecl, structs: StructTab): string {
     var shapes: string[] = collect_tuple_ret_shapes(fn.body, fn.body, []);
     if (shapes.len() == 0) { return ""; }
     var n: i32 = shapes[0].len();
@@ -39306,6 +39341,7 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
             sj = sj + 1;
         }
         if (n_sfld == shapes.len()) { flags = flags + "2"; }
+        else if (n_fld == shapes.len() && is_box_elem_array_type(structs, tag)) { flags = flags + "3"; }
         else if (n_lit + n_fld == shapes.len() && (n_lit == 0 || tag_is_scalar_elem_array(tag))) { flags = flags + "1"; }
         else { flags = flags + "0"; }
         k = k + 1;
@@ -41816,7 +41852,7 @@ function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: St
 // parameter's container — `for mod in mods { for fd in mod.funcs { funcs =
 // funcs.append(fd); } }` then `Module { ...mods[0], funcs: funcs, … }`
 // (checker.ensure_annotated_parts). The append stored the box uncounted
-// (an element binding is a local, not the parameter struct_alias_ident_escapes
+// (an element binding is a local, not the parameter box_param_ident_escapes
 // counts), so the array holds boxes the caller releases, and the deep walk
 // would free them under the caller — the emit-all fixpoint's gen1 read its
 // modules' function boxes back freed. Box-only is the sound release role for
@@ -41897,7 +41933,7 @@ function body_appends_borrowed_elem(stmts: ast.Stmt[], arr: string, params: ast.
 
 // append_arg_is_borrow: `e` is `arr.append(x)` where x is a borrowed name or a
 // read out of a caller-owned container. A bare parameter is not one: the
-// construction retains it (struct_alias_ident_escapes).
+// construction retains it (box_param_ident_escapes).
 function append_arg_is_borrow(e: ast.Expr, arr: string, params: ast.ParamDecl[], borrows: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -55451,7 +55487,9 @@ function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
 // struct sibling because this walk FREES each element box rather than deccing it,
 // so two owners both walking is a double free rather than a double dec. Only the
 // buffer dec stays unconditional — it is the release every owner must perform.
-function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): LowerState {
+// `shared` gates each element's payload walk on its own uniqueness, for a buffer
+// whose elements may have a second owner.
+function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string, shared: boolean): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -55484,7 +55522,8 @@ function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): Lower
     st = st.emit(ir.op_load_local(idxslot));
     st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (enum box ptr)
     st = st.emit(ir.op_store_local(elslot));
-    st = emit_enum_variant_drops(st, elslot, ename); // drop payload AND free the box
+    var no_moved: string[] = [];
+    st = emit_enum_variant_drops_gated(st, elslot, ename, no_moved, shared); // drop payload AND free the box
     st = st.emit(ir.op_br(0));                       // back-edge
     st = st.emit(ir.op_end());                       // end loop
     st = st.emit(ir.op_end()).exit_loop();           // end block
@@ -55509,7 +55548,7 @@ function emit_arrenum_reclaim_store(se: LowerState, slot: i32, ename: string): L
     st = st.emit(ir.op_load_local(tmp));             // new
     st = st.emit(ir.op_bin("ne", 0, false));
     st = st.emit(ir.op_if(0));
-    st = emit_arrenum_deep_free(st, slot, ename);    // free old structure
+    st = emit_arrenum_deep_free(st, slot, ename, false);    // free old structure
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
@@ -66551,10 +66590,11 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
     match (e) {
         ast.ExprIdent(id) => { if (id.name == pn) { return counted; } return true; },
         ast.ExprArray(a) => {
-            // Array and tuple construction inc an ARRAY element; whether they inc
-            // a STRING one is not established, so the string tier declines both
-            // rather than crediting a store that may never have retained.
-            var acnt: boolean = pfx == "ACNT:";
+            // Array construction incs an ARRAY element and a borrowed struct or
+            // enum parameter (box_param_ident_escapes); whether it incs a STRING
+            // one is not established, so the string tier declines it rather than
+            // crediting a store that may never have retained.
+            var acnt: boolean = pfx == "ACNT:" || pfx == "PCNT:" || pfx == "ECNT:";
             var i: i32 = 0;
             while (i < a.elements.len()) { if (!arrparam_use_ok(a.elements[i], pn, acnt, reg, pfx, structs, sfok)) { return false; } i = i + 1; }
             return true;
@@ -66595,11 +66635,11 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
                     // method may thread the receiver, so it is not credited.
                     var recv_counted: boolean = fa.field == "len";
                     if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg, pfx, structs, sfok)) { return false; }
-                    // `xs.append(p)` at the STRUCT tier is a COUNTED store: the
-                    // clone-append retains a borrowed-param struct element, so
-                    // the caller's post-call release nets to the reference the
-                    // array owns.
-                    if (pfx == "PCNT:" && fa.field == "append" && c.args.len() == 1) {
+                    // `xs.append(p)` at the STRUCT or ENUM tier is a COUNTED
+                    // store: every append retains a borrowed struct or enum
+                    // parameter, so the caller's post-call release nets to the
+                    // reference the array owns.
+                    if ((pfx == "PCNT:" || pfx == "ECNT:") && fa.field == "append" && c.args.len() == 1) {
                         return arrparam_use_ok(c.args[0], pn, true, reg, pfx, structs, sfok);
                     }
                 },
@@ -66648,7 +66688,20 @@ function arrparam_use_ok_stmt(st: ast.Stmt, pn: string, reg: string[], pfx: stri
     match (st) {
         ast.StmtVar(v) => { return arrparam_use_ok(v.init, pn, false, reg, pfx, structs, sfok); },
         ast.StmtAssign(a) => { return arrparam_use_ok(a.value, pn, false, reg, pfx, structs, sfok); },
-        ast.StmtReturn(r) => { return arrparam_use_ok(r.value, pn, false, reg, pfx, structs, sfok); },
+        ast.StmtReturn(r) => {
+            // A returned array literal stores a struct or enum parameter uncounted
+            // (lower_expr_array's `returning`), so it is no counted use there.
+            match (r.value) {
+                ast.ExprArray(ra) => {
+                    if (pfx == "PCNT:" || pfx == "ECNT:") {
+                        for el in ra.elements { if (!arrparam_use_ok(el, pn, false, reg, pfx, structs, sfok)) { return false; } }
+                        return true;
+                    }
+                },
+                _ => {}
+            }
+            return arrparam_use_ok(r.value, pn, false, reg, pfx, structs, sfok);
+        },
         ast.StmtExpr(e) => { return arrparam_use_ok(e.value, pn, false, reg, pfx, structs, sfok); },
         ast.StmtIf(f) => {
             return arrparam_use_ok(f.cond, pn, false, reg, pfx, structs, sfok)
@@ -66693,6 +66746,9 @@ pub function str_param_counted_at(reg: string[], callee: string, ai: i32): boole
 }
 pub function struct_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
     return param_counted_at(reg, "PCNT:", callee, ai);
+}
+pub function enum_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
+    return param_counted_at(reg, "ECNT:", callee, ai);
 }
 
 // borrow_reg_with_counted folds param_counted_of's verdict into the borrowability
@@ -68309,7 +68365,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
         strfld_ok_types: sfok,
-        tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
+        tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs, structs),
         own_positions: own_positions_of(funcs),
         own_scalar_arr_positions: own_scalar_arr_positions_of(funcs),
         own_consumed_positions: [],
