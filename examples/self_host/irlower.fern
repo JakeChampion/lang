@@ -280,11 +280,17 @@ pub struct LocalInfo {
     // a binding therefore takes NO transfer retain; retaining it leaves a second
     // claim with nothing to release it (#8070).
     moved_claim: boolean,
+    // var_bound / var_counted: bound by a `var` statement (not an own-lift,
+    // whose bind buys the transfer claim), and whether the bound value is one
+    // this frame provably holds a counted reference to. An `own` position
+    // moves a counted one and retains for any other (emit_own_var_local_arg).
+    var_bound: boolean,
+    var_counted: boolean,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -11902,6 +11908,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!fr.ok) { return fr; }
         return fr.emit(ir.op_free());
     }
+    // __fern_box_free(data, size): core/map's handle release. The rc'd block
+    // starts 8 bytes before `data` and is `size + 8` long, so this is the raw
+    // free of that block; it leaves the same statement-position dummy 0.
+    if (cid.name == "__fern_box_free" && c.args.len() == 2) {
+        var eight: ast.Expr = ast.ExprNumber { text: "8", suffix: "", raw: "8", is_float: false, line: c.line, col: c.col };
+        var bf: LowerState = lower_expr(ast.ExprBinary { op: "-", left: c.args[0], right: eight, line: c.line, col: c.col, ty: "" }, s);
+        if (!bf.ok) { return bf; }
+        bf = lower_expr(ast.ExprBinary { op: "+", left: c.args[1], right: eight, line: c.line, col: c.col, ty: "" }, bf);
+        if (!bf.ok) { return bf; }
+        return bf.emit(ir.op_free());
+    }
     // __fern_arr_dec(v, stride) / __fern_drop_arr_ptr(v, stride):
     // core/map's value-release helpers, still NO-OPS here — the element
     // deep-drop the stride selects has no self-host equivalent, so these
@@ -13443,7 +13460,8 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         // binding along — `var st = a.cfi; f(st)` — is retained at the BIND
         // instead (emit_own_lift_retain, #8267). A bare IDENT there is the
         // #4873 self-reassign admission, and when it names a borrowed
-        // parameter the frame has no reference to transfer (#8429).
+        // parameter the frame has no reference to transfer (#8429); or a
+        // `var` local at its last use (#9541, emit_own_var_local_arg).
         if (util.index_of_str(sc.frame.sigs.own_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0
             && !sc.callee_param_is_typevar(cid.name, ai)) {
             match (c.args[ai]) {
@@ -20456,11 +20474,15 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     match (st) {
         ast.StmtVar(v) =>{
             var sv: LowerState = lower_stmt_var(v, s);
+            sv = mark_var_bound(v, sv);
             sv = emit_own_lift_retain(v, sv);
             sv = seed_snapshot_local(v, sv);
             return release_last_use_source(v, sv);
         },
-        ast.StmtAssign(a) =>{ return lower_stmt_assign(a, s); },
+        ast.StmtAssign(a) =>{
+            if (call_owns_arg(a.value, a.target, s)) { return lower_own_rebind(a, s); }
+            return settle_var_counted(a, lower_stmt_assign(a, s));
+        },
         ast.StmtReturn(r) => {
             if (s.frame.cur_ret == "u32") { r = ast.StmtReturn { ...r, value: settle_u32_literal(r.value) }; }
             // A bare `return;` in a VOID function — parse_expr yields an
@@ -27066,18 +27088,15 @@ function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState
 // later read can observe, with the caller-side grow bracket covering what the
 // borrowed container's owner can still see.
 //
-// arr_push never frees its receiver, so the reallocating path leaves the
-// pre-grow buffer valid for the container that still names it.
-//
-// The IN-PLACE result IS the source container's own buffer, so the identity arm
-// MOVES it: the field is nulled, and the value is the buffer's only name. The
-// result is uncounted either way — a fresh rc 1 buffer, or the field's own with
-// the field no longer claiming it — so whoever releases the box afterwards
-// (the rebind's __field_reclaim_<T>, a sweep's __struct_drop_<T>, an `own`
-// param's exit release, the value's own holder) finds nothing there to free.
-// Every rc helper skips a null field. Without the move, the box and the value
-// both name the buffer at rc 1, and the first of those releases frees it out
-// from under the other.
+// A buffer at rc 1 is CONSUMED by the push, whether it grows in place or into
+// a fresh box that takes over its element pointers uncounted (the owned push
+// then frees the superseded shell). So on that arm the field is nulled and the
+// value is the only name for what the buffer held; whoever releases the box
+// afterwards (the rebind's __field_reclaim_<T>, a sweep's __struct_drop_<T>, an
+// `own` param's exit release) finds nothing there to free. Every rc helper
+// skips a null field. A grown buffer is not the result, so pointer identity
+// cannot stand in for the move. A shared buffer takes arr_push's copy, and the
+// field keeps its own count.
 //
 // The move is only sound for a box this frame holds alone. A second name the
 // CALLER binds (`var cur = s`, the checker's scope walks) is grow_alias_bind's
@@ -27103,31 +27122,35 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
     st = st.emit(ir.op_store_local(uniqslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    var consname: string = "$fiac" + util.i32_to_string(st.locals.len());
+    st = st.add_local(consname);
+    var consslot: i32 = st.slot_of(consname);
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(consslot));
     if (is_counted_elem_array_type(st.frame.structs, decl_field_type_at(st.frame.structs, sty, fidx))) {
-        st = emit_secure_shared_elems(st, srcslot);
+        st = emit_secure_shared_elems(st, consslot, srcslot);
     }
     st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_i64());
+        st = st.emit(ir.op_arr_push_owned_i64());
     } else if (kind == "f64") {
         st = lower_expr(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_f64());
+        st = st.emit(ir.op_arr_push_owned_f64());
     } else {
         st = lower_append_elem_value(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push());
+        st = st.emit(ir.op_arr_push_owned());
     }
     var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
     st = st.add_local(resname);
     var resslot: i32 = st.slot_of(resname);
     st = st.emit(ir.op_store_local(resslot));
     st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
-    st = st.emit(ir.op_load_local(resslot));
-    st = st.emit(ir.op_load_local(srcslot));
-    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_load_local(consslot));
     st = st.emit(ir.op_if(0));
     st = st.emit(ir.op_load_local(root));
     st = st.emit(ir.op_const_i32(0));
@@ -27203,14 +27226,13 @@ function arr_expr_counted_elems(obj: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// emit_secure_shared_elems emits `if (!is_unique(src)) { arr_inc_elems(src) }`
-// ahead of an arr_push on a pointer-element buffer: a shared receiver takes
-// arr_push's un-share copy, which duplicates every element pointer, and the
-// retain gives the copy and the original a count of each element apiece. A
-// unique receiver grows in place and its elements change hands with it.
-function emit_secure_shared_elems(s: LowerState, srcslot: i32): LowerState {
-    var st: LowerState = s.emit(ir.op_load_local(srcslot));
-    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+// emit_secure_shared_elems emits `if (!unique) { arr_inc_elems(src) }` ahead of
+// an arr_push on a pointer-element buffer: a shared receiver takes arr_push's
+// un-share copy, which duplicates every element pointer, and the retain gives
+// the copy and the original a count of each element apiece. A unique receiver's
+// elements change hands with it, in place or grown.
+function emit_secure_shared_elems(s: LowerState, uniqslot: i32, srcslot: i32): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(uniqslot));
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("eq", 0, false));
     st = st.emit(ir.op_if(0));
@@ -60638,7 +60660,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -78505,6 +78527,97 @@ function snapshot_slot_name(i: i32): string {
     return "$snap$" + util.i32_to_string(i);
 }
 
+// mark_var_bound stamps LocalInfo.var_bound on the slots `v` binds — its name,
+// or each top-level name of a destructure — and var_counted where the value is
+// provably this frame's (value_counted).
+function mark_var_bound(v: ast.StmtVar, sv: LowerState): LowerState {
+    if (!sv.ok) { return sv; }
+    if (util.index_of_str(sv.frame.own_lift_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0) { return sv; }
+    var counted: boolean = value_counted(v.init, v.name, v.line, v.col, sv);
+    var st: LowerState = sv;
+    var start: i32 = 0;
+    var p: i32 = 0;
+    var depth: i32 = 0;
+    while (p <= v.name.len()) {
+        if (p == v.name.len() || (v.name[p] == b',' && depth == 0)) {
+            var nm: string = slice_unchecked(v.name, start, p) + "";
+            var sl: i32 = st.slot_of(nm);
+            if (nm.len() > 0 && nm[0] != b'(' && sl >= st.frame.n_params) {
+                st = LowerState { ...st, locals: st.locals.with(sl, LocalInfo { ...st.locals[sl], var_bound: true, var_counted: counted && nm == v.name }) };
+            }
+            start = p + 1;
+        } else if (v.name[p] == b'(') { depth = depth + 1; }
+        else if (v.name[p] == b')') { depth = depth - 1; }
+        p = p + 1;
+    }
+    return st;
+}
+
+// value_counted: is `e`, stored to `name` by the statement at line:col, a
+// value this frame holds a counted reference to — one field_move_owned_value
+// admits, or the move-on-alias of a counted local, which hands that local's
+// claim over?
+function value_counted(e: ast.Expr, name: string, line: i32, col: i32, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIdent(id) => {
+            var src: i32 = s.slot_of(id.name);
+            return src >= s.frame.n_params && s.locals[src].var_counted && s.moves_local_at(id.name, line, col);
+        },
+        ast.ExprCall(c) => {
+            var cn: string = ident_name_or_empty(c.callee);
+            if (cn.len() > 0 && s.slot_of(cn) >= 0) { return false; }
+        },
+        _ => {}
+    }
+    return field_move_owned_value(e, name, s.frame.sigs, []);
+}
+
+// settle_var_counted clears var_counted on a `var` local `a` stores a value
+// to that value_counted cannot vouch for. It never sets it: lowering order is
+// textual, so a count one branch stores says nothing of the other.
+function settle_var_counted(a: ast.StmtAssign, s: LowerState): LowerState {
+    if (!s.ok) { return s; }
+    var keep: boolean = s.slot_of(a.target) >= 0 && value_counted(a.value, a.target, a.line, a.col, s);
+    var st: LowerState = s;
+    var start: i32 = 0;
+    var p: i32 = 0;
+    while (p <= a.target.len()) {
+        if (p == a.target.len() || a.target[p] == b',' || a.target[p] == b'(' || a.target[p] == b')') {
+            var sl: i32 = st.slot_of(slice_unchecked(a.target, start, p) + "");
+            if (!keep && sl >= st.frame.n_params && st.locals[sl].var_counted) {
+                st = LowerState { ...st, locals: st.locals.with(sl, LocalInfo { ...st.locals[sl], var_counted: false }) };
+            }
+            start = p + 1;
+        }
+        p = p + 1;
+    }
+    return st;
+}
+
+// lower_own_rebind lowers `w = f(w)` with `w` at an `own` position — the #4873
+// self-reassign admission, where the callee's result takes the slot over — as
+// for any other binding: the stamp emit_own_var_local_arg reads is lifted for
+// the statement, and the claim `w` held before is the one it holds after.
+function lower_own_rebind(a: ast.StmtAssign, s: LowerState): LowerState {
+    var sl: i32 = s.slot_of(a.target);
+    if (sl < s.frame.n_params || !s.locals[sl].var_bound) { return lower_stmt_assign(a, s); }
+    var st: LowerState = LowerState { ...s, locals: s.locals.with(sl, LocalInfo { ...s.locals[sl], var_bound: false }) };
+    st = lower_stmt_assign(a, st);
+    if (!st.ok || sl >= st.locals.len()) { return st; }
+    return LowerState { ...st, locals: st.locals.with(sl, LocalInfo { ...st.locals[sl], var_bound: true }) };
+}
+
+// emit_own_var_local_arg: the value of `var` local `sl` is on the stack, bound
+// for an `own` position at its last use. A counted local is MOVED: the slot is
+// nulled, so every release still ahead of it on any path meets the null and
+// no-ops. Any other is retained for the callee, which can leak where this
+// lowering cannot prove the local's claim but never frees one it lacks.
+function emit_own_var_local_arg(sl: i32, s: LowerState): LowerState {
+    if (!s.locals[sl].var_counted) { return s.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
+    var st: LowerState = s.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(sl));
+}
+
 // emit_own_lift_retain: a `var st = a.cfi` bind whose local is handed on to a
 // declared `own` position (own_lift_retain_sites_of) takes the transfer retain
 // here, at the BIND. The claim it makes is the one the `own` position consumes;
@@ -80548,8 +80661,9 @@ function emit_own_borrowed_param_arg(id: ast.ExprIdent, scalar_array_move: boole
     }
     // struct_type is stamped on a struct-ELEMENT array slot too, so the
     // container kinds are refused by name before it is consulted.
-    if (sl >= s.frame.n_params) { return s; }
+    if (sl >= s.frame.n_params && !s.locals[sl].var_bound) { return s; }
     if (s.is_str_slot(sl) || s.is_cell_slot(sl)) { return s; }
     if (s.struct_type_of_slot(sl).len() == 0 && !s.slot_is_tuple_box(sl)) { return s; }
+    if (sl >= s.frame.n_params) { return emit_own_var_local_arg(sl, s); }
     return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
 }

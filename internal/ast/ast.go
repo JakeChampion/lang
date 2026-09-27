@@ -1579,7 +1579,7 @@ var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
 // RcUnderflowTrap turns the Phase 3 over-release COUNTER into a TRAP
 // (x86-64 and arm64; a diagnostic build mode). Every site that bumps
 // __fern_rc_underflow — the inline dec, the __fern_rc_dec /
-// __fern_arr_dec / __fern_map_drop helpers — follows the bump with
+// __fern_arr_dec helpers — follows the bump with
 // `ud2`, so the process dies with SIGILL at the exact dec that
 // over-released and a gdb backtrace names the function.
 //
@@ -1648,9 +1648,8 @@ const RcPoison = 0x7EEDFACE
 //
 // It is the SINGLE Go-side spelling of a constant that also exists in Fern
 // as `__map_hdr_bytes`, and the two must agree exactly: the Fern runtime
-// allocates and indexes the buffer, while the Go side both frees it
-// (__fern_map_drop, once per backend) and walks its entry column (the
-// generated __drop_map_* loops in internal/ir). Disagreeing by 8 bytes
+// allocates, indexes and frees the buffer, while the Go side walks its
+// entry column (the generated __drop_map_* loops in internal/ir). Disagreeing by 8 bytes
 // makes every column walk read the entry array off by two slots, which
 // presents as a SEGV in the drop path rather than as anything resembling a
 // layout bug — and it does so on arm64 first, because its 16-byte entry
