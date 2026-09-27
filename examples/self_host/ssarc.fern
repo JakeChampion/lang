@@ -262,10 +262,13 @@ function map_key_fns(t: typeinfo.Type): string {
     return k + ".hash|" + k + ".eq";
 }
 
-// The map ops' widekind: 1 for an i64 or u64 value column, which wasm keeps
-// in cells of their own; the register backends ignore it.
-function map_widekind(t: typeinfo.Type): i32 {
-    if (ssasem.wide_map_value(ssasem.map_value(t))) { return 1; }
+// The map ops' widekind: 1 for an i64 or u64 value column and 2 for a float
+// one, which wasm keeps in cells of their own; the register backends ignore it.
+function map_widekind(t: typeinfo.Type): i32 { return value_widekind(ssasem.map_value(t)); }
+
+function value_widekind(v: typeinfo.Type): i32 {
+    if (ssasem.wide_map_value(v)) { return 1; }
+    if (ssasem.float_map_value(v)) { return 2; }
     return 0;
 }
 
@@ -2812,7 +2815,7 @@ function map_iter_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     } else if (ins.kind_tag == ssasem.mapiter_key()) {
         r = emit(r, ir.op_mapiter_key());
     } else if (ins.kind_tag == ssasem.mapiter_value()) {
-        r = emit(r, ir.op_mapiter_value(ssasem.wide_map_value(semtypes.map_iter_value(f.values[ins.args[0]]))));
+        r = emit(r, ir.op_mapiter_value(value_widekind(semtypes.map_iter_value(f.values[ins.args[0]]))));
     } else {
         r = emit(r, ir.op_mapiter_advance());
     }
@@ -2943,6 +2946,7 @@ function unshared_map(own r: irlower.LowerResult, f: ssasem.Func, slot: i32, box
     var value: i32 = box + 5;
     r = reserve(r, value + 1);
     if (map_widekind(t) == 1) { r = irlower.LowerResult { ...r, i64_slots: r.i64_slots.append(value) }; }
+    if (map_widekind(t) == 2) { r = irlower.LowerResult { ...r, f64_slots: r.f64_slots.append(value) }; }
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
     r = emit(r, ir.op_if(0));
