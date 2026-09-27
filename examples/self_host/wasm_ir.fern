@@ -303,6 +303,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
         "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
         "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_socket_ctl", "temp_dir",
         "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
         "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
         "writer_write", "write_some"
     ];
@@ -2967,6 +2968,225 @@ pub function wasi_udp_local_address_import(): string {
     return "  (import \"wasi:sockets/udp@0.2.0\" \"[method]udp-socket.local-address\" (func $__fern_wasi_udp_local_address (param i32 i32)))\n";
 }
 
+// The reactor floor (#9853) over wasi:io/poll: a readiness set kept
+// between waits, the twin of internal/codegen/wasmbin/wasi_reactor.go.
+//
+// A reactor is a 12-byte header {n @0, cap @4, entries @8} whose entries
+// buffer holds 16-byte rows {socket record @0, interest @4, read pollable
+// @8, write pollable @12}. Watching a record subscribes the pollables its
+// kind word names: a listener (0) or a connect under way (4) through
+// tcp-socket.subscribe, a connection (1) through its input and output
+// streams, a datagram socket with streams (3) through them. A wait polls
+// every pollable the interests select plus a timer for a finite timeout
+// and writes (record, readiness) pairs, one word per slot, into the
+// caller's i32[]. A socket is unwatched before it is closed: the
+// pollables a watch holds are children of its streams.
+pub function wasi_stream_subscribe_imports(): string {
+    var o: string = "";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.subscribe\" (func $__fern_wasi_input_stream_subscribe (param i32) (result i32)))\n";
+    o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.subscribe\" (func $__fern_wasi_output_stream_subscribe (param i32) (result i32)))\n";
+    return o;
+}
+
+pub function wasi_stream_read_import(): string {
+    return "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.read\" (func $__fern_wasi_stream_read_nb (param i32 i64 i32)))\n";
+}
+
+pub function reactor_new_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_reactor_new (result i32)\n";
+    o = o + "    (local $hdr i32)\n";
+    o = o + "    (local.set $hdr (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (i32.store (local.get $hdr) (i32.const 0))\n";
+    o = o + "    (i32.store offset=4 (local.get $hdr) (i32.const 16))\n";
+    o = o + "    (i32.store offset=8 (local.get $hdr) (call $__fern_alloc (i32.const 256)))\n";
+    o = o + "    (local.get $hdr))\n";
+    return o;
+}
+
+// The pollables the entry at $e holds, dropped per its interest bits.
+function reactor_drop_pollables(): string {
+    return "    (if (i32.and (i32.load offset=4 (local.get $e)) (i32.const 1)) (then (call $__fern_wasi_pollable_drop (i32.load offset=8 (local.get $e)))))\n"
+        + "    (if (i32.and (i32.load offset=4 (local.get $e)) (i32.const 2)) (then (call $__fern_wasi_pollable_drop (i32.load offset=12 (local.get $e)))))\n";
+}
+
+// The entry at $e subscribed for the record $fd and the interest, by the
+// record's kind word; a kind with nothing to subscribe leaves the
+// interest at zero and answers -EINVAL.
+function reactor_subscribe(kind: i32, read_sub: string, write_sub: string, read_off: i32, write_off: i32): string {
+    var o: string = "";
+    o = o + "    (if (i32.eq (local.get $kind) (i32.const " + util.i32_to_string(kind) + ")) (then\n";
+    o = o + "      (if (i32.and (local.get $interest) (i32.const 1)) (then (i32.store offset=8 (local.get $e) (call " + read_sub + " (i32.load offset=" + util.i32_to_string(read_off) + " (local.get $fd))))))\n";
+    o = o + "      (if (i32.and (local.get $interest) (i32.const 2)) (then (i32.store offset=12 (local.get $e) (call " + write_sub + " (i32.load offset=" + util.i32_to_string(write_off) + " (local.get $fd))))))\n";
+    o = o + "      (i32.store offset=4 (local.get $e) (local.get $interest))\n";
+    o = o + "      (return (i32.const 0))))\n";
+    return o;
+}
+
+pub function reactor_ctl_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_reactor_ctl (param $r i32) (param $op i32) (param $fd i32) (param $arg i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $interest i32) (local $kind i32) (local $cap i32) (local $grown i32)\n";
+    o = o + "    (local.set $n (i32.load (local.get $r)))\n";
+    o = o + "    (local.set $cap (i32.load offset=4 (local.get $r)))\n";
+    o = o + "    (local.set $ents (i32.load offset=8 (local.get $r)))\n";
+    o = o + "    (if (i32.eq (local.get $op) (i32.const 3)) (then\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $dropped (loop $drop\n";
+    o = o + "        (br_if $dropped (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "        (local.set $e (i32.add (local.get $ents) (i32.mul (local.get $i) (i32.const 16))))\n";
+    o = o + reactor_drop_pollables();
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $drop)))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ents) (i32.mul (local.get $cap) (i32.const 16)))\n";
+    o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 12))\n";
+    o = o + "      (return (i32.const 0))))\n";
+    o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
+    o = o + "    (if (i32.eq (local.get $op) (i32.const 1)) (then (local.set $interest (i32.and (local.get $arg) (i32.const 3)))))\n";
+    o = o + "    (local.set $kind (i32.load offset=12 (local.get $fd)))\n";
+    // Find the record's entry.
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $searched (loop $search\n";
+    o = o + "      (br_if $searched (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $e (i32.add (local.get $ents) (i32.mul (local.get $i) (i32.const 16))))\n";
+    o = o + "      (if (i32.eq (i32.load (local.get $e)) (local.get $fd)) (then\n";
+    o = o + reactor_drop_pollables();
+    o = o + "        (if (i32.eqz (local.get $interest)) (then\n";
+    o = o + "          (memory.copy (local.get $e) (i32.add (local.get $ents) (i32.mul (i32.sub (local.get $n) (i32.const 1)) (i32.const 16))) (i32.const 16))\n";
+    o = o + "          (i32.store (local.get $r) (i32.sub (local.get $n) (i32.const 1)))\n";
+    o = o + "          (return (i32.const 0))))\n";
+    o = o + reactor_subscribe(1, "$__fern_wasi_input_stream_subscribe", "$__fern_wasi_output_stream_subscribe", 4, 8);
+    o = o + reactor_subscribe(3, "$__fern_wasi_udp_in_subscribe", "$__fern_wasi_udp_subscribe", 4, 8);
+    o = o + reactor_subscribe(0, "$__fern_wasi_tcp_subscribe", "$__fern_wasi_tcp_subscribe", 0, 0);
+    o = o + reactor_subscribe(4, "$__fern_wasi_tcp_subscribe", "$__fern_wasi_tcp_subscribe", 0, 0);
+    o = o + "        (i32.store offset=4 (local.get $e) (i32.const 0))\n";
+    o = o + "        (return (i32.const -28))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $search)))\n";
+    // Not watched yet.
+    o = o + "    (if (i32.eqz (local.get $interest)) (then (return (i32.const 0))))\n";
+    o = o + "    (if (i32.eq (local.get $n) (local.get $cap)) (then\n";
+    o = o + "      (local.set $grown (call $__fern_alloc (i32.mul (local.get $cap) (i32.const 32))))\n";
+    o = o + "      (memory.copy (local.get $grown) (local.get $ents) (i32.mul (local.get $n) (i32.const 16)))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ents) (i32.mul (local.get $cap) (i32.const 16)))\n";
+    o = o + "      (i32.store offset=8 (local.get $r) (local.get $grown))\n";
+    o = o + "      (i32.store offset=4 (local.get $r) (i32.mul (local.get $cap) (i32.const 2)))\n";
+    o = o + "      (local.set $ents (local.get $grown))))\n";
+    o = o + "    (local.set $e (i32.add (local.get $ents) (i32.mul (local.get $n) (i32.const 16))))\n";
+    o = o + "    (i32.store (local.get $e) (local.get $fd))\n";
+    o = o + "    (i32.store (local.get $r) (i32.add (local.get $n) (i32.const 1)))\n";
+    o = o + reactor_subscribe(1, "$__fern_wasi_input_stream_subscribe", "$__fern_wasi_output_stream_subscribe", 4, 8);
+    o = o + reactor_subscribe(3, "$__fern_wasi_udp_in_subscribe", "$__fern_wasi_udp_subscribe", 4, 8);
+    o = o + reactor_subscribe(0, "$__fern_wasi_tcp_subscribe", "$__fern_wasi_tcp_subscribe", 0, 0);
+    o = o + reactor_subscribe(4, "$__fern_wasi_tcp_subscribe", "$__fern_wasi_tcp_subscribe", 0, 0);
+    o = o + "    (i32.store offset=4 (local.get $e) (i32.const 0))\n";
+    o = o + "    (i32.const -28))\n";
+    return o;
+}
+
+// One slot of the poll list: the pollable, and its (record, bit) pair in
+// the parallel table.
+function reactor_slot(pollable: string, record: string, bit: string): string {
+    return "      (i32.store (i32.add (local.get $list) (i32.mul (local.get $k) (i32.const 4))) " + pollable + ")\n"
+        + "      (i32.store (i32.add (local.get $slots) (i32.mul (local.get $k) (i32.const 8))) " + record + ")\n"
+        + "      (i32.store offset=4 (i32.add (local.get $slots) (i32.mul (local.get $k) (i32.const 8))) " + bit + ")\n"
+        + "      (local.set $k (i32.add (local.get $k) (i32.const 1)))\n";
+}
+
+pub function reactor_wait_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_reactor_wait (param $r i32) (param $events i32) (param $timeout i32) (result i32)\n";
+    o = o + "    (local $n i32) (local $ents i32) (local $i i32) (local $e i32) (local $count i32) (local $list i32) (local $slots i32) (local $k i32)\n";
+    o = o + "    (local $timer i32) (local $ret i32) (local $rl i32) (local $rc i32) (local $out i32) (local $cap i32) (local $idx i32) (local $bits i32) (local $j i32)\n";
+    o = o + "    (local.set $cap (i32.div_u (i32.load (local.get $events)) (i32.const 2)))\n";
+    o = o + "    (if (i32.eqz (local.get $cap)) (then (return (i32.const -28))))\n";
+    o = o + "    (local.set $n (i32.load (local.get $r)))\n";
+    o = o + "    (local.set $ents (i32.load offset=8 (local.get $r)))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $counted (loop $count_loop\n";
+    o = o + "      (br_if $counted (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $bits (i32.load offset=4 (i32.add (local.get $ents) (i32.mul (local.get $i) (i32.const 16)))))\n";
+    o = o + "      (local.set $count (i32.add (local.get $count) (i32.add (i32.and (local.get $bits) (i32.const 1)) (i32.and (i32.shr_u (local.get $bits) (i32.const 1)) (i32.const 1)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $count_loop)))\n";
+    o = o + "    (if (i32.ge_s (local.get $timeout) (i32.const 0)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
+    o = o + "    (if (i32.eqz (local.get $count)) (then (return (i32.const -28))))\n";
+    o = o + "    (local.set $list (call $__fern_alloc (i32.mul (local.get $count) (i32.const 4))))\n";
+    o = o + "    (local.set $slots (call $__fern_alloc (i32.mul (local.get $count) (i32.const 8))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $filled (loop $fill\n";
+    o = o + "      (br_if $filled (i32.ge_u (local.get $i) (local.get $n)))\n";
+    o = o + "      (local.set $e (i32.add (local.get $ents) (i32.mul (local.get $i) (i32.const 16))))\n";
+    o = o + "      (if (i32.and (i32.load offset=4 (local.get $e)) (i32.const 1)) (then\n";
+    o = o + reactor_slot("(i32.load offset=8 (local.get $e))", "(i32.load (local.get $e))", "(i32.const 1)");
+    o = o + "      ))\n";
+    o = o + "      (if (i32.and (i32.load offset=4 (local.get $e)) (i32.const 2)) (then\n";
+    o = o + reactor_slot("(i32.load offset=12 (local.get $e))", "(i32.load (local.get $e))", "(i32.const 2)");
+    o = o + "      ))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $fill)))\n";
+    o = o + "    (if (i32.ge_s (local.get $timeout) (i32.const 0)) (then\n";
+    o = o + "      (local.set $timer (call $__fern_wasi_subscribe_duration (i64.mul (i64.extend_i32_s (local.get $timeout)) (i64.const 1000000))))\n";
+    o = o + reactor_slot("(local.get $timer)", "(i32.const 0)", "(i32.const 0)");
+    o = o + "    ))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 8)))\n";
+    o = o + "    (call $__fern_wasi_poll (local.get $list) (local.get $count) (local.get $ret))\n";
+    o = o + "    (local.set $rl (i32.load (local.get $ret)))\n";
+    o = o + "    (local.set $rc (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (local.set $j (i32.const 0))\n";
+    o = o + "    (block $reported (loop $report\n";
+    o = o + "      (br_if $reported (i32.ge_u (local.get $j) (local.get $rc)))\n";
+    o = o + "      (local.set $idx (i32.load (i32.add (local.get $rl) (i32.mul (local.get $j) (i32.const 4)))))\n";
+    o = o + "      (local.set $bits (i32.load offset=4 (i32.add (local.get $slots) (i32.mul (local.get $idx) (i32.const 8)))))\n";
+    o = o + "      (if (i32.and (i32.ne (local.get $bits) (i32.const 0)) (i32.lt_u (local.get $out) (local.get $cap))) (then\n";
+    o = o + "        (i32.store (i32.add (i32.add (local.get $events) (i32.const 8)) (i32.mul (local.get $out) (i32.const 8))) (i32.load (i32.add (local.get $slots) (i32.mul (local.get $idx) (i32.const 8)))))\n";
+    o = o + "        (i32.store offset=4 (i32.add (i32.add (local.get $events) (i32.const 8)) (i32.mul (local.get $out) (i32.const 8))) (local.get $bits))\n";
+    o = o + "        (local.set $out (i32.add (local.get $out) (i32.const 1)))))\n";
+    o = o + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n";
+    o = o + "      (br $report)))\n";
+    o = o + "    (if (local.get $rc) (then (call $__fern_raw_free (local.get $rl) (i32.mul (local.get $rc) (i32.const 4)))))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 8))\n";
+    o = o + "    (if (i32.ge_s (local.get $timeout) (i32.const 0)) (then (call $__fern_wasi_pollable_drop (local.get $timer))))\n";
+    o = o + "    (call $__fern_raw_free (local.get $list) (i32.mul (local.get $count) (i32.const 4)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $slots) (i32.mul (local.get $count) (i32.const 8)))\n";
+    o = o + "    (local.get $out))\n";
+    return o;
+}
+
+// $__fern_tcp_recv_into(conn, buf) -> bytes read into the caller's array,
+// one byte per slot; 0 at EOF, -EAGAIN (6) while nothing is queued since a
+// wasm socket never blocks a read, -EIO on a stream error with the error
+// dropped, -EBADF for a record that is not a connection.
+pub function tcp_recv_into_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_recv_into (param $c i32) (param $buf i32) (result i32)\n";
+    o = o + "    (local $ret i32) (local $n i32) (local $src i32) (local $len i32) (local $i i32) (local $closed i32)\n";
+    o = o + "    (if (i32.ne (i32.load offset=12 (local.get $c)) (i32.const 1)) (then (return (i32.const -8))))\n";
+    o = o + "    (local.set $n (i32.load (local.get $buf)))\n";
+    o = o + "    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))\n";
+    o = o + "    (local.set $ret (call $__fern_alloc (i32.const 12)))\n";
+    o = o + "    (call $__fern_wasi_stream_read_nb (i32.load offset=4 (local.get $c)) (i64.extend_i32_u (local.get $n)) (local.get $ret))\n";
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+    o = o + "      (local.set $closed (i32.load8_u offset=4 (local.get $ret)))\n";
+    o = o + "      (if (i32.eqz (local.get $closed)) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
+    o = o + "      (if (local.get $closed) (then (return (i32.const 0))))\n";
+    o = o + "      (return (i32.const -29))))\n";
+    o = o + "    (local.set $src (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "    (local.set $len (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 12))\n";
+    o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const -6))))\n";
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $copied (loop $more\n";
+    o = o + "      (br_if $copied (i32.ge_u (local.get $i) (local.get $len)))\n";
+    o = o + "      (i32.store (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4))) (i32.load8_u (i32.add (local.get $src) (local.get $i))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $more)))\n";
+    o = o + "    (call $__fern_raw_free (local.get $src) (local.get $len))\n";
+    o = o + "    (local.get $len))\n";
+    return o;
+}
+
 // $__fern_ipv4_parse(s, dst) -> i32: parse a dotted-quad "a.b.c.d" string block,
 // store the four octets at `dst` packed a | b<<8 | c<<16 | d<<24, and return 0;
 // -1 on a malformed host, leaving `dst` untouched.
@@ -4416,9 +4636,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
         // malformed host literal. All three args are on the stack (#4375).
         parts = parts.append("    call $__fern_udp_send\n");
-    } else if (o.kind_tag >= 334 && o.kind_tag <= 338) {  // udp_bind, udp_connect, udp_sendto, udp_recvfrom, tcp_connect_with
-        // The datagram sockets and the started connect: every arg is on
-        // the stack, the helper's i32 answer replaces them.
+    } else if ((o.kind_tag >= 334 && o.kind_tag <= 338) || (o.kind_tag >= 341 && o.kind_tag <= 344)) {  // udp_*, tcp_connect_with, reactor_*, tcp_recv_into
+        // The datagram sockets, the started connect and the reactor floor:
+        // every arg is on the stack, the helper's i32 answer replaces them.
         parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
     } else if (o.kind_tag == 110) {  // tcp_connect
         // tcp_connect(host_be, port) -> 16-byte connection struct pointer,
@@ -10302,9 +10522,14 @@ function preview1_imports(needs: string[]): string {
     // instance-network is shared by the tcp set and udp_send; one gate so it
     // is emitted exactly once (a duplicate import is an invalid module).
     if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"]) || need_udp_socket(needs)) { parts = parts.append(wasi_instance_network_import()); }
-    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl"])) { parts = parts.append(wasi_sockets_imports()); }
-    // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2).
-    if (need(needs, "tcp_send") || need(needs, "tcp_recv")) { parts = parts.append(wasi_stream_io_imports()); }
+    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl", "reactor_ctl"])) { parts = parts.append(wasi_sockets_imports()); }
+    // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2);
+    // tcp_recv_into needs the error drop among them.
+    if (need_any(needs, ["tcp_send", "tcp_recv", "tcp_recv_into"])) { parts = parts.append(wasi_stream_io_imports()); }
+    // The reactor's own imports: the stream subscribes and the non-blocking
+    // read, which nothing else brings in.
+    if (need(needs, "reactor_ctl")) { parts = parts.append(wasi_stream_subscribe_imports()); }
+    if (need(needs, "tcp_recv_into")) { parts = parts.append(wasi_stream_read_import()); }
     // tcp_listen / tcp_accept add bind + listen + accept; tcp_pollable and
     // tcp_accept both need the sockets base set (subscribe + the drops).
     if (need_any(needs, ["tcp_listen", "tcp_listen_with", "tcp_accept"])) { parts = parts.append(wasi_sockets_server_imports()); }
@@ -10319,22 +10544,27 @@ function preview1_imports(needs: string[]): string {
     // with the tcp ops; the pollable imports are gated so they are not
     // emitted twice when a tcp op already brought them in.
     if (need_udp_socket(needs)) { parts = parts.append(wasi_udp_socket_imports()); }
-    if (need_udp_send(needs)) { parts = parts.append(wasi_udp_send_imports()); }
-    if (need(needs, "udp_recvfrom")) { parts = parts.append(wasi_udp_recv_imports()); }
+    // reactor_ctl subscribes both datagram streams, so it shares the udp
+    // send and receive import sets.
+    if (need_udp_send(needs) || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_send_imports()); }
+    if (need(needs, "udp_recvfrom") || need(needs, "reactor_ctl")) { parts = parts.append(wasi_udp_recv_imports()); }
     var udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
     if (udp_waits && !need(needs, "wasm_block") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_block_import()); }
     if (udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
+    // The reactor drops the pollables it held and its wait's timer; the
+    // drop comes with it only when no op above has imported it.
+    if (need_any(needs, ["reactor_ctl", "reactor_wait"]) && !udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
     if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) { parts = parts.append(wasi_pollable_block_import()); }
     if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) { parts = parts.append(wasi_pollable_drop_import()); }
     // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
     // helper is heap-backed (it allocates the 8-byte canonical return area), so
     // the heap gate below folds it in.
-    if (need(needs, "wasm_poll") || need(needs, "poll")) { parts = parts.append(wasi_poll_import()); }
+    if (need_any(needs, ["wasm_poll", "poll", "reactor_wait"])) { parts = parts.append(wasi_poll_import()); }
     // poll(fds, timeout) expresses its timeout as a monotonic-clock timer
     // added to the polled set, so it needs subscribe-duration + the pollable
     // drop — each only when the module has not already imported it for the
     // op that owns it, since a duplicate import is invalid.
-    if (need(needs, "poll") && !need(needs, "wasm_timer_pollable")) { parts = parts.append(wasi_subscribe_duration_import()); }
+    if (need_any(needs, ["poll", "reactor_wait"]) && !need(needs, "wasm_timer_pollable")) { parts = parts.append(wasi_subscribe_duration_import()); }
     if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_drop_import()); }
     return util.str_join_chunks(parts);
 }
@@ -10564,7 +10794,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
         "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
         "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-        "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll"])) {
+        "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into"])) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10737,7 +10967,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // host materialises it in guest memory — as does an export whose signature
     // needs the canonical allocator (export_needs_realloc). Like the heap gate
     // above, these come from the module's declarations, not from `needs`.
-    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
+    if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || need(needs, "reactor_wait") || need(needs, "tcp_recv_into") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
     if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_send", "udp_bind"])) { parts = parts.append(network_handle_func()); }
@@ -10759,6 +10989,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need_udp_send(needs)) { parts = parts.append(udp_sendto_func()); }
     if (need(needs, "udp_recvfrom")) { parts = parts.append(udp_recvfrom_func()); }
     if (need(needs, "udp_send")) { parts = parts.append(ipv4_parse_func() + udp_send_func()); }
+    if (need(needs, "reactor_new")) { parts = parts.append(reactor_new_func()); }
+    if (need(needs, "reactor_ctl")) { parts = parts.append(reactor_ctl_func()); }
+    if (need(needs, "reactor_wait")) { parts = parts.append(reactor_wait_func()); }
+    if (need(needs, "tcp_recv_into")) { parts = parts.append(tcp_recv_into_func()); }
     // $__fern_read_file / $__fern_write_file: open under preopen fd 3 and
     // read/write the whole file, boxing a Result[string, IoError] /
     // Result[(), IoError]. They alloc via the heap runtime (module_allocates

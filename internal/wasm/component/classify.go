@@ -75,6 +75,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.BlockWrite = true
 		case m == "wasi:io/streams@0.2.0" && n == "[method]input-stream.blocking-read":
 			req.BlockRead = true
+		case m == "wasi:io/streams@0.2.0" && (n == "[method]input-stream.subscribe" || n == "[method]output-stream.subscribe" || n == "[method]input-stream.read"):
+			req.StreamReactor = true
 		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]input-stream":
 			req.DropInput = true
 		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]output-stream":

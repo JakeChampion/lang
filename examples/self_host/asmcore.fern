@@ -590,6 +590,9 @@ pub function sysno(t: string, name: string): string {
         if (name == "accept") { return "43"; }
         if (name == "nanosleep") { return "35"; }
         if (name == "poll") { return "7"; }
+        if (name == "epoll_create1") { return "291"; }
+        if (name == "epoll_ctl") { return "233"; }
+        if (name == "epoll_pwait") { return "281"; }
         if (name == "wait4") { return "61"; }
         if (name == "socket") { return "41"; }
         if (name == "bind") { return "49"; }
@@ -791,6 +794,9 @@ pub function sysno(t: string, name: string): string {
     if (name == "accept") { return "202"; }
     if (name == "nanosleep") { return "101"; }
     if (name == "ppoll") { return "73"; }
+    if (name == "epoll_create1") { return "20"; }
+    if (name == "epoll_ctl") { return "21"; }
+    if (name == "epoll_pwait") { return "22"; }
     if (name == "wait4") { return "260"; }
     if (name == "socket") { return "198"; }
     if (name == "bind") { return "200"; }
@@ -1866,6 +1872,89 @@ pub function rt_src_udp_sendto(t: string): string {
 // sender's address and port go into `from` when it has six slots.
 pub function rt_src_udp_recvfrom(t: string): string {
     return "function __fern_udp_recvfrom(fd: i32, buf: i32[], from: i32[]): i32 { var max: i32 = buf.len(); var p: usize = __raw_alloc(max + 1); var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); var n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, __raw_addr(sa, 16) as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } if (n >= 0 && from.len() >= 6) { var f: usize = __raw_arr_ptr(from); __raw_store_ptr(f, 1, __raw_load8(sa, 4) as usize); __raw_store_ptr(f, 2, __raw_load8(sa, 5) as usize); __raw_store_ptr(f, 3, __raw_load8(sa, 6) as usize); __raw_store_ptr(f, 4, __raw_load8(sa, 7) as usize); __raw_store_ptr(f, 5, __raw_load8(sa, 2) as usize); __raw_store_ptr(f, 6, __raw_load8(sa, 3) as usize); } var p_own: string = __raw_string(p, max + 1); return n; }";
+}
+
+// The reactor floor (#9853): a readiness set that outlives one wait, epoll
+// on Linux and kqueue on Darwin, the same contract as the Go compiler's
+// bodies in internal/fernrt/runtime.fern. reactor_wait writes (fd,
+// readiness) pairs into the caller's i32[], one word per slot.
+pub function rt_src_reactor_new(t: string): string {
+    if (t == "arm64-darwin") {
+        return "function __fern_reactor_new(): i32 { return __syscall3(" + sysno(t, "kqueue") + ", 0, 0, 0) as i32; }";
+    }
+    return "function __fern_reactor_new(): i32 { return __syscall3(" + sysno(t, "epoll_create1") + ", 524288, 0, 0) as i32; }";
+}
+
+// One struct kevent (32 bytes) per filter: EV_ADD with EV_ENABLE (5) for
+// a filter wanted, EV_DELETE (2) for one not, where deleting a filter never
+// added is ENOENT and not an error.
+function kqueue_watch_src(t: string): string {
+    return "var ch: usize = __raw_scratch(32); var r: i32 = 0; var filter: i32 = 0 - 1; var bit: i32 = 1; "
+        + "while (bit <= 2 && r >= 0) { var flags: i32 = 2; if ((interest & bit) != 0) { flags = 5; } "
+        + "__raw_store_ptr(ch, 0, fd as usize); __raw_store8(ch, 8, filter & 255); __raw_store8(ch, 9, (filter >> 8) & 255); __raw_store8(ch, 10, flags); __raw_store8(ch, 11, 0); "
+        + "__raw_store_ptr(ch, 2, 0); __raw_store_ptr(ch, 3, 0); __raw_store8(ch, 12, 0); __raw_store8(ch, 13, 0); __raw_store8(ch, 14, 0); __raw_store8(ch, 15, 0); "
+        + "var e: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; "
+        + "if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; } filter = filter - 1; bit = bit + bit; } return r;";
+}
+
+// struct epoll_event is packed on x86-64 (12 bytes, the data at 4) and
+// aligned on arm64 (16 bytes, the data at 8). EPOLL_CTL_ADD, or MOD once
+// the fd is in the set (EEXIST), for an interest; DEL for none.
+function epoll_watch_src(t: string): string {
+    var data_at: string = "8";
+    if (t == "x86_64") { data_at = "4"; }
+    return "var ev: usize = __raw_scratch(16); var bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } "
+        + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, 0); __raw_store8(ev, 2, 0); __raw_store8(ev, 3, 0); "
+        + "__raw_store8(ev, " + data_at + ", fd & 255); __raw_store8(ev, " + data_at + " + 1, (fd >> 8) & 255); __raw_store8(ev, " + data_at + " + 2, (fd >> 16) & 255); __raw_store8(ev, " + data_at + " + 3, (fd >> 24) & 255); "
+        + "__raw_store8(ev, " + data_at + " + 4, 0); __raw_store8(ev, " + data_at + " + 5, 0); __raw_store8(ev, " + data_at + " + 6, 0); __raw_store8(ev, " + data_at + " + 7, 0); "
+        + "var r: i32 = 0; if (interest == 0) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, fd as i64, ev as i64) as i32; } else { "
+        + "r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 1, fd as i64, ev as i64) as i32; "
+        + "if (r == 0 - 17) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 3, fd as i64, ev as i64) as i32; } } return r;";
+}
+
+pub function rt_src_reactor_ctl(t: string): string {
+    var watch: string = epoll_watch_src(t);
+    if (t == "arm64-darwin") { watch = kqueue_watch_src(t); }
+    return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
+        + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
+        + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 3; if (op == 2) { interest = 0; } " + watch + " }";
+}
+
+// The pairs are written one word per slot into the caller's array through
+// its box: word 1 is the first element.
+function epoll_wait_src(t: string): string {
+    var size: string = "16";
+    var data_at: string = "8";
+    if (t == "x86_64") { size = "12"; data_at = "4"; }
+    return "var buf: usize = __raw_alloc(cap * " + size + "); var n: i32 = __syscall6(" + sysno(t, "epoll_pwait") + ", r_fd as i64, buf as i64, cap as i64, timeout_ms as i64, 0, 8) as i32; "
+        + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * " + size + "; var bits: i32 = __raw_load8(buf, e); var ready: i32 = 0; "
+        + "if ((bits & 1) != 0) { ready = ready | 1; } if ((bits & 4) != 0) { ready = ready | 2; } if ((bits & 24) != 0) { ready = ready | 4; } "
+        + "var fd: i32 = __raw_load8(buf, e + " + data_at + ") | (__raw_load8(buf, e + " + data_at + " + 1) << 8) | (__raw_load8(buf, e + " + data_at + " + 2) << 16) | (__raw_load8(buf, e + " + data_at + " + 3) << 24); "
+        + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
+        + "var buf_own: string = __raw_string(buf, cap * " + size + "); return n;";
+}
+
+function kqueue_wait_src(t: string): string {
+    return "var buf: usize = __raw_alloc(cap * 32 + 16); var ts: usize = __raw_addr(buf, cap * 32); var tmo: usize = 0 as usize; "
+        + "if (timeout_ms >= 0) { __raw_store_ptr(ts, 0, (timeout_ms / 1000) as usize); __raw_store_ptr(ts, 1, ((timeout_ms % 1000) * 1000000) as usize); tmo = ts; } "
+        + "var n: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, 0, 0, buf as i64, cap as i64, tmo as i64) as i32; "
+        + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * 32; var ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
+        + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
+        + "var fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
+        + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
+        + "var buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
+}
+
+pub function rt_src_reactor_wait(t: string): string {
+    var wait: string = epoll_wait_src(t);
+    if (t == "arm64-darwin") { wait = kqueue_wait_src(t); }
+    return "function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 { var cap: i32 = events.len() / 2; if (cap <= 0) { return 0 - 22; } " + wait + " }";
+}
+
+// One read into the caller's array, spread one byte per slot like
+// rt_src_tcp_recv; the raw buffer is adopted after its last read (#10486).
+pub function rt_src_tcp_recv_into(t: string): string {
+    return "function __fern_tcp_recv_into(fd: i32, buf: i32[]): i32 { var max: i32 = buf.len(); if (max <= 0) { return 0; } var p: usize = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } var p_own: string = __raw_string(p, max); return n; }";
 }
 
 // The Unix-domain sockets (#9853): sockaddr_un is the family head (sun_len
@@ -4728,6 +4817,10 @@ function builtin_i32_names(): string[] {
         "tcp_connect_with",
         "unix_listen",
         "unix_connect",
+        "reactor_new",
+        "reactor_ctl",
+        "reactor_wait",
+        "tcp_recv_into",
         "tcp_send",
         "tcp_close",
         "tcp_pollable",
@@ -7129,6 +7222,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept", "__fn___fern_tcp_local_port",
         "__fn___fern_udp_bind", "__fn___fern_udp_connect", "__fn___fern_udp_sendto", "__fn___fern_udp_recvfrom",
         "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
+        "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into",
         "__fn___fern_open_res", "__fn___fern_writer_write",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",

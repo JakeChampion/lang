@@ -157,6 +157,13 @@ var gatedBuiltins = map[string]string{
 	"unix_listen":  "unix",
 	"unix_connect": "unix",
 
+	// The reactor floor: a readiness set the host keeps between waits,
+	// epoll, kqueue or a table of wasi pollables.
+	"reactor_new":   "reactor",
+	"reactor_ctl":   "reactor",
+	"reactor_wait":  "reactor",
+	"tcp_recv_into": "tcp",
+
 	// Filesystem.
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",

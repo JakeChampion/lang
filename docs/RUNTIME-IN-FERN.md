@@ -391,6 +391,19 @@ sender's six bytes through `__raw_arr_ptr`. The wasm twins are in
 `wasi_udp.go` and `wasm_ir.fern`; there `udp_send` is the three of them
 in a row.
 
+The **reactor floor** (#9853) is three more bodies on both compilers:
+`__fern_reactor_new` (epoll_create1, or kqueue on Darwin),
+`__fern_reactor_ctl` (epoll_ctl with ADD then MOD on EEXIST and DEL for no
+interest; on Darwin one kevent change per filter, EV_ADD with EV_ENABLE or
+EV_DELETE, ENOENT on a delete ignored) and `__fern_reactor_wait`
+(epoll_pwait into a block of events, 12 bytes each on x86-64 where the
+struct is packed and 16 on arm64; kevent with a timespec on Darwin, the
+wait writing (fd, readiness) pairs into the caller's `i32[]` through its
+data pointer on the Go compiler and `__raw_arr_ptr` on the self-host).
+`__fern_tcp_recv_into` is one read into the caller's `u8[]`, the way
+`udp_recvfrom` fills its buffer. The wasm twins keep a guest table of
+pollables (`wasi_reactor.go`, `wasm_ir.fern`).
+
 The last three needed the **bytes floor**: `__str_bytes(s, scratch)` is
 the address of a string's bytes for the length `s.len()` reports, and
 `__arr_set_len(a, n)` shortens a fresh `u8[]` from `__alloc_u8` to the
@@ -1003,8 +1016,8 @@ a millisecond count. Darwin now uses `kqueue` and six-argument `kevent` through
 the same Fern runtime floor (#9853). Its temporary event lists share one owned
 buffer, and every wait closes its kqueue. Native Apple Silicon execution tests
 cover pipe and TCP readiness, timeout/error paths, duplicate descriptors,
-descriptor cleanup and balanced allocation counts. A persistent worker-owned
-reactor remains a separate P0 step.
+descriptor cleanup and balanced allocation counts. The persistent reactor
+is the `__fern_reactor_*` family below.
 
 `__syscall5` **has since landed**, with `sleep_ms` as its first consumer — the
 leaf whose two targets disagree on the call itself, not just the number: Linux

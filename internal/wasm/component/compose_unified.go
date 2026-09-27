@@ -22,6 +22,11 @@ type ComposeRequest struct {
 	// chains, and a TCP connection's send/recv. DropInput / DropOutput
 	// are Reader/Writer close() → canon resource.drop.
 	BlockWrite, BlockRead bool
+	// StreamReactor is the reactor's surface on a connection:
+	// input-stream.subscribe and output-stream.subscribe, which put the
+	// pollable resource in the streams instance type, and the
+	// non-blocking input-stream.read.
+	StreamReactor bool
 	// UdpRecv adds incoming-datagram-stream.receive, whose list result
 	// needs the realloc lowering.
 	UdpRecv               bool
@@ -78,9 +83,9 @@ type ComposeRequest struct {
 // halves of wasi:io/streams surfaced.
 func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	needIn = r.Stdin || r.BlockRead || r.DropInput ||
-		r.File.Read || r.Tcp || r.Http
+		r.File.Read || r.Tcp || r.Http || r.StreamReactor
 	needOut = r.Stdout || r.Stderr || r.BlockWrite || r.DropOutput ||
-		r.File.Write || r.File.Append || r.Tcp || r.Http
+		r.File.Write || r.File.Append || r.Tcp || r.Http || r.StreamReactor
 	return needIn, needOut
 }
 
@@ -100,6 +105,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 
 	// Surface io/streams first with the full direction union so the
 	// later ensure* calls (which request narrower directions) are no-ops.
+	// The subscribe methods return the io/poll pollable, so that instance
+	// comes first when they are wanted.
+	g.needStreamReactor = req.StreamReactor
+	if req.StreamReactor {
+		g.ensureIoPoll()
+	}
 	if needIn, needOut := req.streamDirections(); needIn || needOut {
 		g.ensureIoStreams(needIn, needOut)
 	}
@@ -346,6 +357,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.BlockRead {
 		g.add(gImport{iface: streams, name: composeBlockReadName, kind: gMemRealloc, params: composeBlockReadParams})
+	}
+	if req.StreamReactor {
+		g.add(gImport{iface: streams, name: "[method]input-stream.subscribe", kind: gNoOpt})
+		g.add(gImport{iface: streams, name: "[method]output-stream.subscribe", kind: gNoOpt})
+		g.add(gImport{iface: streams, name: "[method]input-stream.read", kind: gMemRealloc, params: composeBlockReadParams})
 	}
 	if req.DropInput {
 		g.add(gImport{iface: streams, name: "[resource-drop]input-stream", kind: gDrop, resourceT: g.surfaced["input-stream"]})

@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess", "unix"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess", "unix", "reactor"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -79,7 +79,7 @@ function capability_profile(profile: string): string[] {
         // granted: a component's node name is the empty string, truthfully,
         // and so is `signal`: nothing can deliver a signal to a component,
         // so ignoring one is a no-op rather than a missing import.
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor"];
     }
     if (profile == "wasi-proxy") {
         // The proxy world: an HTTP handler and nothing else. No stdout
@@ -298,6 +298,10 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "tcp_connect_with", capability: "tcp" },
         Gate { builtin: "unix_listen", capability: "unix" },
         Gate { builtin: "unix_connect", capability: "unix" },
+        Gate { builtin: "reactor_new", capability: "reactor" },
+        Gate { builtin: "reactor_ctl", capability: "reactor" },
+        Gate { builtin: "reactor_wait", capability: "reactor" },
+        Gate { builtin: "tcp_recv_into", capability: "tcp" },
 
         // Filesystem.
         Gate { builtin: "read_file", capability: "fs" },

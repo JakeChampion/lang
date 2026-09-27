@@ -16,3 +16,20 @@ const (
 func getsockname(fd int) (syscall.Sockaddr, error) {
 	return syscall.Getsockname(fd)
 }
+
+// connectResult is how a connect under way on fd ended: nil once a peer is
+// attached, EINPROGRESS while none is and no error is pending, else the
+// errno the connect failed with, read through SO_ERROR.
+func connectResult(fd int) error {
+	if _, err := syscall.Getpeername(fd); err == nil {
+		return nil
+	}
+	pending, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ERROR)
+	switch {
+	case err != nil:
+		return err
+	case pending != 0:
+		return syscall.Errno(pending)
+	}
+	return syscall.EINPROGRESS
+}

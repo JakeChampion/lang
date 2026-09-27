@@ -914,6 +914,11 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// (conn) → i32 — the connection's readiness
 					// pollable for reactor fan-out.
 					needs.add("__fern_tcp_pollable")
+				case "__fern_reactor_new", "__fern_reactor_ctl", "__fern_reactor_wait", "__fern_tcp_recv_into":
+					// The reactor floor and the owned-buffer read
+					// (wasi_reactor.go); the alloc and free they
+					// need are in helperDeps.
+					needs.add(callDirectAlias(op.Str))
 				case "__fern_tcp_recv":
 					needs.add("cabi_realloc")
 					needs.add("__free")
@@ -1249,13 +1254,17 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_udp_send":         {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
 	// A bound datagram socket is closed through udp_close, so it comes
 	// with the socket and tcp_close gains its datagram arm.
-	"__fern_udp_bind":     {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close"},
-	"__fern_udp_close":    {"__free"},
-	"__fern_udp_connect":  {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
-	"__fern_udp_sendto":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte"},
-	"__fern_udp_recvfrom": {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
-	"__fern_read_file":    {"__fern_utf8_valid"},
-	"__fern_str_copy":     {"__fern_alloc_rc1"},
+	"__fern_udp_bind":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close"},
+	"__fern_udp_close":     {"__free"},
+	"__fern_udp_connect":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
+	"__fern_udp_sendto":    {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte"},
+	"__fern_udp_recvfrom":  {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
+	"__fern_reactor_new":   {"__fern_alloc"},
+	"__fern_reactor_ctl":   {"__fern_alloc", "__free"},
+	"__fern_reactor_wait":  {"__fern_alloc", "__free", "cabi_realloc"},
+	"__fern_tcp_recv_into": {"__fern_alloc", "__free", "cabi_realloc"},
+	"__fern_read_file":     {"__fern_utf8_valid"},
+	"__fern_str_copy":      {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
@@ -2909,6 +2918,32 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpPollableBody,
+	},
+	"__fern_reactor_new": {
+		// () → i32 — a readiness set kept between waits (wasi_reactor.go).
+		params:  nil,
+		results: []byte{encode.ValtypeI32},
+		body:    buildReactorNewBody,
+	},
+	"__fern_reactor_ctl": {
+		// (r, op, fd, arg) → i32 — watch, unwatch or close.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReactorCtlBody,
+	},
+	"__fern_reactor_wait": {
+		// (r, events, timeout_ms) → i32 — the ready pairs written
+		// into the i32[] at events.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildReactorWaitBody,
+	},
+	"__fern_tcp_recv_into": {
+		// (conn, buf) → i32 — bytes read into the u8[] at buf, 0 at
+		// EOF, or -errno.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpRecvIntoBody,
 	},
 	"__fern_tcp_recv": {
 		// (conn: i32, max: i32) → i32 — u8[] data pointer in

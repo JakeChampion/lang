@@ -61,6 +61,7 @@ costs a silent failure on the first target that lacks it.
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |
 | `unix` | `unix_listen`, `unix_connect` | Unix-domain sockets: a filesystem namespace for socket endpoints, which no WASI world has |
+| `reactor` | `reactor_new`, `reactor_ctl`, `reactor_wait` | a readiness set the host keeps between waits: epoll, kqueue, or on wasm a table of wasi:io pollables |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `proc_waitpid`, `proc_waitpid_nohang`, `process_alive`, `signal_send`, `set_process_group` | processes |
 | `rlimit` | `rlimit_nofile` | a kernel that enforces ceilings on this process's resources |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |

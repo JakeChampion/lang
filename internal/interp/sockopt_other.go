@@ -15,3 +15,5 @@ const (
 func getsockname(fd int) (syscall.Sockaddr, error) {
 	return nil, syscall.ENOSYS
 }
+
+func connectResult(fd int) error { return syscall.ENOSYS }

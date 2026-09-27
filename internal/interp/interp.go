@@ -530,6 +530,9 @@ type Interp struct {
 	// tcpNonblocking holds the connections tcp_socket_ctl put into
 	// non-blocking mode, which tcp_recv honours with a zero deadline.
 	tcpNonblocking map[int64]bool
+	// reactors holds the readiness sets reactor_new made (reactor.go).
+	reactors    map[int64]*reactor
+	reactorNext int64
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -1388,6 +1391,10 @@ func New() *Interp {
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
+	i.Builtins["reactor_new"] = &Builtin{Fn: builtinReactorNew}
+	i.Builtins["reactor_ctl"] = &Builtin{Fn: builtinReactorCtl}
+	i.Builtins["reactor_wait"] = &Builtin{Fn: builtinReactorWait}
+	i.Builtins["tcp_recv_into"] = &Builtin{Fn: builtinTcpRecvInto}
 	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
 	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
 	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
@@ -1475,12 +1482,7 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 	buf := make([]byte, int(max))
 	// A non-blocking socket reads what is there and answers empty
 	// otherwise, which is what a native read's -EAGAIN clamps to.
-	if i.tcpNonblocking[int64(id)] {
-		conn.SetReadDeadline(time.Now())
-	} else {
-		conn.SetReadDeadline(time.Time{})
-	}
-	n, err := conn.Read(buf)
+	n, err := readSocket(conn, buf, i.tcpNonblocking[int64(id)])
 	if err != nil || n <= 0 {
 		return arrayOf(), nil
 	}

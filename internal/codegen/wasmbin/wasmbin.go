@@ -818,7 +818,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// bytes, so export it whenever such a wrapper is present.
 	// TCP receive and polling also return canonical lists, including in raw
 	// core modules composed by an external host.
-	if opts.ForceMemorySection || len(externWrappers) > 0 || exportsNeedGuestAlloc(prog) || helpers.set["__fern_tcp_recv"] || helpers.set["__fern_wasm_poll"] {
+	if opts.ForceMemorySection || len(externWrappers) > 0 || exportsNeedGuestAlloc(prog) || helpers.set["__fern_tcp_recv"] || helpers.set["__fern_tcp_recv_into"] || helpers.set["__fern_reactor_wait"] || helpers.set["__fern_wasm_poll"] {
 		if idx, ok := funcIdx["cabi_realloc"]; ok {
 			m.ExportNames = append(m.ExportNames, "cabi_realloc")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)

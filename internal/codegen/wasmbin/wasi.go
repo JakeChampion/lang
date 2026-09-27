@@ -1118,6 +1118,31 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_io_stream_read": {
+		// (handle: i32, len: u64, retptr: i32) → (). The non-blocking
+		// read: the same result shape as blocking-read, with an empty
+		// list while nothing is queued.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]input-stream.read",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_io_input_stream_subscribe": {
+		// (self) → pollable handle, ready when the stream has bytes or
+		// has closed. The reactor's read interest on a connection.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]input-stream.subscribe",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_io_output_stream_subscribe": {
+		// (self) → pollable handle, ready when the stream accepts a
+		// write. The reactor's write interest on a connection.
+		module:  "wasi:io/streams@0.2.0",
+		name:    "[method]output-stream.subscribe",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_sockets_udp_incoming_subscribe": {
 		// (self) → pollable handle, ready when a datagram is pending.
 		module:  "wasi:sockets/udp@0.2.0",
@@ -2472,6 +2497,23 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_tcp_pollable"] {
 		in.add("wasi_sockets_tcp_subscribe")
+	}
+	if helpers.set["__fern_reactor_ctl"] {
+		in.add("wasi_sockets_tcp_subscribe")
+		in.add("wasi_io_input_stream_subscribe")
+		in.add("wasi_io_output_stream_subscribe")
+		in.add("wasi_sockets_udp_incoming_subscribe")
+		in.add("wasi_sockets_udp_outgoing_subscribe")
+		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__fern_reactor_wait"] {
+		in.add("wasi_io_poll_poll")
+		in.add("wasi_clocks_subscribe_duration")
+		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__fern_tcp_recv_into"] {
+		in.add("wasi_io_stream_read")
+		in.add("wasi_io_error_drop")
 	}
 	if helpers.set["__fern_tcp_recv"] {
 		in.add("wasi_io_blocking_read")
