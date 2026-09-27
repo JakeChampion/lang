@@ -37,6 +37,24 @@ function main(): i32 {
 }
 `
 
+// mapNewImplReuseSrc is the same proof over a real map: map_new_impl with a
+// string key tag, so the typed lowering has to lower its __map_hash_seed
+// draw, and the drop frees the kv buffer before the handle.
+const mapNewImplReuseSrc = `import "core/map";
+function main(): i32 {
+    var i: i32 = 0;
+    var last: usize = 0 as usize;
+    while (i < 1000) {
+        var h: usize = map_new_impl(4, 1, 0);
+        __map_drop_impl(h);
+        last = h;
+        i = i + 1;
+    }
+    if (map_new_impl(4, 1, 0) == last) { return 0; }
+    return 3;
+}
+`
+
 func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -50,26 +68,32 @@ func TestSelfHostMapDropImplFreesTheHandle(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	selfHostBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
 
-	caseDir := t.TempDir()
-	srcPath := filepath.Join(caseDir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(mapDropImplReuseSrc), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	binPath := filepath.Join(caseDir, "prog")
-	if out, err := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux", "-o", binPath, srcPath, stdlibRoot).CombinedOutput(); err != nil {
-		t.Fatalf("native build: %v\n%s", err, out)
-	}
-	run := exec.Command(binPath)
-	_ = run.Run()
-	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Fatalf("native: exit %d, want 0 (the freed handle comes back)", code)
-	}
-
-	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		t.Run(target, func(t *testing.T) {
-			exit, stderr := selfHostCLIRun(t, selfHostBin, stdlibRoot, mapDropImplReuseSrc, target)
-			if exit != 0 {
-				t.Fatalf("self-host: exit %d, want 0 (the freed handle comes back)\n%s", exit, stderr)
+	for _, c := range []struct{ name, src string }{
+		{"handle", mapDropImplReuseSrc},
+		{"map_new_impl", mapNewImplReuseSrc},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			caseDir := t.TempDir()
+			srcPath := filepath.Join(caseDir, "main.fern")
+			if err := os.WriteFile(srcPath, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			binPath := filepath.Join(caseDir, "prog")
+			if out, err := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux", "-o", binPath, srcPath, stdlibRoot).CombinedOutput(); err != nil {
+				t.Fatalf("native build: %v\n%s", err, out)
+			}
+			run := exec.Command(binPath)
+			_ = run.Run()
+			if code := run.ProcessState.ExitCode(); code != 0 {
+				t.Fatalf("native: exit %d, want 0 (the freed handle comes back)", code)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				t.Run(target, func(t *testing.T) {
+					exit, stderr := selfHostCLIRun(t, selfHostBin, stdlibRoot, c.src, target)
+					if exit != 0 {
+						t.Fatalf("self-host: exit %d, want 0 (the freed handle comes back)\n%s", exit, stderr)
+					}
+				})
 			}
 		})
 	}
