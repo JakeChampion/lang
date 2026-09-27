@@ -713,9 +713,11 @@ function main(): i32 {
     // is released by the view helper rather than the ordinary string free —
     // which would skip the immortal rc sentinel and leak the box on the
     // register backends. Its type says so, and a slice typed as an owned
-    // string is refused. The slice must DIE here, not be returned: a returned
-    // value is handed to the caller, so it has no drop site and would emit no
-    // release at all.
+    // string is refused. One that dies in the frame that made it takes its
+    // box from the frame (str_slice frame:N, ssaunits.frame_views); the view
+    // helper passes over that box's immortal rc. The slice must DIE here, not
+    // be returned: a returned value is handed to the caller, so it has no
+    // drop site and would emit no release at all.
     var viewTy: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     var sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
@@ -728,15 +730,16 @@ function main(): i32 {
     if (!slicePlan.ok) { eprint(slicePlan.why); return 46; }
     var sliceLowered = ssarc.lower(sliceFunc, [2, 1, 1], slicePlan, irlower.struct_tab_empty(), []);
     if (!sliceLowered.ok) { eprint(sliceLowered.why); return 47; }
-    var sawSlice: boolean = false;
+    var sawFrameSlice: boolean = false;
     var sawViewFree: boolean = false;
     var sawPlainFree: boolean = false;
     for o in sliceLowered.ops {
-        if (ir.render_op(o) == "str_slice") { sawSlice = true; }
-        if (ir.render_op(o) == "call_direct __fern_str_view_free/1") { sawViewFree = true; }
-        if (ir.render_op(o) == "call_direct __fern_str_free/1") { sawPlainFree = true; }
+        var rendered: string = ir.render_op(o);
+        if (rendered.len() > 16 && slice_unchecked(rendered, 0, 16) == "str_slice frame:") { sawFrameSlice = true; }
+        if (rendered == "call_direct __fern_str_view_free/1") { sawViewFree = true; }
+        if (rendered == "call_direct __fern_str_free/1") { sawPlainFree = true; }
     }
-    if (!sawSlice) { return 48; }
+    if (!sawFrameSlice) { return 48; }
     if (!sawViewFree) { return 49; }
     if (sawPlainFree) { return 50; }
     // An ordinary string result keeps the plain free, so the view symbol is
@@ -1042,10 +1045,11 @@ function main(): i32 {
     var fnMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true } };
     var fnMapFunc = ssasem.Func { ...mapFunc, values: [fnMapTy], params: [fnMapTy], result: fnMapTy };
     if (ssaunits.plan(fnMapFunc, [3]).why != "function value is not an element") { return 147; }
-    // An integer key column holds no unit, so the map is admitted and freed
-    // whole through the plain member of the free family, or the _vs one
-    // beside a string value column; its ops carry key kind 1 and hand no
-    // key unit over.
+    // A map over 32-bit integer or boolean columns runs on core/map
+    // (ssarc.routed_map): it is admitted, and dropped whole through
+    // __map_drop_impl. An integer key column beside a string value column
+    // stays on the runtime, freed through the _vs member of the free family;
+    // its ops carry key kind 1 and hand no key unit over.
     var intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
     var intMapFunc = ssasem.Func { ...mapFunc, values: [intMapTy], params: [intMapTy], result: intMapTy };
     if (!ssaunits.plan(intMapFunc, [3]).ok) { eprint(ssaunits.plan(intMapFunc, [3]).why); return 143; }
@@ -1057,7 +1061,7 @@ function main(): i32 {
     var dropIntLowered = ssarc.lower(dropIntMap, [3], dropIntPlan, irlower.struct_tab_empty(), []);
     if (!dropIntLowered.ok) { eprint(dropIntLowered.why); return 170; }
     var sawIntFree: boolean = false;
-    for o in dropIntLowered.ops { if (o.str == "__fern_map_free") { sawIntFree = true; } }
+    for o in dropIntLowered.ops { if (o.str == "__map_drop_impl") { sawIntFree = true; } }
     if (!sawIntFree) { return 171; }
     var intStrMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: strTy };
     var dropIntStr = ssasem.Func { ...dropIntMap, values: [intStrMapTy, i32ty], params: [intStrMapTy] };
@@ -1105,19 +1109,20 @@ function main(): i32 {
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
     var intInsertLowered = ssarc.lower(intInsert, [3, 1, 1], intInsertPlan, irlower.struct_tab_empty(), []);
     if (!intInsertLowered.ok) { eprint(intInsertLowered.why); return 175; }
-    // The insert runs behind the copy-on-write gate: an owned receiver over
-    // scalar columns retains nothing, and the copy arm's releases are of
-    // the snapshots it took.
+    // A routed insert calls core/map's set, whose own copy-on-write hands
+    // back a map the frame alone holds; when that is a copy, the receiver is
+    // released after the call. An owned receiver over scalar columns retains
+    // nothing.
     var sawIntSet: boolean = false;
-    var sawIntGate: boolean = false;
+    var sawIntCopyRelease: boolean = false;
     for o in intInsertLowered.ops {
-        if (o.kind_tag == 125 && o.i32_imm == 1 && (o.width / 2) % 2 == 0) { sawIntSet = true; }
-        if (o.str == "__fern_rc_is_unique") { sawIntGate = true; }
+        if (o.kind_tag == 149 && o.str == "__map_set_impl") { sawIntSet = true; }
+        if (o.str == "__fern_rc_dec") { sawIntCopyRelease = true; }
         if (o.str == "__fern_rc_inc") { return 176; }
     }
-    if (!sawIntSet || !sawIntGate) { return 177; }
-    // The length borrows the map: the op reads it and the owned map is still
-    // freed by its own helper on the way out.
+    if (!sawIntSet || !sawIntCopyRelease) { return 177; }
+    // The length borrows the map: core/map's len reads it and the owned map
+    // is still dropped by its own helper on the way out.
     var lenMapGraph = ssa.SFunc { name: "map_len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             ssa.SInst { kind_tag: ssasem.map_len(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
@@ -1129,8 +1134,8 @@ function main(): i32 {
     var sawLen: boolean = false;
     var sawLenFree: boolean = false;
     for o in lenMapLowered.ops {
-        if (ir.render_op(o) == "map_len") { sawLen = true; }
-        if (o.str == "__fern_map_free") { sawLenFree = true; }
+        if (o.str == "__map_len_impl") { sawLen = true; }
+        if (o.str == "__map_drop_impl") { sawLenFree = true; }
     }
     if (!sawLen || !sawLenFree) { return 180; }
     // An UNREACHABLE end (terminator 4) is the live end of a value-returning
@@ -1153,8 +1158,8 @@ function main(): i32 {
     }
     if (!sawExit || !sawEndFree) { return 183; }
     // A get answers an Option of a narrow value column in a fresh box of its
-    // own, handed to the frame: the map and the key are borrowed by it, and
-    // the owned map is still freed on the way out.
+    // own, handed to the frame: core/map's get borrows the map and the key,
+    // and the owned map is still dropped on the way out.
     var optI32Ty: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i32ty] };
     var getGraph = ssa.SFunc { name: "map_get", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
@@ -1169,8 +1174,8 @@ function main(): i32 {
     var sawGet: boolean = false;
     var sawGetFree: boolean = false;
     for o in getLowered.ops {
-        if (o.kind_tag == 127) { sawGet = true; }
-        if (o.str == "__fern_map_free") { sawGetFree = true; }
+        if (o.str == "__map_get_impl") { sawGet = true; }
+        if (o.str == "__map_drop_impl") { sawGetFree = true; }
     }
     if (!sawGet || !sawGetFree) { return 186; }
     // A map and a boolean spell different drop helpers: without a key of its

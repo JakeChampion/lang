@@ -32,19 +32,6 @@ Nothing is spliced into a caller already past 1,500 instructions, and a
 caller takes at most 64 splices. `FERN_SEM_INLINE=` (set but empty) turns
 the pass off, for comparing a build against itself.
 
-## Found on the way
-
-`TestSelfHostSemanticSourceRC` had been red on main since #10445. That change
-routes a scalar `Map` onto core/map, but the test's driver parsed the program
-alone and never loaded core/map, so the link failed on `map_new_impl`. The
-driver now loads, bundles and tree-shakes the program's imports, and runs the
-CLI's typed pipeline (`lift_lambdas_typed(module_with_builtins_typed(...))`)
-instead of a hand-rolled prefix of it. The program imports core/map, as every
-program that uses a map must. Under that pipeline, generics are monomorphised
-before the semantic source sees them. The four generic probes are therefore
-checked under their instance names (`fold_acc__i32` and so on), the names
-production lowers.
-
 ## Measured
 
 `TestSelfHostSemanticInline`: 100 rounds per probe, heap allocations. The
