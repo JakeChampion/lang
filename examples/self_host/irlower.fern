@@ -74665,6 +74665,27 @@ function is_arm_value_store(a: ast.StmtAssign): boolean {
     return parser.is_value_local_name(lexical.source_name(a.target));
 }
 
+// iife_return_holds_fn_value: does an arm's returned value yield a fn? A
+// fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`) is a fn value
+// too, though lift_arg_is_fn_value declines it — that predicate answers "is
+// this worth env-boxing?", and an already-boxed local is not — so the
+// declared type answers it. A nested value-position if/match arm yields
+// whatever its own arms yield, so the question descends into it.
+function iife_return_holds_fn_value(v: ast.Expr, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    if (lift_arg_is_fn_value(v, mfuncs)) { return true; }
+    match (v) {
+        ast.ExprIdent(aid) => { return aid.ty == "fn"; },
+        ast.ExprCall(rc) => {
+            if let ast.ExprLambda(ril) = rc.callee {
+                return rc.args.len() == 0 && ril.params.len() == 0 && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs);
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -74672,27 +74693,7 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
                 if (is_arm_value_store(a) && lift_arg_is_fn_value(a.value, mfuncs)) { return true; }
             },
             ast.StmtReturn(r) => {
-                if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
-                // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
-                // is a fn value too, but lift_arg_is_fn_value declines it — that
-                // predicate answers "is this worth env-boxing?", and an already-
-                // boxed local is not. Here the question is "does this arm yield a
-                // fn?", so the declared type answers it.
-                match (r.value) {
-                    ast.ExprIdent(aid) => { if (aid.ty == "fn") { return true; } },
-                    // A nested value-position if/match arm yields whatever its own
-                    // arms yield, so the question descends into it.
-                    ast.ExprCall(rc) => {
-                        match (rc.callee) {
-                            ast.ExprLambda(ril) => {
-                                if (rc.args.len() == 0 && ril.params.len() == 0
-                                        && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs)) { return true; }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
+                if (iife_return_holds_fn_value(r.value, fd, structs, mfuncs)) { return true; }
             },
             ast.StmtIf(iff) => {
                 if (iife_arms_hold_fn_value(iff.then_body, fd, structs, mfuncs)) { return true; }

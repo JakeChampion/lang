@@ -19433,23 +19433,18 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
 function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
   if (type_contains_unknown(t)) { return false; }
   match (t) {
-    typeinfo.TypeUnion(u) => {
-      if (u.args.len() < union_arity(s, u.name)) { return false; }
-      for arg in u.args { if (!names_whole_type(arg, s)) { return false; } }
-      return true;
-    },
+    typeinfo.TypeUnion(u) => { return u.args.len() >= union_arity(s, u.name) && all_names_whole(u.args, s); },
     typeinfo.TypeArray(a) => { return names_whole_type(a.elem, s); },
-    typeinfo.TypeTuple(tt) => {
-      for elem in tt.elements { if (!names_whole_type(elem, s)) { return false; } }
-      return true;
-    },
+    typeinfo.TypeTuple(tt) => { return all_names_whole(tt.elements, s); },
     typeinfo.TypeMap(m) => { return names_whole_type(m.key, s) && names_whole_type(m.value, s); },
-    typeinfo.TypeStruct(sd) => {
-      for arg in sd.args { if (!names_whole_type(arg, s)) { return false; } }
-      return true;
-    },
+    typeinfo.TypeStruct(sd) => { return all_names_whole(sd.args, s); },
     _ => { return true; }
   }
+  return true;
+}
+
+function all_names_whole(ts: typeinfo.Type[], s: Scope): boolean {
+  for t in ts { if (!names_whole_type(t, s)) { return false; } }
   return true;
 }
 
