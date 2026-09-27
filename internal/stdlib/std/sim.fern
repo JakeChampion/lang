@@ -17,6 +17,7 @@
 // waits is a hang in simulation exactly as in production.
 import "std/async";
 import "std/rand";
+import "std/time";
 
 // Sim — the simulation driver: virtual clock (ns, starts at 0) +
 // explicit PRNG state. Construct with `sim.new(seed)`.
@@ -206,24 +207,24 @@ pub function net(drv: Sim): Net {
     return Net { drv: drv, eps: [] };
 }
 
-// serve(host_be, port, path, body, latency_ns) — register an endpoint whose
-// whole body arrives in ONE chunk, `latency_ns` of virtual time after the
+// serve(host_be, port, path, body, latency) — register an endpoint whose
+// whole body arrives in ONE chunk, `latency` of virtual time after the
 // fetch. First matching registration wins on lookup; path "" is a wildcard.
-pub function (n: Net) serve(host_be: i32, port: i32, path: string, body: string, latency_ns: i64): Net {
+pub function (n: Net) serve(host_be: i32, port: i32, path: string, body: string, latency: Duration): Net {
     var none: i32[] = [];
-    return n.serve_chunked(host_be, port, path, body, latency_ns, 0 as i64, none);
+    return n.serve_chunked(host_be, port, path, body, latency, time.duration_nanos(0 as i64), none);
 }
 
-// serve_chunked(host_be, port, path, body, first_byte_ns, chunk_ns, chunk_lens)
+// serve_chunked(host_be, port, path, body, first_byte, chunk, chunk_lens)
 // — register an endpoint whose body arrives split per `chunk_lens`: chunk k
-// is ready `first_byte_ns + k * chunk_ns` after the fetch. Lengths past the
+// is ready `first_byte + k * chunk` after the fetch. Lengths past the
 // end of the body are clamped; bytes not covered by `chunk_lens` arrive as
-// one final chunk one `chunk_ns` later; an empty `chunk_lens` means a single
+// one final chunk one `chunk` later; an empty `chunk_lens` means a single
 // chunk (== serve). Use `chunks_of` for a fixed-size schedule.
-pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body: string, first_byte_ns: i64, chunk_ns: i64, chunk_lens: i32[]): Net {
+pub function (n: Net) serve_chunked(host_be: i32, port: i32, path: string, body: string, first_byte: Duration, chunk: Duration, chunk_lens: i32[]): Net {
     var ep: Endpoint = Endpoint {
         host_be: host_be, port: port, path: path, body: body,
-        first_ns: first_byte_ns, chunk_ns: chunk_ns, chunk_lens: chunk_lens,
+        first_ns: first_byte.as_nanos(), chunk_ns: chunk.as_nanos(), chunk_lens: chunk_lens,
         hits: cell_new(0 as i64),
         fault: 0, fault_k: 0, flaky_pct: -1,
     };

@@ -27,12 +27,13 @@ import (
 
 const serveDeadlineSrc = `
 import "std/http";
+import "std/time";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_deadline(%d, handle, 400);
+    return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
 }`
 
 func TestServeRecvDeadlineX86_64(t *testing.T) {
@@ -78,9 +79,10 @@ func containsStatus200(resp string) bool {
 
 const fetchDeadlineSrc = `
 import "std/fetch";
+import "std/time";
 function main(): i32 {
     // Silent upstream (accepts, never replies): must time out to None.
-    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 400);
+    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(400));
     var slow_ok: boolean = false;
     match (slow) {
         Some(s) => { },
@@ -88,7 +90,7 @@ function main(): i32 {
     }
     if (!slow_ok) { return 1; }
     // Live upstream: must resolve in time with a 200 status line.
-    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 5000);
+    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", time.duration_millis(5000));
     match (fast) {
         Some(resp) => {
             if (fetch.http_status(resp) == 200) { return 0; }

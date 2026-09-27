@@ -40,6 +40,7 @@ func TestRunnerSimDriverExamplePasses(t *testing.T) {
 // no examples/tests file compiles through the native CLI pipeline
 // today). Exit 42 iff every check holds.
 const simDriverNativeProgram = `import "std/async";
+import "std/time";
 import "std/sim";
 
 function tie_winner(seed: i64): i32 {
@@ -60,7 +61,7 @@ function main(): i32 {
         sim.future_at(d, 40000000, "late"),
         sim.future_at(d, 10000000, "early")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { return 1; }, None => { } }
     match (got[1]) { Some(v) => { if (v != "early") { return 2; } }, None => { return 3; } }
     if (d.now_ns() != 25000000) { return 4; }

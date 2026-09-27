@@ -48,6 +48,7 @@ import (
 )
 
 const simImports = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -71,10 +72,10 @@ func genSimProgram(r *rand.Rand) string {
 		host, path := i+1, fmt.Sprintf("/e%d", i)
 		body := pick(r, bodies)
 		if r.Intn(2) == 0 {
-			fmt.Fprintf(&b, "    n = n.serve(%d, 80, %q, %q, %d as i64);\n",
+			fmt.Fprintf(&b, "    n = n.serve(%d, 80, %q, %q, time.duration_nanos(%d as i64));\n",
 				host, path, body, pick(r, []int{1, 5, 10, 25, 40})*1000000)
 		} else {
-			fmt.Fprintf(&b, "    n = n.serve_chunked(%d, 80, %q, %q, %d as i64, %d as i64, sim.chunks_of(%d, %d));\n",
+			fmt.Fprintf(&b, "    n = n.serve_chunked(%d, 80, %q, %q, time.duration_nanos(%d as i64), time.duration_nanos(%d as i64), sim.chunks_of(%d, %d));\n",
 				host, path, body,
 				pick(r, []int{1, 2, 5, 10})*1000000, pick(r, []int{1, 2, 5})*1000000,
 				len(body), 1+r.Intn(5))
@@ -131,7 +132,7 @@ func genSimProgram(r *rand.Rand) string {
 			fmt.Fprintf(&b, "    var (w%d, v%d) = async.race_on(d, fs%d, \"!\");\n", s, s, s)
 			fmt.Fprintf(&b, "    print(\"r%d=\" + w%d.to_string() + \":\" + v%d);\n", s, s, s)
 		default:
-			fmt.Fprintf(&b, "    var o%d: Option[string][] = async.with_deadline_on(d, %d, fs%d);\n",
+			fmt.Fprintf(&b, "    var o%d: Option[string][] = async.with_deadline_on(d, time.duration_millis(%d), fs%d);\n",
 				s, pick(r, []int{5, 15, 30, 60}), s)
 			fmt.Fprintf(&b, "    var j%d: i32 = 0;\n", s)
 			fmt.Fprintf(&b, "    while (j%d < o%d.len()) {\n", s, s)
@@ -287,6 +288,7 @@ func FuzzSimProperty(f *testing.F) {
 // evolves.
 
 const simRegressionStallPartialDeadline = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -294,16 +296,16 @@ import "std/i64";
 function main(): i32 {
     var d: sim.Sim = sim.new(538118593 as i64);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/e0", "payload-0123456789", 10000000 as i64);
+    n = n.serve(1, 80, "/e0", "payload-0123456789", time.duration_nanos(10000000 as i64));
     n = n.fault_stall(1, 80, "/e0");
-    n = n.serve(2, 80, "/e1", "x", 25000000 as i64);
+    n = n.serve(2, 80, "/e1", "x", time.duration_nanos(25000000 as i64));
     n = n.fault_partial(2, 80, "/e1", 0);
     n = n.fault_flaky(2, 80, "/e1", 75);
     var fs0: async.Future[string][] = [
         n.fetch_future(9, 80, "/nope"),
         sim.future_chain(d, 8000000 as i64, 6000000 as i64, 2, "c0_1")
     ];
-    var o0: Option[string][] = async.with_deadline_on(d, 60, fs0);
+    var o0: Option[string][] = async.with_deadline_on(d, time.duration_millis(60), fs0);
     var j0: i32 = 0;
     while (j0 < o0.len()) {
         match (o0[j0]) {
@@ -324,7 +326,7 @@ function main(): i32 {
         sim.future_at(d, 58000000 as i64, "a2_1"),
         n.fetch_future(2, 80, "/e1")
     ];
-    var o2: Option[string][] = async.with_deadline_on(d, 30, fs2);
+    var o2: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs2);
     var j2: i32 = 0;
     while (j2 < o2.len()) {
         match (o2[j2]) {
@@ -342,6 +344,7 @@ function main(): i32 {
 `
 
 const simRegressionFlakyChunkedGather = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -349,7 +352,7 @@ import "std/i64";
 function main(): i32 {
     var d: sim.Sim = sim.new(88997876 as i64);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", 1000000 as i64, 5000000 as i64, sim.chunks_of(19, 3));
+    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(19, 3));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 75);
     var fs0: async.Future[string][] = [
@@ -380,6 +383,7 @@ function main(): i32 {
 `
 
 const simRegressionFlakyStallThreeStage = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -387,7 +391,7 @@ import "std/i64";
 function main(): i32 {
     var d: sim.Sim = sim.new(338788670 as i64);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", 1000000 as i64, 2000000 as i64, sim.chunks_of(19, 4));
+    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(1000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 4));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 75);
     var fs0: async.Future[string][] = [
@@ -405,7 +409,7 @@ function main(): i32 {
         sim.future_at(d, 21000000 as i64, "a1_0"),
         n.fetch_future(1, 80, "/e0")
     ];
-    var o1: Option[string][] = async.with_deadline_on(d, 5, fs1);
+    var o1: Option[string][] = async.with_deadline_on(d, time.duration_millis(5), fs1);
     var j1: i32 = 0;
     while (j1 < o1.len()) {
         match (o1[j1]) {
@@ -430,6 +434,7 @@ function main(): i32 {
 `
 
 const simRegressionRaceFailWins = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -437,8 +442,8 @@ import "std/i64";
 function main(): i32 {
     var d: sim.Sim = sim.new(477987043 as i64);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", 2000000 as i64, 2000000 as i64, sim.chunks_of(19, 5));
-    n = n.serve(2, 80, "/e1", "x", 10000000 as i64);
+    n = n.serve_chunked(1, 80, "/e0", "the-quick-brown-fox", time.duration_nanos(2000000 as i64), time.duration_nanos(2000000 as i64), sim.chunks_of(19, 5));
+    n = n.serve(2, 80, "/e1", "x", time.duration_nanos(10000000 as i64));
     n = n.fault_fail(2, 80, "/e1");
     var fs0: async.Future[string][] = [
         sim.future_at(d, 47000000 as i64, "a0_0"),
@@ -457,6 +462,7 @@ function main(): i32 {
 
 // simRegressionGatherResuspendClosure — see the case comment above.
 const simRegressionGatherResuspendClosure = `import "std/async";
+import "std/time";
 import "std/sim";
 import "std/i32";
 import "std/i64";
@@ -464,7 +470,7 @@ import "std/i64";
 function main(): i32 {
     var d: sim.Sim = sim.new(193102384 as i64);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/e0", "abcdefghij", 40000000 as i64);
+    n = n.serve(1, 80, "/e0", "abcdefghij", time.duration_nanos(40000000 as i64));
     n = n.fault_stall(1, 80, "/e0");
     n = n.fault_flaky(1, 80, "/e0", 25);
     var fs0: async.Future[string][] = [

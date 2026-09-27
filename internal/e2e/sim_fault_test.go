@@ -45,12 +45,13 @@ func TestRunnerSimFaultExamplePasses(t *testing.T) {
 // determinism golden: pure integer arithmetic, so the identical
 // program must produce the identical run on interp / native / wasm.
 const simFaultNativeProgram = `import "std/async";
+import "std/time";
 import "std/sim";
 
 function flaky_pattern(seed: i64): string {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
     var out: string = "";
     var i: i32 = 0;
@@ -67,9 +68,9 @@ function flaky_pattern(seed: i64): string {
 function gather_shape_ok(seed: i64): boolean {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "alpha", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "beta", 20000000 as i64);
-    n = n.serve(3, 80, "/k", "gamma", 5000000 as i64);
+    n = n.serve(1, 80, "/k", "alpha", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "beta", time.duration_nanos(20000000 as i64));
+    n = n.serve(3, 80, "/k", "gamma", time.duration_nanos(5000000 as i64));
     n = n.fault_flaky(2, 80, "/k", 50);
     n = n.fault_stall(3, 80, "/k");
     var fs: async.Future[string][] = [
@@ -87,7 +88,7 @@ function gather_shape_ok(seed: i64): boolean {
 function flaky_first_call_ok(seed: i64): boolean {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
     var ok: boolean = false;
     match (n.fetch_future(1, 80, "/k")) {
@@ -100,7 +101,7 @@ function flaky_first_call_ok(seed: i64): boolean {
 function main(): i32 {
     var fd: sim.Sim = sim.new(1);
     var fn2: sim.Net = sim.net(fd);
-    fn2 = fn2.serve(1, 80, "/k", "body", 10000000 as i64);
+    fn2 = fn2.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     fn2 = fn2.fault_fail(1, 80, "/k");
     match (fn2.fetch_future(1, 80, "/k")) {
         Ready(v) => { if (v != "") { return 1; } },
@@ -111,22 +112,22 @@ function main(): i32 {
 
     var d: sim.Sim = sim.new(7);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "healthy", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "silent", 5000000 as i64);
+    n = n.serve(1, 80, "/k", "healthy", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "silent", time.duration_nanos(5000000 as i64));
     n = n.fault_stall(2, 80, "/k");
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { if (v != "healthy") { return 5; } }, None => { return 6; } }
     match (got[1]) { Some(v) => { return 7; }, None => { } }
     if (d.now_ns() != 25000000) { return 8; }
 
     var gd: sim.Sim = sim.new(1);
     var gn: sim.Net = sim.net(gd);
-    gn = gn.serve(1, 80, "/k", "ok", 10000000 as i64);
-    gn = gn.serve(2, 80, "/k", "gone", 5000000 as i64);
+    gn = gn.serve(1, 80, "/k", "ok", time.duration_nanos(10000000 as i64));
+    gn = gn.serve(2, 80, "/k", "gone", time.duration_nanos(5000000 as i64));
     gn = gn.fault_stall(2, 80, "/k");
     var gfs: async.Future[string][] = [
         gn.fetch_future(1, 80, "/k"),
@@ -137,7 +138,7 @@ function main(): i32 {
 
     var pd: sim.Sim = sim.new(1);
     var pn: sim.Net = sim.net(pd);
-    pn = pn.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    pn = pn.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     pn = pn.fault_partial(1, 80, "/big", 2);
     var f: async.Future[string] = pn.fetch_future(1, 80, "/big");
     var toks: i32[] = [];

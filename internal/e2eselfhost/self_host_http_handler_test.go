@@ -148,7 +148,7 @@ function main(): i32 {
 	t.Run("raw-socket-serve", func(t *testing.T) {
 		probe, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.Skipf("no free TCP port: %v", err)
+			t.Fatalf("no free TCP port: %v", err)
 		}
 		port := probe.Addr().(*net.TCPAddr).Port
 		probe.Close()
@@ -224,7 +224,7 @@ func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()

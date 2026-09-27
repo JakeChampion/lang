@@ -1,5 +1,6 @@
 import "std/test";
 import "std/async";
+import "std/time";
 
 // examples/tests/async_combinators_test.fern — the supported
 // structured-concurrency surface (docs/ASYNC-REDESIGN.md): the
@@ -42,7 +43,7 @@ function test_race_first_ready(): test.TestOutcome {
 // timed out. All ready here (none miss the budget) → all Some.
 function test_deadline_all_ready(): test.TestOutcome {
     var fs: async.Future[i32][] = [Ready(40), Ready(2)];
-    var got: Option[i32][] = async.with_deadline(50, fs);
+    var got: Option[i32][] = async.with_deadline(time.duration_millis(50), fs);
     var sum: i32 = 0;
     match (got[0]) { Some(v) => { sum = sum + v; }, None => { } }
     match (got[1]) { Some(v) => { sum = sum + v; }, None => { } }

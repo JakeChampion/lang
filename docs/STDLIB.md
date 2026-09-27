@@ -1059,7 +1059,7 @@ serializer.
   per accepted connection, constructing the `Platform` bag it
   passes. Each connection's request read is bounded by a 10 s
   deadline (the slow-loris guard).
-- `tcp_serve_deadline(port, handler, recv_deadline_ms)` —
+- `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
   disconnected without a response.
@@ -1075,7 +1075,7 @@ serializer.
   accept loop runs in a forked worker the parent reforks on
   death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
   a refork resets the loop frame.
-- `tcp_recv_deadline(fd, max, deadline_ms): Option[u8[]]` —
+- `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
@@ -1109,7 +1109,7 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
   `fetch_get(host_be, port, path)`, `get_url("http://…")` — send
   and read the whole response ("" on failure).
 - **Deadline-bounded:** `fetch_raw_deadline` /
-  `fetch_get_deadline(host_be, port, path, deadline_ms):
+  `fetch_get_deadline(host_be, port, path, deadline):
   Option[string]` — `Some(response)` in time, `None` when the
   upstream was too slow (connect/send failure is `Some("")`,
   mirroring `fetch_raw`).
@@ -1193,7 +1193,7 @@ old `concurrent { … }` / `await` keyword surface.
   `on_incomplete`.
 - `race(fs, none_val)` — return on the FIRST to finish as `(index,
   value)`; `(-1, none_val)` if none can progress.
-- `with_deadline(ms, fs)` — await all with a timeout, yielding
+- `with_deadline(deadline, fs)` — await all within a `Duration`, yielding
   `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
   one abandoned at the deadline.
 

@@ -125,6 +125,25 @@ pub function duration_millis(ms: i64): Duration {
     return Duration { sec: s, nsec: ns };
 }
 
+// `duration_nanos(ns)` — convert nanoseconds to a Duration, the inverse
+// of `as_nanos`.
+pub function duration_nanos(ns: i64): Duration {
+    var s: i64 = ns / (1000000000 as i64);
+    var rem: i64 = ns - s * (1000000000 as i64);
+    return Duration { sec: s, nsec: rem as i32 };
+}
+
+// `(d: Duration) as_nanos()` — the whole interval in nanoseconds.
+pub function (d: Duration) as_nanos(): i64 {
+    return d.sec * (1000000000 as i64) + (d.nsec as i64);
+}
+
+// `(d: Duration) as_millis()` — the interval in whole milliseconds,
+// rounded toward zero.
+pub function (d: Duration) as_millis(): i64 {
+    return d.as_nanos() / (1000000 as i64);
+}
+
 // `(d: Duration) to_string()` — the compact canonical form of a
 // duration, e.g. `"1h30m45s"`, `"500ms"`, `"-2h5m"`, `"0s"`. The largest
 // units come first and zero units are omitted (so `"1h5s"` skips the
