@@ -308,3 +308,5 @@ buf_push_expanded=328
 bsd_sum=329
 reader_splice=330
 raw_splice_pipe=331
+tcp_listen_with=332
+tcp_socket_ctl=333

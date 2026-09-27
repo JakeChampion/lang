@@ -132,13 +132,27 @@ still need their own classifications.
 like any other syscall, and refuses a program whose number is a run-time
 operand, which the seccomp allowlist cannot cover.
 
-On the Go compiler `tcp_listen`, `tcp_connect`, `tcp_accept`,
-`tcp_local_port`, `tcp_close` and `tcp_pollable` are one Fern body each in
-`internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
-arm64-darwin and on both backends of each ISA (the sockaddr's leading
-`sin_len` byte is the Darwin difference); wasm keeps its wasi:sockets
-bodies, and the interpreter its Go ones. `tcp_recv`, `tcp_send` and
-`udp_send` are still hand-written per backend.
+On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
+`tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable` and
+`tcp_socket_ctl` are one Fern body each in `internal/fernrt` over this
+floor, on x86-64-linux, arm64-linux and arm64-darwin and on both backends
+of each ISA (the sockaddr's leading `sin_len` byte and the option numbers
+are the Darwin differences); wasm keeps its wasi:sockets bodies, and the
+interpreter its Go ones. `tcp_recv`, `tcp_send` and `udp_send` are still
+hand-written per backend.
+
+`tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
+arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
+`shutdown(2)` with `arg` its how) are the socket controls of #9853; std/net
+wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
+numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
+blocking mode to turn off, and `reuse_port` is ignored: a port is one
+socket's there. Every other op and the backlog behave the same on every
+target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
+1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
+both compilers' wasm socket bodies read the byte the result's shape names,
+so a refused bind or dial reports its errno rather than whatever the area
+held.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

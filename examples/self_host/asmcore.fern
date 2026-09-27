@@ -595,6 +595,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "49"; }
         if (name == "listen") { return "50"; }
         if (name == "connect") { return "42"; }
+        if (name == "setsockopt") { return "54"; }
+        if (name == "shutdown") { return "48"; }
         if (name == "sendto") { return "44"; }
         if (name == "getsockname") { return "51"; }
     if (name == "execve") { return "59"; }
@@ -681,6 +683,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "bind") { return "104"; }
         if (name == "listen") { return "106"; }
         if (name == "connect") { return "98"; }
+        if (name == "setsockopt") { return "105"; }
+        if (name == "shutdown") { return "134"; }
         if (name == "sendto") { return "133"; }
         if (name == "getsockname") { return "32"; }
         if (name == "execve") { return "59"; }
@@ -786,6 +790,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "bind") { return "200"; }
     if (name == "listen") { return "201"; }
     if (name == "connect") { return "203"; }
+    if (name == "setsockopt") { return "208"; }
+    if (name == "shutdown") { return "210"; }
     if (name == "sendto") { return "206"; }
     if (name == "getsockname") { return "204"; }
     if (name == "execve") { return "221"; }
@@ -1765,6 +1771,40 @@ pub function rt_src_tcp_connect(t: string): string {
 // descriptor to close. It accumulated every non-'.' byte as (c - 48) until
 // #7740: a hostname reported success and sent to the address its letters
 // happened to make, and a fifth group stored past the 16-byte sockaddr.
+// sockopt is a socket-option constant as the target numbers it: the
+// socket level, the two SOL_SOCKET options the primitives set, and the
+// O_NONBLOCK flag. XNU numbers all four differently from Linux.
+function sockopt(t: string, name: string): string {
+    if (t == "arm64-darwin") {
+        if (name == "sol_socket") { return "65535"; }
+        if (name == "so_reuseport") { return "512"; }
+        if (name == "so_keepalive") { return "8"; }
+        return "4";
+    }
+    if (name == "sol_socket") { return "1"; }
+    if (name == "so_reuseport") { return "15"; }
+    if (name == "so_keepalive") { return "9"; }
+    return "2048";
+}
+
+// rt_src_tcp_listen_with backs `tcp_listen_with(port, backlog, reuse_port)`
+// (#9853): rt_src_tcp_listen with the accept queue chosen by the caller and
+// SO_REUSEPORT set before the bind when asked. The option value sits in the
+// same scratch block as the sockaddr, after it.
+pub function rt_src_tcp_listen_with(t: string): string {
+    return "function __fern_tcp_listen_with(port: i32, backlog: i32, reuse_port: boolean): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(20); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 16, 1); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 16) as i64, 4) as i32; } " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+}
+
+// rt_src_tcp_socket_ctl backs `tcp_socket_ctl(fd, op, arg)` (#9853): op 1
+// TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK take arg 0 or 1; op 4 is
+// shutdown(2) with arg 0 read, 1 write or 2 both. 0, -errno, or -EINVAL for
+// an op that names no control.
+pub function rt_src_tcp_socket_ctl(t: string): string {
+    var fc: string = sysno(t, "fcntl");
+    var nb: string = sockopt(t, "o_nonblock");
+    return "function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 { if (op == 1 || op == 2) { var v: usize = __raw_scratch(4); __raw_store8(v, 0, arg & 255); __raw_store8(v, 1, 0); __raw_store8(v, 2, 0); __raw_store8(v, 3, 0); if (op == 1) { return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, 6, 1, v as i64, 4) as i32; } return __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_keepalive") + ", v as i64, 4) as i32; } if (op == 3) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; if (flags < 0) { return flags; } var want: i32 = flags | " + nb + "; if (arg == 0) { want = flags & (0 - 1 - " + nb + "); } return __syscall3(" + fc + ", fd as i64, 4, want as i64) as i32; } if (op == 4) { return __syscall3(" + sysno(t, "shutdown") + ", fd as i64, arg as i64, 0) as i32; } return 0 - 22; }";
+}
+
 pub function rt_src_udp_send(t: string): string {
     return "function __fern_udp_send(host: string, port: i32, data: string): i32 { var o0: i32 = 0; var o1: i32 = 0; var o2: i32 = 0; var oct: i32 = 0; var idx: i32 = 0; var i: i32 = 0; var bad: i32 = 0; var dig: i32 = 0; var hn: i32 = host.len(); while (i < hn) { var c: i32 = host[i] as i32; if (c == 46) { if (dig == 0) { bad = 1; } if (idx == 0) { o0 = oct; } else if (idx == 1) { o1 = oct; } else if (idx == 2) { o2 = oct; } else { bad = 1; } idx = idx + 1; oct = 0; dig = 0; } else { if (c < 48) { bad = 1; } if (c > 57) { bad = 1; } oct = oct * 10 + (c - 48); dig = dig + 1; if (oct > 255) { bad = 1; } } i = i + 1; } if (bad != 0) { return -3; } if (idx != 3) { return -3; } if (dig == 0) { return -3; } var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(16); " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); __raw_store8(sa, 4, o0); __raw_store8(sa, 5, o1); __raw_store8(sa, 6, o2); __raw_store8(sa, 7, oct); var z: i32 = 8; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } var w: i32 = __syscall3(" + sysno(t, "write") + ", fd as i64, __raw_data(data) as i64, data.len() as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return w; }";
 }
@@ -1790,7 +1830,7 @@ pub function rt_src_tcp_send(t: string): string {
 // short read, EOF and -errno all come back as the empty array: the op has no
 // error channel, so a negative read result clamps to len 0.
 pub function rt_src_tcp_recv(t: string): string {
-    return "function __fern_tcp_recv(fd: i32, max: i32): i32[] { if (max <= 0) { var none: usize = __raw_arr_box(0); return __raw_array(none); } var p: usize = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; var p_own: string = __raw_string(p, max); if (n < 0) { n = 0; } var b: usize = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } return __raw_array(b); }";
+    return "function __fern_tcp_recv(fd: i32, max: i32): i32[] { if (max <= 0) { var none: usize = __raw_arr_box(0); return __raw_array(none); } var p: usize = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; if (n < 0) { n = 0; } var b: usize = __raw_arr_box(n); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } var p_own: string = __raw_string(p, max); return __raw_array(b); }";
 }
 
 // The stdout/stderr leaves (#2649). All four are plain write(2) calls, so unlike
@@ -4593,6 +4633,10 @@ function builtin_i32_names(): string[] {
         "tcp_accept",
         // tcp_local_port(fd) -> the bound port / -errno.
         "tcp_local_port",
+        // tcp_listen_with(port, backlog, reuse_port) -> listener fd / -errno;
+        // tcp_socket_ctl(fd, op, arg) -> 0 / -errno.
+        "tcp_listen_with",
+        "tcp_socket_ctl",
         "tcp_send",
         "tcp_close",
         "tcp_pollable",

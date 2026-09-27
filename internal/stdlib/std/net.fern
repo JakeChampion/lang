@@ -724,6 +724,93 @@ pub function (e: NetError) eq(other: NetError): boolean {
     return i >= 0 || e.errno() == other.errno();
 }
 
+// ---------------------------------------------------------------------------
+// Socket controls
+//
+// Typed faces over the descriptor builtins `tcp_listen_with` and
+// `tcp_socket_ctl` (#9853): a negative errno becomes the `NetError` it
+// names. The descriptors are the same `i32` the `tcp_*` builtins and
+// `std/tcp` use, so a listener from `listen_with` goes to `tcp_accept` and
+// an accepted or dialled socket to any control here.
+//
+// wasi:sockets 0.2 has no Nagle switch and no blocking mode to turn off, so
+// on wasm `set_nodelay` and `set_nonblocking` answer `Other(58)`
+// (`ENOTSUP`) rather than claiming a setting the host does not have, and
+// `reuse_port` is ignored: a port is one socket's there.
+
+// ListenOptions — what `listen_with` asks of the listener: the accept
+// queue depth, and whether other listeners may share the port
+// (`SO_REUSEPORT`, the kernel balancing accepted connections across them).
+pub struct ListenOptions {
+    backlog: i32,
+    reuse_port: boolean,
+}
+
+// `listen_options()` — what `tcp_listen` uses: a backlog of 128 and the
+// port held by one listener.
+pub function listen_options(): ListenOptions {
+    return ListenOptions { backlog: 128, reuse_port: false };
+}
+
+// `listen_with(port, opts)` — a listening IPv4 socket on `port` (0 lets the
+// host pick, and `tcp_local_port` reads it back), or the error the bind or
+// listen reported.
+pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] {
+    var fd: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
+    if (fd < 0) { return Err(error_from_errno(fd)); }
+    return Ok(fd);
+}
+
+// Shutdown — the half of a connection `shutdown` closes: `Read` stops
+// receiving, `Write` sends the end of stream the peer reads as EOF, `Both`
+// does both.
+pub enum Shutdown {
+    Read,
+    Write,
+    Both,
+}
+
+// `set_nodelay(sock, on)` — send segments as they are written instead of
+// waiting to coalesce them (`TCP_NODELAY`).
+pub function set_nodelay(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 1, on);
+}
+
+// `set_keepalive(sock, on)` — probe an idle connection so a vanished peer
+// is noticed (`SO_KEEPALIVE`).
+pub function set_keepalive(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 2, on);
+}
+
+// `set_nonblocking(sock, on)` — make `tcp_recv` answer the empty array at
+// once when nothing is queued instead of waiting (`O_NONBLOCK`).
+pub function set_nonblocking(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 3, on);
+}
+
+// `shutdown(sock, how)` — close one or both directions while keeping the
+// descriptor; `tcp_close` still releases it.
+pub function shutdown(sock: i32, how: Shutdown): Result[(), NetError] {
+    var arg: i32 = 2;
+    match (how) {
+        Read => { arg = 0; },
+        Write => { arg = 1; },
+        Both => { arg = 2; },
+    }
+    return __socket_result(tcp_socket_ctl(sock, 4, arg));
+}
+
+function __socket_ctl(sock: i32, op: i32, on: boolean): Result[(), NetError] {
+    var arg: i32 = 0;
+    if (on) { arg = 1; }
+    return __socket_result(tcp_socket_ctl(sock, op, arg));
+}
+
+function __socket_result(r: i32): Result[(), NetError] {
+    if (r < 0) { return Err(error_from_errno(r)); }
+    return Ok(());
+}
+
 impl cmp.Eq for NetError { }
 impl cmp.Display for NetError { }
 impl error.Error for NetError { }

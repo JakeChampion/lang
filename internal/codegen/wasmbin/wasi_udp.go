@@ -94,10 +94,13 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		body = free(body, 14, 4)
 		return free(body, 5, 16)
 	}
-	errorReturn := func(body []byte, streams bool) []byte {
+	// errAt is the error-code's offset in the result at $ret: 1 after a
+	// `result<_, error-code>`, 4 after a handle or handle pair, 8 after
+	// a u64 count (emitErrnoNegReturn).
+	errorReturn := func(body []byte, streams bool, errAt uint32) []byte {
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalGet(body, 5)
-		body = memory.InstI32Load8U(body, 0, 4)
+		body = memory.InstI32Load8U(body, 0, errAt)
 		body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
 		body = numeric.InstI32Sub(body)
 		// Keep errno on the operand stack while frees overwrite the scratch.
@@ -105,7 +108,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		return inst.InstReturn(body)
 	}
 
-	fail := func(body []byte, streams bool) []byte {
+	fail := func(body []byte, streams bool, errAt uint32) []byte {
 		if streams {
 			body = inst.InstLocalGet(body, 8)
 			body = inst.InstCall(body, inDrop)
@@ -114,7 +117,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		}
 		body = inst.InstLocalGet(body, 6)
 		body = inst.InstCall(body, sockDrop)
-		return errorReturn(body, streams)
+		return errorReturn(body, streams, errAt)
 	}
 
 	var body []byte
@@ -277,7 +280,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = errorReturn(body, false)
+	body = errorReturn(body, false, 4)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr+4]
 	body = inst.InstLocalGet(body, 5)
@@ -301,7 +304,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = fail(body, false)
+	body = fail(body, false, 1)
 	body = inst.InstEnd(body)
 
 	// finish-bind(sock, retptr); bail on Err.
@@ -311,7 +314,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = fail(body, false)
+	body = fail(body, false, 1)
 	body = inst.InstEnd(body)
 
 	// stream(sock, Some(ipv4 host:port), retptr) — connect. The option
@@ -335,7 +338,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 5)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = fail(body, false)
+	body = fail(body, false, 4)
 	body = inst.InstEnd(body)
 	// $inStream = mem[retptr+4], $outStream = mem[retptr+8]
 	body = inst.InstLocalGet(body, 5)
@@ -395,7 +398,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 5)
 			body = memory.InstI32Load8U(body, 0, 0)
 			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-			body = fail(body, true)
+			body = fail(body, true, 8)
 			body = inst.InstEnd(body)
 			// permit (low 32 of the u64 @ +8): if non-zero, break the loop.
 			body = inst.InstLocalGet(body, 5)
@@ -423,7 +426,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = fail(body, true)
+		body = fail(body, true, 8)
 		body = inst.InstEnd(body)
 		// $sent = low 32 bits of the u64 datagram count at retptr+8.
 		body = inst.InstLocalGet(body, 5)

@@ -870,6 +870,30 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
+	"wasi_sockets_tcp_set_listen_backlog_size": {
+		// (self, u64 backlog, retptr) → (). retptr holds
+		// `result<_, error-code>`.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.set-listen-backlog-size",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_set_keep_alive_enabled": {
+		// (self, bool, retptr) → (). retptr holds `result<_, error-code>`.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.set-keep-alive-enabled",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_tcp_shutdown": {
+		// (self, shutdown-type, retptr) → (): receive 0, send 1, both
+		// 2, the same numbering as shutdown(2). retptr holds
+		// `result<_, error-code>`.
+		module:  "wasi:sockets/tcp@0.2.0",
+		name:    "[method]tcp-socket.shutdown",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_sockets_tcp_start_connect": {
 		// Outbound client. Same canonical-ABI flattening as
 		// start-bind: self, borrow<network>, disc, 11 flat slots
@@ -2386,13 +2410,20 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	// pulled in by tcp_listen since that's the only call site that
 	// needs the network borrow. The others reach for the cached
 	// handle slot directly through the accessor.
-	if helpers.set["__fern_tcp_listen"] {
+	if helpers.set["__fern_tcp_listen"] || helpers.set["__fern_tcp_listen_with"] {
 		in.add("wasi_sockets_instance_network")
 		in.add("wasi_sockets_create_tcp_socket")
 		in.add("wasi_sockets_tcp_start_bind")
 		in.add("wasi_sockets_tcp_finish_bind")
 		in.add("wasi_sockets_tcp_start_listen")
 		in.add("wasi_sockets_tcp_finish_listen")
+	}
+	if helpers.set["__fern_tcp_listen_with"] {
+		in.add("wasi_sockets_tcp_set_listen_backlog_size")
+	}
+	if helpers.set["__fern_tcp_socket_ctl"] {
+		in.add("wasi_sockets_tcp_set_keep_alive_enabled")
+		in.add("wasi_sockets_tcp_shutdown")
 	}
 	if helpers.set["__fern_tcp_accept"] {
 		in.add("wasi_sockets_tcp_accept")

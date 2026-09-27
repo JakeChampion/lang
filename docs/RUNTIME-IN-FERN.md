@@ -375,10 +375,12 @@ How each backend reaches a helper:
   hand-built wasi body is that target's twin of a native helper written on
   the syscall floor, and the wasi body wins.
 
-The socket helpers `__fern_tcp_listen`, `__fern_tcp_connect`,
-`__fern_tcp_accept`, `__fern_tcp_local_port`, `__fern_tcp_close` and
-`__fern_tcp_pollable` are Fern bodies over `__syscall3` (#9853): four
-hand-written copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone.
+The socket helpers `__fern_tcp_listen`, `__fern_tcp_listen_with`,
+`__fern_tcp_connect`, `__fern_tcp_accept`, `__fern_tcp_local_port`,
+`__fern_tcp_close`, `__fern_tcp_pollable` and `__fern_tcp_socket_ctl` are
+Fern bodies over `__syscall3` and `__syscall5` (#9853): four hand-written
+copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone, and the two
+controls never had any.
 The x86-64 stack backend records a raw syscall whose number is a literal
 (`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
 allowlist stays exact through them; a number computed at run time is refused

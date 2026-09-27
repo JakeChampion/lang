@@ -1953,6 +1953,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_listen_with(port, backlog, reuse_port): number — tcp_listen with
+	// the accept queue's depth and SO_REUSEPORT chosen by the caller, so
+	// several workers can bind one port (#9853). The listener, or -errno.
+	c.info.FuncSigs["tcp_listen_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_socket_ctl(fd, op, arg): number — one control call on a socket.
+	// op 1 is TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK, each with arg
+	// 0 or 1; op 4 is shutdown with arg 0 (read), 1 (write) or 2 (both).
+	// 0, or -errno; an op the target has no control for is -EINVAL.
+	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv(fd, max): u8[] — one blocking read of at most max
 	// bytes; socket data is raw bytes (D9, #5714). The empty array
 	// signals EOF / error / closed alike.

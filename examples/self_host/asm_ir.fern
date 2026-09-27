@@ -7406,6 +7406,15 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_udp_send\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("udp_send");
+    } else if (o.kind_tag == 332 || o.kind_tag == 333) {  // tcp_listen_with, tcp_socket_ctl
+        // [a, b, c] with c on top; the stack ABI wants param[0] lowest, so
+        // pop and re-push reversed, as udp_send does.
+        var ctl_fn: string = "__fn___fern_tcp_listen_with";
+        var ctl_need: string = "tcp_listen_with";
+        if (o.kind_tag == 333) { ctl_fn = "__fn___fern_tcp_socket_ctl"; ctl_need = "tcp_socket_ctl"; }
+        s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+        s = s.write("    call " + ctl_fn + "\n    addq $24, %rsp\n    pushq %rax\n");
+        s = s.need(ctl_need);
     } else if (o.kind_tag == 115) {  // tcp_recv
         // [fd, max] with max on top; the stack ABI wants param[0] (fd)
         // lowest, so pop and re-push swapped.
@@ -9636,7 +9645,7 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
-        "eprint", "udp_send", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
+        "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
         "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
@@ -9844,6 +9853,14 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     if (s.has_need("udp_send")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_send("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_listen_with")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_socket_ctl")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86_64"), all_structs, s);
     }
     if (s.has_need("tcp_connect")) {
         s = s.write("    .text\n");

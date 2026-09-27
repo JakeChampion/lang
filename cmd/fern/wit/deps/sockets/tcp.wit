@@ -3,8 +3,9 @@ package wasi:sockets@0.2.0;
 // Vendored subset of wasi:sockets/tcp@0.2.0 — the methods the wasm
 // backends emit: start/finish-bind, start/finish-listen, accept,
 // start/finish-connect, subscribe, plus the `[resource-drop]tcp-socket`
-// import. The full API also has shutdown/keep-alive/etc., which we do
-// not lower.
+// import, and the three controls tcp_listen_with / tcp_socket_ctl reach:
+// set-listen-backlog-size, set-keep-alive-enabled and shutdown. The rest
+// of the full API is not lowered.
 //
 // start/finish-connect back the OUTBOUND client (tcp_connect, #4318).
 // They are declared here for the SELF-HOST wasm path, which composes via
@@ -18,6 +19,12 @@ interface tcp {
     use wasi:io/poll@0.2.0.{pollable};
     use network.{network, ip-socket-address, error-code};
 
+    enum shutdown-type {
+        receive,
+        send,
+        both,
+    }
+
     resource tcp-socket {
         start-bind: func(network: borrow<network>, local-address: ip-socket-address) -> result<_, error-code>;
         finish-bind: func() -> result<_, error-code>;
@@ -28,5 +35,8 @@ interface tcp {
         start-connect: func(network: borrow<network>, remote-address: ip-socket-address) -> result<_, error-code>;
         finish-connect: func() -> result<tuple<input-stream, output-stream>, error-code>;
         subscribe: func() -> pollable;
+        set-listen-backlog-size: func(value: u64) -> result<_, error-code>;
+        set-keep-alive-enabled: func(value: bool) -> result<_, error-code>;
+        shutdown: func(shutdown-type: shutdown-type) -> result<_, error-code>;
     }
 }

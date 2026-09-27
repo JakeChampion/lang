@@ -131,6 +131,47 @@ function __sys_close(): i32 {
     if (target_os() == "darwin") { return 6; }
     return 57;
 }
+function __sys_setsockopt(): i32 {
+    if (target_arch() == "x86-64") { return 54; }
+    if (target_os() == "darwin") { return 105; }
+    return 208;
+}
+function __sys_shutdown(): i32 {
+    if (target_arch() == "x86-64") { return 48; }
+    if (target_os() == "darwin") { return 134; }
+    return 210;
+}
+function __sys_fcntl(): i32 {
+    if (target_arch() == "x86-64") { return 72; }
+    if (target_os() == "darwin") { return 92; }
+    return 25;
+}
+// The socket-level option names, which XNU numbers differently from Linux.
+function __sol_socket(): i64 {
+    if (target_os() == "darwin") { return 65535; }
+    return 1;
+}
+function __so_reuseport(): i64 {
+    if (target_os() == "darwin") { return 512; }
+    return 15;
+}
+function __so_keepalive(): i64 {
+    if (target_os() == "darwin") { return 8; }
+    return 9;
+}
+function __o_nonblock(): i64 {
+    if (target_os() == "darwin") { return 4; }
+    return 2048;
+}
+
+// setsockopt(fd, level, name, &value, 4) with the i32 in a fresh block.
+function __setsockopt_i32(fd: i64, level: i64, name: i64, value: i32): i64 {
+    var p: usize = __alloc(4);
+    __store_i32(p, value);
+    var r: i64 = __syscall5(__sys_setsockopt(), fd, level, name, p as i64, 4);
+    __free(p, 4);
+    return r;
+}
 
 // A sockaddr_in in a fresh 16-byte block: Darwin leads with sin_len and a
 // one-byte family, Linux with a two-byte family; then the port in network
@@ -158,21 +199,49 @@ function __sockaddr_in(port: i32, host_be: i32): usize {
     return sa;
 }
 
-// __fern_tcp_listen(port) is a socket listening on 0.0.0.0:port with a
-// backlog of 128, or the -errno of the step that failed with the socket
-// closed again.
-function __fern_tcp_listen(port: i32): i32 {
+// __fern_tcp_listen_with(port, backlog, reuse_port) is a socket listening
+// on 0.0.0.0:port with that accept queue, SO_REUSEPORT set before the bind
+// when asked, or the -errno of the step that failed with the socket closed
+// again. `reuse_port` is the builtin's boolean, an i32 here.
+function __fern_tcp_listen_with(port: i32, backlog: i32, reuse_port: i32): i32 {
     var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
     if (fd < 0) { return fd as i32; }
+    var r: i64 = 0;
+    if (reuse_port != 0) { r = __setsockopt_i32(fd, __sol_socket(), __so_reuseport(), 1); }
     var sa: usize = __sockaddr_in(port, 0);
-    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, 16);
-    if (r >= 0) { r = __syscall3(__sys_listen(), fd, 128, 0); }
+    if (r >= 0) { r = __syscall3(__sys_bind(), fd, sa as i64, 16); }
+    if (r >= 0) { r = __syscall3(__sys_listen(), fd, backlog as i64, 0); }
     __free(sa, 16);
     if (r < 0) {
         __syscall3(__sys_close(), fd, 0, 0);
         return r as i32;
     }
     return fd as i32;
+}
+
+// __fern_tcp_listen(port) is __fern_tcp_listen_with at the accept queue
+// depth the serve loop has always used, without SO_REUSEPORT.
+function __fern_tcp_listen(port: i32): i32 {
+    return __fern_tcp_listen_with(port, 128, 0);
+}
+
+// __fern_tcp_socket_ctl(fd, op, arg) is one control call on a socket: op
+// 1 TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK take arg 0 or 1; op 4 is
+// shutdown(2) with arg 0 read, 1 write or 2 both. 0, -errno, or -EINVAL for
+// an op that names no control.
+function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
+    var f: i64 = fd as i64;
+    if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
+    if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
+    if (op == 3) {
+        var flags: i64 = __syscall3(__sys_fcntl(), f, 3, 0);
+        if (flags < 0) { return flags as i32; }
+        var want: i64 = flags | __o_nonblock();
+        if (arg == 0) { want = flags & (0 - 1 - __o_nonblock()); }
+        return __syscall3(__sys_fcntl(), f, 4, want) as i32;
+    }
+    if (op == 4) { return __syscall3(__sys_shutdown(), f, arg as i64, 0) as i32; }
+    return 0 - 22;
 }
 
 // __fern_tcp_connect(host_be, port) is a socket connected to the IPv4

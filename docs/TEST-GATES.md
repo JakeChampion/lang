@@ -97,7 +97,29 @@ Apple Silicon. `TestNetErrnoTablesMatchStrerror` and
 `TestNetErrorVariantsFollowErrnoList` (`internal/stdlib`) read the module
 as data and pin its Linux, Darwin and WASI errno lists to
 `internal/strerror` row for row, and the `NetError` variant order to the
-errno-name list. These gates cover text and tables only: no socket is
+errno-name list.
+
+`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run two probes over a loopback
+connection: `e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
+`tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
+listener on Linux, no-delay and keep-alive, a non-blocking read that
+answers empty, a write-side shutdown the peer reads as EOF, the `-EINVAL`
+of an unknown op, and the wasm `-ENOTSUP` answers), and
+`e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
+`set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
+`AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
+the closed port report. Both check the received bytes, not only their
+count. `TestSelfHostSocketCtl` compiles both with the production self-host
+driver for x86-64, arm64 and wasm under strict IR with complete semantic
+lowering required (it is what caught the self-host `tcp_recv` body
+adopting its buffer before the copy loop, #10486);
+`TestSelfHostArm64DarwinSocketCtl` runs them on Apple Silicon. A wasi:cli/run
+component reports only 0 or 1, so the wasm legs read the probe's "ok" on
+stdout instead of the exit code. `TestWasmSocketSetupReclaimsOnError` and
+its self-host twin write each wasi:sockets result's error-code at the byte
+the canonical ABI names, so a helper reading the wrong one fails there
+rather than reporting whatever the return area held. The std/net address
+gates above cover text and tables only: no socket is
 opened, so they say nothing about what a primitive reports at runtime.
 
 ## HTTP Content-Length parsing

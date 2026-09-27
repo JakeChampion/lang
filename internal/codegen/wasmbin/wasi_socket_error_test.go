@@ -37,7 +37,7 @@ func TestWasiSocketErrorReturns(t *testing.T) {
 	probe = inst.InstI32Const(probe, 4)
 	probe = inst.InstLocalGet(probe, 0)
 	probe = memory.InstI32Store8(probe, 0, 0)
-	probe = emitErrnoNegReturn(probe, 1, map[string]uint32{"__fern_wasi_socket_errno": 1})
+	probe = emitErrnoNegReturn(probe, 1, 4, map[string]uint32{"__fern_wasi_socket_errno": 1})
 	m := module.New()
 	m.TypeParams = [][]byte{{encode.ValtypeI32}}
 	m.TypeResults = [][]byte{{encode.ValtypeI32}}

@@ -1052,6 +1052,46 @@ serializer.
 - **Wire format:** `http_parse_request(buf): Option[HttpRequest]`,
   `http_serialize_response(resp): string`
 
+### `std/net`
+
+IP addresses, socket addresses, and the typed error every networking
+primitive reports (#9853). `IpAddr` is `V4(bytes)` / `V6(bytes)` in network
+order, built with `ipv4(a, b, c, d)`, `ipv6(bytes)` or `ip_parse(text)` and
+rendered by `to_string()` in the RFC 5952 canonical form; `SocketAddr` is an
+address and a port, parsed by `socket_addr_parse` from `a.b.c.d:port` and
+the bracketed `[v6]:port` form. The predicates (`is_loopback`,
+`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) unwrap an
+IPv4-mapped IPv6 address first; `packed_v4()` bridges an `IpAddr` to the
+packed IPv4 argument `tcp_connect` takes.
+
+`NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
+`WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
+builtin returns, negated or not, onto it using the Linux, Darwin or WASI
+numbering `target_os()` names, and `errno()` is the inverse.
+`internal/stdlib/net_errno_test.go` pins the three tables to
+`internal/strerror`.
+
+The socket controls are typed faces over the descriptor builtins
+`tcp_listen_with` and `tcp_socket_ctl`, on the same `i32` descriptors the
+`tcp_*` builtins and `std/tcp` use:
+
+- `listen_with(port, opts)` — a listener with `ListenOptions { backlog,
+  reuse_port }` (`listen_options()` is `tcp_listen`'s 128 and one
+  listener per port), or the `NetError` the bind or listen reported.
+- `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
+  `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
+  `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
+  answers the empty array at once when nothing is queued.
+- `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
+  shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
+
+On wasm, `set_nodelay` and `set_nonblocking` answer `Other(58)` (`ENOTSUP`):
+wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
+The rest of the socket verbs (`recv` / `send` over owned buffers, UDP,
+Unix-domain sockets, IPv6 listeners) arrive with the primitives that make
+them honest on every address family; until then `std/tcp` is the accept
+loop and `std/fetch` the client.
+
 ### `std/tcp`
 
 - `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
