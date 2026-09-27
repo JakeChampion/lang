@@ -256,6 +256,26 @@ Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
 `unwatch_signal` and `close` (std/async), std/sim scripts readiness for
 its leg with `ready_at`, and the serve loops run on it.
 
+Per target, every socket primitive is provided as follows. "Fern body" is
+the one body per compiler over the syscall floor (`internal/fernrt` and
+`asmcore.fern`), the same on x86-64-linux and arm64-linux under both
+backends and on arm64-darwin with its sockaddr length byte, option numbers
+and `MSG_NOSIGNAL` value. wasi-http is the proxy world, whose profile grants
+none of `tcp`, `unix` or `reactor`, so E066 refuses each of these at check
+time there.
+
+| Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | interp |
+| --- | --- | --- | --- | --- | --- |
+| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body | Fern body | wasi:sockets/tcp bodies (`wasi_tcp.go`, `wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
+| `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
+| `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
+| `tcp_socket_ctl` | Fern body | Fern body | ops 2, 4, 5 through wasi:sockets; 1 and 3 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record | E066 | net package controls; op 5 answers 0 at once |
+| `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
+| `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
+| `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasi_udp.go`, `wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
+| `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
+| `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
+
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through
 the byte store. The Darwin legs run in the Apple Silicon lane.
