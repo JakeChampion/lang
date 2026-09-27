@@ -77,6 +77,7 @@ function main(): i32 {
 	// pairing is static but `__fern_rc_is_unique` fails and the construction
 	// allocates fresh. That fresh box carries no shape word of its own, so a
 	// pairing that does not write one corrupts it here and nowhere else.
+	// `keep` starts as `[]`, one allocation since #10408 where it was two.
 	{"shared-donor-degrades", `struct R { tag: string, cells: i32[], n: i32 }
 function shared(n: i32): i32 {
     var keep: R[] = [];
@@ -90,7 +91,7 @@ function main(): i32 {
     var v: i32 = shared(5);
     if (__rc_underflow_count() != 0) { return 99; }
     return v;
-}`, 17, 1, 0, 6, 6, true, false},
+}`, 17, 1, 0, 5, 5, true, false},
 
 	// The donor and the recipient are different TYPES and the same number of
 	// SLOTS, which is the only thing a box has to agree on. Mote and Glyph are
