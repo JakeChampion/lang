@@ -280,11 +280,16 @@ pub struct LocalInfo {
     // a binding therefore takes NO transfer retain; retaining it leaves a second
     // claim with nothing to release it (#8070).
     moved_claim: boolean,
+    // own_handback: a flagged borrowed binding that took over a threaded `own`
+    // array parameter (bind_own_handback). A clear flag means it still holds
+    // the unit the caller passed, which a return hands back uncounted, as
+    // `return p` does.
+    own_handback: boolean,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, own_handback: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -953,6 +958,10 @@ pub struct LowerFrame {
     // passed directly, at the BIND rather than the argument — the field can be
     // released between the two.
     own_lift_sites: string[],
+    // own_handback_sites: the "line:col" keys of the top-level `var`s that
+    // take over a threaded `own` array parameter at its last use
+    // (own_handback_sites_of, bind_own_handback).
+    own_handback_sites: string[],
 }
 
 pub struct LowerState {
@@ -1518,7 +1527,7 @@ function borrowed_arr_param_slot(e: ast.Expr, s: LowerState): i32 {
         if (s.is_own_param(nm)) { return 0 - 1; }
         return sl;
     }
-    if (s.is_borrowed_arr_slot(sl)) { return sl; }
+    if (s.is_borrowed_arr_slot(sl) && !s.locals[sl].own_handback) { return sl; }
     return 0 - 1;
 }
 
@@ -1571,6 +1580,59 @@ pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
     if (slot < 0 || slot >= s.locals.len()) { return 0 - 1; }
     if (slot >= s.frame.n_params) { return s.locals[slot].arr_own_flag; }
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
+}
+
+// threaded_own_array_param: slot `slot` is an `own` array parameter whose unit
+// this frame does not consume. A pointer-element `own` array has no
+// element-unit protocol in this lowering, so the caller keeps the release of
+// the buffer it passed: a result that differs from it is released by the
+// caller's rebind, and an identical one is handed back uncounted. Such a
+// parameter is threaded like a reassigned borrowed one (ownflag_name): the
+// frame releases only the replacements it minted.
+function threaded_own_array_param(s: LowerState, slot: i32): boolean {
+    if (slot < 0 || slot >= s.frame.n_params || !s.is_arr_slot(slot)) { return false; }
+    if (!s.is_own_param(s.locals[slot].slot_name) || owned_scalar_array_slot(s, slot)) { return false; }
+    if (util.index_of_str(s.frame.sigs.own_positions, s.frame.cur_fn + "|" + util.i32_to_string(slot)) < 0) { return false; }
+    return !s.callee_consumes_own_array(s.frame.cur_fn, slot);
+}
+
+// is_own_handback_site: `v` is one of own_handback_sites_of's binds.
+pub function (s: LowerState) is_own_handback_site(v: ast.StmtVar): boolean {
+    return util.index_of_str(s.frame.own_handback_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0;
+}
+
+// bind_own_handback: `slot` was just bound at an own_handback_sites_of site from
+// `src`, a threaded `own` array parameter or a local that took one over. The
+// frame holds no count of src's unit, so the binding is a borrow carrying
+// src's ownership flag: while it still holds src's buffer the flag is src's,
+// and once it holds another the flag is set and a buffer src owned is
+// released, as a rebind of src would. src's flag is cleared. A return with the
+// flag clear hands the unit back uncounted (own_handback).
+function bind_own_handback(s: LowerState, slot: i32, src: i32): LowerState {
+    var st: LowerState = s.mark_borrowed_arr(slot, true);
+    var flag: i32 = st.locals.len();
+    st = st.add_local("$ownhb" + util.i32_to_string(slot));
+    st = LowerState { ...st, locals: st.locals.with(slot, LocalInfo { ...st.locals[slot], arr_own_flag: flag, own_handback: true }) };
+    var src_flag: i32 = st.ownflag_slot_of(src);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(src));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    if (src_flag >= 0) {
+        st = st.emit(ir.op_load_local(src_flag));
+        st = st.emit(ir.op_if(0));
+        st = st.release(src, "__fern_rc_dec", "own-handback-superseded");
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_else());
+    if (src_flag >= 0) { st = st.emit(ir.op_load_local(src_flag)); } else { st = st.emit(ir.op_const_i32(0)); }
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_end());
+    if (src_flag < 0) { return st; }
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(src_flag));
 }
 
 // mark_scalar_array_elems stamps a slot with the element representation its
@@ -20736,7 +20798,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                     && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
                     var rbl: LowerState = lower_expr(r.value, s);
                     if (!rbl.ok) { return rbl; }
-                    if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
+                    if ((!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) && !s.locals[rps].own_handback) {
                         var rbf: i32 = rbl.ownflag_slot_of(rps);
                         if (rbf >= 0) {
                             rbl = rbl.emit(ir.op_load_local(rbf));
@@ -23173,6 +23235,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // buffer. Mark the new slot's array-ness either way.
     var is_arr: boolean = false;
     var alias_inc: boolean = false;
+    var own_alias_src: i32 = 0 - 1;
     match (v.init) {
         ast.ExprArray(_) => { is_arr = true; },
         ast.ExprIdent(id) => {
@@ -23211,7 +23274,8 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // pair native cancels at this site. moves_local_at keys on the
                 // Var's own position, which is what move_sites_toplevel_of
                 // records and the rcplan moveSites diff pins against native.
-                if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
+                if (se.is_own_handback_site(v)) { own_alias_src = aid_slot; }
+                else if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
                 // Dead-alias cancellation (#4402 opt 1): a proven borrowed
                 // VIEW skips the retain; bind_var_slot elides the alias
                 // slot's sweep dec under the same predicate, and the
@@ -24032,7 +24096,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         struct_ty: struct_ty,
         opt_ty: opt_ty,
     };
-    return bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0 && se.is_own_handback_site(v)) { own_alias_src = se.slot_of(own_handback_source(v.init, se)); }
+    var bound: LowerState = bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0 || !bound.ok) { return bound; }
+    return bind_own_handback(bound, bound.slot_of(v.name), own_alias_src);
 }
 
 // The tuple/struct destructuring bind: `var (a, b) = …`, reached when the
@@ -60638,7 +60705,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, own_handback: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -60773,7 +60840,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: [], own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs), own_handback_sites: [] }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -60782,14 +60849,18 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         if (s.locals[cpi].is_cell) { s = s.mark_cell_elem(cpi, s.locals[cpi].cell_elem); }
         cpi = cpi + 1;
     }
+    var ohb: string[] = own_handback_sites_of(fn, s);
+    s = LowerState { ...s, frame: LowerFrame { ...s.frame, own_handback_sites: ohb, grow_alias: grow_alias_names_of(fn, ohb) } };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
-    // A declared `own` param is excluded — the caller moved its reference in.
+    // A declared `own` param is excluded unless it is threaded
+    // (threaded_own_array_param) — otherwise the caller moved its reference in.
     var ofl_own: string[] = own_param_names_of(fn);
     var ofl_i: i32 = 0;
     while (ofl_i < s.frame.n_params) {
         var ofl_nm: string = s.locals[ofl_i].slot_name;
-        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0 && util.index_of_str(ofl_own, ofl_nm) < 0) {
+        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0
+            && (util.index_of_str(ofl_own, ofl_nm) < 0 || threaded_own_array_param(s, ofl_i))) {
             s = s.add_local(ownflag_name(ofl_nm));
             s = s.emit(ir.op_const_i32(0));
             s = s.emit(ir.op_store_local(s.slot_of(ownflag_name(ofl_nm))));
@@ -71503,7 +71574,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         pi = pi + 1;
     }
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [], own_handback_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -77521,23 +77592,53 @@ pub function (s: LowerState) callee_consumes_own_array(name: string, idx: i32): 
 // own_consumed_positions_of closes `seeds` — "fn|idx" rows for the `own`
 // array positions of bodies the semantic lowering produced, which consume
 // their buffer — over the free functions this lowering emits: one that
-// passes its own `own` array parameter to a consuming position in a dying
-// shape (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
+// passes its own `own` array parameter, or a local that took it over at its
+// last use (`var a = p`, `var a = g(p)`), to a consuming position in a dying shape
+// (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
 // the buffer when it returns, so its callers must transfer theirs too. A
 // row only ever gains, so the rounds converge.
 pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]): string[] {
     var out: string[] = seeds;
     var changed: boolean = out.len() > 0;
+    // Per function, the `own` array params and the locals that take one over at
+    // its last use (own_handback_bind), each paired with the param it stands for.
+    var owned_of: string[][] = [];
+    var param_of: string[][] = [];
+    if (changed) {
+        var ownpos: string[] = own_positions_of(funcs);
+        for fn in funcs {
+            var owned: string[] = [];
+            var stands: string[] = [];
+            if (fn.receiver_name.len() == 0) {
+                for p in fn.params {
+                    if (p.own && is_array_type_name(p.type_name)) { owned = owned.append(p.name); stands = stands.append(p.name); }
+                }
+            }
+            var k: i32 = 0;
+            while (owned.len() > 0 && k < fn.body.len()) {
+                match (fn.body[k]) {
+                    ast.StmtVar(v) => {
+                        var oi: i32 = util.index_of_str(owned, own_handback_bind(v.init, ownpos));
+                        if (oi >= 0 && astwalk.count_ident_expr(v.init, owned[oi]) == 1 && !named_after(fn.body, k, owned[oi])) {
+                            owned = owned.append(v.name);
+                            stands = stands.append(stands[oi]);
+                        }
+                    },
+                    _ => {}
+                }
+                k = k + 1;
+            }
+            owned_of = owned_of.append(owned);
+            param_of = param_of.append(stands);
+        }
+    }
     while (changed) {
         changed = false;
+        var fi: i32 = 0;
         for fn in funcs {
-            if (fn.receiver_name.len() > 0) { continue; }
-            var owned: string[] = [];
-            var pi: i32 = 0;
-            while (pi < fn.params.len()) {
-                if (fn.params[pi].own && is_array_type_name(fn.params[pi].type_name)) { owned = owned.append(fn.params[pi].name); }
-                pi = pi + 1;
-            }
+            var owned: string[] = owned_of[fi];
+            var stands: string[] = param_of[fi];
+            fi = fi + 1;
             if (owned.len() == 0) { continue; }
             var sole: string[] = grow_sole_exempt_names_of(fn);
             var passes: string[] = [];
@@ -77552,6 +77653,8 @@ pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]
                 var slot: i32 = util.digits_to_i32(slice_unchecked(entry, b1 + 1, b2));
                 var pname: string = slice_unchecked(entry, b2 + 1, entry.len()) + "";
                 if (cname.len() == 0 || cname[0] == b'@' || slot < 1) { continue; }
+                var oi: i32 = util.index_of_str(owned, pname);
+                if (oi >= 0) { pname = stands[oi]; }
                 if (util.index_of_str(out, cname + "|" + util.i32_to_string(slot - 1)) < 0) { continue; }
                 var at: i32 = 0;
                 while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
@@ -77564,6 +77667,27 @@ pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]
         }
     }
     return out;
+}
+
+// own_handback_bind is the registry-only reading of own_handback_source: the
+// bare ident a `var` initialiser hands over whole, itself or at a direct
+// callee's `own` position ("fn|idx" rows of `ownpos`).
+function own_handback_bind(init: ast.Expr, ownpos: string[]): string {
+    match (init) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprCall(c) => {
+            var cname: string = direct_call_callee_name(init);
+            var i: i32 = 0;
+            while (cname.len() > 0 && i < c.args.len()) {
+                var an: string = ident_name_or_empty(c.args[i]);
+                if (an.len() > 0 && util.index_of_str(ownpos, cname + "|" + util.i32_to_string(i)) >= 0) { return an; }
+                i = i + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 // consume_sigs installs the consuming `own` array positions the produced
@@ -77913,7 +78037,11 @@ function grow_alias_filter(names: string[], alias: string[]): string[] {
 // — and the two co-indexed buffers of the module-wide registry then grew
 // INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
 // longer than `rows` and a bucket chain pointing past the end of `rows`.
-pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+//
+// `owned_binds` are the top-level `var` sites ("line:col") that take over a
+// threaded `own` parameter at its last use (bind_own_handback): the caller
+// handed that buffer over to be grown, so the binding is no alias.
+pub function grow_alias_names_of(fn: parser.FuncDecl, owned_binds: string[]): string[] {
     var srcs: string[] = [];
     if (fn.receiver_name.len() > 0) { srcs = srcs.append(fn.receiver_name); }
     for p in fn.params { srcs = srcs.append(p.name); }
@@ -77921,10 +78049,88 @@ pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
     var grew: boolean = true;
     while (grew) {
         var before: i32 = out.len();
-        out = grow_alias_scan(fn.body, srcs, out);
+        for st in fn.body {
+            if (util.index_of_str(owned_binds, var_site_key(st)) < 0) { out = grow_alias_scan_stmt(st, srcs, out); }
+        }
         grew = out.len() > before;
     }
     return out;
+}
+
+// var_site_key is the "line:col" of a `var` statement, "" for any other.
+function var_site_key(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtVar(v) => { return util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col); },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// own_handback_sites_of lists the top-level `var` sites of `fn` whose value
+// takes over a threaded `own` array parameter p, or a local that already took
+// one over, at its last use: `var a = p`, or `var a = g(…, p, …)` with p at an
+// `own` position g does not consume, which hands p back uncounted when it keeps
+// it. p is named once in the initialiser and nowhere after.
+function own_handback_sites_of(fn: parser.FuncDecl, s: LowerState): string[] {
+    var out: string[] = [];
+    var names: string[] = [];
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        match (fn.body[k]) {
+            ast.StmtVar(v) => {
+                var src: string = own_handback_source(v.init, s);
+                if (src.len() > 0 && (util.index_of_str(names, src) >= 0 || threaded_own_array_param(s, s.slot_of(src)))
+                    && astwalk.count_ident_expr(v.init, src) == 1
+                    && !named_after(fn.body, k, src)) {
+                    out = out.append(var_site_key(fn.body[k]));
+                    names = names.append(v.name);
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+// named_after: `name` appears in a statement of `stmts` after index `k`, as an
+// assignment target or anywhere in an expression, lambda bodies included.
+function named_after(stmts: ast.Stmt[], k: i32, name: string): boolean {
+    function at(n: ast.Expr, own hit: boolean): boolean {
+        if (hit) { return true; }
+        if let ast.ExprIdent(id) = n { return id.name == name; }
+        return false;
+    }
+    var j: i32 = k + 1;
+    while (j < stmts.len()) {
+        if (astwalk.count_ident_stmts([stmts[j]], name) > 0 || astwalk.fold_stmt(stmts[j], false, at)) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// own_handback_source names the bare ident `init` hands over whole: the ident
+// itself, or a call argument at an `own` array position the callee does not
+// consume. "" for anything else.
+function own_handback_source(init: ast.Expr, s: LowerState): string {
+    match (init) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprCall(c) => {
+            var cname: string = direct_call_callee_name(init);
+            if (cname.len() == 0) { return ""; }
+            var fslot: i32 = s.slot_of(cname);
+            var i: i32 = 0;
+            while (i < c.args.len()) {
+                var an: string = ident_name_or_empty(c.args[i]);
+                if (an.len() > 0 && call_arg_pos_owns(s, cname, fslot, i)
+                    && (fslot >= 0 || !s.callee_consumes_own_array(cname, i))) { return an; }
+                i = i + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 function grow_alias_scan(stmts: ast.Stmt[], srcs: string[], acc: string[]): string[] {
@@ -80532,7 +80738,7 @@ function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState 
 function emit_own_borrowed_param_arg(id: ast.ExprIdent, scalar_array_move: boolean, s: LowerState): LowerState {
     var sl: i32 = s.slot_of(id.name);
     if (sl < 0) { return s; }
-    if (sl < s.frame.n_params && s.is_own_param(id.name)) { return s; }
+    if (sl < s.frame.n_params && s.is_own_param(id.name) && s.ownflag_slot_of(sl) < 0) { return s; }
     if (s.is_arr_slot(sl)) {
         if (sl >= s.frame.n_params && !s.is_borrowed_arr_slot(sl)) { return s; }
         if (!scalar_array_move) { return s; }
