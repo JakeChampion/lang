@@ -1054,10 +1054,26 @@ function append_report_on(): boolean {
 // by name alone elided the retain at all of them, which released the same
 // buffer once per literal (#6545). An unstamped ident (0:0) declines — the
 // retain stands and note_moved_elided never fires, so the pair stays balanced.
+// So does a local that holds no count to hand over (slot_exit_releases).
 pub function (s: LowerState) moves_local_at(name: string, line: i32, col: i32): boolean {
     if (util.index_of_str(s.frame.moved_names, name) < 0) { return false; }
     if (line == 0 && col == 0) { return false; }
-    return util.index_of_str(s.frame.move_sites, util.i32_to_string(line) + ":" + util.i32_to_string(col)) >= 0;
+    if (util.index_of_str(s.frame.move_sites, util.i32_to_string(line) + ":" + util.i32_to_string(col)) < 0) { return false; }
+    var sl: i32 = s.slot_of(name);
+    return sl < s.frame.n_params || slot_exit_releases(s, sl);
+}
+
+// slot_exit_releases: local `sl` holds a count the exit sweep gives back — one
+// of the sweep's moved_elided-honouring classes. The move analysis is
+// name-level and takes every rc-typed local as owned, but a field-read bind
+// (`var fr = st.fr`) is an uncounted view no sweep releases (#10482).
+function slot_exit_releases(s: LowerState, sl: i32): boolean {
+    if (s.ownflag_slot_of(sl) >= 0) { return true; }
+    if (s.is_arr_slot(sl)) { return !s.is_borrowed_arr_slot(sl); }
+    return slot_is_reclaimable_struct(s, sl) || slot_is_reclaimable_struct_scoped(s, sl)
+        || param_snapshot_local(s, sl) || slot_is_reclaimable_str(s, sl)
+        || slot_is_reclaimable_tuple(s, sl) || slot_is_reclaimable_rctuple_sweep(s, sl)
+        || slot_is_reclaimable_rcenum_sweep(s, sl) || slot_is_reclaimable_scenum(s, sl);
 }
 
 // note_moved_elided records that the retain for `slot` was actually skipped, so
