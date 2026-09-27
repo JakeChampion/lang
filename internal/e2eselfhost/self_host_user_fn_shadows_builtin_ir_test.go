@@ -28,6 +28,11 @@ function main(): i32 {
 	{"chr-i32", `
 function chr(n: i32): i32 { return n * 2; }
 function main(): i32 { return chr(21); }   // 42`},
+	// #10364: native has no `map_new_i32`, so the name is the user's. The
+	// self-host's map-literal desugar spells its constructor `__map_new_i32`.
+	{"map-new-i32", `
+function map_new_i32(n: i32): i32 { return n * 2; }
+function main(): i32 { return map_new_i32(21); }   // 42`},
 }
 
 // TestSelfHostUserFnShadowsBuiltinIR compiles each case with the self-host CLI for

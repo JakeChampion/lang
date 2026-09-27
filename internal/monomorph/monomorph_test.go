@@ -1252,3 +1252,32 @@ function main(): i32 {
 		})
 	}
 }
+
+// A value binding spelled like its function's type parameter shadows the
+// type parameter, so `T.eq(u)` is a method call on the value. The clone must
+// keep that receiver: rewriting it to the concrete type read `i32.eq(u)` as
+// an associated call and failed the re-check with E043 (#10380).
+func TestRunKeepsValueReceiverSpelledLikeTypeParam(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"parameter", `import "core/cmp";
+function same[T: cmp.Eq](T: T, u: T): i32 { if (T.eq(u)) { return 1; } return 0; }
+function main(): i32 { return same(3, 3) + same("a", "b"); }`},
+		{"local", `import "core/cmp";
+function same[T: cmp.Eq](a: T, u: T): i32 { var T: T = a; if (T.eq(u)) { return 1; } return 0; }
+function main(): i32 { return same(3, 3) + same("a", "b"); }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, _, err := modload.LoadSource(tc.src)
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}

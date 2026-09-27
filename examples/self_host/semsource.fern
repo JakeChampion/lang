@@ -2343,7 +2343,7 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
     if (is_slice_call(name, c)) { return string_slice(c, s); }
     if (name == "cell_new" && c.args.len() == 1) { return cell_construction(c, s, expected); }
-    if ((name == "map_new" || name == "map_new_i32") && c.args.len() == 1) { return map_construction(e, c, s, expected); }
+    if ((name == "map_new" || name == "__map_new_i32") && c.args.len() == 1) { return map_construction(e, c, s, expected); }
     // The lambda lift's closure constructor names no declaration of its own:
     // it is the marker left where a capturing inline lambda — or a bare
     // function name at a function-typed argument — was written, carrying the

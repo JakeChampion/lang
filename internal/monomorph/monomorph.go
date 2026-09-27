@@ -1263,14 +1263,14 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 }
 
 // substituteAssocReceiver rewrites the receiver of a generic associated
-// dispatch `T.f(args)`. The checker stamps such a call with
-// Method.Receiver = ParamType(T) and leaves the callee a FieldAccess whose
-// target Ident *is* the type-param name (that is what distinguishes it from
-// a value-receiver `x.m()`, whose target is a value). Pointing it at the
-// concrete type lets the re-check resolve `Concrete.f()` →
-// `__assoc_<Concrete>_f`.
+// dispatch `T.f(args)`. The checker stamps such a call with Method.Assoc and
+// Method.Receiver = ParamType(T), leaving the callee a FieldAccess whose
+// target Ident is the type-param name. A value-receiver `T.m()` on a value
+// binding spelled `T` has the same shape without Assoc and keeps its target.
+// Pointing it at the concrete type lets the re-check resolve `Concrete.f()`
+// → `__assoc_<Concrete>_f`.
 func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
-	if c.Method == nil {
+	if c.Method == nil || !c.Method.Assoc {
 		return
 	}
 	pt, ok := c.Method.Receiver.(ast.ParamType)

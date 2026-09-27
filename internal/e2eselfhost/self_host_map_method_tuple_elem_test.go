@@ -92,7 +92,7 @@ func TestSelfHostMapMethodTupleElem(t *testing.T) {
 			// survive the round trip rather than truncating.
 			"get_or-i64-elem",
 			`function main(): i32 {
-			   var m: Map[i32, i64] = map_new_i32(4);
+			   var m: Map[i32, i64] = __map_new_i32(4);
 			   m = m.insert(1, 3000000000i64);
 			   var u: (i64, i32) = (m.get_or(1, 0i64), 5);
 			   if (u.0 == 3000000000 && u.1 == 5) { return 7; }
