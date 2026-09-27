@@ -23011,6 +23011,55 @@ match (v.init) {
     return sb;
 }
 
+// The element typing a `var` binds, from its initializer, its annotation, or
+// the local a value block yields (`vbl`, li_new("") when there is none).
+function var_is_strarr(v: ast.StmtVar, se: LowerState, vbl: LocalInfo): boolean {
+    return expr_is_strarr(v.init, se) || v.type_name == "string[]" || vbl.is_strarr;
+}
+
+function var_is_f64arr(v: ast.StmtVar, se: LowerState, vbl: LocalInfo): boolean {
+    return expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name) || vbl.is_f64arr;
+}
+
+function var_is_f32arr(v: ast.StmtVar, se: LowerState, vbl: LocalInfo): boolean {
+    return v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se) || vbl.is_f32arr;
+}
+
+function var_is_i64arr(v: ast.StmtVar, se: LowerState, vbl: LocalInfo): boolean {
+    return expr_is_i64arr(v.init, se) || is_wide_int_array_type_name(v.type_name) || vbl.is_i64arr;
+}
+
+function var_is_boolarr(v: ast.StmtVar, se: LowerState, vbl: LocalInfo): boolean {
+    return expr_is_boolarr(v.init, se) || v.type_name == "boolean[]" || vbl.is_boolarr;
+}
+
+function init_is_typed_array(e: ast.Expr, se: LowerState): boolean {
+    return expr_is_strarr(e, se) || expr_is_f64arr(e, se) || expr_is_i64arr(e, se);
+}
+
+function is_wide_int_array_type_name(t: string): boolean {
+    return t == "i64[]" || t == "u64[]";
+}
+
+// var_binds_wide_scalar: the binding is an 8-byte integer scalar, by its
+// annotation or, unannotated as u32, by its initializer's width.
+function var_binds_wide_scalar(v: ast.StmtVar, s: LowerState): boolean {
+    return v.type_name == "i64" || v.type_name == "u64" || (infer_expr_width(v.init, s) == 64 && !is_u32_type_name(v.type_name));
+}
+
+// is_map_new_into: a one-argument map constructor bound to a `Map[` annotation.
+function is_map_new_into(callee: string, nargs: i32, ty: string): boolean {
+    return (callee == "map_new" || callee == "__map_new_i32") && nargs == 1 && ty.len() >= 5 && slice_unchecked(ty, 0, 4) == "Map[";
+}
+
+function is_payload_ctor_name(name: string): boolean {
+    return name == "Ok" || name == "Some" || name == "Err";
+}
+
+function is_optres_type_name(t: string): boolean {
+    return t.len() >= 8 && (slice_unchecked(t, 0, 7) == "Option[" || slice_unchecked(t, 0, 7) == "Result[");
+}
+
 function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // `var c: Cell[T] = cell_new(init)` is the one-element array
     // `var c: T[] = [init]` with the cell marks on top: the array
@@ -23355,7 +23404,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // 32-bit pattern, and the slot is marked u32 so `x + y` wraps at
     // 2^32). u32 is the only ≤32-bit type that can carry a (2^31, 2^32)
     // literal — i32 / u8 reject one at E047.
-    if (comma < 0 && (v.type_name == "i64" || v.type_name == "u64" || (infer_expr_width(v.init, s) == 64 && !is_u32_type_name(v.type_name)))) {
+    if (comma < 0 && var_binds_wide_scalar(v, s)) {
         var iv: LowerState = lower_i64(v.init, s);
         if (!iv.ok) { return iv; }
         var ivb: LowerState = iv.add_local(v.name);
@@ -23416,7 +23465,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             _ => {}
         }
     }
-    if (comma < 0 && (v.type_name == "i64[]" || i64arr_unannot || v.type_name == "u64[]")) {
+    if (comma < 0 && (i64arr_unannot || is_wide_int_array_type_name(v.type_name))) {
         var i64lit: boolean = false;
         match (v.init) {
             ast.ExprArray(_) => { i64lit = true; },
@@ -23460,7 +23509,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprCall(mnc) => {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "__map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                    if (is_map_new_into(mnid.name, mnc.args.len(), v.type_name)) {
                         var kkind: i32 = 0 - 1;
                         var kt2: string = map_key_of(v.type_name);
                         // The same question map_key_kind_of answers everywhere
@@ -23530,7 +23579,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprCall(vc) => {
             match (vc.callee) {
                 ast.ExprIdent(vcid) => {
-                    if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Result[" || slice_unchecked(v.type_name, 0, 7) == "Option[")) {
+                    if (vc.args.len() == 1 && is_payload_ctor_name(vcid.name) && is_optres_type_name(v.type_name)) {
                         var vvar: string = "Ok";
                         var vtag: i32 = 0;
                         if (vcid.name == "Err") { vvar = "Err"; vtag = 1; }
@@ -24154,23 +24203,23 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     }
     // string[] tracking (element typing for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]" || vbl.is_strarr;
+    var is_strarr: boolean = var_is_strarr(v, se, vbl);
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name) || vbl.is_f64arr;
+    var is_f64arr: boolean = var_is_f64arr(v, se, vbl);
     // f32[] shares is_f64arr's slot and stride; this only keys `a[i]`'s method
     // dispatch (LocalInfo.is_f32arr). From the annotation, or from a literal
     // whose first element is statically f32 when there is none.
-    var is_f32arr: boolean = is_f64arr && (v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se) || vbl.is_f32arr);
+    var is_f32arr: boolean = is_f64arr && var_is_f32arr(v, se, vbl);
     // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
-    var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]" || vbl.is_i64arr;
+    var is_i64arr: boolean = var_is_i64arr(v, se, vbl);
     // boolean[] tracking (element DISPATCH for a[i] — no width or stride
     // implication, see LocalInfo.is_boolarr). The annotation is authoritative;
     // the init predicate catches an alias (`var b = bs`) and a bool literal
     // array (`var bs = [true, false]`). #6117.
-    var is_boolarr: boolean = expr_is_boolarr(v.init, se) || v.type_name == "boolean[]" || vbl.is_boolarr;
+    var is_boolarr: boolean = var_is_boolarr(v, se, vbl);
     // boolean SCALAR tracking (#6305) — the same dispatch-only fact one level
     // down, so `var ok = true; ok.to_json()` keys "boolean.to_json". The init
     // predicate covers the unannotated binding and an alias of another boolean
@@ -24199,7 +24248,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // drives the exit dec-sweep, so it is an RC change rather than a typing one.
     // An init a kind-predicate positively identifies as a typed array, on the
     // other hand, IS an array by construction (#3457).
-    if (expr_is_strarr(v.init, se) || expr_is_f64arr(v.init, se) || expr_is_i64arr(v.init, se)) { is_arr = true; }
+    if (init_is_typed_array(v.init, se)) { is_arr = true; }
     // bind AFTER lowering the init (the init can't see the new name)
     // Option/Result tracking: `var r = f()` of an Option/Result-returning
     // call (or a `var r: Option[T] = …` annotation) records the slot's
@@ -24334,7 +24383,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     }
     // The checker's instantiation, where an erased generic callee registers `Result[T, E]`.
     opt_ty = call_opt_tag_or(v.init, opt_ty);
-    if (opt_ty == "" && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) { opt_ty = v.type_name; }
+    if (opt_ty == "" && is_optres_type_name(v.type_name)) { opt_ty = v.type_name; }
     // An UNANNOTATED array literal of Option values (`var a = [Some(1),
     // Some(2), None]`): infer the element opt-type from the first Some
     // element and record the slot's "Option[T][]" (the array form — the
