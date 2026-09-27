@@ -15137,13 +15137,32 @@ function rw_call_stmts(stmts: ast.Stmt[], fname: string, caps: string[]): ast.St
     return astwalk.map_stmts(stmts, rw);
 }
 
-function hl_rewrite_match(m: ast.StmtMatch, enclosing: string[], hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
+// The names a lift can capture at a point in a body, and what the front end
+// can already tell of their types: a parameter's or a `var`'s written type, or
+// the syntactic type of an unannotated `var`'s initialiser. A lifted function's
+// capture parameter takes that type, "" when nothing is known.
+struct HlScope { names: string[], env: MEnv, fns: MFns }
+
+function hl_var_type(v: ast.StmtVar, sc: HlScope): string {
+    if (v.type_name.len() > 0) { return v.type_name; }
+    return mono_infer(v.init, sc.env, sc.fns);
+}
+
+// A function type's spelling is the coarse `fn` tag plus sidecars a bare type
+// name cannot carry, so such a capture stays untyped.
+function hl_cap_type(sc: HlScope, name: string): string {
+    var t: string = sc.env.elook(name);
+    if (t == "fn" || util.contains(t, "=>")) { return ""; }
+    return t;
+}
+
+function hl_rewrite_match(m: ast.StmtMatch, sc: HlScope, hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
     var arms: ast.MatchArm[] = [];
     var acc: FuncDecl[] = hoisted;
     var acc_lifts: CapLift[] = hl_no_lifts();
     var a: i32 = 0;
     while (a < m.arms.len()) {
-        var (ar_stmts, ar_hoisted, ar_lifts) = hl_rewrite(m.arms[a].body, enclosing, acc);
+        var (ar_stmts, ar_hoisted, ar_lifts) = hl_rewrite(m.arms[a].body, sc, acc);
         acc = ar_hoisted;
         acc_lifts = hl_append_lifts(acc_lifts, ar_lifts);
         arms = arms.append(ast.MatchArm { pattern: m.arms[a].pattern, body: ar_stmts, line: m.arms[a].line, col: m.arms[a].col, guard: m.arms[a].guard, has_guard: m.arms[a].has_guard, alt_cont: false });
@@ -15155,11 +15174,12 @@ function hl_rewrite_match(m: ast.StmtMatch, enclosing: string[], hoisted: FuncDe
 // hl_rewrite lifts self-recursive local functions out of a statement
 // list. A body with none is returned verbatim (the precheck) — so only
 // functions that actually use the feature are ever rebuilt.
-function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
+function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: FuncDecl[]): (ast.Stmt[], FuncDecl[], CapLift[]) {
     if (!hl_has_rec_local(stmts)) { return (stmts, hoisted, hl_no_lifts()); }
     var out: ast.Stmt[] = [];
     var acc: FuncDecl[] = hoisted;
     var acc_lifts: CapLift[] = hl_no_lifts();
+    var sc: HlScope = outer;
     var i: i32 = 0;
     while (i < stmts.len()) {
         match (stmts[i]) {
@@ -15176,15 +15196,16 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                             // Captured enclosing names become trailing
                             // parameters (lambda-lifting); a capture-free
                             // local just keeps its parameter list.
-                            var caps: string[] = hl_capture_list(lam, v.name, enclosing);
+                            var caps: string[] = hl_capture_list(lam, v.name, sc.names);
                             var new_params: ast.ParamDecl[] = lam.params;
                             var ci: i32 = 0;
-                            while (ci < caps.len()) { new_params = new_params.append(ast.ParamDecl { name: caps[ci], type_name: "", is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }); ci = ci + 1; }
+                            while (ci < caps.len()) { new_params = new_params.append(ast.ParamDecl { name: caps[ci], type_name: hl_cap_type(sc, caps[ci]), is_view: false, own: false, has_default: false, default_value: e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }); ci = ci + 1; }
                             // Hoist nested recursive locals first; inside the
                             // lifted function the captures are in scope as params.
                             var inner_encl: string[] = hl_param_names(new_params);
                             inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
-                            var (ir_stmts, ir_hoisted, ir_lifts) = hl_rewrite(lam.body, inner_encl, acc);
+                            var inner: HlScope = HlScope { ...sc, names: inner_encl, env: me_env_from_params(new_params) };
+                            var (ir_stmts, ir_hoisted, ir_lifts) = hl_rewrite(lam.body, inner, acc);
                             acc = ir_hoisted;
                             acc_lifts = hl_append_lifts(acc_lifts, ir_lifts);
                             // Thread the captures through the recursive self-calls.
@@ -15203,31 +15224,34 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
                     },
                     _ => { }
                 }
-                if (!did_lift) { out = out.append(stmts[i]); }
+                if (!did_lift) {
+                    sc = HlScope { ...sc, env: sc.env.ebind(v.name, hl_var_type(v, sc)) };
+                    out = out.append(stmts[i]);
+                }
             },
             ast.StmtIf(f) => {
-                var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(f.then_body, enclosing, acc);
+                var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(f.then_body, sc, acc);
                 acc = tr_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, tr_lifts);
-                var (er_stmts, er_hoisted, er_lifts) = hl_rewrite(f.else_body, enclosing, acc);
+                var (er_stmts, er_hoisted, er_lifts) = hl_rewrite(f.else_body, sc, acc);
                 acc = er_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, er_lifts);
                 out = out.append(s_if(f.cond, tr_stmts, er_stmts));
             },
             ast.StmtWhile(w) => {
-                var (wr_stmts, wr_hoisted, wr_lifts) = hl_rewrite(w.body, enclosing, acc);
+                var (wr_stmts, wr_hoisted, wr_lifts) = hl_rewrite(w.body, sc, acc);
                 acc = wr_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, wr_lifts);
                 out = out.append(s_while(w.cond, wr_stmts));
             },
             ast.StmtFor(fr) => {
-                var (fr2_stmts, fr2_hoisted, fr2_lifts) = hl_rewrite(fr.body, enclosing, acc);
+                var (fr2_stmts, fr2_hoisted, fr2_lifts) = hl_rewrite(fr.body, sc, acc);
                 acc = fr2_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, fr2_lifts);
                 out = out.append(s_for(fr.var_name, fr.iter, fr2_stmts));
             },
             ast.StmtMatch(m) => {
-                var (mr_stmts, mr_hoisted, mr_lifts) = hl_rewrite_match(m, enclosing, acc);
+                var (mr_stmts, mr_hoisted, mr_lifts) = hl_rewrite_match(m, sc, acc);
                 acc = mr_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, mr_lifts);
                 var km: i32 = 0;
@@ -15235,7 +15259,7 @@ function hl_rewrite(stmts: ast.Stmt[], enclosing: string[], hoisted: FuncDecl[])
             },
             ast.StmtDefer(d) => {
                 var one: ast.Stmt[] = [d.action];
-                var (dr_stmts, dr_hoisted, dr_lifts) = hl_rewrite(one, enclosing, acc);
+                var (dr_stmts, dr_hoisted, dr_lifts) = hl_rewrite(one, sc, acc);
                 acc = dr_hoisted;
                 acc_lifts = hl_append_lifts(acc_lifts, dr_lifts);
                 if (dr_stmts.len() >= 1) { out = out.append(s_defer(dr_stmts[0])); }
@@ -15264,12 +15288,15 @@ function hl_apply_lifts(stmts: ast.Stmt[], lifts: CapLift[]): ast.Stmt[] {
 pub function hoist_local_funcs_module(mod: Module): Module {
     var funcs: FuncDecl[] = [];
     var hoisted: FuncDecl[] = [];
+    var fns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[i];
         var encl: string[] = hl_param_names(fn.params);
         encl = hl_append_str(encl, hl_collect_var_names(fn.body));
-        var (r_stmts, r_hoisted, r_lifts) = hl_rewrite(fn.body, encl, hoisted);
+        var env: MEnv = me_env_from_params(fn.params);
+        if (fn.receiver_name.len() > 0) { env = env.ebind(fn.receiver_name, fn.receiver_type); }
+        var (r_stmts, r_hoisted, r_lifts) = hl_rewrite(fn.body, HlScope { names: encl, env: env, fns: fns }, hoisted);
         var h: i32 = hoisted.len();
         hoisted = r_hoisted;
         while (h < hoisted.len()) {
@@ -15283,7 +15310,8 @@ pub function hoist_local_funcs_module(mod: Module): Module {
         i = i + 1;
     }
     var tencl: string[] = hl_collect_var_names(mod.top_stmts);
-    var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(mod.top_stmts, tencl, hoisted);
+    var tenv: MEnv = MEnv { mnames: [], mtypes: [] };
+    var (tr_stmts, tr_hoisted, tr_lifts) = hl_rewrite(mod.top_stmts, HlScope { names: tencl, env: tenv, fns: fns }, hoisted);
     hoisted = tr_hoisted;
     var top_body: ast.Stmt[] = hl_apply_lifts(tr_stmts, tr_lifts);
     var j: i32 = 0;
