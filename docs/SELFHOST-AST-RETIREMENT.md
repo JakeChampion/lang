@@ -5071,7 +5071,7 @@ with both applied (the script fix alone is what ships here):
 | ~~module-level `const BIG: i64`~~ | ~~2~~ | **CLOSED** — see below |
 | ~~`i32[][][]` with nested `for`~~ | ~~1~~ | **CLOSED** — see below |
 | ~~`Option` alias + match~~ | ~~1~~ | **CLOSED** — see below |
-| ~~`Map` with STRUCT values (`map_new_i32` + `P` value)~~ | ~~1~~ | **CLOSED** — see below |
+| ~~`Map` with STRUCT values (`__map_new_i32` + `P` value)~~ | ~~1~~ | **CLOSED** — see below |
 
 Five constructs and one deliberate budget case. That is the whole remaining mode-0
 gap, individually named — which is what step 4 (the IR-or-error reroute) has been
@@ -5164,9 +5164,9 @@ pinned case asserts `-decide` as well as the exit code.
 **And the Map one, same shape.** `var p = m.get_or(k, P { … })` had no struct type,
 so `p.field` bailed; annotating `p` worked, annotating the MAP did not, which is
 what isolates the read. Three sites carry V now — the read (`expr_struct_type`), the
-unannotated `map_new_i32(n).insert(k, P { … })` chain, and the separate
+unannotated `__map_new_i32(n).insert(k, P { … })` chain, and the separate
 `m = m.insert(k, P { … })` assignment (`refine_map_struct_val`, since a bare
-`map_new_i32(n)` binding has no insert to read a value type from and would otherwise
+`__map_new_i32(n)` binding has no insert to read a value type from and would otherwise
 keep `Map[K, i32]` forever). Fact-only for op selection: a struct value is
 pointer-shaped exactly like the string case already handled (widekind 0), so no
 emitted op changes. As predicted, `TestSelfHostRcMapStructVal` did not fail before
@@ -5248,7 +5248,7 @@ covered by the change that creates it. Patch kept, not applied.
 (`TestSelfHostRcMapStructVal`) PASSES today, because it routes AST and asserts the
 AST answer. That is the same shape as the RC-corpus finding above — a test that
 looks like coverage of the IR path and is not — so it will turn into a hard error
-at the reroute rather than a test failure before it. `map_new_i32` is self-host
+at the reroute rather than a test failure before it. `__map_new_i32` is self-host
 dialect (E001 natively), so there is no interpreter oracle for it either.
 
 4. **DONE.** The decline set is empty of CONSTRUCTS. Component mode's corpus is 50/50 `ir`; mode 0's two remaining

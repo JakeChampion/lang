@@ -273,7 +273,7 @@ func checkOwnAliasCensus(t *testing.T, stderr string, census bool, pinned map[st
 		return
 	}
 	if pin, ok := pinned[lowering]; ok {
-		assertLeakPinned(t, stderr, pin)
+		assertLeakPinned(t, stderr, pin, "#10360")
 	} else if census {
 		assertBalancedCensus(t, stderr)
 	}
