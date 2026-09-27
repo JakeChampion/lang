@@ -396,8 +396,8 @@ TestSelfHostMapScopedReclaimIRX86_64 2
 TestSelfHostMapTupleElemReclaimArm64 2
 TestSelfHostMapValueAliasRetainIRX86_64 2
 TestSelfHostMapValuePtrIR 2
-TestSelfHostMapW64IterIRX86_64 2
-TestSelfHostMapW64RecvIRX86_64 2
+TestSelfHostMapW64IterIR 2
+TestSelfHostMapW64RecvIR 2
 TestSelfHostMatchExprBinderBodyWasm 2
 TestSelfHostMatchExprBinderBodyX86_64 2
 TestSelfHostMatchExprValueLocalWasm 2

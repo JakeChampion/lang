@@ -4333,13 +4333,6 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
-// map_value_wide (#5253): the map's VALUE column is an 8-byte scalar, so its
-// values() column elements read with the 8-byte arr_get forms and the
-// op_map_values op carries the valwide flag (which keeps such modules off the
-// i32-celled wasm map runtime — wasm_ir_deferrals_ok).
-function map_value_wide(vt: string): boolean {
-    return vt == "i64" || vt == "u64" || vt == "f64";
-}
 
 // map_value_widekind (#5253): 8-byte VALUE-column discriminator for the map ops
 // that the wasm IR path handles differently per width — 0 narrow (i32/pointer),
@@ -15099,7 +15092,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         if (fa.field == "value" && c.args.len() == 0) {
             var iv2: LowerState = lower_expr(fa.obj, s);
             if (!iv2.ok) { return iv2; }
-            return iv2.emit(ir.op_mapiter_value(map_value_wide(mapiter_value_of(itype))));
+            return iv2.emit(ir.op_mapiter_value(map_value_widekind(mapiter_value_of(itype))));
         }
         if (fa.field == "advance" && c.args.len() == 0) {
             var iadv: LowerState = lower_expr(fa.obj, s);
