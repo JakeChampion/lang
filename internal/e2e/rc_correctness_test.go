@@ -3634,7 +3634,7 @@ function main(): i32 {
 		// Transitive reclamation — a Map-typed STRUCT FIELD (the
 		// headers-map shape). Dropping the owning struct now reclaims
 		// the whole map structure (value column + buf + handle) via
-		// __map_drop_values + __fern_map_drop, instead of the flat dec
+		// __map_drop_values + __map_drop_impl, instead of the flat dec
 		// that leaked it. Both helpers self-guard on the map's rc==1.
 		// Churned 50x: an over-release would drift the counter.
 		name: "struct_map_field_churn_free",

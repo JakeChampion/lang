@@ -9,7 +9,7 @@ import (
 // Map loop-var reclamation (RC-Perceus). A `var m = map_new(8)`
 // re-declared in a loop reuses one slot per iteration. The exit sweep
 // already reclaims an owned Map (value column + string-key column + buf
-// + handle via __map_drop_values / __drop_map_str_* / __fern_map_drop),
+// + handle via __map_drop_values / __drop_map_str_* / __map_drop_impl),
 // but emitVarReinitDropOld routed Map through emitStructEnumSlotDrop,
 // whose dropFnNameFor declines Map → a flat __fern_rc_dec that frees
 // nothing. So every iteration but the last leaked the entire map

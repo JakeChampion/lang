@@ -1468,7 +1468,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// Phase 3 map reclamation: an OWNED Map local returns its buf
 		// + handle to the freelist at the last reference (rc==1) via
-		// __fern_map_drop. First free the value column via
+		// __map_drop_impl. First free the value column via
 		// __map_drop_values (which self-guards on rc==1): it reads the
 		// buf's packed valKind+stride (2 = plain-elem array → arr_dec,
 		// 3 = rc-elem array → drop_arr_ptr) and frees each live value.
@@ -2615,7 +2615,7 @@ func mangleTupleInst(tt ast.TupleType) string {
 // generated __drop_map_via_<perValueDrop>; string values via
 // __drop_map_str_values; array values via the generic __map_drop_values, which
 // also covers a Map whose instantiation args are unknown), then any string-KEY
-// column (__drop_map_str_keys), then the buf + handle (__fern_map_drop). Every
+// column (__drop_map_str_keys), then the buf + handle (__map_drop_impl). Every
 // helper self-guards on the map's own rc==1 — a shared map only dec's — and
 // returns the handle, so the calls chain and the final ptr is left ON the
 // stack for the caller's own OpDrop. This is the one dispatch every map-drop
@@ -2649,7 +2649,7 @@ func appendMapDropChainOf(ops []Op, dropValues string, strKeys bool) []Op {
 	if strKeys {
 		ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
 	}
-	return append(ops, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
+	return append(ops, Op{Kind: OpCallDirect, Str: "__map_drop_impl", I32: 1})
 }
 
 // mapChainDropName names the one-argument function that runs st's drop chain
@@ -3521,7 +3521,7 @@ func mapValDropName(st ast.StructType, info *checker.Info, genEnumDrops map[stri
 // perValueDrop (__drop_struct_<V> / __drop_enum_<V>, which is_unique-gate
 // per value, so a value shared via an outstanding get/values borrow only
 // dec's). The buf + handle are freed separately by the trailing
-// __fern_map_drop the caller emits. Mirrors __map_drop_values' iteration:
+// __map_drop_impl the caller emits. Mirrors __map_drop_values' iteration:
 // cap@buf+0, len@buf+4, entries at buf+16+cap*4, value at entry+ptrW with
 // entryStride = 2*ptrW. Returns m so the caller's OpDrop pops a real
 // value. Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase (scratch).
@@ -3604,7 +3604,7 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 // (data, len) from it via the two-word WidthString load and __fern_str_dec
 // the buffer (inline / literal strings no-op), then __fern_cell_free the
 // now-dead 16-byte cell itself back to the freelist. The buf + handle are
-// freed by the trailing __fern_map_drop the caller emits. Mirrors
+// freed by the trailing __map_drop_impl the caller emits. Mirrors
 // genMapValDropFn's iteration: cap@buf+0, len@buf+4, entries at
 // buf+16+cap*4, entryStride = 2*ptrW.
 // Slots: 0=m (param), 1=buf, 2=len, 3=i, 4=entriesBase, 5=cellPtr.
@@ -4417,9 +4417,10 @@ func rcTrackedForFlatDec(t ast.Type) bool {
 // frame's own. Where the move IS marked, nothing changes (no inc, sweep
 // skipped), so already-correct code keeps its exact rc traffic.
 //
-// Plain locals are excluded: E051 only admits one in an `own` position as a
-// self-reassign `x = f(…, x, …)`, whose old binding is dropped by the callee
-// and whose overwrite-dec callConsumesIdent already suppresses.
+// A `var` local reaches an `own` position as the self-reassign `x = f(…, x,
+// …)`, whose overwrite-dec callConsumesIdent suppresses (ownCallMoveArgs), or
+// at a last use E051 admits (#9541), which computeOwnedArgMoves moves where it
+// can and marks for this retain where it cannot (ownArgRetains).
 func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 	if !ast.RcFreeEnabled {
 		return false
@@ -4436,7 +4437,7 @@ func (b *builder) ownArgNeedsRetain(a ast.Expr) bool {
 		// borrowed or owned-by-default one is covered by its own rules.
 		return p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name]
 	}
-	return false
+	return b.rc.ownArgRetains[id]
 }
 
 // emitBorrowedArrayOwnArgRetain buys the reference an explicit own callee
