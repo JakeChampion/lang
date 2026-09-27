@@ -115,6 +115,50 @@ function main(): i32 {
     if (q.1 - q.0 == 4611686018427387903) { return 7; }
     return 3;
 }`},
+	// The other positions that read a literal-bound variable (#10176): a
+	// scrutinee and a plain comparison take the widest reading as the
+	// unannotated `var` does, and a destination settles the variable at its
+	// own width — `u64`, which no literal reading gives, and through a field
+	// read of the result.
+	{"shared-typevar-scrutinee", `pub function pick[T](a: T, b: T): Option[T] { return Some(b); }
+function main(): i32 {
+    match (pick(1, 4611686018427387904)) {
+        Some(v) => { if (v == 4611686018427387904) { return 7; } return 3; },
+        None => { return 4; }
+    }
+}`},
+	{"shared-typevar-plain-comparison", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    if (both(1, 4611686018427387904).1 == 4611686018427387904) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-u64-destination", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var x: (u64, u64) = both(1, 4611686018427387904);
+    if (x.1 / 1000000000000000000 == 4 && x.0 == 1) { return 7; }
+    return 3;
+}`},
+	{"shared-typevar-field-at-destination", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
+function main(): i32 {
+    var z: u64 = both(1, 18000000000000000000).1;
+    if (z >> 1 == 9000000000000000000) { return 7; }
+    return 3;
+}`},
+	{"typevar-settles-at-typed-operand", `pub function id[T](x: T): T { return x; }
+function main(): i32 {
+    var big: u64 = 18000000000000000000;
+    if (id(1) < big) { return 7; }
+    return 3;
+}`},
+	{"typevar-shares-a-literal-locals-width", `pub function id[T](x: T): T { return x; }
+function main(): i32 {
+    var n = 4294967296;
+    var k = 1;
+    if (k == id(1)) { k = k + n; }
+    var w: i64 = k;
+    if (w == 4294967297) { return 7; }
+    return 3;
+}`},
 	// A typed argument pins the variable: only a variable bound by literals
 	// alone takes the widest reading.
 	{"shared-typevar-typed-arg-pins", `pub function both[T](a: T, b: T): (T, T) { return (a, b); }
