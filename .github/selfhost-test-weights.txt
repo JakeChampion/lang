@@ -199,10 +199,9 @@ TestSelfHostDynArrayParamIRX86_64 2
 TestSelfHostDynEnumIRX86_64 2
 TestSelfHostDynFnIndirectCoerceIRX86_64 2
 TestSelfHostDynFnParamIRX86_64 2
-TestSelfHostDynMultiTraitIRX86_64 2
+TestSelfHostDynMultiTraitIR 2
 TestSelfHostDynStringRetIRX86_64 2
-TestSelfHostDynTraitIRWasm 2
-TestSelfHostDynTraitIRX86_64 2
+TestSelfHostDynTraitIR 2
 TestSelfHostEmbedBundleAndSubstitution 3
 TestSelfHostEmbedCarriesTheStdlib 2
 TestSelfHostEmbedMatchesNative 2
