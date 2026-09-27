@@ -1656,12 +1656,11 @@ pub function op_map_iter(widekind: i32): Op {
 }
 pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
 pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
-// `valwide` (i64_imm 1) marks an i64/u64 VALUE column: on wasm the accessor reads
-// the 8-byte element via $__fern_mapiter_value_w64 (i64 result). f64 never reaches
-// it (its map_iter defers). The register backends ignore it. #5253.
-pub function op_mapiter_value(valwide: boolean): Op {
-    var vw: i64 = 0;
-    if (valwide) { vw = 1; }
+// `widekind` (i64_imm) is 1 for an i64/u64 VALUE column and 2 for an f64 one: on
+// wasm the accessor reads the 8-byte element via $__fern_mapiter_value_w64, and
+// reinterprets it for f64. The register backends ignore it. #5253.
+pub function op_mapiter_value(widekind: i32): Op {
+    var vw: i64 = widekind as i64;
     return Op { decl: 0 - 1, kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }

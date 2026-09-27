@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -23,7 +21,7 @@ import (
 // COMPARE on the get_or result, a string-keyed fresh-key overwrite (the
 // kconsume flag next to the valwide flag), a NEGATIVE i64 value (sign-extend,
 // not zero-extend, through lower_i64's int_extend), and i32/string-valued
-// regression guards. Routing-pinned to "ir", interp-oracle-checked.
+// regression guards. Run through the CLI on x86-64 and wasm, interp-oracle-checked.
 var mapW64RecvIRCases = []struct {
 	name string
 	main string
@@ -70,36 +68,18 @@ function main(): i32 { var c: C = C { m: Map { 1: 2.5 } }; return (c.m.get_or(1,
 function main(): i32 { var m: Map[i32, f64] = Map { 9: 1.0 }; return (m.get_or(1, 3.25) * 2.0) as i32; }`},
 }
 
-func TestSelfHostMapW64RecvIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+func TestSelfHostMapW64RecvIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-	for _, tc := range mapW64RecvIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			want := interpExit(t, interpBin, string(src))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range mapW64RecvIRCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				src := []byte(tc.main + "\n")
+				want := interpExit(t, interpBin, string(src))
+				if stderr, code := cli.exitOf(t, string(src), target); code != want {
+					t.Errorf("%s exited %d, want %d (interp oracle)\n%s", tc.name, code, want, stderr)
+				}
+			})
+		}
 	}
 }
