@@ -291,11 +291,16 @@ pub struct LocalInfo {
     // moves a counted one and retains for any other (emit_own_var_local_arg).
     var_bound: boolean,
     var_counted: boolean,
+    // field_view: the slot holds a field read with no count of its own
+    // (`var fr = st.fr`), so storing it is not a move. bind_ctrl is the block
+    // depth of its `var`, where an assignment runs on every path to what follows.
+    field_view: boolean,
+    bind_ctrl: i32,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false, field_view: false, bind_ctrl: 0 };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -1054,19 +1059,17 @@ function append_report_on(): boolean {
 // by name alone elided the retain at all of them, which released the same
 // buffer once per literal (#6545). An unstamped ident (0:0) declines — the
 // retain stands and note_moved_elided never fires, so the pair stays balanced.
-// So does a local that holds no count to hand over (slot_exit_releases).
+// So does a field view that holds no count to hand over (#10482, #10503).
 pub function (s: LowerState) moves_local_at(name: string, line: i32, col: i32): boolean {
     if (util.index_of_str(s.frame.moved_names, name) < 0) { return false; }
     if (line == 0 && col == 0) { return false; }
     if (util.index_of_str(s.frame.move_sites, util.i32_to_string(line) + ":" + util.i32_to_string(col)) < 0) { return false; }
     var sl: i32 = s.slot_of(name);
-    return sl < s.frame.n_params || slot_exit_releases(s, sl);
+    return sl < s.frame.n_params || !s.locals[sl].field_view || slot_exit_releases(s, sl);
 }
 
 // slot_exit_releases: local `sl` holds a count the exit sweep gives back — one
-// of the sweep's moved_elided-honouring classes. The move analysis is
-// name-level and takes every rc-typed local as owned, but a field-read bind
-// (`var fr = st.fr`) is an uncounted view no sweep releases (#10482).
+// of the sweep's moved_elided-honouring classes.
 function slot_exit_releases(s: LowerState, sl: i32): boolean {
     if (s.ownflag_slot_of(sl) >= 0) { return true; }
     if (s.is_arr_slot(sl)) { return !s.is_borrowed_arr_slot(sl); }
@@ -20800,7 +20803,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             return release_last_use_source(v, sv);
         },
         ast.StmtAssign(a) => {
-            if (call_owns_arg(a.value, a.target, s)) { return lower_own_rebind(a, s); }
+            if (call_owns_arg(a.value, a.target, s)) { return settle_field_view(a, lower_own_rebind(a, s)); }
             return settle_var_counted(a, lower_stmt_assign(a, s));
         },
         ast.StmtReturn(r) => { return lower_stmt_return(r, s); },
@@ -61721,7 +61724,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false, field_view: false, bind_ctrl: 0 });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -80167,9 +80170,11 @@ function snapshot_slot_name(i: i32): string {
 // provably this frame's (value_counted).
 function mark_var_bound(v: ast.StmtVar, sv: LowerState): LowerState {
     if (!sv.ok) { return sv; }
-    if (util.index_of_str(sv.frame.own_lift_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0) { return sv; }
-    var counted: boolean = value_counted(v.init, v.name, v.line, v.col, sv);
-    var st: LowerState = sv;
+    var own_lift: boolean = util.index_of_str(sv.frame.own_lift_sites, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0;
+    var vs: LowerState = mark_field_view(v, !own_lift && is_field_read(v.init), sv);
+    if (own_lift) { return vs; }
+    var counted: boolean = value_counted(v.init, v.name, v.line, v.col, vs);
+    var st: LowerState = vs;
     var start: i32 = 0;
     var p: i32 = 0;
     var depth: i32 = 0;
@@ -80207,13 +80212,38 @@ function value_counted(e: ast.Expr, name: string, line: i32, col: i32, s: LowerS
     return field_move_owned_value(e, name, s.frame.sigs, []);
 }
 
+// mark_field_view stamps field_view and bind_ctrl on the slot a plain `var`
+// binds. An own-lift bind is not a view: it takes the transfer retain.
+function mark_field_view(v: ast.StmtVar, view: boolean, s: LowerState): LowerState {
+    var sl: i32 = s.slot_of(v.name);
+    if (sl < s.frame.n_params || sl >= s.locals.len()) { return s; }
+    return LowerState { ...s, locals: s.locals.with(sl, LocalInfo { ...s.locals[sl], field_view: view, bind_ctrl: s.ctrl }) };
+}
+
+function is_field_read(e: ast.Expr): boolean {
+    if let ast.ExprFieldAccess(_) = e { return true; }
+    return false;
+}
+
+// settle_field_view: storing a field read makes the local a view at any depth;
+// any other store ends the view only at the bind's own depth, since one in a
+// branch leaves the other path holding it.
+function settle_field_view(a: ast.StmtAssign, s: LowerState): LowerState {
+    if (!s.ok) { return s; }
+    var sl: i32 = s.slot_of(a.target);
+    if (sl < s.frame.n_params || sl >= s.locals.len()) { return s; }
+    var view: boolean = is_field_read(a.value);
+    if (!view && (!s.locals[sl].field_view || s.ctrl != s.locals[sl].bind_ctrl)) { return s; }
+    return LowerState { ...s, locals: s.locals.with(sl, LocalInfo { ...s.locals[sl], field_view: view }) };
+}
+
 // settle_var_counted clears var_counted on a `var` local `a` stores a value
 // to that value_counted cannot vouch for. It never sets it: lowering order is
 // textual, so a count one branch stores says nothing of the other.
 function settle_var_counted(a: ast.StmtAssign, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     var keep: boolean = s.slot_of(a.target) >= 0 && value_counted(a.value, a.target, a.line, a.col, s);
-    var st: LowerState = s;
+    var st: LowerState = settle_field_view(a, s);
     var start: i32 = 0;
     var p: i32 = 0;
     while (p <= a.target.len()) {

@@ -78,6 +78,40 @@ function main(): i32 {
     }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, false},
+	// A view rebound at its own depth holds the new value's count on every
+	// path, so the store moves it (#10503).
+	{"field-view-rebound-then-moved", `struct Frame { key: string, n: i32 }
+struct Acc { fr: Frame, m: i32 }
+@noinline
+function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
+function step(n: i32, own st: Acc): Acc {
+    var fr: Frame = st.fr;
+    fr = fresh(n);
+    return Acc { fr: fr, m: st.m + n };
+}
+function main(): i32 {
+    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    var i: i32 = 0;
+    while (i < 5) { acc = step(i, acc); i = i + 1; }
+    return acc.m + acc.fr.key.len() + acc.fr.n;
+}`, true},
+	// Rebound in one branch only, the other path still holds the view, so the
+	// store retains.
+	{"field-view-rebound-in-branch", `struct Frame { key: string, n: i32 }
+struct Acc { fr: Frame, m: i32 }
+@noinline
+function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
+function step(n: i32, own st: Acc): Acc {
+    var fr: Frame = st.fr;
+    if (n % 2 == 0) { fr = fresh(n); }
+    return Acc { fr: fr, m: st.m + n };
+}
+function main(): i32 {
+    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    var i: i32 = 0;
+    while (i < 5) { acc = step(i, acc); i = i + 1; }
+    return acc.m + acc.fr.key.len() + acc.fr.n;
+}`, false},
 }
 
 // TestSelfHostFieldReadMove compiles each row with the emit drivers the
