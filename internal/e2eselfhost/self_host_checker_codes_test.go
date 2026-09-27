@@ -205,6 +205,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-local-compared-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: u8 = hi; return 0; }\n", nil},
 		{"literal-local-compared-before-settling", "function main(): i32 { var hi = 255; var i = 250; if (i != hi) {} var b: u8 = i; var c: u8 = hi; return 0; }\n", nil},
 		{"literal-local-arithmetic-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; var d = hi - i; var e: u8 = d; return 0; }\n", nil},
+		// A method called on a dyn value has the result its trait declares.
+		{"dyn-method-result-typed", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { var x: string = s.say(); return x.len(); }\nfunction main(): i32 { return f(7); }\n", []string{"E003"}},
+		{"dyn-method-result-accepted", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { var x: i32 = s.say(); return x; }\nfunction main(): i32 { return f(7); }\n", nil},
 		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
 		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
 		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},

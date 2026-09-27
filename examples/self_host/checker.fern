@@ -4106,6 +4106,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           typeinfo.TypeUnion(un) => {
             recv_type_name = un.name;
           },
+          typeinfo.TypeDyn(d) => {
+            return dyn_method_type(d.traits, name, s);
+          },
           _ => {
             // `t.0()` — a numeric field access whose element is a fn value is
             // a call THROUGH that value, not a method on the tuple.
@@ -10370,6 +10373,44 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
     }
   }
   return assoc_miss();
+}
+
+// trait_method_req finds method `field` among trait `tr`'s requirements, or a
+// supertrait's, as trait_assoc_req does for an associated function.
+function trait_method_req(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): AssocHit {
+  var idx: i32 = trait_req_idx(tr, reqs);
+  if (idx < 0) {
+    return assoc_miss();
+  }
+  var req: parser.TraitReq = reqs[idx];
+  if (util.has_str(seen, req.trait_name)) { return assoc_miss(); }
+  var path: string[] = seen.append(req.trait_name);
+  for rs in req.req_sigs {
+    if (rs.name == field) {
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
+    }
+  }
+  for supertrait in req.supertraits {
+    var sh: AssocHit = trait_method_req(reqs, supertrait, field, path);
+    if (sh.found) {
+      return sh;
+    }
+  }
+  return assoc_miss();
+}
+
+// dyn_method_type is the result of calling `name` on a `dyn` value: the
+// return type one of its traits declares for it. A result spelling Self has
+// no one type behind a dyn, so it stays unknown.
+function dyn_method_type(traits: string, name: string, s: Scope): typeinfo.Type {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    var h: AssocHit = trait_method_req(s.trait_reqs, util.base_type_name(tr), name, []);
+    if (h.found) {
+      if (h.ret.len() == 0 || parser.subst_self(h.ret, "__dyn") != h.ret) { return t_unknown("dyn method result spells Self"); }
+      return s.resolve_type(h.ret);
+    }
+  }
+  return t_unknown("undefined method `" + name + "` on `dyn " + traits + "`");
 }
 
 // tp_assoc_req resolves `T.field(…)` against type parameter `T`'s declared
