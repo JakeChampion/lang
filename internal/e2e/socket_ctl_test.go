@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -48,6 +49,32 @@ func TestSocketCtlArm64(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			if out, got := compileAndRunArm64(t, p.src()); got != 42 {
 				t.Fatalf("arm64 got %d, want 42; first failing check: %s", got, out)
+			}
+		})
+	}
+}
+
+// The Darwin leg runs the probes natively on Apple Silicon: the Darwin
+// socket leg of #9853, which macos.yml selects by this name.
+func TestArm64DarwinSocketCtl(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires the Apple Silicon execution lane")
+	}
+	fern := buildFernCLI(t)
+	for _, p := range socketProbes {
+		t.Run(p.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "probe.fern")
+			if err := os.WriteFile(src, []byte(p.src()), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(dir, "probe")
+			if out, err := exec.Command(fern, "-target", "arm64-darwin", "-o", bin, src).CombinedOutput(); err != nil {
+				t.Fatalf("compile: %v\n%s", err, out)
+			}
+			out, err := exec.Command(bin).CombinedOutput()
+			if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 42 {
+				t.Fatalf("arm64-darwin: %v, want exit 42; first failing check: %s", err, out)
 			}
 		})
 	}
