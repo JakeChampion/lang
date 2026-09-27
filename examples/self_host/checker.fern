@@ -4332,36 +4332,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     var mi: i32 = 0;
     while (mi < c.args.len()) {
       var mat: typeinfo.Type = check_expr(c.args[mi], s);
-      if (!settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
+      if (!is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
         return t_unknown("arg-type mismatch calling method `" + name + "`");
       }
       mi = mi + 1;
     }
-    var wret: typeinfo.Type = written_method_ret(c, msig, nominal_args(recv_ty), s);
-    if (!is_unknown(wret)) { return wret; }
-    // Generic-receiver method return substitution (#4346 piece 2): a method
-    // whose declared return type names one of the receiver struct's type
-    // parameters (`function (b: Box[T]) get(): T`, or a nested `T[]`)
-    // resolves that spelling to `unknown` at collect time. When the receiver
-    // is a concrete instantiation (`Box[i32]`, carrying args [i32]),
-    // substitute the struct's type parameters with those args throughout the
-    // return spelling — so `b.get()` is i32, not the erased unknown. Mirrors
-    // the field-access substitution; reuses type_from_ref_subst.
-    if (type_contains_unknown(msig.ret_type) && msig.ret_type_name.len() > 0) {
-      match (recv_ty) {
-        typeinfo.TypeStruct(rsn) => {
-          if (rsn.args.len() > 0) {
-            var rssig: StructSig = s.lookup_struct(rsn.name);
-            if (rssig.name.len() > 0 && rssig.type_params.len() > 0) {
-              var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
-              return type_from_ref_subst(rref, rssig.type_params, rsn.args, s.structs.names, s.unions.names);
-            }
-          }
-        },
-        _ => {}
-      }
-    }
-    return msig.ret_type;
+    return generic_method_ret(c, msig, recv_ty, s);
   }
   // If the ident is bound in scope to a TypeFunc,
   // dispatch as a closure call rather than a plain
@@ -4523,7 +4499,7 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
   var bt: typeinfo.Type[] = [];
   var i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), check_expr(c.args[i], s), sig.type_params, s.structs.names, s.unions.names, bn, bt);
+    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.structs.names, s.unions.names, bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -5799,9 +5775,9 @@ struct MethodBinding { names: string[], types: typeinfo.Type[], written: string[
 // a written list names the whole parameter list, or when shorter the method's
 // own parameters, the last ones.
 function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): MethodBinding {
-  var recv_vars: string[] = [];
-  for ra in parser.parse_type_ref(msig.receiver_type).args { recv_vars = recv_vars.append(ra.base); }
-  var full: string[] = recv_vars;
+  var rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
+  var full: string[] = [];
+  for ra in rref.args { full = ref_type_vars(ra, msig.all_type_params, s, full); }
   for tp in msig.all_type_params {
     if (!util.has_str(full, tp)) { full = full.append(tp); }
   }
@@ -5819,14 +5795,25 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Ty
     wi = wi + 1;
   }
   var ri: i32 = 0;
-  while (ri < recv_vars.len() && ri < recv_args.len()) {
-    if (!util.has_str(names, recv_vars[ri])) {
-      names = names.append(recv_vars[ri]);
-      types = types.append(recv_args[ri]);
-    }
+  while (ri < rref.args.len() && ri < recv_args.len()) {
+    let (n2, t2) = gc_bind_param(rref.args[ri], recv_args[ri], full, s.structs.names, s.unions.names, names, types);
+    names = n2;
+    types = t2;
     ri = ri + 1;
   }
   return MethodBinding { names: names, types: types, written: written, full: full };
+}
+
+// ref_type_vars appends the type variables a receiver spelling names, in order:
+// `Result[Result[T, E], E]` names T and E.
+function ref_type_vars(r: parser.TypeRef, tparams: string[], s: Scope, acc: string[]): string[] {
+  var out: string[] = acc;
+  if (r.args.len() == 0) {
+    if (gc_is_typevar_name(r.base, tparams, s.structs.names, s.unions.names) && !util.has_str(out, r.base)) { out = out.append(r.base); }
+    return out;
+  }
+  for a in r.args { out = ref_type_vars(a, tparams, s, out); }
+  return out;
 }
 
 // method_type_arg_diags holds a method call's written type arguments to the
@@ -5856,15 +5843,50 @@ function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig,
   return out;
 }
 
-// written_method_ret is a method call's result with its written type arguments
-// substituted, or unknown when the call wrote none or its result names none.
-function written_method_ret(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Type[], s: Scope): typeinfo.Type {
-  if (c.type_args.len() == 0 || msig.ret_type_name.len() == 0) { return t_unknown("no written type arguments"); }
-  var mb: MethodBinding = method_binding(c, msig, recv_args, s);
-  if (c.type_args.len() > mb.full.len()) { return t_unknown("too many type arguments"); }
-  var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
-  if (!type_ref_names_any(rref, mb.written)) { return t_unknown("result names no written type argument"); }
-  return type_from_ref_subst(rref, mb.names, mb.types, s.structs.names, s.unions.names);
+// generic_method_ret is a method call's result with its type variables
+// substituted: the receiver's from its instantiation (`Box[i32]`,
+// `Result[string, E]`), the written ones from the call, and the method's own
+// from its arguments (`r.and(Ok("vw"))` binds `U` to string). A variable
+// nothing binds stays unknown.
+function generic_method_ret(c: ast.ExprCall, msig: MethodSig, recv_ty: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!type_contains_unknown(msig.ret_type) || msig.ret_type_name.len() == 0) { return msig.ret_type; }
+  var mb: MethodBinding = method_binding(c, msig, nominal_args(recv_ty), s);
+  var bn: string[] = mb.names;
+  var bt: typeinfo.Type[] = mb.types;
+  var i: i32 = 0;
+  while (i < msig.param_type_names.len() && i < c.args.len()) {
+    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), binding_arg_type(c.args[i], s), mb.full, s.structs.names, s.unions.names, bn, bt);
+    bn = bn2;
+    bt = bt2;
+    i = i + 1;
+  }
+  for tp in mb.full {
+    if (util.index_of_str(bn, tp) < 0) {
+      bn = bn.append(tp);
+      bt = bt.append(t_unknown("type parameter " + tp));
+    }
+  }
+  if (bn.len() == 0) { return msig.ret_type; }
+  return type_from_ref_subst(parser.parse_type_ref(msig.ret_type_name), bn, bt, s.structs.names, s.unions.names);
+}
+
+// binding_arg_type is an argument's type as type-variable binding reads it. A
+// builtin `Ok(x)` / `Err(e)` types as the argless `Result` (its payload leaves
+// the other argument open); here it settles the argument its payload names.
+function binding_arg_type(a: ast.Expr, s: Scope): typeinfo.Type {
+  var t: typeinfo.Type = check_expr(a, s);
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.name != "Result" || u.args.len() > 0) { return t; }
+    if let ast.ExprCall(ctor) = a {
+      if let ast.ExprIdent(cid) = ctor.callee {
+        if (ctor.args.len() != 1) { return t; }
+        var pt: typeinfo.Type = check_expr(ctor.args[0], s);
+        if (cid.name == "Ok") { return t_union_g("Result", [pt, t_unknown("unbound E")]); }
+        if (cid.name == "Err") { return t_union_g("Result", [t_unknown("unbound T"), pt]); }
+      }
+    }
+  }
+  return t;
 }
 
 // same_nominal reports whether two types are both the struct, or both the
@@ -6437,7 +6459,7 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && gc_is_typevar_name(r.base, tparams, struct_names, union_names) && util.index_of_str(ns, r.base) < 0) {
+  if (r.args.len() == 0 && !is_unknown(at) && gc_is_typevar_name(r.base, tparams, struct_names, union_names) && util.index_of_str(ns, r.base) < 0) {
     ns = ns.append(r.base);
     ts = ts.append(at);
   }

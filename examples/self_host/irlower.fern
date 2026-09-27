@@ -18104,6 +18104,15 @@ function try_success_type(ot: string, structs: StructTab): string {
     return "";
 }
 
+// call_opt_tag_or is the checker's "Option[T]" / "Result[T, E]" tag on a call,
+// or `fallback` when `e` is no call or carries no such tag.
+function call_opt_tag_or(e: ast.Expr, fallback: string): string {
+    if let ast.ExprCall(c) = e {
+        if (c.ty.len() >= 7 && (slice_unchecked(c.ty, 0, 7) == "Option[" || slice_unchecked(c.ty, 0, 7) == "Result[")) { return c.ty; }
+    }
+    return fallback;
+}
+
 // try_opt_type recovers the Option/Result type spelling of a match scrutinee or
 // try-operator operand: a direct-call `f()` via opt_ret_fns, a direct `Some(x)`
 // construction via some_opt_type, a map `.get()` (Option[V]), a local/param via
@@ -18117,10 +18126,9 @@ function try_opt_type(inner: ast.Expr, s: LowerState): string {
     // resolution. Guarded to a well-formed Option[…] / Result[…] tag; anything
     // else (an unresolved "" tag, or a non-call scrutinee) falls through to the
     // structural walk below.
+    var tagged: string = call_opt_tag_or(inner, "");
+    if (tagged != "") { return tagged; }
     match (inner) {
-        ast.ExprCall(oc0) => {
-            if (oc0.ty.len() >= 7 && (slice_unchecked(oc0.ty, 0, 7) == "Option[" || slice_unchecked(oc0.ty, 0, 7) == "Result[")) { return oc0.ty; }
-        },
         // `(a +? b)?` — a checked arithmetic operand (#5542) is Option[T].
         ast.ExprBinary(ob) => {
             if (is_chk_op(ob.op)) { return chk_opt_type_tag(ob, s); }
@@ -23981,6 +23989,8 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprSlice(osl) => { if (expr_is_str(osl.array, se)) { opt_ty = "Option[string]"; } },
         _ => {}
     }
+    // The checker's instantiation, where an erased generic callee registers `Result[T, E]`.
+    opt_ty = call_opt_tag_or(v.init, opt_ty);
     if (opt_ty == "" && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Option[" || slice_unchecked(v.type_name, 0, 7) == "Result[")) { opt_ty = v.type_name; }
     // An UNANNOTATED array literal of Option values (`var a = [Some(1),
     // Some(2), None]`): infer the element opt-type from the first Some

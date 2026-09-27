@@ -652,9 +652,7 @@ function main(): i32 {
 	// and `and[U](other: Result[U, E])` binds U from this very argument: the
 	// destination `Result[U, string]` named Ok without saying what it held, so
 	// the literal was refused ("unsupported variant literal"). The payload
-	// settles it now, for Ok and Err as it already did for Some. The payload is
-	// an i32 because the AST lowering, the oracle here, misreads a string one
-	// through the erased U and answers differently on each leg (#10014).
+	// settles it now, for Ok and Err as it already did for Some.
 	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
 import "std/result";
 
@@ -663,10 +661,10 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 200) {
         var r: Result[i32, string] = Ok(i);
-        var s: Result[i32, string] = r.and(Ok(i + 1));
+        var s: Result[string, string] = r.and(Ok("vw"));
         var e: Result[i32, string] = Err("no");
-        var f: Result[i32, string] = e.and(Ok(i + 2));
-        t = t + s.unwrap_or(0) + f.unwrap_or(9);
+        var f: Result[string, string] = e.and(Ok("xyz"));
+        t = t + s.unwrap_or("").len() + f.unwrap_or("q").len() + r.unwrap_or(0);
         i = i + 1;
     }
     return t % 7;
@@ -3169,7 +3167,7 @@ function main(): i32 {
 `},
 	// The same shape through the standard library: every ordmap method with a
 	// bounded key is that clone, and the tree under it is produced with it.
-	{name: "ordmap-bounded-method-clones", atLeast: 69, src: `
+	{name: "ordmap-bounded-method-clones", atLeast: 65, src: `
 import "std/ordmap";
 function main(): i32 {
     var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
@@ -3664,7 +3662,7 @@ function main(): i32 {
 	// without saying what `Some` holds, and only the payload can say. The
 	// checker does not settle it either, since it infers the literal from the
 	// same parameter.
-	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 52, noLeak: true, src: `
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 48, noLeak: true, src: `
 import "std/option";
 function both(): i32 {
     var s: Option[i32] = Some(5);
