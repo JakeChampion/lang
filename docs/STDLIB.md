@@ -1049,8 +1049,12 @@ serializer.
 - **Path / header / UA:** `http_path_segments`,
   `http_url_path_only`, `http_user_agent_is_bot`,
   `http_header_value`
-- **Wire format:** `http_parse_request(buf): Option[HttpRequest]`,
-  `http_serialize_response(resp): string`
+- **Wire format:** `http_parse_request_bytes(buf: u8[]): Option[HttpRequest]`
+  reads a request as it came off the wire and keeps owned copies of what a
+  handler reads (the method, the path, each header, the body), so the wire
+  buffer is the connection's to reuse; `http_parse_request(buf: string)` is
+  the same parse over text, one copy dearer. `http_serialize_response(resp):
+  string`.
 
 ### `std/net`
 
