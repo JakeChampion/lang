@@ -1961,11 +1961,17 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
-	// tcp_listen_with(port, backlog, reuse_port): number — tcp_listen with
-	// the accept queue's depth and SO_REUSEPORT chosen by the caller, so
-	// several workers can bind one port (#9853). The listener, or -errno.
+	// The socket primitives take an address as its network-order bytes:
+	// four for IPv4, sixteen for IPv6, and any other length is refused
+	// with -EAFNOSUPPORT (#9853).
+	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	// tcp_listen_with(addr, port, backlog, reuse_port): number — a
+	// listener on addr:port with the accept queue's depth and SO_REUSEPORT
+	// chosen by the caller, so several workers can bind one port. The
+	// unspecified address of either family takes every interface. The
+	// listener, or -errno.
 	c.info.FuncSigs["tcp_listen_with"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Params: []ast.Type{u8s, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
 		Result: ast.NumberType{},
 	}
 	// tcp_socket_ctl(fd, op, arg): number — one control call on a socket.
@@ -1978,12 +1984,13 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
-	// tcp_connect_with(host_be, port, nonblocking): number — tcp_connect,
-	// or with `nonblocking` a non-blocking socket whose connect is only
-	// started: the descriptor while it is under way (-errno if it could
-	// not start), and tcp_socket_ctl op 5 to learn how it ended (#9853).
+	// tcp_connect_with(addr, port, nonblocking): number — a socket
+	// connected to addr:port, or with `nonblocking` a non-blocking socket
+	// whose connect is only started: the descriptor while it is under way
+	// (-errno if it could not start), and tcp_socket_ctl op 5 to learn how
+	// it ended (#9853).
 	c.info.FuncSigs["tcp_connect_with"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Params: []ast.Type{u8s, ast.NumberType{}, ast.BoolType{}},
 		Result: ast.NumberType{},
 	}
 	// The Unix-domain sockets (#9853): unix_listen(path, backlog) is a
@@ -2122,31 +2129,31 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
-	// The datagram sockets (#9853). udp_bind(host_be, port): a socket bound
-	// to the IPv4 address packed in network order (0 for every address,
-	// port 0 for one the kernel picks), or -errno. It is closed with
-	// tcp_close and its port read with tcp_local_port, like any socket.
+	// The datagram sockets (#9853). udp_bind(addr, port): a socket bound
+	// to addr:port (the unspecified address for every interface, port 0
+	// for one the kernel picks), or -errno. It is closed with tcp_close
+	// and its port read with tcp_local_port, like any socket.
 	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{u8s, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
-	// udp_connect(fd, host_be, port): fixes the peer a bound socket sends
-	// to and receives from. 0, or -errno.
+	// udp_connect(fd, addr, port): fixes the peer a bound socket sends to
+	// and receives from. 0, or -errno.
 	c.info.FuncSigs["udp_connect"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
-	// udp_sendto(fd, host_be, port, data): one datagram to host:port, or to
-	// the connected peer when both are 0. The bytes accepted, or -errno.
+	// udp_sendto(fd, addr, port, data): one datagram to addr:port, or to
+	// the connected peer when addr is empty. The bytes accepted, or -errno.
 	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
-		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.StringType{}},
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
 	// udp_recvfrom(fd, buf, from): one datagram read into buf, up to its
 	// length; the datagram's byte count (0 for an empty one), or -errno.
-	// A `from` of at least six bytes receives the sender's IPv4 address in
-	// network order and then its port, high byte first.
-	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	// A `from` of at least nineteen bytes receives the sender: the family
+	// at 0 (4 or 6), the address's network-order bytes from 1 (four or
+	// sixteen, the rest zero), and the port at 17, high byte first.
 	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, u8s, u8s},
 		Result: ast.NumberType{},

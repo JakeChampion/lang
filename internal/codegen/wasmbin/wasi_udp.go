@@ -15,12 +15,14 @@
 //	udp_close     drop the streams, then the socket
 //	udp_send      udp_bind(0.0.0.0:0) → udp_sendto(host:port) → udp_close
 //
-// An ip-socket-address flattens to 13 i32 (the option discriminant, the
-// family discriminant, the port, four octets and six padding slots); an
+// An address arrives as a u8[] of four or sixteen network-order bytes and
+// goes to the host through __fern_ip_flat (wasi_addr.go). An
 // outgoing-datagram record is 44 bytes (data ptr @0, len @4, the option
-// disc @8, the family disc @12, the port @16 and the octets @18) and an
-// incoming-datagram 40 (data ptr @0, len @4, the family disc @8, the port
-// @12 and the octets @14).
+// disc @8, the family disc @12, the port @16, then the octets @18 for
+// ipv4, or the flow label @20, the segments @24 and the scope id @40 for
+// ipv6) and an incoming-datagram 40 (data ptr @0, len @4, the family disc
+// @8, the port @12, then the octets @14, or the flow label @16, the
+// segments @20 and the scope id @36).
 
 package wasmbin
 
@@ -42,23 +44,6 @@ const (
 	udpRecordStreams = 3
 )
 
-// emitOctetsFromPacked pushes the four octets of the IPv4 address packed
-// in network order in local `packed`, first octet first, then six zero
-// padding slots: the tail of an ipv4 ip-socket-address flattening.
-func emitOctetsFromPacked(body []byte, packed uint32) []byte {
-	for shift := int32(0); shift < 32; shift += 8 {
-		body = inst.InstLocalGet(body, packed)
-		body = inst.InstI32Const(body, shift)
-		body = numeric.InstI32ShrU(body)
-		body = inst.InstI32Const(body, 255)
-		body = numeric.InstI32And(body)
-	}
-	for i := 0; i < 6; i++ {
-		body = inst.InstI32Const(body, 0)
-	}
-	return body
-}
-
 // buildUdpSendBody assembles __fern_udp_send.
 //
 // Signature: (host_data, host_len, port, data_data, data_len) → i32 —
@@ -76,7 +61,7 @@ func emitOctetsFromPacked(body []byte, packed uint32) []byte {
 //	5:  $host_buf      SSO-normalized host pointer
 //	6:  $host_blen     host byte length
 //	7:  $i             normalize + parse loop index
-//	8:  $octets        4-byte scratch holding the parsed ipv4 octets
+//	8:  $octets        the parsed octets as a u8[]: its length word, then 4 bytes
 //	9:  $octIdx        which octet (0..3) the parser is filling
 //	10: $acc           current octet accumulator
 //	11: $b             current host byte
@@ -84,6 +69,7 @@ func emitOctetsFromPacked(body []byte, packed uint32) []byte {
 //	13: $digits        digits seen in the octet being parsed
 //	14: $rec           the socket record from udp_bind
 //	15: $sent          udp_sendto's answer
+//	16: $any           0.0.0.0 as a u8[], for the bind
 func buildUdpSendBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	free := func(body []byte, ptr uint32, size int32) []byte {
@@ -100,9 +86,17 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// octet store is guarded on $octIdx separately, because a host with
 	// a fifth group would otherwise write past the 4-byte $octets.
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 7)
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, 8)
+	for _, arr := range []uint32{8, 16} {
+		body = inst.InstI32Const(body, 8)
+		body = inst.InstCall(body, alloc)
+		body = inst.InstLocalSet(body, arr)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 4)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstLocalGet(body, arr)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 4)
+	}
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 9) // octIdx
 	body = inst.InstI32Const(body, 0)
@@ -149,7 +143,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 				body = inst.InstLocalGet(body, 9)
 				body = numeric.InstI32Add(body)
 				body = inst.InstLocalGet(body, 10)
-				body = memory.InstI32Store8(body, 0, 0)
+				body = memory.InstI32Store8(body, 0, 4)
 				body = inst.InstLocalGet(body, 9)
 				body = inst.InstI32Const(body, 1)
 				body = numeric.InstI32Add(body)
@@ -237,10 +231,12 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 9)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 10)
-	body = memory.InstI32Store8(body, 0, 0)
+	body = memory.InstI32Store8(body, 0, 4)
 
-	// $rec = udp_bind(0, 0); a negative answer is the -errno.
-	body = inst.InstI32Const(body, 0)
+	// $rec = udp_bind(0.0.0.0, 0); a negative answer is the -errno.
+	body = inst.InstLocalGet(body, 16)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, idxs["__fern_udp_bind"])
 	body = inst.InstLocalTee(body, 14)
@@ -252,10 +248,11 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
-	// $sent = udp_sendto($rec, packed octets, port, data); close; answer.
+	// $sent = udp_sendto($rec, octets, port, data); close; answer.
 	body = inst.InstLocalGet(body, 14)
 	body = inst.InstLocalGet(body, 8)
-	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 4)
@@ -267,35 +264,40 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 15)
 	body = free(body, 8, 4)
 
-	locals := inst.PutLocalsOneGroup(nil, 11, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildUdpBindBody assembles __fern_udp_bind.
 //
-// Signature: (host_be: i32, port: i32) → i32 — a socket record bound to
-// the IPv4 address packed in network order, with its datagram streams
-// open to any peer, or -errno. The 16-byte return area of the setup calls
-// becomes the record: stream(none) lands the two stream handles at +4 and
-// +8, where the record keeps them.
+// Signature: (addr: i32, port: i32) → i32 — a socket record bound to the
+// address in the u8[] at addr, with its datagram streams open to any
+// peer, or -errno. The 16-byte return area of the setup calls becomes the
+// record: stream(none) lands the two stream handles at +4 and +8, where
+// the record keeps them.
 //
 // Locals (after the two params):
 //
 //	2: $ret    16-byte return area, then the record
 //	3: $sock   udp-socket handle
+//	4: $flat   the flattened address
+//	5: $tmp
 func buildUdpBindBody(idxs map[string]uint32) []byte {
 	var body []byte
+	body = emitIpFlat(body, idxs, 0, 1, 4, 5)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__fern_alloc"])
 	body = inst.InstLocalSet(body, 2)
 
-	// create-udp-socket(ipv4, ret); the handle sits at +4 on Ok.
-	body = inst.InstI32Const(body, 0)
+	// create-udp-socket(family, ret); the handle sits at +4 on Ok.
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["wasi_sockets_create_udp_socket"])
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitIpFlatFree(body, idxs, 4)
 	body = emitErrnoNegReturnReclaim(body, 2, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 2)
@@ -308,14 +310,13 @@ func buildUdpBindBody(idxs map[string]uint32) []byte {
 		return emitErrnoNegReturnReclaim(body, 2, errAt, 16, idxs)
 	}
 
-	// start-bind(sock, network, ipv4 host:port, ret) → finish-bind(sock, ret).
+	// start-bind(sock, network, addr:port, ret) → finish-bind(sock, ret).
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, idxs["__network_handle"])
-	body = inst.InstI32Const(body, 0) // family = ipv4
-	body = inst.InstLocalGet(body, 1)
-	body = emitOctetsFromPacked(body, 0)
+	body = emitIpFlatWords(body, 4)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["wasi_sockets_udp_start_bind"])
+	body = emitIpFlatFree(body, idxs, 4)
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -351,7 +352,7 @@ func buildUdpBindBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, udpRecordStreams)
 	body = memory.InstI32Store(body, 2, 12)
 	body = inst.InstLocalGet(body, 2)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32), body)
 }
 
 // emitUdpDropStreams drops a datagram socket record's streams when it has
@@ -395,30 +396,32 @@ func buildUdpCloseBody(idxs map[string]uint32) []byte {
 
 // buildUdpConnectBody assembles __fern_udp_connect.
 //
-// Signature: (rec: i32, host_be: i32, port: i32) → i32 — 0 once the
-// record's streams are replaced by a pair fixed to the peer, or -errno with
-// the record left bare: the host may trap on a stream() call while the old
-// pair is alive, so they go first.
+// Signature: (rec: i32, addr: i32, port: i32) → i32 — 0 once the record's
+// streams are replaced by a pair fixed to the peer at addr:port, or
+// -errno with the record left bare: the host may trap on a stream() call
+// while the old pair is alive, so they go first.
 //
 // Locals (after the three params):
 //
 //	3: $ret    16-byte return area
+//	4: $flat   the flattened address
+//	5: $tmp
 func buildUdpConnectBody(idxs map[string]uint32) []byte {
 	var body []byte
+	body = emitIpFlat(body, idxs, 1, 2, 4, 5)
 	body = emitUdpDropStreams(body, 0, idxs)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__fern_alloc"])
 	body = inst.InstLocalSet(body, 3)
 
-	// stream(sock, some(ipv4 host:port), ret).
+	// stream(sock, some(addr:port), ret).
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstI32Const(body, 1) // option = some
-	body = inst.InstI32Const(body, 0) // family = ipv4
-	body = inst.InstLocalGet(body, 2)
-	body = emitOctetsFromPacked(body, 1)
+	body = emitIpFlatWords(body, 4)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, idxs["wasi_sockets_udp_stream"])
+	body = emitIpFlatFree(body, idxs, 4)
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -438,15 +441,15 @@ func buildUdpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__free"])
 	body = inst.InstI32Const(body, 0)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32), body)
 }
 
 // buildUdpSendtoBody assembles __fern_udp_sendto.
 //
-// Signature: (rec, host_be, port, data_data, data_len) → i32 — the byte
-// count once the host accepts the datagram, or -errno. A zero host and
-// port address the connected peer (remote-address none); otherwise the
-// record carries some(ipv4 host:port).
+// Signature: (rec, addr, port, data_data, data_len) → i32 — the byte
+// count once the host accepts the datagram, or -errno. An empty addr
+// addresses the connected peer (remote-address none); otherwise the
+// record carries some(addr:port).
 //
 // Two would-block shapes hide in the send: check-send reports a permit of
 // 0 until the socket is writable, and wasmtime ≥45 rejects a send that
@@ -464,8 +467,19 @@ func buildUdpConnectBody(idxs map[string]uint32) []byte {
 //	10: $dg     the one-element list<outgoing-datagram>
 //	11: $sent   the answer
 //	12: $poll   pollable handle for the permit wait
+//	13: $flat   the flattened address
+//	14: $tmp
 func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	var body []byte
+	// The address is judged before anything is allocated for the send.
+	body = emitArrayLen(body, 1)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitIpFlat(body, idxs, 1, 2, 13, 14)
+	body = inst.InstElse(body)
+	body = inst.InstI32Const(body, ipFlatSize)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstLocalSet(body, 13)
+	body = inst.InstEnd(body)
 	body = emitStrNormalize(body, idxs, 3, 4, 7, 8, 9)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__fern_alloc"])
@@ -484,33 +498,51 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 10)
 	body = inst.InstLocalGet(body, 8)
 	body = memory.InstI32Store(body, 2, 4)
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstLocalGet(body, 2)
-	body = numeric.InstI32Or(body)
+	body = emitArrayLen(body, 1)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
 		body = inst.InstLocalGet(body, 10)
 		body = inst.InstI32Const(body, 1)
 		body = memory.InstI32Store(body, 2, 8)
 		body = inst.InstLocalGet(body, 10)
-		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalGet(body, 13)
+		body = memory.InstI32Load(body, 2, 0)
 		body = memory.InstI32Store(body, 2, 12)
 		body = inst.InstLocalGet(body, 10)
-		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 13)
+		body = memory.InstI32Load(body, 2, 4)
 		body = memory.InstI32Store16(body, 1, 16)
-		for i := uint32(0); i < 4; i++ {
+		body = inst.InstLocalGet(body, 13)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		// ipv6: the flow label, the eight segments, the scope id.
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 20)
+		for k := uint32(0); k < 8; k++ {
 			body = inst.InstLocalGet(body, 10)
-			body = inst.InstLocalGet(body, 1)
-			body = inst.InstI32Const(body, int32(8*i))
-			body = numeric.InstI32ShrU(body)
-			body = memory.InstI32Store8(body, 0, 18+i)
+			body = inst.InstLocalGet(body, 13)
+			body = memory.InstI32Load(body, 2, 12+4*k)
+			body = memory.InstI32Store16(body, 1, 24+2*k)
 		}
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, 40)
+		body = inst.InstElse(body)
+		for k := uint32(0); k < 4; k++ {
+			body = inst.InstLocalGet(body, 10)
+			body = inst.InstLocalGet(body, 13)
+			body = memory.InstI32Load(body, 2, 8+4*k)
+			body = memory.InstI32Store8(body, 0, 18+k)
+		}
+		body = inst.InstEnd(body)
 	}
 	body = inst.InstElse(body)
 	body = inst.InstLocalGet(body, 10)
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 8)
 	body = inst.InstEnd(body)
+	body = emitIpFlatFree(body, idxs, 13)
 
 	// $sent = -errno from the result at $ret, then leave the send loop.
 	failed := func(body []byte, errAt uint32, depth uint32) []byte {
@@ -579,7 +611,7 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__free"])
 	body = emitStrNormalizeFree(body, idxs, 4, 7, 8)
 	body = inst.InstLocalGet(body, 11)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 8, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 10, encode.ValtypeI32), body)
 }
 
 // buildUdpRecvfromBody assembles __fern_udp_recvfrom.
@@ -588,8 +620,9 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 // at buf, up to the length at buf-4: its byte count, or -errno. receive
 // answers an empty list while nothing is pending, so the call subscribes
 // and blocks on the incoming stream and asks again. When the u8[] at
-// `from` holds six bytes or more and the sender is IPv4, its octets and
-// then its port, high byte first, are written there.
+// `from` holds nineteen bytes or more it receives the sender: the family
+// at 0 (4 or 6), the address's network-order bytes from 1 (four or
+// sixteen, the rest zero), and the port at 17, high byte first.
 //
 // The list and each datagram's bytes were placed in this heap by
 // cabi_realloc, so both are released once copied.
@@ -612,13 +645,7 @@ func buildUdpRecvfromBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__fern_alloc"])
 	body = inst.InstLocalSet(body, 3)
 
-	// The length word of a u8[] sits four bytes before its data.
-	arrayLen := func(body []byte, arr uint32) []byte {
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, -4)
-		body = numeric.InstI32Add(body)
-		return memory.InstI32Load(body, 2, 0)
-	}
+	arrayLen := emitArrayLen
 
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty) // done
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)  // again
@@ -673,29 +700,51 @@ func buildUdpRecvfromBody(idxs map[string]uint32) []byte {
 		body = inst.InstLocalGet(body, 7)
 		body = inst.InstLocalGet(body, 6)
 		body = memory.InstMemoryCopy(body)
-		// The sender, when there is room for it and it is IPv4.
+		// The sender, when there is room for it.
 		body = arrayLen(body, 2)
-		body = inst.InstI32Const(body, 6)
+		body = inst.InstI32Const(body, 19)
 		body = numeric.InstI32GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstI32Const(body, 19)
+		body = memory.InstMemoryFill(body)
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 8)
-		body = numeric.InstI32Eqz(body)
-		body = numeric.InstI32And(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		for i := uint32(0); i < 4; i++ {
+		// ipv6: the family byte, then each segment high byte first.
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 6)
+		body = memory.InstI32Store8(body, 0, 0)
+		for k := uint32(0); k < 8; k++ {
 			body = inst.InstLocalGet(body, 2)
 			body = inst.InstLocalGet(body, 5)
-			body = memory.InstI32Load8U(body, 0, 14+i)
-			body = memory.InstI32Store8(body, 0, i)
+			body = memory.InstI32Load8U(body, 0, 21+2*k)
+			body = memory.InstI32Store8(body, 0, 1+2*k)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstLocalGet(body, 5)
+			body = memory.InstI32Load8U(body, 0, 20+2*k)
+			body = memory.InstI32Store8(body, 0, 2+2*k)
 		}
+		body = inst.InstElse(body)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI32Const(body, 4)
+		body = memory.InstI32Store8(body, 0, 0)
+		for k := uint32(0); k < 4; k++ {
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstLocalGet(body, 5)
+			body = memory.InstI32Load8U(body, 0, 14+k)
+			body = memory.InstI32Store8(body, 0, 1+k)
+		}
+		body = inst.InstEnd(body)
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 13)
-		body = memory.InstI32Store8(body, 0, 4)
+		body = memory.InstI32Store8(body, 0, 17)
 		body = inst.InstLocalGet(body, 2)
 		body = inst.InstLocalGet(body, 5)
 		body = memory.InstI32Load8U(body, 0, 12)
-		body = memory.InstI32Store8(body, 0, 5)
+		body = memory.InstI32Store8(body, 0, 18)
 		body = inst.InstEnd(body)
 		// Release the host's list and the datagram's bytes.
 		body = inst.InstLocalGet(body, 8)

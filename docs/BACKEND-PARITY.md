@@ -145,8 +145,23 @@ Go ones. The bytes floor the last three are written on, `__str_bytes` and
 self-host (`docs/RUNTIME-IN-FERN.md`); the interpreter has no floor, as it
 has none of the raw floor.
 
-`tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
-arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
+Every socket primitive that takes an address takes it as a `u8[]` of its
+network-order bytes, four for IPv4 and sixteen for IPv6, and opens the
+socket for the family the length names; any other length answers
+`-EAFNOSUPPORT` before a socket exists (97 on Linux, 47 on Darwin, 5 in
+the WASI numbering). The unspecified address of either family takes
+every interface, and `::` both families where the host allows a
+dual-stack listener: Linux and Darwin do by default, and wasi:sockets 0.2
+keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
+`-EAFNOSUPPORT` from `socket(2)` natively and in the interpreter, and on
+wasm the `-ENOTSUP` wasmtime answers for create-socket. `tcp_connect` and
+`udp_send` keep their packed IPv4 forms and box them for the same bodies.
+The IPv6 leg (`TestSocketV6*` and the self-host twin) runs where Go can
+listen on `::1` and skips, with the probe's own "nov6" answer required,
+where it cannot.
+
+`tcp_listen_with(addr, port, backlog, reuse_port)` and `tcp_socket_ctl(fd,
+op, arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
 `shutdown(2)` with `arg` its how, 5 the result of a connect under way) are
 the socket controls of #9853; std/net wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
 numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
@@ -158,15 +173,17 @@ both compilers' wasm socket bodies read the byte the result's shape names,
 so a refused bind or dial reports its errno rather than whatever the area
 held.
 
-The datagram sockets (#9853) are `udp_bind(host_be, port)` (a socket bound
-to the IPv4 address packed in network order, 0 for every address and port
-0 for one the host picks, or -errno), `udp_connect(fd, host_be, port)`
-(fix the peer: 0 or -errno), `udp_sendto(fd, host_be, port, data)` (one
-datagram to host:port, or to the peer when both are 0: the bytes accepted,
-or -errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
-`buf`, up to its length, the sender's four address bytes and then its port,
-high byte first, into a `from` of six bytes or more: the byte count, or
--errno). `tcp_close` and `tcp_local_port` take a datagram socket too, and
+The datagram sockets (#9853) are `udp_bind(addr, port)` (a socket bound
+to addr:port, the unspecified address for every interface and port 0 for
+one the host picks, or -errno), `udp_connect(fd, addr, port)` (fix the
+peer: 0 or -errno), `udp_sendto(fd, addr, port, data)` (one datagram to
+addr:port, or to the peer when `addr` is empty: the bytes accepted, or
+-errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
+`buf`, up to its length, and the sender into a `from` of nineteen bytes
+or more: the family at 0, 4 or 6, the address's network-order bytes from
+1, four or sixteen with the rest zero, and the port at 17, high byte
+first: the byte count, or -errno). `tcp_close` and `tcp_local_port` take
+a datagram socket too, and
 std/net wraps the four as `udp_socket`, `set_peer`, `send_to`, `send`,
 `recv_from`, `recv`, `local_port` and `close`. The same on every target,
 with these divergences: on wasm a datagram "fd" is the tcp record with a
@@ -177,12 +194,12 @@ leaves the socket without streams until the next one succeeds, and
 `udp_recvfrom` blocks on the incoming stream's pollable where the natives
 block in recvfrom(2), so `set_nonblocking` has no udp arm there; on Darwin
 a `udp_sendto` naming an address on a connected socket is refused with
-`EISCONN` where Linux sends it, so a connected socket sends with a zero
+`EISCONN` where Linux sends it, so a connected socket sends with an empty
 address on every target; and the interpreter keeps a raw descriptor per
 datagram socket, so its errnos are the host's like the natives'.
 
-`tcp_connect_with(host_be, port, nonblocking)` is `tcp_connect`, or with
-`nonblocking` a non-blocking socket whose connect is only started: the
+`tcp_connect_with(addr, port, nonblocking)` is a connect to addr:port, or
+with `nonblocking` a non-blocking socket whose connect is only started: the
 descriptor comes back while the connect is under way (-errno only when it
 could not start), and control op 5 says how it ended: 0 once a peer is
 attached, `-EINPROGRESS` while none is and no error is pending, else the

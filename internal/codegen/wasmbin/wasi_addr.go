@@ -1,0 +1,138 @@
+package wasmbin
+
+import (
+	"github.com/jakechampion/lang/internal/wasm/encode"
+	"github.com/jakechampion/lang/internal/wasm/inst"
+	"github.com/jakechampion/lang/internal/wasm/memory"
+	"github.com/jakechampion/lang/internal/wasm/numeric"
+)
+
+// The socket builtins take an address as a u8[] of four or sixteen
+// network-order bytes (#9853). wasi:sockets takes an ip-socket-address,
+// which flattens to a family discriminant (0 ipv4, 1 ipv6) and eleven
+// payload i32: for ipv4 the port, the four octets and six zero pads; for
+// ipv6 the port, a zero flow label, the eight 16-bit segments and a zero
+// scope id. __fern_ip_flat writes that flattening to a 48-byte record
+// once, and each bind, connect and stream pushes its twelve words from
+// there.
+
+// errnoSocketAddressFamily is EAFNOSUPPORT in the Preview 1 errno namespace
+// used by socket return values.
+const errnoSocketAddressFamily = 5
+
+// ipFlatSize is the byte size of the record __fern_ip_flat writes.
+const ipFlatSize = 48
+
+// buildIpFlatBody assembles __fern_ip_flat.
+//
+// Signature: (addr, port, out) → i32 — 0 with the flattening of addr:port
+// at out, or -EAFNOSUPPORT for an address of another length, with out
+// zeroed.
+//
+// Locals (after the three params):
+//
+//	3: $len   the u8[]'s length, from the word before its bytes
+func buildIpFlatBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, 3)
+
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstI32Const(body, ipFlatSize)
+	body = memory.InstMemoryFill(body)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 1)
+	body = memory.InstI32Store(body, 2, 4)
+
+	// ipv4: family 0, the octets in slots 2..5.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	for k := uint32(0); k < 4; k++ {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load8U(body, 0, k)
+		body = memory.InstI32Store(body, 2, 8+4*k)
+	}
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// ipv6: family 1, the segments in slots 3..10.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+	for k := uint32(0); k < 8; k++ {
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load8U(body, 0, 2*k)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Shl(body)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load8U(body, 0, 2*k+1)
+		body = numeric.InstI32Or(body)
+		body = memory.InstI32Store(body, 2, 12+4*k)
+	}
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	body = inst.InstI32Const(body, -errnoSocketAddressFamily)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+}
+
+// emitIpFlat allocates the flat record into local `flat` and fills it from
+// the address in local `addr` and the port in local `port`, with `tmp`
+// holding the helper's answer; a refused length frees the record and
+// returns its -errno.
+func emitIpFlat(body []byte, idxs map[string]uint32, addr, port, flat, tmp uint32) []byte {
+	body = inst.InstI32Const(body, ipFlatSize)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstLocalSet(body, flat)
+	body = inst.InstLocalGet(body, addr)
+	body = inst.InstLocalGet(body, port)
+	body = inst.InstLocalGet(body, flat)
+	body = inst.InstCall(body, idxs["__fern_ip_flat"])
+	body = inst.InstLocalTee(body, tmp)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitIpFlatFree(body, idxs, flat)
+	body = inst.InstLocalGet(body, tmp)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	return body
+}
+
+// emitArrayLen pushes the length of the u8[] in local `arr`: the word four
+// bytes before its data.
+func emitArrayLen(body []byte, arr uint32) []byte {
+	body = inst.InstLocalGet(body, arr)
+	body = inst.InstI32Const(body, -4)
+	body = numeric.InstI32Add(body)
+	return memory.InstI32Load(body, 2, 0)
+}
+
+// emitIpFlatWords pushes the record's twelve words: the family
+// discriminant and the eleven payload slots.
+func emitIpFlatWords(body []byte, flat uint32) []byte {
+	for k := uint32(0); k < 12; k++ {
+		body = inst.InstLocalGet(body, flat)
+		body = memory.InstI32Load(body, 2, 4*k)
+	}
+	return body
+}
+
+// emitIpFlatFree releases the record in local `flat`.
+func emitIpFlatFree(body []byte, idxs map[string]uint32, flat uint32) []byte {
+	body = inst.InstLocalGet(body, flat)
+	body = inst.InstI32Const(body, ipFlatSize)
+	return inst.InstCall(body, idxs["__free"])
+}
