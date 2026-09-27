@@ -179,6 +179,28 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// A literal local takes ONE integer type: its first width-fixing use
+		// decides it, i32 when none does (#10123). The self-host held it at i32
+		// from its binding and native let each use pick a width, so the same
+		// local read at two widths was accepted natively and miscompiled.
+		{"literal-local-widens", "function main(): i32 { var x = 5; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-narrows", "function main(): i32 { var x = 5; var y: u8 = x; return 0; }\n", nil},
+		{"literal-local-shift-count", "function main(): i32 { var x = 5; var z: u64 = 1 as u64 << x; return 0; }\n", nil},
+		{"literal-local-wider-operand", "function main(): i32 { var x = 5; var y: i64 = x + (1 as i64); return 0; }\n", nil},
+		{"literal-local-through-a-second-local", "function main(): i32 { var x = 5; var y = x + 1; var z: u64 = y; return 0; }\n", nil},
+		{"literal-local-assigned-typed", "function main(): i32 { var x = 0; var n: i64 = 7i64; x = n; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-parameter", "function take(v: u64): i32 { return 0; }\nfunction main(): i32 { var x = 3; var r = take(x); var y: u64 = x; return r; }\n", nil},
+		{"literal-local-struct-field", "struct P { a: i64 }\nfunction main(): i32 { var x = 3; var p = P { a: x }; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-array-sibling", "function main(): i32 { var x = 3; var xs: i64[] = [x, 2i64]; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-cast-does-not-decide", "function main(): i32 { var x = 5; var f: f64 = x as f64; var y: i64 = x; return 0; }\n", nil},
+		{"range-variable-shifts-u64", "function main(): i32 {\n    var t: i64 = 0 as i64;\n    for i in 0..64 {\n        var bits: i64 = (1 as u64 << i) as i64;\n        t = t + bits;\n    }\n    return 0;\n}\n", nil},
+		{"range-variable-typed-bound", "function main(): i32 { var n: i64 = 5i64; for i in 0..n { var k: i64 = i; } return 0; }\n", nil},
+		{"literal-local-two-widths", "function main(): i32 { var x = 5; var a: i32 = x; var b: i64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-two-widths-wrapped", "function main(): i32 {\n    var x = 2147483647;\n    x = x + 1;\n    var a: i32 = x;\n    var b: i64 = x;\n    if (b > 0i64) { return 1; }\n    if (a < 0) { return 2; }\n    return 3;\n}\n", []string{"E003"}},
+		{"literal-local-index-is-i32", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i = 1; var v = xs[i]; var w: i64 = i; return v; }\n", []string{"E003"}},
+		{"literal-local-float", "function main(): i32 { var x = 5; var f: f64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-out-of-range", "function main(): i32 { var x = 300; var b: u8 = x; return 0; }\n", []string{"E047"}},
+		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
 		// `fbip` exists for — drew E053 there and nothing natively, and

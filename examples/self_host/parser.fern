@@ -5690,9 +5690,9 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     // `..` + HIGH and encode the half-open interval as a synthetic
     // `__range(LOW, HIGH)` call — the same parser-internal-builtin
     // idiom as `__set_index` / `__set_field`. The checker binds the
-    // loop var to i32 and irlower lowers it to a counted loop; the
-    // call shape goes through constfold / substitution / printing
-    // for free (LOW, HIGH are ordinary i32 sub-expressions). The
+    // loop var at its bounds' type and irlower lowers it to a counted
+    // loop; the call shape goes through constfold / substitution /
+    // printing for free (LOW, HIGH are ordinary sub-expressions). The
     // inclusive form `LOW..=HIGH` emits `__range_incl(LOW, HIGH)`
     // instead, which irlower lowers with a `<=` (closed-interval)
     // condition.
@@ -16105,6 +16105,38 @@ function range_call_name(iter: ast.Expr): string {
     return "";
 }
 
+// The type the desugared counter is declared at: a bound's literal suffix —
+// the checker writes one onto untyped bounds when the loop variable settles
+// wider or narrower than i32 — else i32.
+function range_bound_type(bounds: ast.Expr[]): string {
+    for bound in bounds {
+        var t: string = literal_suffix_of(bound);
+        if (t.len() > 0) { return t; }
+    }
+    return "i32";
+}
+
+function literal_suffix_of(e: ast.Expr): string {
+    match (e) {
+        ast.ExprNumber(n) => {
+            if (n.is_float || n.suffix == "char") { return ""; }
+            return n.suffix;
+        },
+        ast.ExprUnary(u) => {
+            if (u.op == "-" || u.op == "+") { return literal_suffix_of(u.operand); }
+            return "";
+        },
+        ast.ExprBinary(b) => {
+            if (b.op != "+" && b.op != "-" && b.op != "*" && b.op != "/" && b.op != "%") { return ""; }
+            var l: string = literal_suffix_of(b.left);
+            if (l.len() > 0) { return l; }
+            return literal_suffix_of(b.right);
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // The break test the desugared loop takes: `>=` leaves HIGH out of the
 // half-open form, `>` keeps it in the closed one.
 function range_break_op(iter: ast.Expr): string {
@@ -16148,8 +16180,9 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
             var rargs: ast.Expr[] = iter_range_args(fr.iter);
             if (rargs.len() == 2) {
                 var hi_name: string = "$hi_" + fr.var_name;
-                var ivar: ast.Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
-                var hivar: ast.Stmt = s_var(hi_name, "i32", rargs[1]);
+                var rty: string = range_bound_type(rargs);
+                var ivar: ast.Stmt = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
+                var hivar: ast.Stmt = s_var(hi_name, rty, rargs[1]);
                 var incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
                 var brk: ast.Stmt = s_if(e_binary(range_break_op(fr.iter), e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
                 var wbody: ast.Stmt[] = [incr, brk];
