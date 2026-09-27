@@ -179,6 +179,43 @@ function main(): i32 {
     return t.0 + got + t.1.len() + acc - 72;
 }
 `, 10, false, map[string][2]int64{"ast": {28, 22}, "ast_callees": {28, 22}, "ast_main": {28, 20}}},
+	// An array field's length as a returned element, and a nested-array field
+	// as one, refused the callee on the AST leg (#10318). The nested rows still
+	// leak there: nothing releases a T[][] a record or a tuple holds (#10397).
+	{"callee_local_arrlen", `struct Fs { n: i32, ws: f64[] }
+function mk(k: i32): (i32, i32, i32) {
+    var r: Ints = Ints { n: k, ys: [k, 1] };
+    var f: Fs = Fs { n: k, ws: [1.5, 2.5, 3.5] };
+    return (r.n, r.ys.len(), f.ws.len());
+}
+function main(): i32 {
+    var t: (i32, i32, i32) = mk(3);
+    mk(4);
+    return t.0 + t.1 + t.2;
+}
+`, 8, true, nil},
+	{"callee_local_nested", `struct Bag { n: i32, grid: i32[][] }
+function mk(k: i32): (i32, i32[][]) {
+    var r: Bag = Bag { n: k, grid: [[k, 1], [2, 3]] };
+    return (r.n, r.grid);
+}
+function main(): i32 {
+    var t: (i32, i32[][]) = mk(3);
+    mk(4);
+    return t.0 + t.1[0][0] + t.1[1][1] + t.1.len();
+}
+`, 11, false, map[string][2]int64{"ast": {10, 4}, "ast_callees": {10, 4}, "ast_main": {10, 4}}},
+	{"callee_local_nested_strarr", `struct Grid { n: i32, rows: string[][] }
+function mk(k: i32): (i32, string[][]) {
+    var r: Grid = Grid { n: k, rows: [["ab", "c"], ["def"]] };
+    return (r.n, r.rows);
+}
+function main(): i32 {
+    var (n, rows) = mk(3);
+    var last: string[] = rows[1];
+    return n + rows[0][0].len() + last[0].len() + rows.len();
+}
+`, 10, false, map[string][2]int64{"ast": {5, 1}, "ast_callees": {5, 1}, "ast_main": {5, 1}}},
 	// Extracting the element to a new owner refuses the tuple's element release,
 	// so the AST leg keeps the tuple's reference: a leak, never a second free.
 	{"refused_elem_extracted", `function main(): i32 {
@@ -322,9 +359,9 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 	}
 }
 
-// assertLeakPinned: a row that still leaks on this leg (#10326) left exactly
-// its pinned allocs and frees. Fewer frees is a regression; more frees is a fix
-// of the element leak, which moves the pin.
+// assertLeakPinned: a row that still leaks on this leg (#10326, #10397) left
+// exactly its pinned allocs and frees. Fewer frees is a regression; more frees
+// is a fix of the element leak, which moves the pin.
 func assertLeakPinned(t *testing.T, stderr string, want [2]int64) {
 	t.Helper()
 	summary := leakSummaryLine(stderr)
@@ -334,6 +371,6 @@ func assertLeakPinned(t *testing.T, stderr string, want [2]int64) {
 	}
 	if got := [2]int64{allocs, frees}; got != want {
 		t.Errorf("%s, pinned allocs=%d frees=%d — fewer frees means the sweep lost a release; "+
-			"more frees means the element leak (#10326) closed, so move the pin", summary, want[0], want[1])
+			"more frees means the element leak closed, so move the pin", summary, want[0], want[1])
 	}
 }

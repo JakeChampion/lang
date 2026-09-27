@@ -57946,7 +57946,7 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
                         else if (sccfa.field == "len" && scc.args.len() == 0
                                 && (expr_is_str(sccfa.obj, s) || expr_is_arr_src(sccfa.obj, s)
                                     || expr_is_strarr(sccfa.obj, s) || expr_is_f64arr(sccfa.obj, s)
-                                    || expr_is_i64arr(sccfa.obj, s))) { el_call_ok = true; }
+                                    || expr_is_i64arr(sccfa.obj, s) || arr_field_read(sccfa.obj, s))) { el_call_ok = true; }
                         // (f) a MAP read method — the other builtin receiver the
                         // registry cannot answer for. Admitted exactly when
                         // map_method_elem_tag names the result kind, so the slot
@@ -64762,6 +64762,9 @@ pub function tuple_elems_lowerable(rt: string, structs: StructTab): boolean {
             // name (mark_struct_type) so `t.N[i].field` / `match (t.N[i])` resolve
             // the element shape — exactly the struct-array field-read bind (#3292).
             if (!ok_elem && (is_struct_array_field_type(structs, t) || is_enum_array_field_type(structs, t))) { ok_elem = true; }
+            // A nested array (`T[][]`) is one outer-buffer pointer, like the flat
+            // arrays; the `.N` / destructure read marks the inner level.
+            if (!ok_elem && (is_nested_array_field_type(structs, t) || t == "string[][]")) { ok_elem = true; }
             // A Map[K, V] element is a leak-only heap box in one pointer slot, like
             // a struct / array element — so a tuple-returning fn can return it (the
             // `(Map, V)` shape of Map.get_or_insert / Map.without). Construction
