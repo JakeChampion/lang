@@ -249,9 +249,8 @@ type rcPlan struct {
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
 	// ownArgRetains marks the `var` locals handed to an explicit `own`
-	// parameter that computeOwnedArgMoves could not move — a borrowed alias,
-	// a call through a function value — so the call site retains them for the
-	// callee instead (ownArgNeedsRetain).
+	// parameter that computeOwnedArgMoves could not move — a borrowed alias —
+	// so the call site retains them for the callee instead (ownArgNeedsRetain).
 	ownArgRetains map[*ast.Ident]bool
 	// fieldOwnMoves marks the `x.f` nodes this frame hands to an explicit
 	// `own` parameter or to `.with` as a MOVE out of x's box: the enclosing

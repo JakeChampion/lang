@@ -445,6 +445,17 @@ function f(): i32 {
 }`)
 }
 
+// The positive side of the same contract: a local of enum type at its last use
+// is a move (#9541).
+func TestOwnGuardAllowsEnumLocalAtLastUse(t *testing.T) {
+	wantOK(t, "enum-local-last-use", `enum Span { Empty, Wide(i32[]) }
+function eat(own sp: Span): i32 { return 0; }
+function f(): i32 {
+    var sp: Span = Empty;
+    return eat(sp);                    // dead after the call → moved
+}`)
+}
+
 // A call to a function whose EVERY pointer parameter is `own` returns a
 // freshly-owned result (the callee consumed each pointer input, so it can't
 // hand back a borrowed one) — so it passes the E051 transfer guard. This is
