@@ -1799,6 +1799,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E040: explicit generic call-site type-argument arity.
 		{"type-arg-too-many", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32, i32](5); }\n", []string{"E040"}},
 		{"type-arg-too-few", "function pair[A, B](a: A, b: B): A { return a; }\nfunction main(): i32 { return pair[i32](5, 6); }\n", []string{"E040"}},
+		// E040: a type parameter nothing binds (#10507). An empty array
+		// literal binds none (#10499); a later argument or the destination can.
+		{"type-param-unbound-empty-array", "function first[T](own x: T, n: i32): i32 { return n; }\nfunction main(): i32 { return first([], 3); }\n", []string{"E040"}},
+		{"type-param-unbound-no-args", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk(); }\n", []string{"E040"}},
+		{"type-param-explicit", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk[i32](); }\n", nil},
+		{"type-param-later-arg-binds", "function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }\nfunction add(x: i32, own acc: string[]): string[] { return acc.append(\"a\"); }\nfunction main(): i32 {\n    var r: string[] = fold(1, [], add);\n    return r.len();\n}\n", nil},
+		{"type-param-destination-binds", "function id[T](own x: T): T { return x; }\nfunction main(): i32 {\n    var r: i32[] = id([]);\n    return r.len();\n}\n", nil},
 		{"type-arg-ok", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32](5); }\n", nil},
 		{"type-arg-nongeneric-ok", "function f(x: i32): i32 { return x; }\nfunction main(): i32 { return f[i32](5); }\n", nil},
 		// E027: a match-arm guard (`Pat when <expr> =>`) must be boolean.
