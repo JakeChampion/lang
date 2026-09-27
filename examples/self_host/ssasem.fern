@@ -24,7 +24,11 @@ pub struct Func {
     // The builtin names the module's own declarations take over
     // (semsource.shadowed_builtins): a call to one is an ordinary call, never
     // the builtin's op.
-    shadows: string[]
+    shadows: string[],
+    // A map of 32-bit columns runs on core/map's table (ssarc.routed_map):
+    // the unit defines every core/map function that routing calls, and none of
+    // its bodies keeps the AST lowering, whose maps are the runtime's.
+    routes_maps: boolean
 }
 
 // The parameter whose storage a callee's result reads, so a caller keeps that

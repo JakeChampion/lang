@@ -336,6 +336,15 @@ pub function str_less(a: string, b: string): boolean {
     return a.len() < b.len();
 }
 
+// core_map_routed_fns are the core/map functions the typed lowering calls for
+// a map it routes onto core/map (ssarc.routed_map_site).
+pub function core_map_routed_fns(): string[] {
+    return ["map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
+        "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
+        "__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
+        "__mapiter_key_impl", "__mapiter_value_impl", "__mapiter_advance_impl", "__mapiter_drop_impl"];
+}
+
 // index_of_str returns the index of `s` in `xs`, or -1 if absent.
 // Canonical -1-on-miss (ssa_wasm previously returned 0, which silently
 // resolved a missing funcaddr to table slot 0 — SH-007).

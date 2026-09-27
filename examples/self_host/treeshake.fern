@@ -114,18 +114,6 @@ function ts_recv_rooted(name: string): boolean {
 // spelled out rather than wildcarded so a new expression kind fails E030 here
 // and gets a reachability decision, not a silent empty contribution — the
 // soundness property the hand-written walk this replaces had.
-// ts_routed_map_roots are the core/map functions the typed lowering calls for
-// a map it routes onto core/map (ssarc.routed_map_site), which no source
-// spells. They are rooted wherever a map can reach the program
-// (ts_reaches_map), not wherever core/map is loaded: map_new_impl draws the
-// hash seed, which on wasm is an import a program without maps must not carry.
-function ts_routed_map_roots(): string[] {
-    return ["map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
-        "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
-        "__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
-        "__mapiter_key_impl", "__mapiter_value_impl", "__mapiter_advance_impl", "__mapiter_drop_impl"];
-}
-
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
@@ -499,9 +487,13 @@ pub function treeshake(mod: parser.Module): parser.Module {
     while (pi0 < mod.funcs.len()) { pending = pending.append(pi0); pi0 = pi0 + 1; }
 
     var grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
+    // No source spells the core/map functions a routed map calls. They are
+    // rooted wherever a map can reach the program, not wherever core/map is
+    // loaded: map_new_impl draws the hash seed, which on wasm is an import a
+    // program without maps must not carry.
     if (ts_reaches_map(mod, grown.rs)) {
         var rs0: RefSet = grown.rs;
-        for root in ts_routed_map_roots() { if (!refset_has(rs0, root)) { rs0 = refset_add(rs0, root); } }
+        for root in util.core_map_routed_fns() { if (!refset_has(rs0, root)) { rs0 = refset_add(rs0, root); } }
         grown = ts_grow(mod, rs0, grown.pending);
     }
     var rs: RefSet = grown.rs;

@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -247,4 +248,91 @@ func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...
 		t.Fatalf("run (%s): %v\n%s", target, err, stderr.String())
 	}
 	return strings.TrimSpace(stdout.String()), stderr.String()
+}
+
+// mapRoutingUnitDriver lowers `tally` through the typed pipeline and prints
+// whether its unit routes maps and every call the lowering makes.
+const mapRoutingUnitDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ir";
+import "./parser"; import "./lexer"; import "./irlower"; import "./checker";
+function main(): i32 {
+    var src: string = "";
+    match (read_file(args()[1])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
+    var parsed = parser.parse_module(lexer.tokenize(src));
+    var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
+    var tab = irlower.struct_tab(parser.erase_str_module(typed).structs);
+    var built = semsource.build_module(typed);
+    var call: i32 = ir.op_call_direct("", 0).kind_tag;
+    var at: i32 = 0;
+    for fd in typed.funcs {
+        if (fd.name == "tally") {
+            var p = built.decls[at];
+            if (!p.ok) { eprint(p.why); return 4; }
+            var plan = ssaunits.plan(p.func, p.modes);
+            if (!plan.ok) { eprint(plan.why); return 5; }
+            var lowered = ssarc.lower(p.func, p.modes, plan, tab, []);
+            if (!lowered.ok) { eprint(lowered.why); return 6; }
+            if (p.func.routes_maps) { print("routes_maps true"); } else { print("routes_maps false"); }
+            for op in lowered.ops { if (op.kind_tag == call) { print("call " + op.str); } }
+        }
+        at = at + 1;
+    }
+    return 0;
+}
+`
+
+const mapRoutingTally = `function tally(n: i32): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(i, i * i); i = i + 1; }
+    return m.get_or(2, 0) + m.len();
+}
+`
+
+// TestSelfHostMapRoutingFollowsUnit: a map runs on core/map only in a unit
+// that defines every core/map function routing calls. A unit without them —
+// a test driver with no module loader, a runtime helper source — keeps the
+// runtime's map, or the link names symbols nothing defines (#10510).
+func TestSelfHostMapRoutingFollowsUnit(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := copySelfHostTree(t)
+	if err := os.WriteFile(filepath.Join(dir, "map_routing_unit.fern"), []byte(mapRoutingUnitDriver), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	driver := buildSelfHostBin(t, gcc, dir, "map_routing_unit.fern", "map-routing-unit")
+	// Stand-ins for core/map: routing reads which functions the unit defines,
+	// never their bodies.
+	var stubs strings.Builder
+	for _, name := range []string{"map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
+		"__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
+		"__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
+		"__mapiter_key_impl", "__mapiter_value_impl", "__mapiter_advance_impl", "__mapiter_drop_impl"} {
+		stubs.WriteString("function " + name + "(): i32 { return 0; }\n")
+	}
+	for _, c := range []struct {
+		name, src string
+		routed    bool
+	}{
+		{"without_core_map", mapRoutingTally, false},
+		{"with_core_map", mapRoutingTally + stubs.String(), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := filepath.Join(dir, c.name+".fern")
+			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := runX86_64Bin(runner, driver, src).CombinedOutput()
+			if err != nil {
+				t.Fatalf("driver: %v\n%s", err, got)
+			}
+			out := string(got)
+			if want := fmt.Sprintf("routes_maps %v\n", c.routed); !strings.HasPrefix(out, want) {
+				t.Fatalf("want %q first:\n%s", want, out)
+			}
+			for _, sym := range []string{"call map_new_impl\n", "call __map_set_impl\n", "call __map_drop_impl\n"} {
+				if strings.Contains(out, sym) != c.routed {
+					t.Fatalf("%q present = %v, want %v:\n%s", strings.TrimSpace(sym), !c.routed, c.routed, out)
+				}
+			}
+		})
+	}
 }

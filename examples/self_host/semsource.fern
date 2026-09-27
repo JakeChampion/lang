@@ -3377,7 +3377,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
         out = out.append(ssa.SBlock { ...b, insts: insts, term: term });
     }
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] };
+    return ssasem.Func { graph: graph, values: kept, params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], routes_maps: false };
 }
 
 // ---- functions --------------------------------------------------------------
@@ -3649,7 +3649,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
     var graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [] }, modes: [], template: false, key: "", requests: [], bodyless: false };
+    return Produced { ok: false, why: why, func: ssasem.Func { graph: graph, values: [], params: [], result: t_void(), records: [], enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], routes_maps: false }, modes: [], template: false, key: "", requests: [], bodyless: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): State {
@@ -5204,6 +5204,7 @@ pub function build_module(mod: parser.Module): Built {
         at = at + 1;
     }
     var all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), names), names);
+    all = with_map_routing(all, defines_all(names, util.core_map_routed_fns()));
     decls = [];
     instances = [];
     i = 0;
@@ -5217,6 +5218,25 @@ pub function build_module(mod: parser.Module): Built {
         i = i + 1;
     }
     return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, mod.impls, util.append_all(decls, instances)) };
+}
+
+function defines_all(names: string[], wanted: string[]): boolean {
+    for n in wanted { if (util.index_of_str(names, n) < 0) { return false; } }
+    return true;
+}
+
+function with_map_routing(all: Produced[], on: boolean): Produced[] {
+    var out: Produced[] = [];
+    for p in all { out = out.append(Produced { ...p, func: ssasem.Func { ...p.func, routes_maps: on } }); }
+    return out;
+}
+
+// The module with every map on the runtime's representation, for a caller that
+// keeps an AST-lowered body beside the produced ones.
+pub function without_map_routing(b: Built): Built {
+    var decls: Produced[] = with_map_routing(b.decls, false);
+    var instances: Produced[] = with_map_routing(b.instances, false);
+    return Built { ...b, decls: decls, instances: instances };
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the

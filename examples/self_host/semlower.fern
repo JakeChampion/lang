@@ -625,6 +625,9 @@ function inferred_pass(mod: parser.Module, built: semsource.Built, r: Rows, stru
 // under the inferred modes.
 function produced_rows(mod: parser.Module, structs: irlower.StructTab): Inference {
     var built: semsource.Built = semsource.build_module(mod);
+    // The bisect knobs keep a mixed module, whose AST-lowered bodies build
+    // their maps on the runtime.
+    if (sem_ir_only() != "" || sem_ir_skip() != "") { built = semsource.without_map_routing(built); }
     util.arr_push_cliff_report("sem:built", 0);
     var rows: Rows = rows_of(mod, built, structs, no_reuse(), []);
     util.arr_push_cliff_report("sem:lowered", 0);
