@@ -11902,6 +11902,17 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!fr.ok) { return fr; }
         return fr.emit(ir.op_free());
     }
+    // __fern_box_free(data, size): core/map's handle release. The rc'd block
+    // starts 8 bytes before `data` and is `size + 8` long, so this is the raw
+    // free of that block; it leaves the same statement-position dummy 0.
+    if (cid.name == "__fern_box_free" && c.args.len() == 2) {
+        var eight: ast.Expr = ast.ExprNumber { text: "8", suffix: "", raw: "8", is_float: false, line: c.line, col: c.col };
+        var bf: LowerState = lower_expr(ast.ExprBinary { op: "-", left: c.args[0], right: eight, line: c.line, col: c.col, ty: "" }, s);
+        if (!bf.ok) { return bf; }
+        bf = lower_expr(ast.ExprBinary { op: "+", left: c.args[1], right: eight, line: c.line, col: c.col, ty: "" }, bf);
+        if (!bf.ok) { return bf; }
+        return bf.emit(ir.op_free());
+    }
     // __fern_arr_dec(v, stride) / __fern_drop_arr_ptr(v, stride):
     // core/map's value-release helpers, still NO-OPS here — the element
     // deep-drop the stride selects has no self-host equivalent, so these
