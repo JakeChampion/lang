@@ -11045,8 +11045,9 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // admission — without this arm the rebind freed the buffer
                     // shallow and stranded every element box, 47 B/round on the
                     // wasm leg only, while the exit path's $__struct_drop_<T>
-                    // already walked deep.
-                    if (strarr_ok && ft == "string[]") {
+                    // already walked deep. A nested-array field's rows take
+                    // the same walk, as in $__struct_drop_<T>.
+                    if ((strarr_ok && ft == "string[]") || irlower.is_row_array_field_type(structs, ft)) {
                         dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
                     }
                     // A replaced struct-ARRAY / enum-ARRAY field (#7067) is
