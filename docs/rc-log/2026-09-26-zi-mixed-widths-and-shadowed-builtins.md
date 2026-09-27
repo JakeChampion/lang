@@ -14,9 +14,10 @@ the typed path, and three bugs in it surfaced:
 - **A user function named like a builtin called the builtin** (#10344).
   `ssarc.call_site` chose a builtin's op by the call's name alone.
   `ssasem.Func.shadows` now lists the builtin names the module declares as
-  free functions, and a call to one is an ordinary direct call. A method
-  never shadows, as on the AST path (`is_user_fn`): std's `string.trim`
-  and its siblings stand in for the runtime helpers, which still win.
+  free functions, and a call to one is an ordinary direct call. Methods
+  are not counted: a call to std's `string.trim` and its siblings still
+  takes the runtime helper, and a user's own method of one of those names
+  is #10363.
 
 Four more files stay on the drivers: the self-host checker types an
 integer literal in a value `if` / `match` arm or a variant constructor as

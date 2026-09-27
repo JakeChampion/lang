@@ -3941,8 +3941,8 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
     return out;
 }
 
-// The builtin names a module's free function takes over. A method never does:
-// std's `string.trim` and the rest stand in for the runtime helpers, which win.
+// The builtin names a module's free function takes over. Methods are not
+// counted: a receiver-keyed builtin lowers by name (#10363).
 function shadowed_builtins(mod: parser.Module): string[] {
     var out: string[] = [];
     var keys: string[] = [];
@@ -4437,9 +4437,10 @@ function builtin_contracts(): ssasem.Contract[] {
 // The string methods the AST lowering emits an OP for rather than a call —
 // `is_str_builtin_method`'s seven. Each is keyed by its receiver the way a
 // declared method is, `string.trim`, so a text receiver finds it through the
-// owner method_call already derives. A module that DECLARES one of these wins:
-// contracts() keeps the declaration and drops the builtin, which is the same
-// precedence the AST path gives a user's own definition.
+// owner method_call already derives. contracts() keeps a declaration of one of
+// these over the builtin, but ssarc.string_method_site lowers the call by name
+// to the helper's op all the same — right for std/string's own declarations,
+// which the helpers stand in for, and wrong for a user's (#10363).
 //
 // The receiver is LENT — every one reads its bytes and keeps none of them —
 // and the three that answer text hand back a fresh string of the caller's own,
