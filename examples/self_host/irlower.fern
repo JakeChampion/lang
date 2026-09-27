@@ -18689,6 +18689,106 @@ function lower_value_stmt(st: ast.Stmt, s: LowerState, force_i64: boolean): Lowe
     return s.fail();
 }
 
+// vb_tail_index is the index of the top-level `var` a value block's body names
+// as its value (`{ …; var q = …; …; q }`), or -1.
+function vb_tail_index(body: ast.Stmt[]): i32 {
+    var n: i32 = body.len();
+    if (n < 2) { return 0 - 1; }
+    if let ast.StmtReturn(r) = body[n - 1] {
+        if let ast.ExprIdent(id) = r.value {
+            var k: i32 = n - 2;
+            while (k >= 0) {
+                if let ast.StmtVar(v) = body[k] {
+                    if (v.name == id.name) { return k; }
+                }
+                k = k - 1;
+            }
+        }
+    }
+    return 0 - 1;
+}
+
+// vb_tail_slot is the slot of that `var`, found by its binding site so a
+// retired name still resolves, or -1.
+function vb_tail_slot(s: LowerState, body: ast.Stmt[]): i32 {
+    var k: i32 = vb_tail_index(body);
+    if (k < 0) { return 0 - 1; }
+    if let ast.StmtVar(v) = body[k] { return s.slot_of_site(reclaim_site_key_of(v.name, v.line, v.col)); }
+    return 0 - 1;
+}
+
+// vb_iife_body is the body of a zero-argument IIFE, or empty.
+function vb_iife_body(e: ast.Expr): ast.Stmt[] {
+    var none: ast.Stmt[] = [];
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprLambda(lam) = c.callee {
+            if (c.args.len() == 0 && lam.params.len() == 0) { return lam.body; }
+        }
+    }
+    return none;
+}
+
+// vb_arms_defer: a defer is armed at the block's top level.
+function vb_arms_defer(body: ast.Stmt[]): boolean {
+    var armed: string[] = [];
+    for st in body { armed = armed_defer_flag_at(st, armed); }
+    return armed.len() > 0;
+}
+
+// vb_moved_tail is the body of a value block initializer and the index of the
+// local it yields and moves out (vb_tail_index), or -1 when a defer armed in
+// the block keeps the local's value.
+function vb_moved_tail(e: ast.Expr): (ast.Stmt[], i32) {
+    var body: ast.Stmt[] = vb_iife_body(e);
+    if (vb_arms_defer(body)) { return (body, 0 - 1); }
+    return (body, vb_tail_index(body));
+}
+
+// vb_after_decl: the statements between the tail local's `var` and the tail.
+function vb_after_decl(body: ast.Stmt[], k: i32): ast.Stmt[] {
+    var after: ast.Stmt[] = [];
+    var j: i32 = k + 1;
+    while (j < body.len() - 1) { after = after.append(body[j]); j = j + 1; }
+    return after;
+}
+
+// vb_tail_structarr_fresh: the block yields a local bound from a fresh
+// struct-array literal that nothing after the binding lets escape, so the
+// variable the block initializes receives the literal whole.
+function vb_tail_structarr_fresh(e: ast.Expr, fresh_ret: string[]): boolean {
+    let (body, k) = vb_moved_tail(e);
+    if (k < 0) { return false; }
+    if let ast.StmtVar(q) = body[k] {
+        var after: ast.Stmt[] = vb_after_decl(body, k);
+        var none: string[] = [];
+        return structarr_lit_is_fresh(q.init) && !structarr_unsafe_for(after, q.name, none, fresh_ret) && !structarr_elem_escapes(after, q.name, none);
+    }
+    return false;
+}
+
+// vb_tail_strarr_fresh is the string[] sibling: a literal of fresh strings.
+function vb_tail_strarr_fresh(e: ast.Expr, str_fresh: string[]): boolean {
+    let (body, k) = vb_moved_tail(e);
+    if (k < 0) { return false; }
+    if let ast.StmtVar(q) = body[k] {
+        if let ast.ExprArray(al) = q.init {
+            for el in al.elements { if (!strarr_value_is_fresh(el, str_fresh)) { return false; } }
+            var none: string[] = [];
+            return !strarr_unsafe_for(vb_after_decl(body, k), q.name, none, str_fresh, none);
+        }
+    }
+    return false;
+}
+
+// vb_tail_owns: the tail local holds a count the exit sweep would give back,
+// and no defer armed in the block reads it after the block.
+function vb_tail_owns(s: LowerState, slot: i32, body: ast.Stmt[]): boolean {
+    if (!s.is_arr_slot(slot) || s.is_borrowed_arr_slot(slot) || s.ownflag_slot_of(slot) >= 0) { return false; }
+    if (slot_list_has(s.frame.moved_elided, slot)) { return false; }
+    if (reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(slot))) { return false; }
+    return !vb_arms_defer(body);
+}
+
 // lower_value_block lowers a MULTI-statement value-position block IIFE body —
 // `[leading…, s_return(tail)]` — INLINE, the self-host analogue of the native
 // *ast.BlockExpr arm (#4521 general value blocks + #4522 control flow inside
@@ -18723,6 +18823,15 @@ function lower_value_block(body: ast.Stmt[], s: LowerState, force_i64: boolean):
                 ts = lower_stmt(body[i], ts);
                 if (!ts.ok) { return ts; }
                 i = i + 1;
+            }
+            // A tail naming an owning array local the block declared moves it:
+            // the block's value takes the local's count and the local is left
+            // null, so its rebind and exit releases find nothing.
+            var mslot: i32 = vb_tail_slot(ts, body);
+            if (mslot >= s.locals.len() && vb_tail_owns(ts, mslot, body)) {
+                ts = ts.emit(ir.op_load_local(mslot));
+                ts = ts.emit(ir.op_const_i32(0));
+                return ts.emit(ir.op_store_local(mslot));
             }
             // Final `return tail` -> `tmp = tail`, then load the temp.
             var assign: ast.Stmt = ast.StmtAssign { target: tmp, value: r.value, line: 0, col: 0, target_line: 0, target_col: 0 };
@@ -24002,25 +24111,34 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // from the source slot. (is_arr / alias_inc are already set by the
     // ExprIdent arm above.)
     struct_ty = struct_ty_from_arr_alias(se, v, struct_ty);
+    // A value block yielding its own array local hands the binding one count,
+    // moved or retained, and the local's element typing.
+    var vbl: LocalInfo = li_new("");
+    var vbq: i32 = vb_tail_slot(se, vb_iife_body(v.init));
+    if (se.is_arr_slot(vbq)) {
+        vbl = se.locals[vbq];
+        is_arr = true;
+        if (struct_ty == "") { struct_ty = vbl.struct_type; }
+    }
     // string[] tracking (element typing for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]";
+    var is_strarr: boolean = expr_is_strarr(v.init, se) || v.type_name == "string[]" || vbl.is_strarr;
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
-    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name);
+    var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name) || vbl.is_f64arr;
     // f32[] shares is_f64arr's slot and stride; this only keys `a[i]`'s method
     // dispatch (LocalInfo.is_f32arr). From the annotation, or from a literal
     // whose first element is statically f32 when there is none.
-    var is_f32arr: boolean = is_f64arr && (v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se));
+    var is_f32arr: boolean = is_f64arr && (v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se) || vbl.is_f32arr);
     // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
-    var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]";
+    var is_i64arr: boolean = expr_is_i64arr(v.init, se) || v.type_name == "i64[]" || v.type_name == "u64[]" || vbl.is_i64arr;
     // boolean[] tracking (element DISPATCH for a[i] — no width or stride
     // implication, see LocalInfo.is_boolarr). The annotation is authoritative;
     // the init predicate catches an alias (`var b = bs`) and a bool literal
     // array (`var bs = [true, false]`). #6117.
-    var is_boolarr: boolean = expr_is_boolarr(v.init, se) || v.type_name == "boolean[]";
+    var is_boolarr: boolean = expr_is_boolarr(v.init, se) || v.type_name == "boolean[]" || vbl.is_boolarr;
     // boolean SCALAR tracking (#6305) — the same dispatch-only fact one level
     // down, so `var ok = true; ok.to_json()` keys "boolean.to_json". The init
     // predicate covers the unannotated binding and an alias of another boolean
@@ -24352,6 +24470,10 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     dt = dt.add_local(tmp);
     var tmp_slot: i32 = dt.slot_of(tmp);
     dt = dt.emit(ir.op_store_local(tmp_slot));
+    // A tuple literal with only scalar elements is this bind's alone once every
+    // element is read out, so its box is released below.
+    var lit_scalar: boolean = false;
+    if let ast.ExprTuple(_) = v.init { lit_scalar = td_at.len() == 0; }
     var dk: i32 = 0;
     while (dk < dn) {
         // A NESTED position `(b,c)` is not a name: bind the inner tuple to
@@ -24432,6 +24554,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // diagnostic (#8458). A bail names the site under FERN_STRICT_IR=1
         // instead.
         if (dtag == "") { return dt.note_fail("destructured tuple element " + util.i32_to_string(dk) + " (`" + lexical.source_name(dbind) + "`) has no type: its width is unknown").fail(); }
+        lit_scalar = lit_scalar && is_scalar_type_name(dtag);
         // Emit the element read at its width (8-byte i64/f64 use the
         // matching load), then store + type the binding. An i64
         // element marks the slot i64 (so later uses route through
@@ -24525,6 +24648,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         }
         dk = dk + 1;
     }
+    if (lit_scalar) { dt = dt.release(tmp_slot, "__fern_rc_dec", "destructured-scalar-tuple-literal"); }
     return dt;
 }
 
@@ -24554,7 +24678,9 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
     // held before (a loop-local's previous iteration; null on the first
     // bind). Without the element retain the slot's exit dec freed the box out
     // of the array that still pointed at it. A fresh lambda / `__mkclo$` /
-    // closure-returning-call init is already owned at rc=1 and stores bare.
+    // closure-returning-call init is already owned at rc=1 and takes no
+    // retain, but it still releases the previous value wherever the sweep
+    // would have released it.
     // An `__env[i]` capture read is not a closure-array read — its slot is an
     // "ENVCAP:" borrow the sweep skips, so it takes no retain here either.
     var clo_alias: boolean = ident_name_or_empty(v.init).len() > 0;
@@ -24563,7 +24689,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
         if (cixn.len() > 0 && s.is_closurearr_slot(s.slot_of(cixn))) { clo_alias = true; }
     }
     if (clo_alias) { return emit_arr_store(cvb, cslot, true, true); }
-    return cvb.emit(ir.op_store_local(cslot));
+    return emit_arr_store(cvb, cslot, false, arr_slot_shallow_release_ok(cvb, cslot));
 }
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
@@ -40632,6 +40758,7 @@ function collect_fresh_strarr_in_stmt(st: ast.Stmt, body: ast.Stmt[], fresh_ret:
                     return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
                 },
                 ast.ExprCall(c) => {
+                    if (vb_tail_strarr_fresh(v.init, str_fresh)) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
                     match (c.callee) {
                         ast.ExprIdent(cid) => {
                             if ((util.index_of_str(fresh_ret, "STRARR:" + cid.name) >= 0
@@ -50624,7 +50751,7 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (structarr_lit_is_fresh(v.init)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (structarr_lit_is_fresh(v.init) || vb_tail_structarr_fresh(v.init, fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // APPEND-BUILT candidate (#6127): `var g: P[] = []` grown by
                 // `g = g.append(P { .. })`. structarr_lit_is_fresh rejects `[]`
                 // (no elements to prove fresh) — right for a literal-only

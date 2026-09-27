@@ -204,6 +204,21 @@ function clo_sole_store(ops: ir.Op[], slot: i32, k_store: i32, k_tee: i32): i32 
     return found;
 }
 
+// clo_copy_origin follows a sole store whose value is a load of another
+// single-written local back to that local's store, so a box parked in a
+// temp around the release of the slot's old value keeps its provenance.
+function clo_copy_origin(ops: ir.Op[], st: i32, k_load: i32, k_store: i32, k_tee: i32): i32 {
+    var cur: i32 = st;
+    var guard: i32 = 0;
+    while (cur > 0 && ops[cur - 1].kind_tag == k_load && guard < 8) {
+        var src: i32 = clo_sole_store(ops, ops[cur - 1].i32_imm, k_store, k_tee);
+        if (src <= 0) { return cur; }
+        cur = src;
+        guard = guard + 1;
+    }
+    return cur;
+}
+
 // clo_flat_box answers whether ops[m] closes a closure-box construction of the
 // shape both constructors emit — `const_func <fn> ; load_local … ; arr_make(k, 32)`
 // — and so names exactly one call target. A construction whose captures are
@@ -297,7 +312,7 @@ function clo_census(fns: ir.LoweredFn[]): string {
                     if (slot < fns[i].n_params) {
                         n_param = n_param + 1;
                     } else {
-                        var st: i32 = clo_sole_store(ops, slot, k_store, k_tee);
+                        var st: i32 = clo_copy_origin(ops, clo_sole_store(ops, slot, k_store, k_tee), k_load, k_store, k_tee);
                         if (st > 0 && clo_flat_box(ops, st - 1, k_make, k_load, k_func)) {
                             n_local = n_local + 1;
                         } else if (st > 0 && ops[st - 1].kind_tag == k_calld) {
