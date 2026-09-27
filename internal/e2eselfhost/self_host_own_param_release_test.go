@@ -300,14 +300,20 @@ function round(i: i32): i32 {
 			// A fresh literal at a COUNTED-RETAIN position: the callee appends
 			// it into a container it returns, so the box is shared after the
 			// call and the temp's release must skip the field walk (the
-			// rc==1 gate) and dec the box only.
+			// rc==1 gate) and dec the box only. `churn` recycles any block
+			// freed early, so a premature release reads back as exit 77 or
+			// a crash rather than as a moved count. The 200 frees are
+			// `c`'s; `hd` is never released (still a leak), so the box and
+			// its `xs` must stay live.
 			name: "counted_position_array_field_temp",
 			src: `struct H { id: i32, xs: i32[] }
 struct Hold { items: H[], n: i32 }
 @noinline
-function keep(h: H, k: i32): Hold { var items: H[] = []; items = items.append(h); return Hold { items: items, n: k }; }` +
-				ownParamReleaseMain(`var hd: Hold = keep(H { id: i, xs: [i, i + 1, i + 2] }, i); x = x + hd.n + hd.items[0].xs.len() + hd.items[0].xs[2];`),
-			want: 25, wantFrees: 300,
+function keep(h: H, k: i32): Hold { var items: H[] = []; items = items.append(h); return Hold { items: items, n: k }; }
+@noinline
+function churn(i: i32): H { return H { id: i, xs: [900, 901, 902] }; }` +
+				ownParamReleaseMain(`var hd: Hold = keep(H { id: i, xs: [i, i + 1, i + 2] }, i); var c: H = churn(i); if (hd.items[0].xs[2] != i + 2) { return 77; } x = x + hd.n + hd.items[0].xs.len() + hd.items[0].xs[2] + c.xs.len();`),
+			want: 76, wantFrees: 200,
 		},
 		{
 			// A callee that RETURNS a field of its param is not borrowable,
