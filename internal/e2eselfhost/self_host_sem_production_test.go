@@ -1570,6 +1570,27 @@ function main(): i32 {
     }
     return t % 101;
 }`},
+	// The tuple and struct-pattern desugars yield an arm's value by storing it
+	// into the match's value local, not by returning it, so the hoist of a
+	// fn-valued value block has to count that store as an arm (#10333).
+	{name: "tuple-and-struct-match-of-capturing-lambdas", atLeast: 9, noLeak: true, src: `
+struct P { a: i32, b: i32 }
+function pick(p: P, base: i32): (i32) => i32 {
+    return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) };
+}
+function main(): i32 {
+    var base: i32 = 5;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: i32 = i;
+        var g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        var h: (i32) => i32 = pick(P { a: i % 3, b: i }, base);
+        t = t + g(3) % 7 + h(3) % 5;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
 	// A record literal's type is the struct it names. It was read off the
 	// checker, which leaves a literal untyped when a field holds a value
 	// block over a template call, and the literal was refused whole even
