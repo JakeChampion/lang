@@ -20984,6 +20984,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     }
     if (!se.ok) { return se; }
     se = tail_release_snapshot_locals(r.value, se);
+    se = settle_returned_append(r.value, se);
     // Perceus move-on-return: any array local the returned value MOVES out
     // (a bare array local, an `.append` receiver, or an array under a
     // returned enum / struct-enum-field — see returned_moved_arr_slots) is
@@ -20997,6 +20998,22 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     se = emit_consumed_param_exit(se, r.value, true);
     se = emit_dec_sweep_except_list(se, moved_slots);
     return se.emit(ir.op_return());
+}
+
+// settle_returned_append: `return a.append(v)` keeps the local `a` from the exit
+// sweep (returned_moved_arr_slots), so the pushed result must take over the
+// reference `a` holds. A grow or a copy hands back a new buffer and leaves the
+// old one counted; the store releases it as a self-append rebind does (#10367).
+function settle_returned_append(e: ast.Expr, s: LowerState): LowerState {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var slot: i32 = s.slot_of(ident_name_or_empty(fa.obj));
+            if (fa.field != "append" || c.args.len() != 1 || slot < s.frame.n_params) { return s; }
+            if (!s.is_arr_slot(slot) || !arr_slot_shallow_release_ok(s, slot)) { return s; }
+            return emit_aliased_push_store(s, slot, false).emit(ir.op_load_local(slot));
+        }
+    }
+    return s;
 }
 
 function lower_stmt_if(iff: ast.StmtIf, s: LowerState): LowerState {
@@ -24606,10 +24623,12 @@ function slot_holds_counted_elems(s: LowerState, i: i32): boolean {
 // append_target_sole_owner: `name = name.append(v)` may reclaim the superseded
 // buffer on a grow (arr_push_owned) only when no other reference survives it —
 // not a local something else aliases, not a parameter (the caller's buffer,
-// #3457), and not a binding borrowed from a box it still shares with, a match
-// projection say, whose grow must leave the box's buffer to the box.
+// #3457), not a binding that shares a buffer another name still reaches
+// (`var out = acc` over a borrowed parameter, #10367), and not a binding borrowed
+// from a box it still shares with, a match projection say, whose grow must leave
+// the box's buffer to the box.
 function append_target_sole_owner(s: LowerState, name: string, slot: i32): boolean {
-    return !s.is_aliased_name(name) && slot >= s.frame.n_params && !s.is_borrowed_arr_slot(slot);
+    return !s.is_aliased_name(name) && !s.is_borrowed_name(name) && slot >= s.frame.n_params && !s.is_borrowed_arr_slot(slot);
 }
 
 function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
