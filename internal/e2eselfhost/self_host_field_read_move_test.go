@@ -16,9 +16,9 @@ import (
 // pass had this shape in strarr_own_node, and the gen1 compiler segfaulted
 // there.
 //
-// balanced marks the rows whose census reads zero. The tuple-element row
-// reports a leak: the retain is kept and nothing gives it back, which is the
-// sound direction.
+// balanced marks the rows whose census reads zero. The tuple-element and
+// branch-rebound rows report a leak: the retain is kept and nothing gives it
+// back, which is the sound direction.
 var fieldReadMoveCases = []struct {
 	name     string
 	src      string
@@ -76,6 +76,42 @@ function main(): i32 {
         acc = Acc { fr: f, m: m };
         i = i + 1;
     }
+    return acc.m + acc.fr.key.len() + acc.fr.n;
+}`, false},
+	// A view replaced by a fresh value at the top level owns that value when
+	// it moves, so the literal takes it without a retain (#10482's guard
+	// retained every moved local no sweep releases, and leaked here).
+	{"view-rebound-fresh", `struct Frame { key: string, n: i32 }
+struct Acc { fr: Frame, m: i32 }
+@noinline
+function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
+function step(n: i32, own st: Acc): Acc {
+    var fr: Frame = st.fr;
+    var m: i32 = fr.n;
+    fr = fresh(m + n);
+    return Acc { fr: fr, m: st.m + n };
+}
+function main(): i32 {
+    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    var i: i32 = 0;
+    while (i < 5) { acc = step(i, acc); i = i + 1; }
+    return acc.m + acc.fr.key.len() + acc.fr.n;
+}`, true},
+	// Replaced on one branch only: the other still holds the view, so the
+	// literal keeps its retain.
+	{"view-rebound-in-branch", `struct Frame { key: string, n: i32 }
+struct Acc { fr: Frame, m: i32 }
+@noinline
+function fresh(n: i32): Frame { return Frame { key: "f" + "", n: n }; }
+function step(n: i32, own st: Acc): Acc {
+    var fr: Frame = st.fr;
+    if (n % 2 == 0) { fr = fresh(n); }
+    return Acc { fr: fr, m: st.m + n };
+}
+function main(): i32 {
+    var acc: Acc = Acc { fr: Frame { key: "k" + "", n: 1 }, m: 0 };
+    var i: i32 = 0;
+    while (i < 5) { acc = step(i, acc); i = i + 1; }
     return acc.m + acc.fr.key.len() + acc.fr.n;
 }`, false},
 }
