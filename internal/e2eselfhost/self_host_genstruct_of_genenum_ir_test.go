@@ -15,10 +15,9 @@ import (
 // malformed key `Box__Opt[i32]` (brackets — the inner `Opt[i32]` is a generic
 // enum the struct pass's mg_ty couldn't mangle), so the clone was dropped and the
 // module bailed. Two struct-pass changes close it: sanitize_key rewrites a
-// bracketed enum arg to a symbol-safe `Box__Opt__i32`, and retype_struct_lit
-// re-keys the `Box { v: Sm(5) }` literal from its `Box[Opt[i32]]` annotation
-// (infer_lit_key can't pin the instantiation from the variant construction
-// `Sm(5)`). The enum pass — unchanged — then clones `Opt__i32` from the kept
+// bracketed enum arg to a symbol-safe `Box__Opt__i32`, and the
+// `Box { v: Sm(5) }` literal takes its instantiation from its `Box[Opt[i32]]`
+// annotation (ms_expr_to). The enum pass — unchanged — then clones `Opt__i32` from the kept
 // `v: Opt[i32]` field and keys the inner `Sm(5)`/match arms. Native
 // monomorphises these; each oracle is the native-interp value, kept <= 120.
 type genStructOfGenEnumIRCase struct {
