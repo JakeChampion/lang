@@ -76684,9 +76684,10 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 // An empty `view` means "use the module's own functions", so every caller that
 // does not thread a view is byte-identical to before.
 //
-// The lift is where every route into the AST lowering starts, a driver that
-// parses and lowers without module_with_builtins included, so its result has
-// each `str` erased.
+// The lift is on every production route into the AST lowering, including the
+// per-module and stdin drivers that never reach module_with_builtins, so its
+// result has each `str` erased. A test driver that lowers a parsed module
+// without it (irlower_run, ir_const_numeric_run) still sees `str`.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
 }

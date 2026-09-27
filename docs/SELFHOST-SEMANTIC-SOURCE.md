@@ -799,7 +799,7 @@ wasm, whose stack is small, and not natively.
 
 `internal/e2eselfhost/self_host_semsource_test.go`:
 
-Both drivers run `irlower.lift_lambdas` over the module first, the way every
+Both drivers run `irlower.lift_lambdas_typed` over the module first, the way every
 production backend reaches a tree it lowers. That is what puts a closure in
 front of the boundary at all — the lift is where a lambda becomes a hoisted
 body and a `__mkclo$` box — and it holds the two drivers to the same input the
