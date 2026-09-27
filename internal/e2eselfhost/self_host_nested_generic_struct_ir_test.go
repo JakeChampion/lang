@@ -164,6 +164,17 @@ function main(): i32 {
         None => { return 9; }
     }
 }`, 2},
+	// an array argument's parameter is the destination of its literal's
+	// elements, so each literal is laid out as a Same[i64] whatever its first
+	// field says.
+	{"literal_in_array_argument", `struct Same[T] { a: T, b: T }
+function take(xs: Same[i64][]): i32 {
+    var s: i64 = xs[0].a + xs[0].b + xs[1].a + xs[1].b;
+    return s as i32;
+}
+function main(): i32 {
+    return take([Same { a: 3, b: 4 }, Same { a: 1, b: 2 }]);
+}`, 10},
 	// a nested instantiation and a flat instantiation of the same struct
 	// coexisting (each clones independently).
 	{"coexist_with_flat", `struct Box[T] { v: T }

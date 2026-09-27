@@ -17461,6 +17461,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						// A generic struct parameter is the destination a
 						// struct literal argument is read at, as a var's is.
 						c.expectedType = pt
+					} else if _, isArray := pt.(ast.ArrayType); isArray {
+						// So is an array parameter for an array literal's elements.
+						if _, isLit := n.Args[i].(*ast.ArrayLit); isLit {
+							c.expectedType = pt
+						}
 					}
 				}
 				at = c.checkExpr(n.Args[i], s)
@@ -19208,6 +19213,10 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		// `srcEnum.Args[0]`.
 		to.Type = hint
 	}
+	if fa, ok := e.(*ast.FieldAccess); ok {
+		c.settleGenericCallByHint(fa, hint)
+		return
+	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
 		if hn.Polymorphic {
@@ -19372,6 +19381,9 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				}
 				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
 			}
+		} else if call, ok := e.(*ast.Call); ok {
+			// `var b: Box[u64] = box(1)` reaches T through the return type.
+			c.settleGenericCallByHint(call, hint)
 		} else if ie, ok := e.(*ast.IfExpr); ok {
 			// `var m: Map[K, V] = if cond { Map {...} } else
 			// { Map {...} }` — fan out the destination Map type
@@ -19546,8 +19558,8 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// literal widths and lets TypeArgs/monomorph pick the
 		// right clone.
 		//
-		// Gate on the existing TypeArgs entry being polymorphic
-		// or zero-width: a call whose args already pinned T to a
+		// Gate on the existing TypeArgs entry being polymorphic:
+		// a call whose args already pinned T to a
 		// concrete width (`id(7i64)` → T=i64) should NOT have
 		// its TypeArgs overridden by an enclosing-context hint
 		// like a CastExpr's target. Without this gate,
@@ -19558,6 +19570,8 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// type says, and only the arguments bound to THAT parameter
 		// settle: `first(1234567890123, "x"): A` binds A alone, and
 		// B's string leaves A's proof untouched (#8722).
+		c.settleGenericCallByHint(x, hn)
+	case *ast.FieldAccess:
 		c.settleGenericCallByHint(x, hn)
 	}
 }
@@ -19585,11 +19599,6 @@ func unsettledNumericShape(e ast.Expr) bool {
 	return false
 }
 
-// isPolymorphicNumeric reports whether t is an unsettled
-// numeric / float type — i.e. came from a bare literal whose
-// width hasn't been pinned yet. settleInt's generic-call case
-// uses this to decide whether the destination's width hint
-// should override the existing TypeArgs entry.
 // elemSettleable reports whether an array literal whose elements already
 // inferred as `have` may be re-stamped to the destination's `want`.
 //
@@ -19655,9 +19664,12 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 	return c.assignable(want, have)
 }
 
+// isPolymorphicNumeric reports whether t is an unsettled numeric / float type
+// — one that came from a bare literal whose width no context has pinned. A
+// declared `i32` has width 0 too, so the width does not say.
 func isPolymorphicNumeric(t ast.Type) bool {
 	if n, ok := t.(ast.NumberType); ok {
-		return n.Polymorphic || n.Width == 0
+		return n.Polymorphic
 	}
 	if f, ok := t.(ast.FloatType); ok {
 		return f.Polymorphic
@@ -19748,6 +19760,8 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 				}
 			}
 		}
+	case *ast.FieldAccess:
+		c.settleGenericCallByHint(x, hf)
 	}
 }
 
@@ -19773,6 +19787,11 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
 func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
+	if holdsPolymorphicNumeric(prior) {
+		if t := c.settledProjectionType(e); t != nil {
+			return t
+		}
+	}
 	switch x := e.(type) {
 	case *ast.Ident:
 		// A read of a literal local that the settle just fixed.
@@ -20122,7 +20141,7 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 				}
 				bound = append(bound, call.Args[j])
 				wide = wide || c.unsettledIntLitExceedsI32(call.Args[j], false)
-			} else if !ast.Equal(substituteType(p.Type, map[string]ast.Type{tp: i64}), p.Type) {
+			} else if typeMentionsParam(p.Type, tp) {
 				// `T[]`, `Option[T]`: the argument pins T on its own.
 				pinned = true
 			}
@@ -20155,18 +20174,15 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 // restamped, exactly as a scalar destination does through settleInt's Call
 // case. A parameter pinned by a typed argument, or by an argument whose
 // parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
-// argument (#8722).
-func (c *checker) settleGenericCallByHint(call *ast.Call, hint ast.Type) {
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok || c.shadowedGenericCalls[call] {
-		return
-	}
-	fn, isGen := c.info.GenericFuncs[id.Name]
-	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+// argument (#8722). A field read of the call's result — `both(1, 2).1` —
+// settles through the declared type of the field it reads (#10176).
+func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
+	call, fn, declared := c.genericCallProjection(e)
+	if call == nil {
 		return
 	}
 	for i, tp := range fn.TypeParams {
-		want, ok := c.genericReturnBinding(fn, hint, tp)
+		want, ok := c.genericResultBinding(declared, hint, tp)
 		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) {
 			continue
 		}
@@ -20181,7 +20197,7 @@ func (c *checker) settleGenericCallByHint(call *ast.Call, hint ast.Type) {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
-			} else if !ast.Equal(substituteType(p.Type, map[string]ast.Type{tp: want}), p.Type) {
+			} else if typeMentionsParam(p.Type, tp) {
 				pinned = true
 			}
 		}
@@ -20195,11 +20211,107 @@ func (c *checker) settleGenericCallByHint(call *ast.Call, hint ast.Type) {
 	}
 }
 
-// genericReturnBinding is the concrete number type the destination `hint`
-// binds type parameter `tp` to through `fn`'s return type, if any.
-func (c *checker) genericReturnBinding(fn *ast.FuncDecl, hint ast.Type, tp string) (ast.Type, bool) {
+// genericCallProjection resolves e — a generic call, or a chain of tuple or
+// struct field reads of one — to the call, its callee, and the declared type
+// of the value e reads, spelled in the callee's type parameters. The call is
+// nil when e is neither.
+func (c *checker) genericCallProjection(e ast.Expr) (*ast.Call, *ast.FuncDecl, ast.Type) {
+	switch x := e.(type) {
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok || c.shadowedGenericCalls[x] {
+			return nil, nil, nil
+		}
+		fn, isGen := c.info.GenericFuncs[id.Name]
+		if !isGen || len(x.TypeArgs) != len(fn.TypeParams) {
+			return nil, nil, nil
+		}
+		return x, fn, fn.ReturnType
+	case *ast.FieldAccess:
+		call, fn, t := c.genericCallProjection(x.Target)
+		if call == nil {
+			return nil, nil, nil
+		}
+		if ft := c.declaredFieldType(t, x.Field); ft != nil {
+			return call, fn, ft
+		}
+	}
+	return nil, nil, nil
+}
+
+// declaredFieldType is the type of field `field` of the declared type t: a
+// tuple element, or a struct field with the struct's arguments substituted.
+func (c *checker) declaredFieldType(t ast.Type, field string) ast.Type {
+	switch tt := t.(type) {
+	case ast.TupleType:
+		if idx, err := strconv.Atoi(field); err == nil && idx >= 0 && idx < len(tt.Elems) {
+			return tt.Elems[idx]
+		}
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		sub := make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = tt.Args[i]
+		}
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				return substituteType(f.Type, sub)
+			}
+		}
+	}
+	return nil
+}
+
+// settledProjectionType is the type a generic call, or a field read of one,
+// has once its TypeArgs are settled; nil while a type argument it reads is
+// still polymorphic.
+func (c *checker) settledProjectionType(e ast.Expr) ast.Type {
+	call, fn, declared := c.genericCallProjection(e)
+	if call == nil {
+		return nil
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		if isPolymorphicNumeric(call.TypeArgs[i]) && typeMentionsParam(declared, tp) {
+			return nil
+		}
+		sub[tp] = call.TypeArgs[i]
+	}
+	return c.resolveProj(substituteType(declared, sub))
+}
+
+// holdsPolymorphicNumeric reports whether t is, or has an element or argument
+// that is, a numeric type no context has settled yet.
+func holdsPolymorphicNumeric(t ast.Type) bool {
+	switch tt := t.(type) {
+	case ast.TupleType:
+		return slices.ContainsFunc(tt.Elems, holdsPolymorphicNumeric)
+	case ast.ArrayType:
+		return holdsPolymorphicNumeric(tt.Elem)
+	case ast.SliceType:
+		return holdsPolymorphicNumeric(tt.Elem)
+	case ast.StructType:
+		return slices.ContainsFunc(tt.Args, holdsPolymorphicNumeric)
+	case ast.EnumType:
+		return slices.ContainsFunc(tt.Args, holdsPolymorphicNumeric)
+	}
+	return isPolymorphicNumeric(t)
+}
+
+// typeMentionsParam reports whether t names type parameter tp anywhere.
+func typeMentionsParam(t ast.Type, tp string) bool {
+	return !ast.Equal(substituteType(t, map[string]ast.Type{tp: ast.BoolType{}}), t)
+}
+
+// genericResultBinding is the concrete number type the destination `hint`
+// binds type parameter `tp` to through `declared`, the callee's type for the
+// value the destination receives, if any.
+func (c *checker) genericResultBinding(declared ast.Type, hint ast.Type, tp string) (ast.Type, bool) {
 	sub := map[string]ast.Type{}
-	if !c.unifyType(fn.ReturnType, hint, sub) {
+	if !c.unifyType(declared, hint, sub) {
 		return nil, false
 	}
 	want, ok := sub[tp]
@@ -20245,23 +20357,20 @@ func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 		}
 	case *ast.BlockExpr:
 		return c.unsettledIntLitExceedsI32(x.Tail, false)
-	case *ast.Call:
+	case *ast.Call, *ast.FieldAccess:
 		// A generic call is polymorphic only while its `T` is pinned by
 		// nothing but literal-shaped arguments, so those arguments are
-		// the tree — the same ones settleInt's Call case settles.
-		id, ok := x.Callee.(*ast.Ident)
-		if !ok || c.shadowedGenericCalls[x] {
-			return false
-		}
-		fn, isGen := c.info.GenericFuncs[id.Name]
-		if !isGen {
+		// the tree — the same ones settleInt settles through the call or
+		// a field read of its result.
+		call, fn, declared := c.genericCallProjection(x)
+		if call == nil {
 			return false
 		}
 		for i, p := range fn.Params {
-			if i >= len(x.Args) {
+			if i >= len(call.Args) {
 				break
 			}
-			if _, ok := p.Type.(ast.ParamType); ok && c.unsettledIntLitExceedsI32(x.Args[i], false) {
+			if pt, ok := p.Type.(ast.ParamType); ok && typeMentionsParam(declared, pt.Name) && c.unsettledIntLitExceedsI32(call.Args[i], false) {
 				return true
 			}
 		}
