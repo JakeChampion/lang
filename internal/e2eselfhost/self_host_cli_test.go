@@ -1293,6 +1293,30 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("check-overreject-not-silent", func(t *testing.T) {
+		// #4346: a native-valid program the self-host checker cannot type is
+		// over-rejected, and piece 1 surfaces a best-effort `error[type]` hint so
+		// the rejection is never silent. An immediately-invoked lambda is such a
+		// program: its value has no inferred type. The native `fern` stays the
+		// full oracle (this asserts non-silence, not a code).
+		srcPath := filepath.Join(dir, "overreject.fern")
+		src := "function main(): i32 { return ((x: i32): i32 => { return x * 2; })(4); }\n"
+		if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		combined, _ := exec.Command(fernBin, "-check", srcPath).CombinedOutput()
+		_, code := runDriver(t, "-check", srcPath)
+		if code != 1 {
+			t.Errorf("-check on an over-rejected program exited %d, want 1", code)
+		}
+		if len(strings.TrimSpace(string(combined))) == 0 {
+			t.Errorf("-check on an over-rejected program produced no diagnostic (silent exit 1) — #4346 fix regressed")
+		}
+		if !strings.Contains(string(combined), "error[type]") {
+			t.Errorf("-check over-reject hint = %q, want it to contain \"error[type]\"", combined)
+		}
+	})
+
 	t.Run("check-selfhost-no-e001", func(t *testing.T) {
 		// The self-host modules are well-typed real code (they compile and
 		// self-host), full of bare-identifier reads — locals, params, loop
