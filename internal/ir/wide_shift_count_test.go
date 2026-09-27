@@ -3,6 +3,7 @@ package ir_test
 import (
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -17,19 +18,18 @@ import (
 // width, which is why the interpreter, x86-64 and arm64 all agreed on the
 // right answer while only wasm broke.
 //
-// The gap was narrow: a parameter or an ordinary local reaches the shift
-// through a checker-inserted cast and was already extended, and a constant
-// count takes emitShlByConst, fixed earlier for exactly this reason. A LOOP
-// VARIABLE goes through neither — it arrives as a bare 32-bit local.
+// A loop variable used as the count takes the shift's width itself
+// (#10123), so it reaches the shift as a 64-bit local. The extend is still
+// what carries a count a use has already fixed at i32.
 //
 // Asserted on the op stream rather than on wasm bytes because the invariant is
 // "the count reaches the shift at the shift's width" — one target happens to
 // reject the violation and the others silently tolerate it, and the invariant
 // is what should be pinned.
 
-// extendPrecedesWideShift reports whether every 64-bit shift in fn is
-// immediately preceded by a widening extend.
-func extendPrecedesWideShift(fn *ir.Func) bool {
+// countIsWide reports whether every 64-bit shift in fn takes a 64-bit count:
+// a widening extend, an i64 constant, or a load of a 64-bit local.
+func countIsWide(fn *ir.Func) bool {
 	seen := false
 	for i, op := range fn.Ops {
 		if op.Kind != ir.OpShl && op.Kind != ir.OpShrS {
@@ -42,22 +42,36 @@ func extendPrecedesWideShift(fn *ir.Func) bool {
 		if i == 0 {
 			return false
 		}
-		prev := fn.Ops[i-1].Kind
-		if prev != ir.OpExtendI32S && prev != ir.OpExtendI32U && prev != ir.OpConstI64 {
+		prev := fn.Ops[i-1]
+		switch prev.Kind {
+		case ir.OpExtendI32S, ir.OpExtendI32U, ir.OpConstI64:
+		case ir.OpLoadLocal:
+			if !wideLocal(fn, prev.I32) {
+				return false
+			}
+		default:
 			return false
 		}
 	}
 	return seen
 }
 
+func wideLocal(fn *ir.Func, idx int32) bool {
+	i := int(idx)
+	var t ast.Type
+	switch {
+	case i < len(fn.Params):
+		t = fn.Params[i].Type
+	case i-len(fn.Params) < len(fn.Locals):
+		t = fn.Locals[i-len(fn.Params)].Type
+	default:
+		return false
+	}
+	nt, ok := t.(ast.NumberType)
+	return ok && nt.Width == 64
+}
+
 func TestWideShiftCountIsWidened(t *testing.T) {
-	// Every case here uses a LOOP VARIABLE as the count, because that is the
-	// shape that actually reproduced. A parameter or an ordinary local reaches
-	// the shift through a checker-inserted cast and was already extended; a
-	// count the folder resolves to a constant takes emitShlByConst, which has
-	// emitted an i64 const all along. Only the loop variable arrives as a bare
-	// 32-bit local with a 64-bit shift above it — confirmed by building each
-	// spelling for wasm against a pre-fix compiler and validating the module.
 	for _, tc := range []struct{ name, src string }{
 		{"left shift", `
 function main(): i32 {
@@ -80,10 +94,17 @@ function main(): i32 {
     for i in 0..4 { t = t + (u << i); }
     return t as i32;
 }`},
+		{"count fixed at i32 first", `
+function main(): i32 {
+    var s: i64 = 1;
+    var t: i64 = 0;
+    for i in 0..4 { var j: i32 = i; t = t + (s << i); }
+    return t as i32;
+}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ip := lowerForTest(t, tc.src+"\n")
-			if !extendPrecedesWideShift(funcByName(ip, "main")) {
+			if !countIsWide(funcByName(ip, "main")) {
 				t.Error("a 64-bit shift takes its count at 32 bits — wasm rejects the module it produces, and the natives only work by ignoring the width")
 			}
 		})
