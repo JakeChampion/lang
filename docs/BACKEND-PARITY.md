@@ -227,9 +227,17 @@ socket is unwatched before it is closed, since on wasm the pollables a watch
 holds are children of its streams. Behind it, `tcp_recv_into(fd, buf)` is
 the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
 -EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
-which on wasm is every socket, else -errno. The Driver seam wraps the four
-as `watch`, `unwatch`, `wait` and `close` (std/async), std/sim scripts
-readiness for its leg with `ready_at`, and the serve loops run on it.
+which on wasm is every socket, else -errno. A signal is a readiness event
+too: `reactor_ctl` op 4 watches signal `fd` and answers a descriptor op 5
+wants back, and the set reports a delivery as the pair (-signal, 1). On
+Linux the signal is blocked and read through a signalfd the set holds
+beside -signal in its event's data word; on Darwin it is ignored, so its
+default action cannot end the process, and kqueue's EVFILT_SIGNAL records
+each delivery; the interpreter turns os/signal deliveries into bytes on a
+pipe the set watches; wasm, which has no signals, answers -ENOTSUP. The
+Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
+`unwatch_signal` and `close` (std/async), std/sim scripts readiness for
+its leg with `ready_at`, and the serve loops run on it.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

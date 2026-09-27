@@ -149,11 +149,16 @@ connection, the waits that report the accept, the bytes, the writable side
 and the peer's close, `tcp_recv_into`'s bytes and its -EAGAIN when nothing
 is queued, the quiet timeout, and the -EINVAL of a refused op or event
 buffer; a wait is checked for the pair it must contain, since a host may
-report readiness spuriously. `TestSimReactor{Interp,X86_64}` pin the sim
-leg of the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual
-clock advancing to a scripted readiness or the timeout, interest bits
-selecting it, an unwatch dropping it). The serve loops run on the reactor,
-so every serve, fetch and handler-census gate below exercises it.
+report readiness spuriously. `TestReactorSignal{Interp,X86_64,Arm64,Wasm}`,
+`TestArm64DarwinReactorSignal`, `TestSelfHostReactorSignal` and its Darwin
+twin run `e2eharness.ReactorSignalProbe`: SIGUSR1 watched, delivered by a
+child shell (subprocess on the interpreter, fork and exec natively) and
+reported as (-signal, 1) twice over, unwatched and watched again, and the
+-ENOTSUP wasm answers. `TestSimReactor{Interp,X86_64}` pin the sim leg of
+the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
+advancing to a scripted readiness or the timeout, interest bits selecting
+it, an unwatch dropping it). The serve loops run on the reactor, so every
+serve, fetch and handler-census gate below exercises it.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body

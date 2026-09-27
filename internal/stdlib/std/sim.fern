@@ -228,6 +228,14 @@ impl async.Driver for Sim {
         self.readiness.set(kept);
         return out;
     }
+    // A signal is the descriptor -sig: `ready_at(-sig, at_ms, 1)` scripts
+    // its delivery.
+    function watch_signal(self: Self, sig: i32): i32 {
+        return self.watch(0 - sig, 1);
+    }
+    function unwatch_signal(self: Self, sig: i32): i32 {
+        return self.unwatch(0 - sig);
+    }
     function close(self: Self): i32 {
         return 0;
     }

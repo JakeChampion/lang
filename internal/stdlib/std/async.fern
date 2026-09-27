@@ -25,6 +25,8 @@
 // case, not a hand-duplicated `…Str` twin. This is the shape that
 // drops the i32-throughout restriction of the old `std/task` runtime.
 
+import "core/int";
+import "std/string";
 import "std/time";
 
 // A pending computation yielding a value of type `T`.
@@ -57,8 +59,12 @@ pub enum Future[T] {
 // ready descriptors, readiness 1 readable, 2 writable and 4 an error or
 // hang-up: empty on the timeout (-1 waits without one) and on an error. A
 // host may report readiness spuriously, so a reader reads until -EAGAIN;
-// a descriptor is unwatched before it is closed. `close()` releases the
-// set.
+// a descriptor is unwatched before it is closed. `watch_signal(sig)` makes
+// a signal a readiness event, reported as the pair (-sig, 1) and no longer
+// ending the process (signalfd behind a blocked signal on Linux, kqueue's
+// EVFILT_SIGNAL behind an ignored one on Darwin; -ENOTSUP on wasm, which
+// has no signals), and `unwatch_signal(sig)` restores its default.
+// `close()` releases the set.
 pub trait Driver {
     function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
     function now_ns(self: Self): i64;
@@ -67,6 +73,8 @@ pub trait Driver {
     function watch(self: Self, fd: i32, interest: i32): i32;
     function unwatch(self: Self, fd: i32): i32;
     function wait(self: Self, max: i32, timeout_ms: i32): i32[];
+    function watch_signal(self: Self, sig: i32): i32;
+    function unwatch_signal(self: Self, sig: i32): i32;
     function close(self: Self): i32;
 }
 
@@ -75,11 +83,28 @@ pub trait Driver {
 // native, wasi:io/poll on wasm, the -1 stubs on interp), and the reactor
 // is the `reactor_*` floor (epoll, kqueue, a table of wasi pollables),
 // made on the first watch so a driver that only polls costs nothing.
-pub struct RealDriver { reactor: Cell[i32] }
+// `signals` is the watched signals as rows `sig:descriptor;`, the
+// descriptor being what the floor answered for the watch and wants back
+// for the unwatch.
+pub struct RealDriver { reactor: Cell[i32], signals: Cell[string] }
 
 // real_driver() — the Driver the public combinators run on.
 pub function real_driver(): RealDriver {
-    return RealDriver { reactor: cell_new(-1) };
+    return RealDriver { reactor: cell_new(-1), signals: cell_new("") };
+}
+
+// The descriptor a watched signal's row holds, -1 when it is not watched.
+function __real_signal_fd(d: RealDriver, sig: i32): i32 {
+    for row in d.signals.get().split(";") {
+        var parts: string[] = row.split(":");
+        if (parts.len() == 2 && parts[0] == int.int_to_string(sig)) {
+            match (int.parse_int_radix(parts[1], 10)) {
+                Some(v) => { return v; },
+                None => { return -1; },
+            }
+        }
+    }
+    return -1;
 }
 
 function __real_reactor(d: RealDriver): i32 {
@@ -127,10 +152,30 @@ impl Driver for RealDriver {
         if (n <= 0) { return none; }
         return events.take(n * 2);
     }
+    function watch_signal(self: Self, sig: i32): i32 {
+        if (__real_signal_fd(self, sig) >= 0) { return 0; }
+        var r: i32 = __real_reactor(self);
+        if (r < 0) { return r; }
+        var sfd: i32 = reactor_ctl(r, 4, sig, 0);
+        if (sfd < 0) { return sfd; }
+        self.signals.set(self.signals.get() + int.int_to_string(sig) + ":" + int.int_to_string(sfd) + ";");
+        return 0;
+    }
+    function unwatch_signal(self: Self, sig: i32): i32 {
+        var sfd: i32 = __real_signal_fd(self, sig);
+        if (sfd < 0) { return 0; }
+        var kept: string = "";
+        for row in self.signals.get().split(";") {
+            if (row.len() > 0 && !row.starts_with(int.int_to_string(sig) + ":")) { kept = kept + row + ";"; }
+        }
+        self.signals.set(kept);
+        return reactor_ctl(self.reactor.get(), 5, sig, sfd);
+    }
     function close(self: Self): i32 {
         var r: i32 = self.reactor.get();
         if (r < 0) { return 0; }
         self.reactor.set(-1);
+        self.signals.set("");
         return reactor_ctl(r, 3, 0, 0);
     }
 }

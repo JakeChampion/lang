@@ -593,6 +593,8 @@ pub function sysno(t: string, name: string): string {
         if (name == "epoll_create1") { return "291"; }
         if (name == "epoll_ctl") { return "233"; }
         if (name == "epoll_pwait") { return "281"; }
+        if (name == "signalfd4") { return "289"; }
+        if (name == "rt_sigprocmask") { return "14"; }
         if (name == "wait4") { return "61"; }
         if (name == "socket") { return "41"; }
         if (name == "bind") { return "49"; }
@@ -797,6 +799,8 @@ pub function sysno(t: string, name: string): string {
     if (name == "epoll_create1") { return "20"; }
     if (name == "epoll_ctl") { return "21"; }
     if (name == "epoll_pwait") { return "22"; }
+    if (name == "signalfd4") { return "74"; }
+    if (name == "rt_sigprocmask") { return "135"; }
     if (name == "wait4") { return "260"; }
     if (name == "socket") { return "198"; }
     if (name == "bind") { return "200"; }
@@ -1888,12 +1892,21 @@ pub function rt_src_reactor_new(t: string): string {
 // One struct kevent (32 bytes) per filter: EV_ADD with EV_ENABLE (5) for
 // a filter wanted, EV_DELETE (2) for one not, where deleting a filter never
 // added is ENOENT and not an error.
+// One struct kevent (32 bytes) at `ch` for the descriptor, filter and
+// flags named by the locals given; fflags, data and udata zero.
+function kevent_change_src(ch: string, fd: string, filter: string, flags: string): string {
+    return "__raw_store_ptr(" + ch + ", 0, " + fd + " as usize); __raw_store8(" + ch + ", 8, " + filter + " & 255); __raw_store8(" + ch + ", 9, (" + filter + " >> 8) & 255); __raw_store8(" + ch + ", 10, " + flags + "); __raw_store8(" + ch + ", 11, 0); "
+        + "__raw_store_ptr(" + ch + ", 2, 0); __raw_store_ptr(" + ch + ", 3, 0); __raw_store8(" + ch + ", 12, 0); __raw_store8(" + ch + ", 13, 0); __raw_store8(" + ch + ", 14, 0); __raw_store8(" + ch + ", 15, 0);";
+}
+
+// One struct kevent per filter: EV_ADD with EV_ENABLE (5) for a filter
+// wanted, EV_DELETE (2) for one not, where deleting a filter never added
+// is ENOENT and not an error.
 function kqueue_watch_src(t: string): string {
     return "var ch: usize = __raw_scratch(32); var r: i32 = 0; var filter: i32 = 0 - 1; var bit: i32 = 1; "
         + "while (bit <= 2 && r >= 0) { var flags: i32 = 2; if ((interest & bit) != 0) { flags = 5; } "
-        + "__raw_store_ptr(ch, 0, fd as usize); __raw_store8(ch, 8, filter & 255); __raw_store8(ch, 9, (filter >> 8) & 255); __raw_store8(ch, 10, flags); __raw_store8(ch, 11, 0); "
-        + "__raw_store_ptr(ch, 2, 0); __raw_store_ptr(ch, 3, 0); __raw_store8(ch, 12, 0); __raw_store8(ch, 13, 0); __raw_store8(ch, 14, 0); __raw_store8(ch, 15, 0); "
-        + "var e: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; "
+        + kevent_change_src("ch", "fd", "filter", "flags")
+        + " var e: i32 = __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; "
         + "if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; } filter = filter - 1; bit = bit + bit; } return r;";
 }
 
@@ -1912,11 +1925,34 @@ function epoll_watch_src(t: string): string {
         + "if (r == 0 - 17) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 3, fd as i64, ev as i64) as i32; } } return r;";
 }
 
+// The signal pollable: op 4 watches signal `fd` and answers the descriptor
+// op 5 wants back in `arg`. Linux blocks the signal and puts a signalfd in
+// the set with -signal beside the descriptor in the event's data word;
+// Darwin ignores the signal (a zeroed 32-byte act with SIG_IGN at 0) and
+// records each delivery through EVFILT_SIGNAL (-3).
+function signal_watch_src(t: string): string {
+    if (t == "arm64-darwin") {
+        return "if (op == 4) { var act: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(act, z, 0); z = z + 1; } __raw_store8(act, 0, 1); __syscall4(" + sysno(t, "sigaction") + ", fd as i64, act as i64, 0, 8); "
+            + "var ch: usize = __raw_scratch(32); var sig_fd: i32 = fd; var sig_filter: i32 = 0 - 3; var sig_flags: i32 = 5; " + kevent_change_src("ch", "sig_fd", "sig_filter", "sig_flags") + " return __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch as i64, 1, 0, 0, 0) as i32; } "
+            + "if (op == 5) { var ch2: usize = __raw_scratch(32); var del_fd: i32 = fd; var del_filter: i32 = 0 - 3; var del_flags: i32 = 2; " + kevent_change_src("ch2", "del_fd", "del_filter", "del_flags") + " __syscall6(" + sysno(t, "kevent") + ", r_fd as i64, ch2 as i64, 1, 0, 0, 0); "
+            + "var act2: usize = __raw_scratch(32); var z2: i32 = 0; while (z2 < 32) { __raw_store8(act2, z2, 0); z2 = z2 + 1; } return __syscall4(" + sysno(t, "sigaction") + ", fd as i64, act2 as i64, 0, 8) as i32; } ";
+    }
+    var data_at: string = "8";
+    if (t == "x86_64") { data_at = "4"; }
+    return "if (op == 4 || op == 5) { if (fd <= 0 || fd > 64) { return 0 - 22; } var set: usize = __raw_scratch(8); var w: i32 = 0; while (w < 8) { __raw_store8(set, w, 0); w = w + 1; } var bit: i32 = fd - 1; var bit_off: i32 = 0; if (fd > 32) { bit = fd - 33; bit_off = 4; } __raw_store8(set, bit_off + bit / 8, 1 << (bit % 8)); "
+        + "if (op == 4) { var blocked: i32 = __syscall4(" + sysno(t, "rt_sigprocmask") + ", 0, set as i64, 0, 8) as i32; if (blocked < 0) { return blocked; } var sfd: i32 = __syscall4(" + sysno(t, "signalfd4") + ", 0 - 1, set as i64, 8, 526336) as i32; if (sfd < 0) { return sfd; } "
+        + "var ev: usize = __raw_scratch(16); var e: i32 = 0; while (e < 16) { __raw_store8(ev, e, 0); e = e + 1; } __raw_store8(ev, 0, 1); var neg: i32 = 0 - fd; __raw_store8(ev, " + data_at + ", neg & 255); __raw_store8(ev, " + data_at + " + 1, (neg >> 8) & 255); __raw_store8(ev, " + data_at + " + 2, (neg >> 16) & 255); __raw_store8(ev, " + data_at + " + 3, (neg >> 24) & 255); "
+        + "__raw_store8(ev, " + data_at + " + 4, sfd & 255); __raw_store8(ev, " + data_at + " + 5, (sfd >> 8) & 255); __raw_store8(ev, " + data_at + " + 6, (sfd >> 16) & 255); __raw_store8(ev, " + data_at + " + 7, (sfd >> 24) & 255); "
+        + "var added: i32 = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 1, sfd as i64, ev as i64) as i32; if (added < 0) { __syscall3(" + sysno(t, "close") + ", sfd as i64, 0, 0); return added; } return sfd; } "
+        + "var ev2: usize = __raw_scratch(16); __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, arg as i64, ev2 as i64); __syscall3(" + sysno(t, "close") + ", arg as i64, 0, 0); return __syscall4(" + sysno(t, "rt_sigprocmask") + ", 1, set as i64, 0, 8) as i32; } ";
+}
+
 pub function rt_src_reactor_ctl(t: string): string {
     var watch: string = epoll_watch_src(t);
     if (t == "arm64-darwin") { watch = kqueue_watch_src(t); }
     return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
         + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
+        + signal_watch_src(t)
         + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 3; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
@@ -1930,6 +1966,7 @@ function epoll_wait_src(t: string): string {
         + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * " + size + "; var bits: i32 = __raw_load8(buf, e); var ready: i32 = 0; "
         + "if ((bits & 1) != 0) { ready = ready | 1; } if ((bits & 4) != 0) { ready = ready | 2; } if ((bits & 24) != 0) { ready = ready | 4; } "
         + "var fd: i32 = __raw_load8(buf, e + " + data_at + ") | (__raw_load8(buf, e + " + data_at + " + 1) << 8) | (__raw_load8(buf, e + " + data_at + " + 2) << 16) | (__raw_load8(buf, e + " + data_at + " + 3) << 24); "
+        + "if (fd < 0) { var sfd: i32 = __raw_load8(buf, e + " + data_at + " + 4) | (__raw_load8(buf, e + " + data_at + " + 5) << 8) | (__raw_load8(buf, e + " + data_at + " + 6) << 16) | (__raw_load8(buf, e + " + data_at + " + 7) << 24); var drain: usize = __raw_scratch(128); __syscall3(" + sysno(t, "read") + ", sfd as i64, drain as i64, 128); ready = 1; } "
         + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
         + "var buf_own: string = __raw_string(buf, cap * " + size + "); return n;";
 }
@@ -1941,6 +1978,7 @@ function kqueue_wait_src(t: string): string {
         + "var b: usize = __raw_arr_ptr(events); var i: i32 = 0; while (i < n) { var e: i32 = i * 32; var ready: i32 = 2; if (__raw_load8(buf, e + 8) == 255) { ready = 1; } "
         + "if ((__raw_load8(buf, e + 11) & 192) != 0) { ready = ready | 4; } "
         + "var fd: i32 = __raw_load8(buf, e) | (__raw_load8(buf, e + 1) << 8) | (__raw_load8(buf, e + 2) << 16) | (__raw_load8(buf, e + 3) << 24); "
+        + "if (__raw_load8(buf, e + 8) == 253) { ready = 1; fd = 0 - fd; } "
         + "__raw_store_ptr(b, i * 2 + 1, fd as usize); __raw_store_ptr(b, i * 2 + 2, ready as usize); i = i + 1; } "
         + "var buf_own: string = __raw_string(buf, cap * 32 + 16); return n;";
 }

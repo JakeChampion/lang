@@ -1289,8 +1289,11 @@ old `concurrent { … }` / `await` keyword surface.
   the readiness a test scripts with `ready_at(fd, at_ms, bits)`, its
   virtual clock advancing to the earliest one an interest selects. A host
   may report readiness spuriously, so a reader reads until -EAGAIN, and a
-  descriptor is unwatched before it is closed. `std/tcp`'s serve loops run
-  on it.
+  descriptor is unwatched before it is closed. `watch_signal(sig)` makes a
+  signal a readiness event, reported as the pair (-sig, 1) and no longer
+  ending the process (-ENOTSUP on wasm), `unwatch_signal(sig)` restores
+  its default; in the sim `ready_at(-sig, at_ms, 1)` scripts a delivery.
+  `std/tcp`'s serve loops run on it.
 
 ### `std/platform`
 

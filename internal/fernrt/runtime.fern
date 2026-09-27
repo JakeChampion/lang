@@ -448,6 +448,20 @@ function __sys_epoll_pwait(): i32 {
 }
 function __sys_kqueue(): i32 { return 362; }
 function __sys_kevent(): i32 { return 363; }
+function __sys_rt_sigaction(): i32 {
+    if (target_arch() == "x86-64") { return 13; }
+    if (target_os() == "darwin") { return 46; }
+    return 134;
+}
+function __sys_rt_sigprocmask(): i32 {
+    if (target_arch() == "x86-64") { return 14; }
+    if (target_os() == "darwin") { return 48; }
+    return 135;
+}
+function __sys_signalfd4(): i32 {
+    if (target_arch() == "x86-64") { return 289; }
+    return 74;
+}
 
 // struct epoll_event is packed on x86-64 (12 bytes, data at 4) and
 // naturally aligned on arm64 (16 bytes, data at 8).
@@ -524,8 +538,97 @@ function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
     return r as i32;
 }
 
+// A signal as a readiness event (op 4 watches signal `fd`, op 5 stops with
+// the descriptor op 4 answered in `arg`): the set reports it as the pair
+// (-signal, 1). On Linux the signal is blocked and read through a
+// signalfd the set holds in its event's data word beside -signal; on
+// Darwin it is ignored, so its default action cannot end the process,
+// and kqueue's EVFILT_SIGNAL records each delivery.
+
+// A zeroed 32-byte act with the handler at 0, which both kernels read
+// that way: SIG_IGN is 1, SIG_DFL 0.
+function __sig_disposition(sig: i32, handler: i32): i32 {
+    var act: usize = __alloc(32);
+    var z: usize = 0;
+    while (z < 32) {
+        __store_i32(act + z, 0);
+        z = z + 4;
+    }
+    __store_i32(act, handler);
+    var r: i64 = __syscall4(__sys_rt_sigaction(), sig as i64, act as i64, 0, 8);
+    __free(act, 32);
+    return r as i32;
+}
+
+// The signal's bit in a fresh 8-byte kernel sigset.
+function __sigset_of(sig: i32): usize {
+    var set: usize = __alloc(8);
+    __store_i32(set, 0);
+    __store_i32(set + 4, 0);
+    if (sig <= 32) { __store_i32(set, 1 << (sig - 1)); } else { __store_i32(set + 4, 1 << (sig - 33)); }
+    return set;
+}
+
+// rt_sigprocmask(how, {sig}, 0, 8): SIG_BLOCK is 0, SIG_UNBLOCK 1.
+function __sig_mask_change(sig: i32, how: i32): i32 {
+    var set: usize = __sigset_of(sig);
+    var r: i64 = __syscall4(__sys_rt_sigprocmask(), how as i64, set as i64, 0, 8);
+    __free(set, 8);
+    return r as i32;
+}
+
+function __signal_watch(r: i64, sig: i32): i32 {
+    if (sig <= 0 || sig > 64) { return 0 - 22; }
+    if (target_os() == "darwin") {
+        __sig_disposition(sig, 1);
+        var ch: usize = __alloc(32);
+        __kevent_change(ch, sig, 0 - 3, 5);
+        var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
+        __free(ch, 32);
+        return e as i32;
+    }
+    var blocked: i32 = __sig_mask_change(sig, 0);
+    if (blocked < 0) { return blocked; }
+    var set: usize = __sigset_of(sig);
+    var sfd: i64 = __syscall4(__sys_signalfd4(), 0 - 1, set as i64, 8, 526336);
+    __free(set, 8);
+    if (sfd < 0) { return sfd as i32; }
+    var ev: usize = __alloc(16);
+    __store_i32(ev, 1);
+    __store_i32(ev + (__epoll_data_at() as usize), 0 - sig);
+    __store_i32(ev + (__epoll_data_at() as usize) + 4, sfd as i32);
+    var added: i64 = __syscall4(__sys_epoll_ctl(), r, 1, sfd, ev as i64);
+    __free(ev, 16);
+    if (added < 0) {
+        __syscall3(__sys_close(), sfd, 0, 0);
+        return added as i32;
+    }
+    return sfd as i32;
+}
+
+function __signal_unwatch(r: i64, sig: i32, sfd: i32): i32 {
+    if (target_os() == "darwin") {
+        var ch: usize = __alloc(32);
+        __kevent_change(ch, sig, 0 - 3, 2);
+        __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
+        __free(ch, 32);
+        return __sig_disposition(sig, 0);
+    }
+    var ev: usize = __alloc(16);
+    __store_i32(ev, 0);
+    __store_i32(ev + 4, 0);
+    __store_i32(ev + 8, 0);
+    __store_i32(ev + 12, 0);
+    __syscall4(__sys_epoll_ctl(), r, 2, sfd as i64, ev as i64);
+    __free(ev, 16);
+    __syscall3(__sys_close(), sfd as i64, 0, 0);
+    return __sig_mask_change(sig, 1);
+}
+
 function __fern_reactor_ctl(r: i32, op: i32, fd: i32, arg: i32): i32 {
     if (op == 3) { return __syscall3(__sys_close(), r as i64, 0, 0) as i32; }
+    if (op == 4) { return __signal_watch(r as i64, fd); }
+    if (op == 5) { return __signal_unwatch(r as i64, fd, arg); }
     if (op != 1 && op != 2) { return 0 - 22; }
     var interest: i32 = arg & 3;
     if (op == 2) { interest = 0; }
@@ -553,7 +656,15 @@ function __epoll_wait_into(ep: i64, events: usize, cap: i32, timeout_ms: i32): i
         if ((bits & 1) != 0) { ready = ready | 1; }
         if ((bits & 4) != 0) { ready = ready | 2; }
         if ((bits & 24) != 0) { ready = ready | 4; }
-        __reactor_event(events, i, __load_i32(e + (__epoll_data_at() as usize)), ready);
+        var fd: i32 = __load_i32(e + (__epoll_data_at() as usize));
+        if (fd < 0) {
+            // A signal: drain its signalfd so the delivery is consumed.
+            var drain: usize = __alloc(128);
+            __syscall3(__sys_read(), __load_i32(e + (__epoll_data_at() as usize) + 4) as i64, drain as i64, 128);
+            __free(drain, 128);
+            ready = 1;
+        }
+        __reactor_event(events, i, fd, ready);
         i = i + 1;
     }
     __free(buf, cap * size);
@@ -576,9 +687,15 @@ function __kqueue_wait_into(kq: i64, events: usize, cap: i32, timeout_ms: i32): 
     while (i < n) {
         var e: usize = buf + ((i * 32) as usize);
         var ready: i32 = 2;
+        var fd: i32 = __load_i32(e);
         if (__load_u8(e + 8) == 255) { ready = 1; }
+        if (__load_u8(e + 8) == 253) {
+            // EVFILT_SIGNAL: the ident is the signal.
+            ready = 1;
+            fd = 0 - fd;
+        }
         if ((__load_u8(e + 11) & 192) != 0) { ready = ready | 4; }
-        __reactor_event(events, i, __load_i32(e), ready);
+        __reactor_event(events, i, fd, ready);
         i = i + 1;
     }
     __free(buf, cap * 32 + 16);
