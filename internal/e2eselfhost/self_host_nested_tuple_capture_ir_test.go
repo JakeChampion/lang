@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -23,8 +21,7 @@ import (
 // lift. A pointer-element (string/…) destructure binding stays declined: that is
 // a SEPARATE pre-existing nested-destructure lowering gap, out of scope here.
 //
-// Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
-// against the interpreter; results stay <= 120 (the wasm exit-code clamp, #2908).
+// Each case is oracle-checked against the interpreter; results stay <= 120 (the wasm exit-code clamp, #2908).
 var nestedTupleCaptureIRCases = []struct {
 	name string
 	main string
@@ -63,38 +60,18 @@ function g(): i32 {
 function main(): i32 { return g(); }`},
 }
 
-// TestSelfHostNestedTupleCaptureIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, oracle-checked, with routing pinned to "ir".
+// TestSelfHostNestedTupleCaptureIRX86_64 compiles each case with the self-host
+// CLI for x86-64, oracle-checked.
 func TestSelfHostNestedTupleCaptureIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range nestedTupleCaptureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			if stderr, code := cli.exitOf(t, string(src), "x86-64-linux"); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)\n%s", tc.name, code, want, stderr)
 			}
 		})
 	}

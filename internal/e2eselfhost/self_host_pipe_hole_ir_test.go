@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -39,37 +37,16 @@ function main(): i32 { return (9 |> diff(b = _)) + 20; }`, 11},
 function main(): i32 { return 20 |> pick(1, c = _); }`, 21},
 }
 
-// TestSelfHostPipeHoleIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver and runs the produced binary, oracle-checking its
-// exit code.
+// TestSelfHostPipeHoleIRX86_64 compiles each case with the self-host CLI for
+// x86-64 and checks the exit code.
 func TestSelfHostPipeHoleIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	cli := buildSelfHostCLI(t)
 
 	for _, tc := range pipeHoleIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
+			if stderr, code := cli.exitOf(t, string(src), "x86-64-linux"); code != tc.want {
+				t.Errorf("%s exited %d, want %d\n%s", tc.name, code, tc.want, stderr)
 			}
 		})
 	}

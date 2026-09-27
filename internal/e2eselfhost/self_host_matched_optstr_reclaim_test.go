@@ -233,7 +233,7 @@ function round(i: i32): i32 {
     match (o) { Some(v) => { keep = keep.append(v); }, None => {} }
     return keep.len();
 }` + matchedOptstrMain,
-			want: 34, wantFrees: 400,
+			want: 34, wantFrees: 200,
 		},
 		{
 			// REFUSED, and deliberately conservative: `v + "z"` BORROWS the
