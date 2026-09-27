@@ -41,27 +41,53 @@ pub enum Future[T] {
 }
 
 // Driver — the waiting seam (docs/DST-PLATFORM-BRIEF.md). Everything
-// nondeterministic the combinators do funnels through these four
-// primitives; substituting them (std/sim) makes gather / race /
-// with_deadline fully deterministic on every backend, including the
-// interpreter. `poll_ready(toks, timeout_ms)` returns the index of the
-// first ready token, or -1 on timeout / error / no readiness — the
-// same contract as the `poll` builtin.
+// nondeterministic the combinators and the serve loop do funnels through
+// these primitives; substituting them (std/sim) makes gather / race /
+// with_deadline and a reactor loop fully deterministic on every backend,
+// including the interpreter.
+//
+// The first four are the one-shot waits: `poll_ready(toks, timeout_ms)`
+// returns the index of the first ready token, or -1 on timeout / error /
+// no readiness, the contract of the `poll` builtin.
+//
+// The rest are the reactor (#9853): a readiness set that outlives one
+// wait. `watch(fd, interest)` registers a descriptor for the interest bits
+// (1 readable, 2 writable) or changes them, `unwatch(fd)` drops it, and
+// `wait(max, timeout_ms)` is the (fd, readiness) pairs of up to `max`
+// ready descriptors, readiness 1 readable, 2 writable and 4 an error or
+// hang-up: empty on the timeout (-1 waits without one) and on an error. A
+// host may report readiness spuriously, so a reader reads until -EAGAIN;
+// a descriptor is unwatched before it is closed. `close()` releases the
+// set.
 pub trait Driver {
     function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32;
     function now_ns(self: Self): i64;
     function timer(self: Self, ns: i64): i32;
     function drop_token(self: Self, tok: i32): i32;
+    function watch(self: Self, fd: i32, interest: i32): i32;
+    function unwatch(self: Self, fd: i32): i32;
+    function wait(self: Self, max: i32, timeout_ms: i32): i32[];
+    function close(self: Self): i32;
 }
 
-// RealDriver — the production Driver: each method is exactly the
-// builtin the combinator loops used to call directly (poll(2) /
-// ppoll(2) on native, wasi:io/poll on wasm, the -1 stubs on interp).
-pub struct RealDriver { }
+// RealDriver — the production Driver: each wait is exactly the builtin
+// the combinator loops used to call directly (poll(2) / ppoll(2) on
+// native, wasi:io/poll on wasm, the -1 stubs on interp), and the reactor
+// is the `reactor_*` floor (epoll, kqueue, a table of wasi pollables),
+// made on the first watch so a driver that only polls costs nothing.
+pub struct RealDriver { reactor: Cell[i32] }
 
 // real_driver() — the Driver the public combinators run on.
 pub function real_driver(): RealDriver {
-    return RealDriver { };
+    return RealDriver { reactor: cell_new(-1) };
+}
+
+function __real_reactor(d: RealDriver): i32 {
+    var r: i32 = d.reactor.get();
+    if (r >= 0) { return r; }
+    r = reactor_new();
+    if (r >= 0) { d.reactor.set(r); }
+    return r;
 }
 
 impl Driver for RealDriver {
@@ -76,6 +102,36 @@ impl Driver for RealDriver {
     }
     function drop_token(self: Self, tok: i32): i32 {
         return wasm_pollable_drop(tok);
+    }
+    function watch(self: Self, fd: i32, interest: i32): i32 {
+        var r: i32 = __real_reactor(self);
+        if (r < 0) { return r; }
+        return reactor_ctl(r, 1, fd, interest);
+    }
+    function unwatch(self: Self, fd: i32): i32 {
+        var r: i32 = self.reactor.get();
+        if (r < 0) { return 0; }
+        return reactor_ctl(r, 2, fd, 0);
+    }
+    function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
+        var none: i32[] = [];
+        var r: i32 = __real_reactor(self);
+        if (r < 0 || max <= 0) { return none; }
+        var events: i32[] = [];
+        var i: i32 = 0;
+        while (i < max * 2) {
+            events = events.append(0);
+            i = i + 1;
+        }
+        var n: i32 = reactor_wait(r, events, timeout_ms);
+        if (n <= 0) { return none; }
+        return events.take(n * 2);
+    }
+    function close(self: Self): i32 {
+        var r: i32 = self.reactor.get();
+        if (r < 0) { return 0; }
+        self.reactor.set(-1);
+        return reactor_ctl(r, 3, 0, 0);
     }
 }
 

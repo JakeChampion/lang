@@ -36,11 +36,12 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	}
 	end += start
 	body := src[start:end]
-	if strings.Count(body, "while (true)") != 1 || strings.Count(body, "tcp_close(fd);") != 1 {
+	const finished = "if (done) { conns = __serve_close(drv, conns, at); }"
+	if strings.Count(body, "while (true)") != 1 || strings.Count(body, finished) != 1 {
 		t.Fatal("accept loop changed; update its bounded census fixture")
 	}
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("var completed: i32 = 0;\n    while (completed < %d)", rounds), 1)
-	body = strings.Replace(body, "tcp_close(fd);", "tcp_close(fd);\n        completed = completed + 1;", 1)
+	body = strings.Replace(body, finished, finished+"\n            if (done) { completed = completed + 1; }", 1)
 	return src[:start] + body + src[end:] + `
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");

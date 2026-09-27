@@ -90,7 +90,7 @@ ready index, and zero/infinite timeouts. Every case requires balanced
 `FERN_LEAKCHECK` counts and zero live bytes; descriptor reuse checks that
 the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
-P0's persistent worker-owned reactor remains separate work.
+the persistent reactor has its own gates below.
 
 ## std/net addresses and errors
 
@@ -141,7 +141,20 @@ run `e2eharness.UnixSocketProbe` and `NetUnixProbe` over a socket file
 under /tmp (a listener, a connect, both directions through the tcp verbs,
 the refused second listener, the `ENOENT` of a removed path and the
 `ENAMETOOLONG` of a path too long for the address); `TestWASMUnixSocketRefused`
-pins the E066 the `unix` capability draws on wasm32-wasi. `TestSelfHostSocketCtl` compiles them with the production self-host
+pins the E066 the `unix` capability draws on wasm32-wasi.
+`TestReactorFloor{Interp,X86_64,Arm64,Wasm}`, `TestArm64DarwinReactorFloor`,
+`TestSelfHostReactorFloor` (x86-64, arm64 and wasm) and its Darwin twin run
+`e2eharness.ReactorProbe`: a readiness set watching a listener and a
+connection, the waits that report the accept, the bytes, the writable side
+and the peer's close, `tcp_recv_into`'s bytes and its -EAGAIN when nothing
+is queued, the quiet timeout, and the -EINVAL of a refused op or event
+buffer; a wait is checked for the pair it must contain, since a host may
+report readiness spuriously. `TestSimReactor{Interp,X86_64}` pin the sim
+leg of the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual
+clock advancing to a scripted readiness or the timeout, interest bits
+selecting it, an unwatch dropping it). The serve loops run on the reactor,
+so every serve, fetch and handler-census gate below exercises it.
+`TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486);
@@ -183,7 +196,7 @@ lowest index. A failed registration must not hide a ready descriptor or block
 on another idle one, even with an infinite timeout. Repeated calls must balance
 allocations and frees, leave zero live bytes and produce no RC underflow. These gates
 cover temporary poll buffers; they do not establish leak freedom for a whole
-HTTP server or replace the persistent-reactor work in #9853.
+HTTP server.
 
 ## WASI poll storage
 
@@ -220,7 +233,7 @@ census; this does not claim zero live WebAssembly linear memory.
 The native handler fixture catches missing builtin contracts or ambiguous
 deadline operand widths that otherwise move the handler back to AST ownership.
 It does not establish bootstrap compiler leak freedom, zero allocations per
-request, persistent-reactor behavior or throughput.
+request or throughput.
 
 ## WASI socket lifecycles
 
