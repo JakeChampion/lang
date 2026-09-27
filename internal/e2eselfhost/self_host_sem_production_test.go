@@ -1591,6 +1591,40 @@ function main(): i32 {
     }
     return t % 101;
 }`},
+	// A value block's result is typed from its checked tail, not the parser's
+	// syntactic guess, so a tail naming a local bound from a match still says
+	// the struct array it holds (#10332): lifted when the block captures
+	// nothing, inlined when it does, and a single struct as well as an array.
+	{name: "value-block-tail-local-struct-array", atLeast: 2, noLeak: true, src: `
+struct P { x: i32, y: i32 }
+function main(): i32 {
+    var ps = { var j = 1; var q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
+    return ps[0].x * 10 + ps[0].y;
+}`},
+	{name: "value-block-tail-local-struct", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var r = { var q = if (i % 2 == 0) { R{name: "a" + "b", n: i} } else { R{name: "c", n: 1} }; q };
+        t = t + r.n + r.name.len();
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var rs = { var q = if (i % 2 == 0) { [R{name: "a" + "b", n: i}] } else { [R{name: "c", n: 1}, R{name: "d", n: 2}] }; q };
+        t = t + rs[rs.len() - 1].n + rs[0].name.len();
+        i = i + 1;
+    }
+    return t % 101;
+}`},
 	// A record literal's type is the struct it names. It was read off the
 	// checker, which leaves a literal untyped when a field holds a value
 	// block over a template call, and the literal was refused whole even

@@ -19502,9 +19502,44 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     ls = ls.bind(lm.params[i].name, pts[i]);
     i = i + 1;
   }
+  // A value block's result spelling is the parser's guess from the tail's
+  // syntax, so a checked tail that names a whole type replaces it.
   var typed: ast.ExprLambda = lm;
-  if (lm.ret_type.len() == 0) { typed = inferred_lambda_result(lm, ls); }
+  if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) { typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0); }
   return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
+// names_whole_type reports whether `t` is a complete type: nothing unknown in
+// it, and no generic union named with fewer arguments than it declares — a
+// bare `None` checks as the `Option` family, which no binding has.
+function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
+  if (type_contains_unknown(t)) { return false; }
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      if (u.args.len() < union_arity(s, u.name)) { return false; }
+      for arg in u.args { if (!names_whole_type(arg, s)) { return false; } }
+      return true;
+    },
+    typeinfo.TypeArray(a) => { return names_whole_type(a.elem, s); },
+    typeinfo.TypeTuple(tt) => {
+      for elem in tt.elements { if (!names_whole_type(elem, s)) { return false; } }
+      return true;
+    },
+    typeinfo.TypeMap(m) => { return names_whole_type(m.key, s) && names_whole_type(m.value, s); },
+    typeinfo.TypeStruct(sd) => {
+      for arg in sd.args { if (!names_whole_type(arg, s)) { return false; } }
+      return true;
+    },
+    _ => { return true; }
+  }
+  return true;
+}
+
+// union_arity is how many type arguments the union `name` takes.
+function union_arity(s: Scope, name: string): i32 {
+  if (name == "Option") { return 1; }
+  if (name == "Result") { return 2; }
+  return s.lookup_union(name).type_params.len();
 }
 
 // A lambda spelling no result is hoisted as a declaration spelling none, and
@@ -19515,10 +19550,11 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
 // empty: a result nested inside another type that holds a function, which no
 // spelling carries, and a bare literal, which adapts to the width of whatever
 // receives the lambda.
-function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope): ast.ExprLambda {
+function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean): ast.ExprLambda {
   var (returned, at) = first_returned(lm.body, body_scope);
   if (bare_return(returned) || int_literal_tree(returned)) { return lm; }
   var t: typeinfo.Type = check_expr(returned, at);
+  if (need_whole && !names_whole_type(t, at)) { return lm; }
   if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return lm; } }
   if (is_unknown(t)) { return lm; }
   if let typeinfo.TypeFunc(_) = t {
