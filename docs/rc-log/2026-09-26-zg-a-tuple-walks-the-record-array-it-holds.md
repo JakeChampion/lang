@@ -84,7 +84,11 @@ counted-parameter tiers credit it: the array-literal element for `PCNT:` and
 `ECNT:` (except in a returned literal), and the append for `ECNT:` as well as
 `PCNT:`. `stash_fresh_struct_arg`
 now checks `ECNT:`, so the caller releases a temporary enum argument after the
-call. A temporary passed to such a callee balances on every lowering (33 / 33).
+call. At an `ECNT:` position that includes a payload-carrying
+constructor temp passed to a method or to a callee returning a struct
+(`h.mk(Flag.On([i]))`): the credit already proves the callee only stores it
+counted, so `fresh_enum_arg_type`'s free-function, `i32`-result restriction
+does not apply there. A temporary passed to such a callee balances on every lowering (33 / 33).
 On main it balanced only because the callee freed it, and it leaked 33 / 27 with
 a semantic callee.
 

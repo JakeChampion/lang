@@ -36737,7 +36737,7 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     var boxonly: boolean = false;
     if (ty.len() == 0) { boxonly = counted_ret_call_arg(arg, s); }
     if (ty.len() == 0 && !boxonly) {
-        var ety: string = fresh_enum_arg_type(s, arg, callee);
+        var ety: string = fresh_enum_arg_type(s, arg, callee, enum_param_counted_at(s.frame.sigs.param_counted, callee, ai));
         if (ety.len() == 0) { return StructArgStash { state: s, slot: 0 - 1 }; }
         var ean: string = "$lse" + util.i32_to_string(s.locals.len());
         var est: LowerState = s.add_local(ean);
@@ -36780,8 +36780,9 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
 // position the caller checked is enough. An rc-payload box's release is deep,
 // so it is admitted only where the callee returns no pointer at all and so
 // cannot hand a payload back uncounted — the gap the struct stash above closes
-// with its field-type set.
-function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): string {
+// with its field-type set — or where the position is `counted` ("ECNT:"), whose
+// callee only stores the parameter counted and never reads a payload out.
+function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string, counted: boolean): string {
     // A variant construction written at the call site (`f(Pr(Ok2(1), Ok2(2)))`)
     // is a sole-owned box whose payloads are fresh (fresh_scalar_enum_init /
     // fresh_rcpayload_enum_init), so it releases on the same terms as a fresh
@@ -36790,13 +36791,13 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     if (sctor.len() > 0) { return sctor; }
     var ctor: string = fresh_rcpayload_enum_init(arg, s.frame.structs, s.frame.sigs.str_fresh_ret_fns, [], false);
     if (ctor.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return ctor;
     }
     match (arg) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee); },
+                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee, counted); },
                 _ => { return ""; }
             }
         },
@@ -36805,11 +36806,11 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     return "";
 }
 
-function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string): string {
+function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string, counted: boolean): string {
     if (s.slot_of(name) >= 0) { return ""; }
     var rce: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name);
     if (rce.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return rce;
     }
     if (enum_fresh_ret_call(arg, s.frame.sigs.return_fresh_struct_ret_fns)) {

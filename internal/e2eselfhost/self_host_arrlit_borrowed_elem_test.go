@@ -130,6 +130,26 @@ function main(): i32 {
     return s;
 }
 `, 18, nil},
+	// The same at a METHOD's counted position whose result is a struct: the
+	// counted store is the proof, whatever the callee returns.
+	{"temp_enum_to_method", `enum Flag { On(i32[]), Off }
+struct Flags { n: i32, fs: Flag[] }
+function (h: Flags) mk(f: Flag): Flags { return Flags { n: h.n + 1, fs: h.fs.append(f) }; }
+function round(i: i32): i32 {
+    var h: Flags = Flags { n: 0, fs: [] };
+    h = h.mk(Flag.On([i, 4]));
+    h = h.mk(Flag.Off);
+    var v: i32 = 0;
+    match (h.fs[0]) { Flag.On(q) => { v = q[1] + h.n; }, Flag.Off => {} }
+    return v;
+}
+function main(): i32 {
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) { s = s + round(i); i = i + 1; }
+    return s;
+}
+`, 18, nil},
 }
 
 var arrlitBorrowedElemLowerings = []struct{ name, env string }{
