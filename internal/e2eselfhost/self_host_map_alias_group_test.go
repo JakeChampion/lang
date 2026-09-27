@@ -162,7 +162,6 @@ function main(): i32 {
     while (j < seen.len()) { acc = acc + seen[j].get_or("k", 0); j = j + 1; }
     return acc + __rc_underflow_count() * 100;
 }`,
-			// `seen` starts as `[]`, one block since #10408 where it was two.
 			want: 6, allocs: 36, frees: 21,
 		},
 		{

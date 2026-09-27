@@ -53,8 +53,6 @@ import (
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
 // twice its pin.
-// An empty `[]` is one allocation with room for its first push (#10408), so
-// each round's source array costs one block where it cost two.
 
 type strArrFieldSourceCase struct {
 	name   string
