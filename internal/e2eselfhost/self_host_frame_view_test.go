@@ -104,9 +104,7 @@ func TestSelfHostFrameViews(t *testing.T) {
 func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	if err := os.WriteFile(filepath.Join(dir, "semsource_rc.fern"), []byte(semsourceRCDriver), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeSemanticDriver(t, dir)
 	path := filepath.Join(dir, "program.fern")
 	if err := os.WriteFile(path, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
