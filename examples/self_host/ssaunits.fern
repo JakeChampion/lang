@@ -674,6 +674,7 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
 function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     if (!narrow_scalar(t)) { return ""; }
     var d: ssa.SInst = defs[v];
+    if (d.kind_tag == 1 && d.str != "") { return small_decimal(d.str); }
     if (d.kind_tag == 1 || d.kind_tag == 2) { return util.i32_to_string(d.imm); }
     if (d.str != "-" || !ssasem.is_i32(t)) { return ""; }
     var k: ssa.SInst = defs[d.args[d.args.len() - 1]];
@@ -682,6 +683,18 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     var zero: ssa.SInst = defs[d.args[0]];
     if (d.kind_tag != 9 || zero.kind_tag != 1 || zero.imm != 0) { return ""; }
     return util.i32_to_string(0 - k.imm);
+}
+
+// A literal carried as its source text (an unsigned one), admitted only when
+// it is plain decimal below 2^31, where its word reads the same at any width.
+function small_decimal(text: string): string {
+    if (text.len() == 0 || text.len() > 9) { return ""; }
+    var i: i32 = 0;
+    while (i < text.len()) {
+        if (text[i] < b'0' || text[i] > b'9') { return ""; }
+        i = i + 1;
+    }
+    return text;
 }
 
 function narrow_scalar(t: typeinfo.Type): boolean {
