@@ -80,4 +80,4 @@ struct HttpResponse { status: i32, body: string, headers: HeaderMap }
 // poll either (#5686). `version` is the bag's ABI version; `mode` and `sink`
 // carry the mock seam (Rec §6) — a recording bag is mode 1 over a cell that
 // std/platform's capability methods append to instead of reaching the host.
-struct Platform { version: i32, mode: i32, sink: Cell[string] }
+struct Platform { version: i32, mode: i32, sink: Cell[string], handle: i32 }

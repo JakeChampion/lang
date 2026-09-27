@@ -360,11 +360,12 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns 
 }
 
 // __host_platform — the bag the accept loops hand every handler: the host
-// mode, and a sink nothing writes to. Recording is a MockPlatform's job; it
-// builds a bag over its own cell (std/mock_platform). Built once per loop
-// rather than per request, since no request can change it.
-function __host_platform(): Platform {
-    return Platform { version: 1, mode: 0, sink: cell_new("") };
+// mode, a sink nothing writes to, and the worker's reactor as its handle.
+// Recording is a MockPlatform's job; it builds a bag over its own cell
+// (std/mock_platform). Built once per loop rather than per request, since
+// no request can change it.
+function __host_platform(handle: i32): Platform {
+    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: handle };
 }
 
 // __serve_loop — the HTTP/1.1 reactor loop factored out of `tcp_serve`
@@ -378,10 +379,10 @@ function __host_platform(): Platform {
 // -errno like a failed bind. `recv_deadline` bounds each connection's
 // request read (see `tcp_serve_deadline`).
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
-    var plat: Platform = __host_platform();
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {
@@ -431,10 +432,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // request sees the value the previous one returned.
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
     var st: S = init;
-    var plat: Platform = __host_platform();
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {

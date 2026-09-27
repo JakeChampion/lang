@@ -8687,12 +8687,15 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // (#5686).
     // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
     // version, `mode` + `sink` the mock seam (Rec §6) — a recording bag is
-    // mode 1 over a cell std/platform's capability methods append to.
+    // mode 1 over a cell std/platform's capability methods append to — and
+    // `handle` the worker-owned runtime handle (the serving worker's
+    // reactor, 0 outside one).
     if (!name_declared(structs, "Platform")) {
         var pltf: StructFieldDecl[] = [];
         pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "", fn_param_types: "" });
         pltf = pltf.append(StructFieldDecl { name: "mode", type_name: "i32", fn_ret: "", fn_param_types: "" });
         pltf = pltf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
+        pltf = pltf.append(StructFieldDecl { name: "handle", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
     // std/time's seven date/time types are compiler built-ins (registered in

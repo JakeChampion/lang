@@ -4391,7 +4391,7 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 func TestPlatformConstructorNotSynthesisedOverUserDefinition(t *testing.T) {
 	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
-function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new("") }; }
+function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new(""), handle: 0 }; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }`)
