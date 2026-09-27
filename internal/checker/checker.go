@@ -1978,6 +1978,21 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
 		Result: ast.NumberType{},
 	}
+	// The Unix-domain sockets (#9853): unix_listen(path, backlog) is a
+	// stream socket listening at the filesystem path, unix_connect(path)
+	// one connected to the listener there; each a descriptor or -errno,
+	// and both -ENAMETOOLONG for a path longer than the address holds.
+	// tcp_accept, tcp_recv, tcp_send and tcp_close take the descriptors.
+	// Native only: neither WASI world has a filesystem namespace for
+	// sockets, so the `unix` capability refuses them there.
+	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["unix_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv(fd, max): u8[] — one blocking read of at most max
 	// bytes; socket data is raw bytes (D9, #5714). The empty array
 	// signals EOF / error / closed alike.

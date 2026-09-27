@@ -316,6 +316,77 @@ function __connect_v4(fd: i64, host_be: i32, port: i32): i64 {
     return r;
 }
 
+// A sockaddr_un in a fresh 112-byte block: the family head (Darwin leads
+// with sun_len), the path's bytes and a terminator. The path fits, since
+// the callers refuse one longer than __sun_path_max() first.
+function __sockaddr_un(path: string): usize {
+    var n: i32 = path.len();
+    var sa: usize = __alloc(112);
+    if (target_os() == "darwin") {
+        __store_u8(sa, n + 3);
+        __store_u8(sa + 1, 1);
+    } else {
+        __store_u8(sa, 1);
+        __store_u8(sa + 1, 0);
+    }
+    var scratch: usize = __alloc(16);
+    var p: usize = __str_bytes(path, scratch);
+    var i: usize = 0;
+    while (i < (n as usize)) {
+        __store_u8(sa + 2 + i, __load_u8(p + i));
+        i = i + 1;
+    }
+    __store_u8(sa + 2 + (n as usize), 0);
+    __free(scratch, 16);
+    return sa;
+}
+// The longest path a sockaddr_un holds with its terminator: 108 bytes on
+// Linux, 104 on Darwin.
+function __sun_path_max(): i32 {
+    if (target_os() == "darwin") { return 103; }
+    return 107;
+}
+function __enametoolong(): i32 {
+    if (target_os() == "darwin") { return 63; }
+    return 36;
+}
+
+// __fern_unix_listen(path, backlog) is a stream socket listening at the
+// filesystem path with that accept queue, or -errno with the socket closed
+// again; a path longer than a sockaddr_un holds is -ENAMETOOLONG before any
+// socket exists. The path is not unlinked first: a held one is -EADDRINUSE.
+function __fern_unix_listen(path: string, backlog: i32): i32 {
+    if (path.len() > __sun_path_max()) { return 0 - __enametoolong(); }
+    var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_un(path);
+    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, (path.len() + 3) as i64);
+    if (r >= 0) { r = __syscall3(__sys_listen(), fd, backlog as i64, 0); }
+    __free(sa, 112);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
+}
+
+// __fern_unix_connect(path) is a stream socket connected to the listener at
+// the filesystem path, or -errno with the socket closed again (-ENOENT when
+// nothing is there).
+function __fern_unix_connect(path: string): i32 {
+    if (path.len() > __sun_path_max()) { return 0 - __enametoolong(); }
+    var fd: i64 = __syscall3(__sys_socket(), 1, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_un(path);
+    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, (path.len() + 3) as i64);
+    __free(sa, 112);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
+}
+
 // __fern_tcp_connect_with(host_be, port, nonblocking) is a socket
 // connected to the IPv4 address packed in network order, or -errno with the
 // socket closed again. With `nonblocking` (the builtin's boolean, an i32

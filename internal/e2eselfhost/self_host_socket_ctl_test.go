@@ -147,3 +147,53 @@ func composeSelfHostWat(t *testing.T, watPath string) *exec.Cmd {
 	}
 	return exec.Command("wasmtime", "run", "-S", "inherit-network", comp)
 }
+
+// The self-host twin of internal/e2e's TestUnixSocket*: the Unix-domain
+// sockets compiled by the production self-host driver on the native targets
+// it serves here. There is no wasm leg: the unix capability refuses the
+// builtins there on both compilers.
+func TestSelfHostUnixSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux native targets")
+	}
+	checkSelfHostUnixSocket(t, []string{"x86-64-linux", "arm64-linux"})
+}
+
+func TestSelfHostArm64DarwinUnixSocket(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires native Apple Silicon")
+	}
+	checkSelfHostUnixSocket(t, []string{"arm64-darwin"})
+}
+
+func checkSelfHostUnixSocket(t *testing.T, targets []string) {
+	t.Helper()
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "fern.fern")
+	host := "x86-64-linux"
+	if runtime.GOARCH == "arm64" {
+		host = "arm64-" + runtime.GOOS
+	}
+	driver := filepath.Join(dir, "fern")
+	if out, err := exec.Command(buildLangBinForInterp(t), "-target", host, "-o", driver, filepath.Join(dir, "fern.fern")).CombinedOutput(); err != nil {
+		t.Fatalf("build compiler: %v\n%s", err, out)
+	}
+	probes := []struct {
+		name string
+		src  string
+	}{
+		{"raw", e2eharness.UnixSocketProbe()},
+		{"std_net", e2eharness.NetUnixProbe()},
+	}
+	stdlib, err := filepath.Abs("../stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range targets {
+		for _, p := range probes {
+			t.Run(target+"/"+p.name, func(t *testing.T) {
+				checkSelfHostSocketProbe(t, driver, stdlib, target, p.src)
+			})
+		}
+	}
+}

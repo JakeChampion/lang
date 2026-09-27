@@ -1104,6 +1104,14 @@ The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
 - `local_port(sock)` and `close(sock)` — the bound port, and the release,
   of a socket of either kind.
 
+Unix-domain sockets, native only (no WASI world has a filesystem namespace
+for sockets, so a program naming them does not compile for wasm):
+`listen_unix(path, backlog)` is a stream listener at the path (`AddrInUse`
+while a socket file is there, `Other(ENAMETOOLONG)` past 107 bytes on
+Linux and 103 on Darwin), `connect_unix(path)` a connection to it
+(`Other(ENOENT)` when nothing is there), and `accept(sock)` the next queued
+connection of any listener.
+
 Connecting: `connect(addr)` is a connection to a `SocketAddr` or the error
 the dial reported; `connect_start(addr)` is a non-blocking socket whose
 connect is under way, and `connect_result(sock)` says how it ended,

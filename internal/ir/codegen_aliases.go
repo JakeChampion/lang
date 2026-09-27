@@ -61,6 +61,8 @@ var CodegenAliases = map[string]string{
 	"tcp_send":         "__fern_tcp_send",
 	"udp_send":         "__fern_udp_send",
 	"tcp_connect_with": "__fern_tcp_connect_with",
+	"unix_listen":      "__fern_unix_listen",
+	"unix_connect":     "__fern_unix_connect",
 	"udp_bind":         "__fern_udp_bind",
 	"udp_connect":      "__fern_udp_connect",
 	"udp_sendto":       "__fern_udp_sendto",

@@ -151,6 +151,12 @@ var gatedBuiltins = map[string]string{
 	"tcp_socket_ctl":   "tcp",
 	"tcp_connect_with": "tcp",
 
+	// Unix-domain sockets: a filesystem namespace for socket endpoints,
+	// which neither WASI world has, where `tcp` is the network stack
+	// wasi:sockets does provide.
+	"unix_listen":  "unix",
+	"unix_connect": "unix",
+
 	// Filesystem.
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",

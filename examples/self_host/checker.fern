@@ -3825,6 +3825,8 @@ function builtin_sigs(): string[] {
     "udp_send(string, i32, string): i32",
     "udp_sendto(i32, i32, i32, string): i32",
     "umask(i32): i32",
+    "unix_connect(string): i32",
+    "unix_listen(string, i32): i32",
     "uname_field(i32): string",
     "wasm_block(i32): i32",
     "wasm_poll(i32[]): i32",

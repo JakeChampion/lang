@@ -135,7 +135,13 @@ control op 5 (a started connect settled by asking until it is no longer
 `-ECONNREFUSED` a connect to the closed port ends with, whether it fails
 as it starts or once it settles), and `e2eharness.NetConnectProbe` through
 `connect_start`, `connect_result` and `connect`. All six check the
-received bytes, not only their count. `TestSelfHostSocketCtl` compiles them with the production self-host
+received bytes, not only their count. `TestUnixSocket{Interp,X86_64,Arm64}`,
+`TestArm64DarwinUnixSocket`, `TestSelfHostUnixSocket` and its Darwin twin
+run `e2eharness.UnixSocketProbe` and `NetUnixProbe` over a socket file
+under /tmp (a listener, a connect, both directions through the tcp verbs,
+the refused second listener, the `ENOENT` of a removed path and the
+`ENAMETOOLONG` of a path too long for the address); `TestWASMUnixSocketRefused`
+pins the E066 the `unix` capability draws on wasm32-wasi. `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486);

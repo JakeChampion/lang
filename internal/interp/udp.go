@@ -2,6 +2,7 @@ package interp
 
 import (
 	"fmt"
+	"net"
 	"syscall"
 )
 
@@ -204,4 +205,62 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 		return negErrno(err), true
 	}
 	return Number(0), true
+}
+
+// The Unix-domain sockets go through the net package like the tcp ones,
+// so tcp_accept, tcp_recv, tcp_send and tcp_close take them. A path longer
+// than a sockaddr_un holds is refused with the natives' errno, where the
+// net package would report EINVAL.
+const sunPathMax = 107
+
+func builtinUnixListen(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("unix_listen: expected 2 args, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("unix_listen: expected string path arg, got %T", args[0])
+	}
+	if _, ok := args[1].(Number); !ok {
+		return nil, fmt.Errorf("unix_listen: expected number backlog arg, got %T", args[1])
+	}
+	if len(path) > sunPathMax {
+		return Number(-int64(syscall.ENAMETOOLONG)), nil
+	}
+	ln, err := tcpNetListen("unix", string(path))
+	if err != nil {
+		return negErrno(err), nil
+	}
+	// The natives leave the socket file for the program to remove; the
+	// net package would unlink it on close.
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	if i.tcpListeners == nil {
+		i.tcpListeners = map[int64]tcpListenerHandle{}
+	}
+	i.tcpNextHandle++
+	i.tcpListeners[i.tcpNextHandle] = ln
+	return Number(i.tcpNextHandle), nil
+}
+
+func builtinUnixConnect(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("unix_connect: expected 1 arg, got %d", len(args))
+	}
+	path, ok := args[0].(String)
+	if !ok {
+		return nil, fmt.Errorf("unix_connect: expected string path arg, got %T", args[0])
+	}
+	if len(path) > sunPathMax {
+		return Number(-int64(syscall.ENAMETOOLONG)), nil
+	}
+	conn, err := net.Dial("unix", string(path))
+	if err != nil {
+		return negErrno(err), nil
+	}
+	if i.tcpConns == nil {
+		i.tcpConns = map[int64]tcpConnHandle{}
+	}
+	i.tcpNextHandle++
+	i.tcpConns[i.tcpNextHandle] = conn
+	return Number(i.tcpNextHandle), nil
 }

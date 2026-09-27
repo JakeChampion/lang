@@ -65,7 +65,7 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "syscall", "subprocess", "unix"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -296,6 +296,8 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "udp_sendto", capability: "tcp" },
         Gate { builtin: "udp_recvfrom", capability: "tcp" },
         Gate { builtin: "tcp_connect_with", capability: "tcp" },
+        Gate { builtin: "unix_listen", capability: "unix" },
+        Gate { builtin: "unix_connect", capability: "unix" },
 
         // Filesystem.
         Gate { builtin: "read_file", capability: "fs" },
