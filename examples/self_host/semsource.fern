@@ -4812,36 +4812,36 @@ function inferred_mode(old: i32, t: typeinfo.Type, consumed: boolean): i32 {
     return old;
 }
 
-function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[]): ssasem.Contract {
-    if (ownership.find(rows, c.name) < 0) { return c; }
+function inferred_contract(c: ssasem.Contract, rows: ownership.Escapes[], ix: ownership.Index): ssasem.Contract {
+    if (ownership.find(rows, ix, c.name) < 0) { return c; }
     var modes: i32[] = c.modes;
     var i: i32 = 0;
     while (i < modes.len() && i < c.params.len()) {
-        modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, c.name, i)));
+        modes = modes.with(i, inferred_mode(modes[i], c.params[i], ownership.consumed(rows, ix, c.name, i)));
         i = i + 1;
     }
     return ssasem.Contract { ...c, modes: modes };
 }
 
-function inferred_table(table: ssasem.Contract[], rows: ownership.Escapes[]): ssasem.Contract[] {
+function inferred_table(table: ssasem.Contract[], rows: ownership.Escapes[], ix: ownership.Index): ssasem.Contract[] {
     var out: ssasem.Contract[] = [];
-    for c in table { out = out.append(inferred_contract(c, rows)); }
+    for c in table { out = out.append(inferred_contract(c, rows, ix)); }
     return out;
 }
 
 // A produced body carries its own modes and a copy of every callee contract it
 // calls through; both are rewritten from the same rows, so the definition side
 // and the call site read one answer.
-function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[]): Produced {
+function inferred_produced(p: Produced, name: string, rows: ownership.Escapes[], ix: ownership.Index): Produced {
     var calls0: ssasem.Contract[] = [];
-    for c in p.func.calls { calls0 = calls0.append(inferred_contract(c, rows)); }
-    if (ownership.find(rows, name) < 0) {
+    for c in p.func.calls { calls0 = calls0.append(inferred_contract(c, rows, ix)); }
+    if (ownership.find(rows, ix, name) < 0) {
         return Produced { ...p, func: ssasem.Func { ...p.func, calls: calls0 } };
     }
     var modes: i32[] = p.modes;
     var i: i32 = 0;
     while (i < modes.len() && i < p.func.params.len()) {
-        modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, name, i)));
+        modes = modes.with(i, inferred_mode(modes[i], p.func.params[i], ownership.consumed(rows, ix, name, i)));
         i = i + 1;
     }
     return Produced { ...p, modes: modes, func: ssasem.Func { ...p.func, calls: calls0 } };
@@ -4890,18 +4890,30 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
         }
         i = i + 1;
     }
+    var produced: ownership.Index = ownership.index(rows);
+    var builtins: string[] = [];
     for c in builtin_contracts() {
-        if (ownership.find(rows, c.name) < 0) { rows = rows.append(builtin_row(c)); }
+        if (ownership.find(rows, produced, c.name) < 0 && !ownership.names_has(builtins, c.name)) {
+            rows = rows.append(builtin_row(c));
+            builtins = builtins.append(c.name);
+        }
+    }
+    var ix: ownership.Index = ownership.index(rows);
+    var own_row: i32[] = [];
+    i = 0;
+    while (i < all.len() && i < names.len()) {
+        own_row = own_row.append(ownership.find(rows, ix, names[i]));
+        i = i + 1;
     }
     var changed: boolean = true;
     var round: i32 = 0;
     while (changed && round <= all.len() + 1) {
         changed = false;
         i = 0;
-        while (i < all.len() && i < names.len()) {
-            var at: i32 = ownership.find(rows, names[i]);
+        while (i < own_row.len()) {
+            var at: i32 = own_row[i];
             if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-                var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows);
+                var next: boolean[] = ownership.escaping(all[i].func, analyses[i], rows, ix);
                 if (!same_bits(rows[at].bits, next)) {
                     rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next });
                     changed = true;
@@ -4916,15 +4928,16 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
 
 function infer_ownership(all: Produced[], names: string[], table: ssasem.Contract[], pinned: string[]): Inferred {
     var rows: ownership.Escapes[] = infer_rows(all, names, pinned);
+    var ix: ownership.Index = ownership.index(rows);
     var out: Produced[] = [];
     var i: i32 = 0;
     while (i < all.len()) {
         var name: string = "";
         if (i < names.len()) { name = names[i]; }
-        out = out.append(inferred_produced(all[i], name, rows));
+        out = out.append(inferred_produced(all[i], name, rows, ix));
         i = i + 1;
     }
-    return Inferred { all: out, table: inferred_table(table, rows) };
+    return Inferred { all: out, table: inferred_table(table, rows, ix) };
 }
 
 pub function build_module(mod: parser.Module): Built {
