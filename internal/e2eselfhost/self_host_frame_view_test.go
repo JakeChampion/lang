@@ -112,6 +112,7 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 		t.Fatal(err)
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "semsource_rc.fern", "semsource-rc")
+	stdlibRoot := semsourceStdlibRoot(t)
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "x86-64-sanitize", "wasm32-wasi"} {
 		want, ok := wants[target]
 		if !ok {
@@ -122,7 +123,7 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, path)
+			cmd := runX86_64Bin(runner, driver, emitTarget, path, stdlibRoot)
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics
