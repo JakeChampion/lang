@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,7 +41,8 @@ var freshRecvLenCases = []struct {
 }{
 	// FRESH path freed: 5000 rounds stay flat. On the parent this leaked one
 	// box per evaluation (48 bytes a round, measured).
-	{"freshrecv-len-churn", `function (s: string) tails(n: i32): string {
+	{"freshrecv-len-churn", `import "std/i32";
+function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -59,7 +59,8 @@ function main(): i32 {
 	// IDENTITY path NOT freed: `b.tails(0)` hands back `b` itself, which is
 	// read again afterwards. Freeing it would be a use-after-free; the value
 	// check and the underflow counter are both witnesses.
-	{"freshrecv-len-identity-alias-safe", `function (s: string) tails(n: i32): string {
+	{"freshrecv-len-identity-alias-safe", `import "std/i32";
+function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -79,7 +80,8 @@ function main(): i32 {
 	// Both paths in one body, alternating per iteration — the discriminator is
 	// a runtime pointer compare, so it has to decide correctly each time rather
 	// than once per call site.
-	{"freshrecv-len-alternating", `function (s: string) tails(n: i32): string {
+	{"freshrecv-len-alternating", `import "std/i32";
+function (s: string) tails(n: i32): string {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -103,7 +105,8 @@ function main(): i32 {
 	// which is not even an allocation boundary — freeing it would push a
 	// mid-block address onto the freelist, so the byte re-read after 3000
 	// releases is the direct witness that only the box goes.
-	{"freshrecv-len-view-alias-safe", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-view-alias-safe", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -123,7 +126,8 @@ function main(): i32 {
 }`, 0},
 	// All three admitted shapes in one callee, chosen per iteration by a
 	// runtime compare: the receiver, a fresh literal box, and a view.
-	{"freshrecv-len-view-alternating", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-view-alternating", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -146,7 +150,8 @@ function main(): i32 {
 	// root's own box. The guard has to recognise that through two levels — a
 	// root walked wrong here frees a live local, and the byte re-read plus the
 	// detector are the witnesses.
-	{"freshrecv-len-chain-identity", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-chain-identity", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -168,7 +173,8 @@ function main(): i32 {
 	// A chain whose OUTER link allocates over a receiver that is itself a view:
 	// the result is the chain's own box and dies at the read, while the view it
 	// was built from is still the root's bytes.
-	{"freshrecv-len-chain-alias-safe", `function (s: string) tails(n: i32): str {
+	{"freshrecv-len-chain-alias-safe", `import "std/i32";
+function (s: string) tails(n: i32): str {
     if (n <= 0) { return s; }
     var sLen: i32 = s.len();
     if (n >= sLen) { return ""; }
@@ -192,7 +198,8 @@ function main(): i32 {
 	// earns no SFRRECV key and nothing here is released. Admitting it would
 	// free `alt` — whose pointer differs from the receiver's — while the caller
 	// still owns it.
-	{"freshrecv-len-view-nonrecv-return-refused", `function (s: string) pick(n: i32, alt: string): str {
+	{"freshrecv-len-view-nonrecv-return-refused", `import "std/i32";
+function (s: string) pick(n: i32, alt: string): str {
     if (n < 0) { return alt; }
     if (n == 0) { return s; }
     return slice_unchecked(s, n, s.len());
@@ -213,13 +220,12 @@ function main(): i32 {
 }
 
 // freshRecvLenLeakCases are the LEAK half, x86-64 only. Heap flatness is
-// asserted here rather than in the shared table because the wasm leg runs the
-// WAT driver (wasm_ir_run), and every wasm sibling in this package asserts the
-// over-release detector rather than heap growth for that reason. Flatness on
-// wasm was checked separately through the CLI pipeline (`-target wasm32-wasi`),
-// where both churns move the bump pointer by under 128 bytes across 5000
-// rounds; the shared cases carry wasm's half, which is that nothing is
-// over-released and the aliased receiver survives.
+// asserted here rather than in the shared table because every wasm sibling in
+// this package asserts the over-release detector rather than heap growth.
+// Flatness on wasm was checked separately (`-target wasm32-wasi`), where both
+// churns move the bump pointer by under 128 bytes across 5000 rounds; the
+// shared cases carry wasm's half, which is that nothing is over-released and
+// the aliased receiver survives.
 var freshRecvLenLeakCases = []struct {
 	name string
 	src  string
@@ -348,42 +354,19 @@ func TestSelfHostFreshRecvLenReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFreshRecvLenReclaimWasm runs the same cases on the wasm IR
-// backend, where the release maps to $__fern_arr_dec and its over-release
-// detector is the direct witness that the identity alias is never freed.
+// TestSelfHostFreshRecvLenReclaimWasm runs the same cases through the self-host
+// CLI on wasm32-wasi, where the release maps to $__fern_arr_dec and its
+// over-release detector is the direct witness that the identity alias is never
+// freed.
 func TestSelfHostFreshRecvLenReclaimWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host fresh-or-receiver len reclaim wasm e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range freshRecvLenCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("fresh-or-receiver len reclaim wasm %q = %d, want %d", tc.name, code, tc.expected)
+			src := tc.src
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.expected {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.expected, stderr)
+				}
 			}
 		})
 	}

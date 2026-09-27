@@ -105,7 +105,8 @@ function main(): i32 {
 	// a fresh copy, the type-driven drop routes it through the rc-aware
 	// __fern_str_free. A string tag that rejects admission leaks all three
 	// levels per iteration.
-	{"opttup-string-elem-churn", `function main(): i32 {
+	{"opttup-string-elem-churn", `import "std/i32";
+function main(): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { var o: Option[(i32, string)] = Some((i, "v" + i.to_string())); match (o) { Some(p) => { acc = (acc + p.0 + p.1.len()) % 251; }, None => {} } i = i + 1; }
@@ -148,7 +149,8 @@ function main(): i32 {
 	// string element out of the arm — the escape walker treats a bare
 	// non-scalar p.N as an escape, the local is NOT credited (leak-safe),
 	// keep stays valid.
-	{"opttup-string-extract-safe", `function main(): i32 {
+	{"opttup-string-extract-safe", `import "std/i32";
+function main(): i32 {
     var keep: string = "";
     var i: i32 = 0;
     while (i < 100) {

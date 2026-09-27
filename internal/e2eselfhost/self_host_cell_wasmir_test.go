@@ -1,17 +1,13 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
-// Cell primitives on the self-host WASM **IR** driver (#5510). The existing
+// Cell primitives on the self-host's wasm IR path (#5510). The existing
 // Cell coverage (`TestSelfHostWasmRun`'s cell-* cases) drives wasm_run.fern,
-// the AST driver; this pins the wasm_ir_run.fern path, which is the one #5510
-// is about.
+// the AST driver; this runs the cases through the self-host CLI, the path
+// #5510 is about.
 //
 // irlower lowers a Cell as a one-element array — `cell_new(v)` → `[v]`,
 // `c.get()` → `c[0]`, `c.set(x)` → `c[0] = x` — so it uses the array
@@ -92,46 +88,20 @@ var cellWasmIRCases = []struct {
 	{"unannotated-cell-f32", `function main(): i32 { var c = cell_new(2.5 as f32); return (c.get() * 2.0) as i32; }`, 5},
 }
 
-// TestSelfHostCellWasmIR runs each case through the self-hosted wasm IR driver
-// and checks it against the native backend as the oracle.
+// TestSelfHostCellWasmIR runs each case through the self-host CLI on
+// wasm32-wasi and checks it against the native backend as the oracle.
 func TestSelfHostCellWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host Cell wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range cellWasmIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Native cross-check first: if the oracle disagrees the case is
-			// wrong, not the backend.
+			src := tc.src + "\n"
 			if _, code := compileAndRunX86_64(t, tc.src+"\n"); code != tc.want {
 				t.Fatalf("native x86-64 exited %d, want %d", code, tc.want)
 			}
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("wasm IR driver failed for %q: %v", tc.src, err)
-			}
-			watFile := filepath.Join(dir, "cell_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.src, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("Cell wasm IR %q = %d, want %d", tc.name, code, tc.want)
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}

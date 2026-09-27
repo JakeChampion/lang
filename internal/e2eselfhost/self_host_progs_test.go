@@ -67,7 +67,7 @@ var selfHostProgCases = []struct {
 	// yields 15, a mis-classified SIGNED shr_s yields -1 -> exit 255, so the arm's
 	// is_u64 verdict is what the exit code turns on (the -1>>60 control confirms the
 	// signed reading is 255). These run on both the legacy-asm x86 leg and the
-	// IR-path arm64 leg (asm_ir_run -> irlower), so they guard the refactored
+	// arm64 leg through the self-host CLI, so they guard the refactored
 	// predicates directly. (u32 is deliberately NOT covered: x86/arm zero-extension
 	// hides its signedness divergence, so a u32 shift test would pass regardless of
 	// classification — only wasm exposes it. The u64-IIFE arm is likewise omitted:
@@ -91,14 +91,17 @@ var selfHostProgCases = []struct {
 	// the map.get resolver only handled a map IDENT receiver, so a struct-field map
 	// bailed the function to AST (#3457 IR-gap: std/peg's PegResult.caps and any
 	// map-in-struct). expr_map_type_tag now recovers the field's Map[K,V].
-	{"map-field-get-opt-match", `struct R { caps: Map[string, i32] } function mk(): R { var m: Map[string, i32] = map_new(4); m = m.insert("a", 7); return R { caps: m }; } function main(): i32 { var r: R = mk(); match (r.caps.get("a")) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
+	{"map-field-get-opt-match", `import "core/map";
+struct R { caps: Map[string, i32] } function mk(): R { var m: Map[string, i32] = map_new(4); m = m.insert("a", 7); return R { caps: m }; } function main(): i32 { var r: R = mk(); match (r.caps.get("a")) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.
 	{"array-build", `function main(): i32 { var xs: i32[] = [1,2,3]; var out: i32[] = Array.build((b: ArrayBuilder[i32]): void => { for x in xs { b.append(x * x); } }); return out[0] + out[1] + out[2]; }`, 14},
 	// Repeated with: [0,0,0] → with(0,5) → with(2,7) → [5,0,7]; 5*10+7 = 57.
 	{"array-with-chain", `function main(): i32 { var a: i32[] = [0, 0, 0]; a = a.with(0, 5); a = a.with(2, 7); return a[0] * 10 + a[2]; }`, 57},
 	// Map.insert (value-returning) with overwrite: {1:99, 2:20}.
-	{"map-insert", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,-1) + m.get_or(2,-1); }`, 119},
-	{"map-insert-fresh", `function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(5,7); return m.get_or(5,0); }`, 7},
+	{"map-insert", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); m = m.insert(1,99); return m.get_or(1,-1) + m.get_or(2,-1); }`, 119},
+	{"map-insert-fresh", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(4); m = m.insert(5,7); return m.get_or(5,0); }`, 7},
 
 	// Tuple-destructure inference from a user method returning a tuple:
 	// `q` must be typed Pair so `q.hi`/`q.lo` resolve (without the fix
@@ -112,14 +115,18 @@ function main(): i32 { var p: Pair = Pair { hi: 7, lo: 3 }; var (q, old) = p.swa
 	// re-queried, exercising both the runtime helper and the
 	// tuple-destructure inference. m={1:10,2:20}; without(1) → existed,
 	// m2={2:20}; m2.get_or(2,-1)=20.
-	{"map-delete", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
+	{"map-delete", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(1); if (!ex) { return 70; } return m2.get_or(2,-1); }`, 20},
 	// without: {1:10}; existed; m2.get_or(1,-1)=10 and the
 	// removed key reads the default (-1+1=0): total 10.
-	{"map-without", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(2); if (!ex) { return 70; } return m2.get_or(1,-1) + (m2.get_or(2,-1) + 1); }`, 10},
+	{"map-without", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); m = m.insert(2,20); var (m2, ex) = m.without(2); if (!ex) { return 70; } return m2.get_or(1,-1) + (m2.get_or(2,-1) + 1); }`, 10},
 	// Deleting an absent key reports existed=false; the map is unchanged.
-	{"map-without-absent", `function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); var (m2, ex) = m.without(9); if (ex) { return 1; } return m2.get_or(1,-1); }`, 10},
+	{"map-without-absent", `import "core/map";
+function main(): i32 { var m: Map[i32,i32] = map_new(8); m = m.insert(1,10); var (m2, ex) = m.without(9); if (ex) { return 1; } return m2.get_or(1,-1); }`, 10},
 	// String-keyed without: shift over the string-compare search path.
-	{"smap-delete", `function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); var (m2, ex) = m.without("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
+	{"smap-delete", `import "core/map";
+function main(): i32 { var m: Map[string,i32] = map_new(8); m = m.insert("a",10); m = m.insert("b",20); var (m2, ex) = m.without("a"); if (!ex) { return 70; } return m2.get_or("b",-1) + (m2.get_or("a",-1) + 1); }`, 20},
 }
 
 // TestSelfHostProgsX86_64 compiles each program with the self-hosted
@@ -159,23 +166,14 @@ func TestSelfHostProgsX86_64(t *testing.T) {
 
 // TestSelfHostProgsArm64 — CI-gated arm64 counterpart.
 func TestSelfHostProgsArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range selfHostProgCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			src := tc.src
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}
