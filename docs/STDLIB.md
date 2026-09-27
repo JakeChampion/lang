@@ -1116,6 +1116,11 @@ loop and `std/fetch` the client.
   per accepted connection, constructing the `Platform` bag it
   passes. Each connection's request read is bounded by a 10 s
   deadline (the slow-loris guard).
+- `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
+  `ServeOptions { backlog, reuse_port, recv_deadline }`
+  (`serve_options()` is 128, one listener per port, and the 10 s
+  deadline): the accept queue depth, port sharing between listeners
+  (`SO_REUSEPORT`, ignored on wasm), and the read deadline.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1126,8 +1131,8 @@ loop and `std/fetch` the client.
   it returns is what the next request receives. The loop's frame
   owns it, so it lasts as long as the process — this is how a
   handler keeps a cache or a counter, the language having no
-  module-level mutable state. `tcp_serve_with_deadline` adds the
-  explicit read deadline.
+  module-level mutable state. `tcp_serve_with_opts` takes the
+  `ServeOptions`, `tcp_serve_with_deadline` the read deadline alone.
 - `tcp_serve_supervised(port, handler)` — crash-only serving: the
   accept loop runs in a forked worker the parent reforks on
   death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
