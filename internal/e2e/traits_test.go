@@ -1235,3 +1235,37 @@ func TestX86_64TraitSupertrait(t *testing.T) {
 		}
 	}
 }
+
+// A value named like its function's type parameter shadows it: `T.eq(u)`
+// calls `eq` on the value, in every instantiation (#10380).
+const valueSpelledLikeTypeParamSrc = `import "core/cmp";
+function same[T: cmp.Eq](T: T, u: T): i32 { if (T.eq(u)) { return 1; } return 0; }
+function main(): i32 {
+    print("same=" + (same(3, 3) + same("a", "b") * 10).to_string());
+    return 0;
+}
+`
+
+func TestInterpValueSpelledLikeTypeParam(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(src, []byte(valueSpelledLikeTypeParamSrc), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	code, out := runFernInterp(t, src)
+	if code != 0 || strings.TrimSpace(out) != "same=1" {
+		t.Fatalf("exit = %d, output %q; want 0 and \"same=1\"", code, out)
+	}
+}
+
+func TestArm64ValueSpelledLikeTypeParam(t *testing.T) {
+	out, code := compileAndRunArm64(t, valueSpelledLikeTypeParamSrc)
+	if code != 0 || strings.TrimSpace(out) != "same=1" {
+		t.Fatalf("exit = %d, output %q; want 0 and \"same=1\"", code, out)
+	}
+}
+
+func TestWASMValueSpelledLikeTypeParam(t *testing.T) {
+	if got := strings.TrimSpace(runWasmCapturingStdout(t, valueSpelledLikeTypeParamSrc)); got != "same=1" {
+		t.Fatalf("output %q; want \"same=1\"", got)
+	}
+}

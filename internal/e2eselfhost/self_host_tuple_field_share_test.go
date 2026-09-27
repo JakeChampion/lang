@@ -348,3 +348,19 @@ func TestSelfHostTupleFieldShareWasm(t *testing.T) {
 		}
 	}
 }
+
+// assertLeakPinned: a row that still leaks on this leg (the leak `issue`
+// tracks) left exactly its pinned allocs and frees. Fewer frees is a
+// regression; more frees is a fix of the leak, which moves the pin.
+func assertLeakPinned(t *testing.T, stderr string, want [2]int64, issue string) {
+	t.Helper()
+	summary := leakSummaryLine(stderr)
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if got := [2]int64{allocs, frees}; got != want {
+		t.Errorf("%s, pinned allocs=%d frees=%d — fewer frees means the sweep lost a release; "+
+			"more frees means the leak (%s) closed, so move the pin", summary, want[0], want[1], issue)
+	}
+}

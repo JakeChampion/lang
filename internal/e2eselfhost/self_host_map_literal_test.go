@@ -10,7 +10,7 @@ import (
 
 // mapLiteralCases cover the `Map { k0: v0, k1: v1, … }` literal, which
 // the parser desugars to a chained `map_new[_i32](n).insert(k0,v0)…`
-// (map_new_i32 when the first key is a number literal, so the chained
+// (__map_new_i32 when the first key is a number literal, so the chained
 // .set dispatch picks integer key comparison). Exit codes cross-checked
 // vs the Go backend.
 var mapLiteralCases = []struct {

@@ -2301,6 +2301,9 @@ type MethodCallSite struct {
 	// lookup above all — re-resolves with this as its preference
 	// rather than re-deriving one.
 	OwnerTrait string
+	// Assoc marks a generic associated dispatch `T.f(args)`, whose target
+	// names the type parameter itself rather than a value of that type.
+	Assoc bool
 }
 
 // ModuleCallSite is the cross-module analogue of MethodCallSite:
