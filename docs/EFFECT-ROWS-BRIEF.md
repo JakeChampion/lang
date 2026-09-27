@@ -88,7 +88,7 @@ settled is backwards.
 
 **The `Platform` bag is the better answer, and it is already landing.**
 `std/platform` (#4414) gives the handler's bag real capabilities, and the
-`ambient-capability` lint pushes handlers to reach effects *through* it.
+ambient-effect rule (E080) makes handlers reach effects *through* it.
 That is Effekt's capability-passing design — the model
 `PLT-LANDSCAPE-2026.md` §4 already named as preferable to Koka's rows. If
 the bag becomes the only route to host effects, **the bag's type is the
@@ -293,10 +293,11 @@ checker has already produced.
   declarations (still unshipped), Scala uses classifiers. Fern has associated
   types, so Flix's answer is available — but it is its own piece of work, and
   a prototype that guessed at it would be guessing.
-- **Not a replacement for the `ambient-capability` lint** (#4414, landed
-  alongside this). That rule says a handler should reach its effects
-  *through its bag* rather than around it; the analysis says what a function
-  reaches, by whatever route. They compose: the lint moves an effect onto
+- **Not a replacement for the ambient-effect rule** (E080, `internal/ambient`,
+  which grew out of the `ambient-capability` lint #4414 landed alongside
+  this). That rule says a handler must reach its effects *through its bag*
+  rather than around it; the analysis says what a function reaches, by
+  whatever route. They compose: the rule moves an effect onto
   `plat.*`, and the walk then attributes it through `__method_Platform_*` —
   exactly how the 315 false positives in §4.3 became visible.
 - **Not mirrored into the self-host.** The clause parses and checks in the
