@@ -418,6 +418,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
     }
+    // A bounded loop (the census fixtures) hands the listener back with
+    // nothing watching it: on wasm a socket still subscribed cannot close.
+    drv.unwatch(listener);
+    drv.close();
     return 0;
 }
 
@@ -468,6 +472,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
     }
+    // A bounded loop (the census fixtures) hands the listener back with
+    // nothing watching it: on wasm a socket still subscribed cannot close.
+    drv.unwatch(listener);
+    drv.close();
     return 0;
 }
 
