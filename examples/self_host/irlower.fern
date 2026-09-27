@@ -18105,10 +18105,11 @@ function try_success_type(ot: string, structs: StructTab): string {
 }
 
 // call_opt_tag_or is the checker's "Option[T]" / "Result[T, E]" tag on a call,
-// or `fallback` when `e` is no call or carries no such tag.
+// or `fallback` when `e` is no call or carries no such tag. An array of them
+// (`Option[i32][]`, or `Option[]` for an array of the argless union) is not one.
 function call_opt_tag_or(e: ast.Expr, fallback: string): string {
     if let ast.ExprCall(c) = e {
-        if (c.ty.len() >= 7 && (slice_unchecked(c.ty, 0, 7) == "Option[" || slice_unchecked(c.ty, 0, 7) == "Result[")) { return c.ty; }
+        if (c.ty.len() >= 7 && !is_array_type_name(c.ty) && (slice_unchecked(c.ty, 0, 7) == "Option[" || slice_unchecked(c.ty, 0, 7) == "Result[")) { return c.ty; }
     }
     return fallback;
 }
