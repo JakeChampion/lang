@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -203,6 +204,163 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
+	// The same co-owner with its element read spelled as a `.len()` borrow, which
+	// the read scan does not mark (#10405). Nothing then kept the deep walk off
+	// `Reg.rows`: `names` holds boxes `items` owns, so a bare-ident store of it
+	// must withhold the walk wherever the array's elements are not provably its
+	// own. The three rows reach the field directly, through the storing
+	// parameter's call site, and through a second parameter forwarding it.
+	{"strarr-field-caller-array-co-owner-len", `struct Item { name: string }
+struct Reg { rows: string[], head: i32[] }
+function digit(d: i32): string {
+    if (d == 0) { return "0"; } if (d == 1) { return "1"; } if (d == 2) { return "2"; }
+    if (d == 3) { return "3"; } if (d == 4) { return "4"; } if (d == 5) { return "5"; }
+    if (d == 6) { return "6"; } if (d == 7) { return "7"; } if (d == 8) { return "8"; }
+    return "9";
+}
+function label(i: i32): string { return "row" + digit(i); }
+function reg_of(rows: string[]): Reg { var head: i32[] = []; var i: i32 = 0; while (i < rows.len()) { head = head.append(i); i = i + 1; } return Reg { rows: rows, head: head }; }
+function probe(items: Item[], want: string): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < items.len()) { names = names.append(items[i].name); i = i + 1; }
+    var r: Reg = reg_of(names);
+    var hits: i32 = 0;
+    var j: i32 = 0;
+    while (j < r.rows.len()) { if (r.rows[j].len() == want.len()) { hits = hits + 1; } j = j + 1; }
+    return hits + names.len();
+}
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var a: string[] = []; a = a.append("w" + digit(i % 10)); a = a.append("q" + digit(i % 7)); acc = acc + a.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var items: Item[] = [];
+    var i: i32 = 0;
+    while (i < 10) { items = items.append(Item { name: label(i) }); i = i + 1; }
+    if (probe(items, "row7") != 20) { return 97; }
+    if (churn(64) != 128) { return 97; }
+    var k: i32 = 0;
+    while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	{"strarr-field-borrowed-local-store", `struct Item { name: string }
+struct Reg { rows: string[], head: i32[] }
+function digit(d: i32): string {
+    if (d == 0) { return "0"; } if (d == 1) { return "1"; } if (d == 2) { return "2"; }
+    if (d == 3) { return "3"; } if (d == 4) { return "4"; } if (d == 5) { return "5"; }
+    if (d == 6) { return "6"; } if (d == 7) { return "7"; } if (d == 8) { return "8"; }
+    return "9";
+}
+function label(i: i32): string { return "row" + digit(i); }
+function reg_of(rows: string[]): Reg { var head: i32[] = []; var i: i32 = 0; while (i < rows.len()) { head = head.append(i); i = i + 1; } return Reg { rows: rows, head: head }; }
+function probe(items: Item[], want: string): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < items.len()) { names = names.append(items[i].name); i = i + 1; }
+    var head: i32[] = [];
+    var r: Reg = Reg { rows: names, head: head };
+    var hits: i32 = 0;
+    var j: i32 = 0;
+    while (j < r.rows.len()) { if (r.rows[j].len() == want.len()) { hits = hits + 1; } j = j + 1; }
+    return hits + names.len();
+}
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var a: string[] = []; a = a.append("w" + digit(i % 10)); a = a.append("q" + digit(i % 7)); acc = acc + a.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var items: Item[] = [];
+    var i: i32 = 0;
+    while (i < 10) { items = items.append(Item { name: label(i) }); i = i + 1; }
+    if (probe(items, "row7") != 20) { return 97; }
+    if (churn(64) != 128) { return 97; }
+    var k: i32 = 0;
+    while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	{"strarr-field-borrowed-forwarded-param", `struct Item { name: string }
+struct Reg { rows: string[], head: i32[] }
+function digit(d: i32): string {
+    if (d == 0) { return "0"; } if (d == 1) { return "1"; } if (d == 2) { return "2"; }
+    if (d == 3) { return "3"; } if (d == 4) { return "4"; } if (d == 5) { return "5"; }
+    if (d == 6) { return "6"; } if (d == 7) { return "7"; } if (d == 8) { return "8"; }
+    return "9";
+}
+function label(i: i32): string { return "row" + digit(i); }
+function reg_of(rows: string[]): Reg { var head: i32[] = []; var i: i32 = 0; while (i < rows.len()) { head = head.append(i); i = i + 1; } return Reg { rows: rows, head: head }; }
+function reg_via(rows: string[]): Reg { return reg_of(rows); }
+function probe(items: Item[], want: string): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < items.len()) { names = names.append(items[i].name); i = i + 1; }
+    var r: Reg = reg_via(names);
+    var hits: i32 = 0;
+    var j: i32 = 0;
+    while (j < r.rows.len()) { if (r.rows[j].len() == want.len()) { hits = hits + 1; } j = j + 1; }
+    return hits + names.len();
+}
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var a: string[] = []; a = a.append("w" + digit(i % 10)); a = a.append("q" + digit(i % 7)); acc = acc + a.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var items: Item[] = [];
+    var i: i32 = 0;
+    while (i < 10) { items = items.append(Item { name: label(i) }); i = i + 1; }
+    if (probe(items, "row7") != 20) { return 97; }
+    if (churn(64) != 128) { return 97; }
+    var k: i32 = 0;
+    while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
+	// The control: the same shape with every element fresh keeps the walk.
+	{"strarr-field-owned-param-store", `struct Item { name: string }
+struct Reg { rows: string[], head: i32[] }
+function digit(d: i32): string {
+    if (d == 0) { return "0"; } if (d == 1) { return "1"; } if (d == 2) { return "2"; }
+    if (d == 3) { return "3"; } if (d == 4) { return "4"; } if (d == 5) { return "5"; }
+    if (d == 6) { return "6"; } if (d == 7) { return "7"; } if (d == 8) { return "8"; }
+    return "9";
+}
+function label(i: i32): string { return "row" + digit(i); }
+function reg_of(rows: string[]): Reg { var head: i32[] = []; var i: i32 = 0; while (i < rows.len()) { head = head.append(i); i = i + 1; } return Reg { rows: rows, head: head }; }
+function probe(items: Item[], want: string): i32 {
+    var names: string[] = [];
+    var i: i32 = 0;
+    while (i < items.len()) { names = names.append(label(i)); i = i + 1; }
+    var r: Reg = reg_of(names);
+    var hits: i32 = 0;
+    var j: i32 = 0;
+    while (j < r.rows.len()) { if (r.rows[j].len() == want.len()) { hits = hits + 1; } j = j + 1; }
+    return hits + names.len();
+}
+function churn(n: i32): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < n) { var a: string[] = []; a = a.append("w" + digit(i % 10)); a = a.append("q" + digit(i % 7)); acc = acc + a.len(); i = i + 1; }
+    return acc;
+}
+function main(): i32 {
+    var items: Item[] = [];
+    var i: i32 = 0;
+    while (i < 10) { items = items.append(Item { name: label(i) }); i = i + 1; }
+    if (probe(items, "row7") != 20) { return 97; }
+    if (churn(64) != 128) { return 97; }
+    var k: i32 = 0;
+    while (k < items.len()) { if (items[k].name != label(k)) { return 97; } k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
@@ -300,5 +458,32 @@ func TestSelfHostStrArrFieldBufferReleaseWasmIR(t *testing.T) {
 				t.Errorf("%s = %d, want %d (a small non-zero is the leaked bytes per round; 98 = element boxes leaked; 99 = over-release; 97 = value corrupted)", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64 runs the borrowed-element
+// rows (#10405) under FERN_SANITIZE on both lowerings. Neither may release an
+// element box `items` still holds. The sanitizer's leak line is not asserted:
+// `Item.name` escaping into `names` withholds that type's field reclaim, which
+// is the admission's sound leak.
+func TestSelfHostStrArrFieldBorrowedElemsSanitizeX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	rows := []string{"strarr-field-caller-array-co-owner-len", "strarr-field-borrowed-local-store", "strarr-field-borrowed-forwarded-param", "strarr-field-owned-param-store"}
+	for _, tc := range strArrFieldBufferReleaseCases {
+		if !slices.Contains(rows, tc.name) {
+			continue
+		}
+		src := filepath.Join(t.TempDir(), "main.fern")
+		if err := os.WriteFile(src, []byte(tc.src+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, lw := range []string{"FERN_SEM_IR=", "FERN_SEM_IR=1"} {
+			t.Run(tc.name+"/"+lw, func(t *testing.T) {
+				stderr, exit := runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw), nil)
+				if exit != tc.want || strings.Contains(stderr, "use-after-free") || strings.Contains(stderr, "over-release") {
+					t.Fatalf("exit = %d, want %d, with no use-after-free or over-release\n%s", exit, tc.want, stderr)
+				}
+			})
+		}
 	}
 }
