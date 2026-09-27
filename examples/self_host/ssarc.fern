@@ -174,6 +174,7 @@ function walked(t: typeinfo.Type): boolean {
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
+    if (routed_map(t) && ssasem.is_string(ssasem.map_key(t))) { return "__map_drop_strkey_impl"; }
     if (routed_map(t)) { return "__map_drop_impl"; }
     if (ssasem.is_map(t)) { return map_release_name(t); }
     if (routed_iter(t)) { return "__mapiter_drop_impl"; }
@@ -1941,12 +1942,17 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
 // module, so under them every map stays on the runtime.
 function routed_map(t: typeinfo.Type): boolean {
     if (!ssasem.is_map(t)) { return false; }
-    return routed_column(ssasem.map_key(t)) && routed_column(ssasem.map_value(t)) && map_routing_on();
+    return routed_key(ssasem.map_key(t)) && routed_column(ssasem.map_value(t)) && map_routing_on();
 }
 
 function routed_iter(t: typeinfo.Type): boolean {
     if (!semtypes.is_map_iter(t)) { return false; }
-    return routed_column(semtypes.map_iter_key(t)) && routed_column(semtypes.map_iter_value(t)) && map_routing_on();
+    return routed_key(semtypes.map_iter_key(t)) && routed_column(semtypes.map_iter_value(t)) && map_routing_on();
+}
+
+// A string key column holds one unit of each key, as the runtime's does.
+function routed_key(t: typeinfo.Type): boolean {
+    return routed_column(t) || ssasem.is_string(t);
 }
 
 function routed_column(t: typeinfo.Type): boolean {
@@ -1979,7 +1985,7 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     var k: i32 = ins.kind_tag;
     if (k == ssasem.map_new() || k == ssasem.map_cleared()) {
         if (k == ssasem.map_new()) { r = emit(r, ir.op_load_local(ins.args[0])); } else { r = emit(r, ir.op_const_i32(8)); }
-        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, ir.op_const_i32(routed_key_tag(ssasem.map_key(f.values[ins.result]))));
         r = emit(r, ir.op_const_i32(0));
         return emit(r, ir.op_call_direct("map_new_impl", 3));
     }
@@ -1999,9 +2005,22 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     return from_address(r, ssasem.map_value(t));
 }
 
+// core/map's keyKind: 1 a string, 0 a scalar held in the slot itself.
+function routed_key_tag(t: typeinfo.Type): i32 {
+    if (ssasem.is_string(t)) { return 1; }
+    return 0;
+}
+
+// A string key crosses as its box's address, which is its slot already.
 function routed_slot(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
     r = emit(r, ir.op_load_local(slot));
+    if (ssasem.reference(t)) { return r; }
     return into_address(r, t);
+}
+
+function routed_from_slot(own r: irlower.LowerResult, t: typeinfo.Type): irlower.LowerResult {
+    if (ssasem.reference(t)) { return r; }
+    return from_address(r, t);
 }
 
 // A column snapshot is a fresh array in this compiler's own layout, built by
@@ -2009,6 +2028,7 @@ function routed_slot(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): i
 function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, offset: ir.Op): irlower.LowerResult {
     r = emit(r, offset);
     if (ssasem.is_bool(elem)) { return emit(r, ir.op_call_direct("__map_bool_column", 2)); }
+    if (ssasem.is_string(elem)) { return emit(r, ir.op_call_direct("__map_string_column", 2)); }
     return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
 
@@ -2022,7 +2042,7 @@ function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     var t: typeinfo.Type = f.values[ins.args[0]];
     if (k == ssasem.mapiter_key()) {
         r = emit(r, ir.op_call_direct("__mapiter_key_impl", 1));
-        return from_address(r, semtypes.map_iter_key(t));
+        return routed_from_slot(r, semtypes.map_iter_key(t));
     }
     r = emit(r, ir.op_call_direct("__mapiter_value_impl", 1));
     return from_address(r, semtypes.map_iter_value(t));
@@ -2031,35 +2051,71 @@ function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // An insert consumes the receiver's unit. core/map copies a shared map and
 // leaves the original's count alone, so when the handle it answers is not the
 // receiver the receiver's unit is released here; it cannot be the last.
+//
+// A string key arrives with a unit of its own. A new entry keeps it; an
+// overwrite keeps the equal key already in the column, so the entry count not
+// growing is what says the arriving unit is released.
 function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.args[0]];
     var res: i32 = scratch_base(f);
-    r = reserve(r, res + 1);
+    var before: i32 = res + 1;
+    var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
+    r = reserve(r, before + 1);
+    if (counted_key) {
+        r = emit(r, ir.op_load_local(ins.args[0]));
+        r = emit(r, ir.op_call_direct("__map_len_impl", 1));
+        r = emit(r, ir.op_store_local(before));
+    }
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = routed_slot(r, ins.args[1], ssasem.map_key(t));
     r = routed_slot(r, ins.args[2], ssasem.map_value(t));
     r = emit(r, ir.op_call_direct("__map_set_impl", 3));
     r = emit(r, ir.op_store_local(res));
     r = release_if_copied(r, ins.args[0], res);
+    if (counted_key) {
+        r = emit(r, ir.op_load_local(res));
+        r = emit(r, ir.op_call_direct("__map_len_impl", 1));
+        r = emit(r, ir.op_load_local(before));
+        r = emit(r, ir.op_bin("eq", 0, false));
+        r = emit(r, ir.op_if(0));
+        r = release(r, ins.args[1], ssasem.map_key(t));
+        r = emit(r, ir.op_end());
+    }
     return emit(r, ir.op_load_local(res));
 }
 
 // `without` answers the map and whether the key was there. The receiver is
 // made the frame's alone first, by core/map's own copy-on-write, and the
-// delete then runs on it in place.
+// delete then runs on it in place. A string column's removed key is the
+// map's unit, which core/map's delete drops from the column without
+// releasing, so it is read out first and released after.
 function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.args[0]];
     var box: i32 = scratch_base(f);
     var found: i32 = box + 1;
-    r = reserve(r, found + 1);
+    var old: i32 = box + 2;
+    var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
+    r = reserve(r, old + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
     r = emit(r, ir.op_store_local(box));
     r = release_if_copied(r, ins.args[0], box);
+    if (counted_key) {
+        r = emit(r, ir.op_load_local(box));
+        r = routed_slot(r, ins.args[1], ssasem.map_key(t));
+        r = emit(r, ir.op_call_direct("__map_key_of", 2));
+        r = emit(r, ir.op_store_local(old));
+    }
     r = emit(r, ir.op_load_local(box));
     r = routed_slot(r, ins.args[1], ssasem.map_key(t));
     r = emit(r, ir.op_call_direct("__map_delete_impl", 2));
     r = emit(r, ir.op_store_local(found));
+    if (counted_key) {
+        r = emit(r, ir.op_load_local(found));
+        r = emit(r, ir.op_if(0));
+        r = helper(r, old, "__fern_str_free");
+        r = emit(r, ir.op_end());
+    }
     r = emit(r, ir.op_load_local(box));
     r = emit(r, ir.op_load_local(found));
     return emit(r, ir.op_tuple_make_k(2, tuple_kinds(f.values[ins.result])));
@@ -3304,6 +3360,12 @@ function bit_count_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     return Lowered { found: false, r: r };
 }
 
+// __fern_str_dec(s): core/map releases one unit of a string it holds, which
+// is what __fern_str_free does to the box. Its dummy result is the store's.
+function str_release(own r: irlower.LowerResult): irlower.LowerResult {
+    return emit(r, ir.op_call_direct("__fern_str_free", 1));
+}
+
 function no_op_release(own r: irlower.LowerResult, operands: i32): irlower.LowerResult {
     var i: i32 = 0;
     while (i < operands) { r = emit(r, ir.op_drop()); i = i + 1; }
@@ -3366,10 +3428,10 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__fern_box_free") { return Lowered { found: true, r: box_free(r, ins) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
     if (ins.str == "__map_hash_seed") { return Lowered { found: true, r: emit(r, ir.op_map_hash_seed()) }; }
-    // core/map's string and array-value releases stay no-ops, as irlower
-    // lowers them: the lent operands are dropped, nothing is released, and the
-    // dummy 0 a void call leaves is pushed.
-    if (ins.str == "__fern_str_dec") { return Lowered { found: true, r: no_op_release(r, 1) }; }
+    // core/map's array-value releases stay no-ops, as irlower lowers them: the
+    // lent operands are dropped, nothing is released, and the dummy 0 a void
+    // call leaves is pushed. No routed map has an array column.
+    if (ins.str == "__fern_str_dec") { return Lowered { found: true, r: str_release(r) }; }
     if (ins.str == "__fern_drop_arr_ptr" || ins.str == "__fern_arr_dec") {
         return Lowered { found: true, r: no_op_release(r, 2) };
     }
@@ -3683,8 +3745,8 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
     return out;
 }
 
-pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
-    return bare_indexed(caller_rows(sg, name, f, modes, plan));
+pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
+    return bare_indexed(caller_rows(sg, name, f, modes, plan, method));
 }
 
 // `borrow_bare` indexes every row of `borrowable_params`: a caller applying
@@ -3694,7 +3756,7 @@ pub function bare_indexed(sg: irlower.FnSigs): irlower.FnSigs {
 }
 
 // caller_sigs without the `borrow_bare` reindex; see bare_indexed.
-pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): irlower.FnSigs {
+pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
     var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
     // Every row an AST reader could have written for this result is erased,
     // including the bare name. A row says the caller may release something;
@@ -3717,7 +3779,7 @@ pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
         if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
     }
     if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
-    if (box_only_result(f)) { arrays = arrays.append(name); }
+    if (bare_row_result(f, plan, method)) { arrays = arrays.append(name); }
     // A union result is one counted reference the caller releases, which the
     // "ENUM:" readers' rc-gated releases honour whatever the payload (#10365).
     if let typeinfo.TypeUnion(_) = f.result { arrays = arrays.append("ENUM:" + name); }
@@ -3857,23 +3919,80 @@ function derives(a: ssasem.Analysis, v: i32, root: i32): boolean {
     return false;
 }
 
-// A nominal struct result whose release is the box and nothing else.
+// A nominal struct result the bare-name row can carry.
 //
-// This is the one nominal shape the bare-name row can carry. That row asserts
-// the caller SOLE-owns the result, which this boundary does not promise: a
-// return supplies one counted unit, and a value the function did not build —
-// a projection of a borrowed parameter — is supplied by a retain over a box
-// its caller still owns. The row's exit sweep then runs __struct_drop_<T>
-// with no uniqueness guard, freeing a field buffer the other owner still
-// reads.
+// That row asserts the caller SOLE-owns the result, which a return alone does
+// not promise: it supplies one counted unit, and a value the function did not
+// build — a projection of a borrowed parameter — is supplied by a retain over
+// a box its caller still owns. The row's exit sweep runs __struct_drop_<T>
+// with no uniqueness guard, which would free a field buffer the other owner
+// still reads.
 //
 // A schema with no reference field has no field walk for that sweep to run,
 // so the release is the rc-guarded box dec alone and a shared result stays
-// balanced. Every other nominal result keeps the leak floor until it can
-// prove the box is the caller's only one.
-function box_only_result(f: ssasem.Func): boolean {
-    if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f); }
+// balanced. Any other schema needs the box proven the caller's only one
+// (built_result); the walk's per-field releases are rc-guarded, so the counts
+// the box holds on its fields need no such proof. A method's AST callers look
+// it up as `<Base>.<name>`, never by the bare name written here, so a method
+// is left at the box-only floor rather than lend its verdict to a free
+// function of the same name.
+function bare_row_result(f: ssasem.Func, plan: ssaunits.Plan, method: boolean): boolean {
+    if let typeinfo.TypeStruct(_) = f.result { return !has_children(f.result, f) || (!method && built_result(f, plan)); }
     return false;
+}
+
+// Every return hands back a record this body constructed, and nothing but a
+// field read touches it on the way, so no other reference to the box exists.
+function built_result(f: ssasem.Func, plan: ssaunits.Plan): boolean {
+    if (!plan.ok) { return false; }
+    var boxes: i32[] = returned_records(f);
+    if (boxes.len() == 0) { return false; }
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (!box_use_ok(ins, boxes)) { return false; }
+        }
+    }
+    for step in plan.steps {
+        for item in step.supplies {
+            if (item.mode == ssaunits.retain_unit() && util.index_of_i32(boxes, item.value) >= 0) { return false; }
+        }
+    }
+    return true;
+}
+
+// The returned values and every copy or phi operand they merge, or nothing
+// when one of them is defined by anything but a record construction.
+function returned_records(f: ssasem.Func): i32[] {
+    var out: i32[] = [];
+    for b in f.graph.blocks {
+        if (b.term.kind_tag == 1 && b.term.value >= 0 && util.index_of_i32(out, b.term.value) < 0) { out = out.append(b.term.value); }
+    }
+    var at: i32 = 0;
+    while (at < out.len()) {
+        var def: ssa.SInst = defining(f, out[at]);
+        if (def.kind_tag == 7 || def.kind_tag == 8) {
+            for arg in def.args { if (util.index_of_i32(out, arg) < 0) { out = out.append(arg); } }
+        } else if (def.kind_tag != ssasem.record_new()) {
+            return [];
+        }
+        at = at + 1;
+    }
+    return out;
+}
+
+function defining(f: ssasem.Func, v: i32): ssa.SInst {
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.result == v) { return ins; } }
+    }
+    return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+}
+
+// A field read, or a copy or phi that stays inside the returned set.
+function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {
+    if (ins.kind_tag == ssasem.record_get()) { return true; }
+    if ((ins.kind_tag == 7 || ins.kind_tag == 8) && util.index_of_i32(boxes, ins.result) >= 0) { return true; }
+    for arg in ins.args { if (util.index_of_i32(boxes, arg) >= 0) { return false; } }
+    return true;
 }
 
 function scalar_array(t: typeinfo.Type): boolean {

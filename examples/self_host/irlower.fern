@@ -964,6 +964,9 @@ pub struct LowerFrame {
     // passed directly, at the BIND rather than the argument — the field can be
     // released between the two.
     own_lift_sites: string[],
+    // view_move_sites: the move_sites whose local holds an uncounted field view
+    // there (view_move_sites_of).
+    view_move_sites: string[],
     // own_handback_sites: "line:col|src" for each top-level `var` that takes
     // over the flagged `own` array parameter (or earlier such local) `src` at
     // its last use (own_handbacks_of, bind_own_handback).
@@ -1054,26 +1057,88 @@ function append_report_on(): boolean {
 // by name alone elided the retain at all of them, which released the same
 // buffer once per literal (#6545). An unstamped ident (0:0) declines — the
 // retain stands and note_moved_elided never fires, so the pair stays balanced.
-// So does a local that holds no count to hand over (slot_exit_releases).
+// So does a local that holds an uncounted field view there (view_move_sites).
 pub function (s: LowerState) moves_local_at(name: string, line: i32, col: i32): boolean {
     if (util.index_of_str(s.frame.moved_names, name) < 0) { return false; }
     if (line == 0 && col == 0) { return false; }
-    if (util.index_of_str(s.frame.move_sites, util.i32_to_string(line) + ":" + util.i32_to_string(col)) < 0) { return false; }
+    var site: string = util.i32_to_string(line) + ":" + util.i32_to_string(col);
+    if (util.index_of_str(s.frame.move_sites, site) < 0) { return false; }
+    if (util.index_of_str(s.frame.view_move_sites, site) < 0) { return true; }
     var sl: i32 = s.slot_of(name);
-    return sl < s.frame.n_params || slot_exit_releases(s, sl);
+    return sl < s.frame.n_params || (s.is_arr_slot(sl) && !s.is_borrowed_arr_slot(sl));
 }
 
-// slot_exit_releases: local `sl` holds a count the exit sweep gives back — one
-// of the sweep's moved_elided-honouring classes. The move analysis is
-// name-level and takes every rc-typed local as owned, but a field-read bind
-// (`var fr = st.fr`) is an uncounted view no sweep releases (#10482).
-function slot_exit_releases(s: LowerState, sl: i32): boolean {
-    if (s.ownflag_slot_of(sl) >= 0) { return true; }
-    if (s.is_arr_slot(sl)) { return !s.is_borrowed_arr_slot(sl); }
-    return slot_is_reclaimable_struct(s, sl) || slot_is_reclaimable_struct_scoped(s, sl)
-        || param_snapshot_local(s, sl) || slot_is_reclaimable_str(s, sl)
-        || slot_is_reclaimable_tuple(s, sl) || slot_is_reclaimable_rctuple_sweep(s, sl)
-        || slot_is_reclaimable_rcenum_sweep(s, sl) || slot_is_reclaimable_scenum(s, sl);
+// view_move_sites_of: the move sites whose local holds an uncounted field view
+// when it moves. The move analysis is name-level and takes every rc-typed local
+// as owned, but `var fr = st.fr` emits no retain and no exit sweep releases fr,
+// so a construction that elides its retain on the move holds st's box
+// uncounted (#10482). Top-level statements are read in order; a local is a
+// view from a bind or assignment of a field read or of another view until a
+// top-level store replaces it, and a store nested in a block only ever adds.
+// An own-lift bind buys its claim (emit_own_lift_retain), so it is no view.
+// Sites are placed by line, and a line two statements share is checked at both.
+function view_move_sites_of(fn: parser.FuncDecl, moved: MlOut, own_lift: string[]): string[] {
+    var out: string[] = [];
+    var views: string[] = [];
+    var k: i32 = 0;
+    while (k < fn.body.len()) {
+        var lo: i32 = ast.stmt_line(fn.body[k]);
+        var hi: i32 = 0 - 1;
+        if (k + 1 < fn.body.len()) { hi = ast.stmt_line(fn.body[k + 1]); }
+        var j: i32 = 0;
+        while (j < moved.names.len()) {
+            var ln: i32 = site_line(moved.sites[j]);
+            if (ln >= lo && (hi < 0 || ln < hi || ln == lo) && util.index_of_str(views, moved.names[j]) >= 0) {
+                out = push_str_unique(out, moved.sites[j]);
+            }
+            j = j + 1;
+        }
+        match (fn.body[k]) {
+            ast.StmtVar(v) => {
+                var lift: boolean = util.index_of_str(own_lift, util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col)) >= 0;
+                views = set_view(views, v.name, !lift && is_view_value(v.init, views));
+            },
+            ast.StmtAssign(a) => { views = set_view(views, a.target, is_view_value(a.value, views)); },
+            _ => {
+                var nested: string[] = [];
+                nested = astwalk.fold_stmt_spine(fn.body[k], nested, view_assign_into);
+                for nm in nested { views = push_str_unique(views, nm); }
+            }
+        }
+        k = k + 1;
+    }
+    return out;
+}
+
+function set_view(views: string[], name: string, on: boolean): string[] {
+    if (on) { return push_str_unique(views, name); }
+    var out: string[] = [];
+    for v in views { if (v != name) { out = out.append(v); } }
+    return out;
+}
+
+function is_view_value(e: ast.Expr, views: string[]): boolean {
+    match (e) {
+        ast.ExprFieldAccess(_) => { return true; },
+        ast.ExprIdent(id) => { return util.index_of_str(views, id.name) >= 0; },
+        _ => {}
+    }
+    return false;
+}
+
+// view_assign_into: the targets a nested block assigns a field read.
+function view_assign_into(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtAssign(a) = st {
+        if let ast.ExprFieldAccess(_) = a.value { return acc.append(a.target); }
+    }
+    return acc;
+}
+
+function site_line(site: string): i32 {
+    var c: i32 = 0;
+    var n: i32 = 0;
+    while (c < site.len() && site[c] != b':') { n = n * 10 + (site[c] - b'0') as i32; c = c + 1; }
+    return n;
 }
 
 // note_moved_elided records that the retain for `slot` was actually skipped, so
@@ -61913,7 +61978,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: [], own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs), own_handback_sites: [] }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var own_lifts: string[] = own_lift_retain_sites_of(fn, sg, structs);
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: [], own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lifts, view_move_sites: view_move_sites_of(fn, fn_moves_top, own_lifts), own_handback_sites: [] }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -72994,7 +73060,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         pi = pi + 1;
     }
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [], own_handback_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [], view_move_sites: [], own_handback_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
