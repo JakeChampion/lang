@@ -151,6 +151,138 @@ function main(): i32 {
     if (acc != 149) { return 97; }
     return 52;
 }`, 52},
+	// #10369: a scalar `.to_string()` local stored in a struct FIELD. The
+	// construction retains the box and the struct's field drop gives it back, so the
+	// local keeps its own credit only if it earns the field credit every other fresh
+	// string local gets; without it the store read as an escape and every box leaked.
+	{"tostr-scalar-struct-field", `import "std/i32";
+import "std/string";
+struct Rec { name: string }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    while (i < 5000) {
+        var s: string = i.to_string();
+        var r: Rec = Rec { name: s };
+        if (r.name.len() != s.len()) { return 97; }
+        acc = (acc + r.name.len()) % 251;
+        i = i + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    return 0;
+}`, 0},
+	// #10369: the same local reassigned into an alias (`t = s`), which retains and
+	// shares the credit only when the source is a credited fresh string local.
+	{"tostr-scalar-alias-reassign", `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    while (i < 5000) {
+        var s: string = i.to_string();
+        var t: string = "";
+        t = s;
+        if (t.len() != s.len()) { return 97; }
+        acc = (acc + t.len()) % 251;
+        i = i + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    return 0;
+}`, 0},
+	// VALUE guard for the field credit: a record built from a `.to_string()` local
+	// before the loop is read after it, so a release of the source that took the
+	// field's share with it shows as a wrong value or an underflow.
+	{"tostr-scalar-field-read-after-loop", `import "std/i32";
+import "std/string";
+struct Rec { name: string }
+function main(): i32 {
+    var acc: i32 = 0;
+    var first: string = (7 * 1000).to_string();
+    var keep: Rec = Rec { name: first };
+    var i: i32 = 0;
+    while (i < 200) { var s: string = i.to_string(); var r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; i = i + 1; }
+    var b1: i32 = (__heap_bump_bytes() as i32);
+    var j: i32 = 0;
+    while (j < 5000) { var s: string = j.to_string(); var r: Rec = Rec { name: s }; acc = (acc + r.name.len()) % 251; j = j + 1; }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    if (keep.name != "7000") { return 97; }
+    if (first.len() != 4) { return 97; }
+    return 0;
+}`, 0},
+	// STRING-RECEIVER negative for the field and reassign credits: the result is the
+	// receiver's own box, so neither credit may reach it. 200 rounds of 2+2 = 800,
+	// %251 = 47.
+	{"tostr-string-recv-field-uncredited", `import "std/string";
+struct Rec { name: string }
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var base: string = "ab";
+        var s: string = base.to_string();
+        var r: Rec = Rec { name: s };
+        var t: string = "";
+        t = s;
+        if (base != "ab" || r.name != "ab") { return 97; }
+        acc = (acc + r.name.len() + t.len()) % 251;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (acc != 47) { return 97; }
+    return 52;
+}`, 52},
+	// The receiver-typed `join` and `trim` locals are fresh string locals on the same
+	// terms, so they earn the same field and alias-reassign credits.
+	{"join-strarr-field-and-reassign", `struct Rec { name: string }
+function main(): i32 {
+    var acc: i32 = 0;
+    var b1: i32 = 0;
+    var i: i32 = 0;
+    while (i < 5200) {
+        if (i == 200) { b1 = (__heap_bump_bytes() as i32); }
+        var xs: string[] = ["ab", "cd"];
+        var s: string = xs.join("-");
+        var r: Rec = Rec { name: s };
+        var t: string = "";
+        t = s;
+        if (r.name != "ab-cd" || t != "ab-cd") { return 97; }
+        acc = (acc + r.name.len() + t.len()) % 251;
+        i = i + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    return 0;
+}`, 0},
+	{"trim-local-field-and-reassign", `struct Rec { name: string }
+function main(): i32 {
+    var acc: i32 = 0;
+    var b1: i32 = 0;
+    var i: i32 = 0;
+    while (i < 5200) {
+        if (i == 200) { b1 = (__heap_bump_bytes() as i32); }
+        var base: string = "  ab-cd  ";
+        var s: string = base.trim();
+        var r: Rec = Rec { name: s };
+        var t: string = "";
+        t = s;
+        if (r.name != "ab-cd" || t != "ab-cd" || base.len() != 9) { return 97; }
+        acc = (acc + r.name.len() + t.len()) % 251;
+        i = i + 1;
+    }
+    var b2: i32 = (__heap_bump_bytes() as i32);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (b2 - b1 >= 2048) { return 98; }
+    return 0;
+}`, 0},
 	// ESCAPE negative: the credited local is returned, so it must NOT be freed.
 	{"tostr-scalar-escape-return-safe", `import "std/i32";
 function mk(n: i32): string { var s: string = n.to_string(); return s; }
@@ -191,6 +323,37 @@ func TestSelfHostTostrScalarReclaimIRX86_64(t *testing.T) {
 			} else {
 				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
 			}
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+				t.Errorf("%s = %d, want %d (98 = to_string box leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostTostrScalarReclaimWasmIR drives the same cases through the self-hosted
+// wasm backend, where a string box carries an rc header and an over-release ticks
+// the underflow counter (exit 99) instead of passing silently.
+func TestSelfHostTostrScalarReclaimWasmIR(t *testing.T) {
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host to_string reclaim wasm IR e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+
+	for _, tc := range tostrScalarReclaimCases {
+		t.Run(tc.name, func(t *testing.T) {
+			wat := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"), "-ir")
+			if len(wat) == 0 {
+				t.Fatal("self-host wasm driver emitted 0 bytes")
+			}
+			watFile := filepath.Join(dir, tc.name+".wat")
+			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
+				t.Fatalf("write wat: %v", err)
+			}
+			cmd := exec.Command("wasmtime", "run", watFile)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = to_string box leaked; 99 = over-release/underflow; 97 = value corrupted)", tc.name, code, tc.want)
