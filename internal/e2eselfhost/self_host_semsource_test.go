@@ -1386,11 +1386,64 @@ struct Threaded { acc: Acc, labels: i32[], why: string }
     var d: i32[] = c.append(8);
     return b.len() * 100 + d.len() * 10 + b[b.len() - 1];
 }
+// The same read reached around a loop, where only the header carries it.
+@noinline function reread_loop(b: i32[]): i32 {
+    var i: i32 = 0;
+    while (i < 2) { var c: i32[] = b.append(9); i = i + 1; }
+    return b.len() * 10;
+}
 @noinline function spare(n: i32): i32[] {
     var a: i32[] = [];
     var i: i32 = 0;
     while (i < n) { a = a.append(i); i = i + 1; }
     return a;
+}
+// A loop appending through a borrowed parameter (#9526): the phi carries the
+// parameter's box until the first grow, and the retain it owes is taken at
+// the return. loop_fill copies nothing; loop_kept's caller keeps its array,
+// so its row brackets the call and the kept one stays at its length.
+// loop_early returns the untouched parameter on one path, and loop_drop
+// discards the accumulator, which leaves it an ordinary owned value.
+@noinline function loop_raw(out: u8[], s: string): u8[] {
+    var bs: u8[] = out;
+    var i: i32 = 0;
+    while (i < s.len()) { bs = bs.append(s[i]); i = i + 1; }
+    return bs;
+}
+@noinline function loop_fill(n: i32): i32 {
+    var before: i32 = __arr_push_shared_count();
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = loop_raw(out, "abcd"); i = i + 1; }
+    out = loop_raw(out, "");
+    return out.len() * 10 + (__arr_push_shared_count() - before);
+}
+@noinline function loop_kept(n: i32): i32 {
+    var out: u8[] = loop_raw([], "abc");
+    var held: u8[] = out;
+    out = loop_raw(out, "de");
+    return held.len() * 100 + out.len() * 10 + (held[held.len() - 1] as i32) - 99;
+}
+@noinline function loop_early(b: string[], n: i32): string[] {
+    var i: i32 = 0;
+    while (i < n) {
+        if (i == 2) { return b; }
+        b = b.append("w");
+        i = i + 1;
+    }
+    return b.append("end");
+}
+@noinline function loop_early_run(n: i32): i32 {
+    var ws: string[] = [];
+    var i: i32 = 0;
+    while (i < n) { ws = loop_early(ws, i % 4); i = i + 1; }
+    return ws.len() * 10 + ws[ws.len() - 1].len();
+}
+@noinline function loop_drop(b: i32[], n: i32): i32 {
+    var i: i32 = 0;
+    var t: i32 = 0;
+    while (i < n) { b = b.append(i); t = t + b.len(); i = i + 1; }
+    return t;
 }
 // Match-expressions and if-expressions in value position: every arm carries
 // its value to the join's phi, a string, a record and an array among them,
@@ -3605,6 +3658,9 @@ function main(): i32 {
     print_int(chain_fill(100)); print(""); print_int(chain_kept(4)); print("");
     print_int(chain_words_run(5)); print(""); print_int(chain_tail_run(7)); print("");
     print_int(reread_one(spare(5))); print(""); print_int(reread_chain(spare(5))); print("");
+    print_int(reread_loop(spare(5))); print("");
+    print_int(loop_fill(100)); print(""); print_int(loop_kept(0)); print("");
+    print_int(loop_early_run(9)); print(""); print_int(loop_drop(spare(5), 4)); print("");
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -3715,8 +3771,15 @@ function main(): i32 {
 // held and a last "xc" for 18152, and chain_tail_run(7) is 5 elements ending
 // in 8, then the caller's 3 for 5083.
 // reread_one(spare(5)) keeps b at 5 beside c's 6 for 56, and reread_chain
-// keeps b at 5 ending in 4 beside d's 7 for 574.
-const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n13\n15\n4000\n262\n18152\n5083\n56\n574\n"
+// keeps b at 5 ending in 4 beside d's 7 for 574. reread_loop keeps b at 5
+// across both turns for 50.
+// loop_fill(100) is 400 bytes and no copies for 4000. loop_kept holds "abc"
+// ending in 'c' (99) beside "abcde" for 300 + 50 + 0 = 350. loop_early_run(9)
+// calls with n = 0,1,2,3,0,1,2,3,0, adding 1, 2, 3 and 2 elements per round
+// of four (n = 3 returns at i == 2), 2 * 8 + 1 = 17 ending in "end" for 173.
+// loop_drop(spare(5),
+// 4) sums 6 + 7 + 8 + 9 = 30.
+const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n6\n4\n2\n0\n7\n31\n1\n0\n2\n22\n10\n7\n2\n5\n14\n7\n9\n4\n7\n1\n4\n8\n13\n14\n3\n9\n7\n3\n5\n5\n2\n2\n9\n36\n12\n9\n0\n4\n6\n6\n9\n7\n0\n3\n109\n9\n12\n4\n0\n3\n9\n3\n4\n4\n5\n3\n5\n5\n0\n3\n1\n0\n10\n-2147483648\n0\n28\n8\n-20\n2\n6\n3\n7\n6\n4\n10\n9\n98\n196\n98\n98\n97\n97\n195\n0\n0\n2\n144\n1\n1\n1\n44\n65\n65\n90\n128\n0\n1\n35\n35\n705032739\n1\n3\n1\n2\n1\n40\n1\n0\n625\n38\n30\n3\n3\n25\n150\n0\n-1\n1\n10\n10\n5000\n6\n9\n10\n4\n5\n6\n0\n3\n5\n6\n3\n10\n7\n70\n28\n16\n21\n8\n5\n12\n7\n5\n5\n6\n42\n3\ntick\n2\n1\n5\n2\n11\n-2\n3\n0\n6\n9\n48\n4224\n0\n3\n2\n13\n12\n16\n0\n8\n11\n5\n9\n-3\n2\n9\n18\n-1\n5\n18\n3\n16\n2\n32\n71\n32\n43\n43\n332\n42\n15\n27\n0\n15\n0\n0\n0\n4\n4\n2\n0\n3\n-1\n1\nA66\n2\n0\n0\n0\n0\n0\n7\n12\n6\n9\n1\n1431655765\n3\n15\n0\n255\n-1\n255\n4294\n11718750\n1\n9223\n854775808\n8\n15\n255\n771\n9223\n-1966660860\n3\n12\n10\n1\n0\n1\n13\n6\n6\n1\n23\n5\n1\n3\n1\n2\n3\n2\n3\n2\n5\n0\n2\n4\n3\n17\n7\n13\n8\n6\n6\n17\n8\n1\n1\n7\n1\n0\n1\n0\n7\n8\n5\n6\n3\n6\n16777216\n1036831949\n1266679808\n1056964609\n1\n1077936128\n14\n6\n15\n13\n4\n7\n9\n397\n15\n10\n0\n20\n0\n21\n8\n18\n131\n2\n67\n7\n5\n1\n0\n10\n2\n51\n234\n9\n4743\n61\n121\n12\n210\n13\n-2147452531\n11\n0\n15\n8\n-1\n255100\n-7\n4\n224\n223\n22\n11\n1804\n642\n94\n915\n152\n50128\n85\n3\n101\n205\n0\n1004\n14\n3\n7\n1\n18\n7\n8\n10\n40\n4\n2\n7\n0\n11\nelem!\n5\nelem\n4\n48\n12\npt:pt\n5\npt\n2\n5\n12\n107\n34\n12\n3\n9\n42\n50\n1072\n13\npt!\n6\n9\n17\n14\n3\n9\n3\n6\n6\n4\nob\nob\nob\n13\n2\n60\n9\n50\n36\n1\n2\n72\n17\n418\n10\n12\n32\n13\n15\n4000\n262\n18152\n5083\n56\n574\n50\n4000\n350\n173\n30\n"
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
@@ -3870,7 +3933,7 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 			if err != nil {
 				t.Fatalf("semantic lowering: %v\n%s", err, diagnostics.String())
 			}
-			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "map_get_hit", "map_get_int", "opt_has", "opt_words", "lam_inferred", "lam_text", "float_bound", "map_lit_words", "show", "show_pt", "labelled_sum", "inc_by", "inc_calls", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show", "map_vrec", "map_venum", "map_varr", "checked_head", "checked_mid", "checked_temp", "checked_miss", "checked_split", "checked_scan", "open_base", "open_window", "try_even", "try_quarter", "try_opt", "try_head", "try_view", "try_parse", "try_msg", "try_loop", "tick_ns", "napped", "reused_step", "reuse_loop", "reuse_shared", "sigil_code", "cross_step", "cross_back", "cross_back_code", "cross_loop", "cross_wide", "tuple_step", "tuple_loop", "tuple_from_rec", "rec_from_tuple", "chain_le32", "chain_fill", "chain_kept", "chain_words", "chain_words_run", "chain_tail", "chain_tail_run", "reread_one", "reread_chain", "spare", "print_int"} {
+			for _, name := range []string{"pick", "pair", "boxed", "carry", "count_even", "fill", "first_of", "keep", "chain", "twice", "count_down", "grow", "make", "wrap", "unwrap", "tally", "greet", "boxed_local", "boxed_carry", "shape", "measure", "sum_shapes", "consume", "boxed_shape", "hold", "mk_node", "node_size", "node_sum", "leaf", "fork", "tree_sum", "build_sum", "chain_len", "chain_build", "mk_s2", "proj", "total", "make_counter", "twice_total", "size_of", "eat_size", "fresh_size", "text_size", "inner_size", "sum_all", "grown_size", "grow_to", "push_temp", "borrow_acc", "push_borrowed", "set_borrowed", "push_field_len", "set_field_at", "push_elem_len", "elem_push", "push_kept", "build_rows", "push_word", "word_lens", "set_word_borrowed", "word_set", "words", "word_bytes", "rows", "row_total", "sum_for", "skip_two", "until_two_for", "first_gt", "shadow_for", "temp_for", "nested_for", "copy_words", "head_of", "mid_of", "temp_slice", "scan_slices", "grown", "boxed_len", "deep_len", "paired_len", "longs_len", "span_len", "div_of", "rem_of", "bit_ops", "shifts", "int_min", "ratio_of", "bump", "pure_copy", "reorder", "from_temp", "retag", "nested_up", "out_of_order", "byte_at", "first_last", "temp_byte", "outlives", "checksum", "byte_wrap", "byte_shift", "byte_mask", "wide_wrap", "wide_mul", "narrow", "upper", "wide_shift", "wide_product", "wide_low", "wide_byte", "wide_narrow", "wide_neg", "wide_count", "wide_hex", "wide_cmp", "wide_div", "wide_of", "wide_hi", "wide_call", "view_len", "copied", "scan_views", "lent_views", "view_of_temp", "scale", "ratio", "float_cmp", "float_loop", "float_call", "wide_float", "wide_fields", "span_wide", "mk_wide", "mk_span", "wide_lit", "wide_sum", "wide_lit_sum", "wide_grow", "wide_set", "wide_copy_set", "uwide_lit", "uwide_sum", "uwide_lit_sum", "uwide_grow", "uwide_set", "uwide_copy_set", "wide_pair", "wide_pair_sum", "float_pair", "float_pair_sum", "float_arr", "float_sum", "float_lit_sum", "float_grow", "set_at", "fill_squares", "copy_set", "set_word", "word_swap", "shared_word", "set_p", "halves", "unpack", "unpack_discard", "unpack_words", "based", "tagged", "tick", "ticked", "built", "find_byte", "bump_each", "line_each", "word_recs", "dbl", "negate", "apply_int", "call_twice", "head_of_arr", "apply_arr", "lend_array", "text_len", "apply_text", "lend_text", "boxed_of", "apply_box", "drop_box", "box_via", "pick_fn", "shift_by", "shift_loop", "pick_shift", "shape_code", "eat_shape", "node_tag", "tag_probe", "shape_codes", "env_len", "touch_env", "line_len", "read_len", "dir_count", "wrapped_len", "drop_opt", "pick_opt", "mk_result", "has_args", "emit_byte", "bits_to_int", "underflow_now", "bytes_len", "stat_seen", "lstat_seen", "shared_pushes", "slot_n", "note_n", "held_n", "slot_share", "note_share", "slot_pair", "note_pair", "slot_held", "u32_cmp", "u32_div", "u32_rem", "u32_shift", "u32_wrap", "u32_widen", "u32_signed", "u32_byte", "u32_float", "u32_of_f64", "u64_cmp", "u64_div", "u64_rem", "u64_shift", "u64_from_i32", "u64_from_u32", "u64_narrow", "u64_float", "u64_of_f64", "ord_bits", "ord_view", "ord_temp", "add_at", "or_over", "fold_acc", "fold_twice", "fold_loop", "folded_sum", "folded_twice", "folded_loop", "folded_flag", "held_across", "keep_words", "add_word", "fold_words", "words_kept", "words_grown", "words_lambda", "words_held", "pick_len", "pick_word", "pick_word_len", "pick_kept", "pick_flip", "pick_nested", "cap_text", "cap_words", "cap_pick", "cap_loop", "cap_held", "cap_rec", "made_dir", "wrote", "unlinked", "removed", "cell_count", "cell_share", "cell_words", "cell_wide", "cell_float", "cell_closure", "f32_round_int", "f32_lit_bits", "f32_sum_bits", "f32_field", "f32_cmp", "f32_from_int", "buf_text", "buf_handle_round", "via_cap", "cap_fn", "map_tally", "map_words", "map_eat", "map_hand", "alloc_bytes", "scan_temp", "addr_walk", "addr_order", "addr_text", "addr_eq", "float_bits", "wide_some", "wide_maybe", "float_some", "float_maybe", "mixed_res", "wide_or_text", "text_methods", "points", "point_eq", "map_vstr", "map_vwords", "acc_push", "acc_push_own", "acc_fill", "acc_kept", "acc_loop", "tags_add", "tags_total", "acc_osz", "acc_via", "acc_via_fill", "acc_via_kept", "acc_via_shared", "thread_step", "thread_run", "thread_shared", "sat_mix", "chk_count", "chk_wide", "sat_byte", "chk_unsigned", "vb_words", "vb_rows", "lit_of", "lit_int", "churn", "lit_bytes", "set_kept", "fill_field", "set_shared_field", "set_word_field", "word_field_set", "map_ints", "map_int_words", "map_get_hit", "map_get_int", "opt_has", "opt_words", "lam_inferred", "lam_text", "float_bound", "map_lit_words", "show", "show_pt", "labelled_sum", "inc_by", "inc_calls", "nested_arms", "mk_out", "nested_case", "guarded_pick", "guarded_words", "for_pairs", "mk_dp", "struct_unpack", "at_unpack", "nested_unpack", "guarded_and", "qualified_pick", "assoc_make", "tm_word", "tm_show", "tm_sum", "tm_words", "sm_pick", "sm_show", "map_vrec", "map_venum", "map_varr", "checked_head", "checked_mid", "checked_temp", "checked_miss", "checked_split", "checked_scan", "open_base", "open_window", "try_even", "try_quarter", "try_opt", "try_head", "try_view", "try_parse", "try_msg", "try_loop", "tick_ns", "napped", "reused_step", "reuse_loop", "reuse_shared", "sigil_code", "cross_step", "cross_back", "cross_back_code", "cross_loop", "cross_wide", "tuple_step", "tuple_loop", "tuple_from_rec", "rec_from_tuple", "chain_le32", "chain_fill", "chain_kept", "chain_words", "chain_words_run", "chain_tail", "chain_tail_run", "reread_one", "reread_chain", "reread_loop", "spare", "loop_raw", "loop_fill", "loop_kept", "loop_early", "loop_early_run", "loop_drop", "print_int"} {
 				if !strings.Contains(diagnostics.String(), "produced "+name+"\n") {
 					t.Fatalf("%s was not produced:\n%s", name, diagnostics.String())
 				}
