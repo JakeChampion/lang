@@ -1524,7 +1524,7 @@ function container_op(k: i32): boolean {
 }
 
 function variant_op(k: i32): boolean {
-    return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get()], k) || identity_op(k);
+    return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get(), ssasem.dyn_is()], k) || identity_op(k);
 }
 
 // A struct-union's member is its own box, a view and the string it borrows
@@ -1532,7 +1532,7 @@ function variant_op(k: i32): boolean {
 // narrowing and a string retag move no bytes: the operand is already on the
 // stack and the store below takes it.
 function identity_op(k: i32): boolean {
-    return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.dyn_up()], k);
+    return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.dyn_up(), ssasem.dyn_as()], k);
 }
 
 function supported_op(k: i32): boolean { return value_op(k) || container_op(k); }
@@ -1955,11 +1955,29 @@ function field_get(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
 
 function variant(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (identity_op(ins.kind_tag)) { return r; }
+    if (ins.kind_tag == ssasem.dyn_is()) { return dyn_test(r, f, ins); }
     var whole: typeinfo.Type = variant_union(f, ins);
     if (enum_layout(f, whole) == semrecords.layout_option()) { return option_site(r, f, ins, whole); }
     if (ins.kind_tag == ssasem.variant_new()) { return emit(r, ir.op_struct_make(ins.str, ins.args.len(), decl_of(f, ins, structs))); }
     if (ins.kind_tag == ssasem.variant_is()) { return emit(r, ir.op_variant_is(ins.str)); }
     return field_get(r, f, ins);
+}
+
+// A dyn box carries its concrete's shape where a member box carries its
+// variant's, so the downcast's test is the member test. An enum's box carries
+// the shape of the variant it holds, so an enum target is any of them, each
+// test reading the operand afresh.
+function dyn_test(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
+    var at: i32 = semrecords.find_enum(f.enums, typeinfo.TypeUnion { name: ins.str, args: [] });
+    if (at < 0) { return emit(r, ir.op_variant_is(ins.str)); }
+    var first: boolean = true;
+    for v in f.enums[at].variants {
+        if (!first) { r = emit(r, ir.op_load_local(ins.args[0])); }
+        r = emit(r, ir.op_variant_is(v.name));
+        if (!first) { r = emit(r, ir.op_bin("or", 0, false)); }
+        first = false;
+    }
+    return r;
 }
 
 // The union a variant instruction works on: a construction produces one, and
