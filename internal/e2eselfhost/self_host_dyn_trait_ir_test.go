@@ -20,13 +20,13 @@ var dynTraitIRCases = []struct {
 		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function sum(xs: dyn Shape[]): i32 { var t: i32 = 0; for x in xs { t = t + x.area(); } return t; } function main(): i32 { var xs: dyn Shape[] = [Circle { r: 3 }, Rect { w: 2, h: 5 }]; return sum(xs); }`, 19},
 	// A `dyn Shape` SCALAR param, receiving a Circle. 4*4 = 16.
 	{"param-circle",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } function main(): i32 { var c: Circle = Circle { r: 4 }; return ar(c); }`, 16},
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { var c: Circle = Circle { r: n(4) }; return ar(c); }`, 16},
 	// Same param, receiving a Rect — the OTHER impl arm. 2*5 = 10.
 	{"param-rect",
-		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } function main(): i32 { var r: Rect = Rect { w: 2, h: 5 }; return ar(r); }`, 10},
+		`trait Shape { function area(self: Self): i32; } struct Circle { r: i32 } struct Rect { w: i32, h: i32 } impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r; } } impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h; } } function ar(s: dyn Shape): i32 { return s.area(); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { var r: Rect = Rect { w: n(2), h: 5 }; return ar(r); }`, 10},
 	// A trait method taking an ARGUMENT, dispatched dynamically. 5 * 3 = 15.
 	{"method-with-arg",
-		`trait Sc { function sc(self: Self, k: i32): i32; } struct A { v: i32 } struct B { v: i32 } impl Sc for A { function sc(self: Self, k: i32): i32 { return self.v * k; } } impl Sc for B { function sc(self: Self, k: i32): i32 { return self.v + k; } } function f(s: dyn Sc): i32 { return s.sc(3); } function main(): i32 { var a: A = A { v: 5 }; return f(a); }`, 15},
+		`trait Sc { function sc(self: Self, k: i32): i32; } struct A { v: i32 } struct B { v: i32 } impl Sc for A { function sc(self: Self, k: i32): i32 { return self.v * k; } } impl Sc for B { function sc(self: Self, k: i32): i32 { return self.v + k; } } function f(s: dyn Sc): i32 { return s.sc(3); } @noinline function n(k: i32): i32 { return k; } function main(): i32 { var a: A = A { v: n(5) }; return f(a); }`, 15},
 	// Three impls in a heterogeneous array — exercises a longer compare-branch
 	// chain. 3*3 + 2*5 + 7 = 9 + 10 + 7 = 26.
 	{"three-impls",
@@ -64,7 +64,7 @@ var dynTraitIRCases = []struct {
 	// type is "dyn Show" (NOT "Circle") so `d.show()` dispatches DYNAMICALLY
 	// (regression: must not static-dispatch to Circle.show). 4*4 = 16.
 	{"struct-var-init",
-		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } function main(): i32 { var d: dyn Show = Circle { r: 4 }; return d.show(); }`, 16},
+		`trait Show { function show(self: Self): i32; } struct Circle { r: i32 } impl Show for Circle { function show(self: Self): i32 { return self.r * self.r; } } @noinline function n(k: i32): i32 { return k; } function main(): i32 { var d: dyn Show = Circle { r: n(4) }; return d.show(); }`, 16},
 	// `d = <i32>` — reassigning a SCALAR dyn local boxes the primitive RHS at
 	// the assignment. Init with 10 (show -> 11), then reassign 41 (show -> 42).
 	{"prim-i32-assign",
@@ -206,7 +206,9 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 }
 
 // TestSelfHostDynTraitIR compiles each case with the self-host CLI for
-// x86-64 and wasm and checks the exit code and the leak census.
+// x86-64 and wasm and checks the exit code and the leak census. A record of
+// constant fields is a static box, so a probe whose census needs a heap box
+// takes one field from n().
 func TestSelfHostDynTraitIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
