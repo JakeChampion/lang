@@ -306,12 +306,13 @@ emits 16 distinct `__fern_map_*` calls including seven `__fern_map_free_*`
 reclaim variants tied to the parallel-array layout, against nine core/map entry
 points that own reclaim internally.
 
-Routing has started. Under the typed lowering, a map whose key is a string,
-`i32`, `u32` or `boolean` and whose value is `i32`, `u32` or `boolean` runs on
-core/map (`ssarc.routed_map`): 20,000 inserts and 40,000 lookups went from
-3.05 s to 5 ms, against native's 4 ms, and `tsort` over a 20,000-edge DAG from
-1.68 s to 10 ms, against native's 9 ms. Counted values (strings, arrays,
-records) are the next slice.
+Routing has started. Under the typed lowering, a map whose key and value are
+each a string, `i32`, `u32` or `boolean` runs on core/map
+(`ssarc.routed_map`): 20,000 inserts and 40,000 lookups went from 3.05 s to
+5 ms, against native's 4 ms; `tsort` over a 20,000-edge DAG from 1.68 s to
+10 ms, against native's 9 ms; and the same workload on `Map[string, string]`
+from 1.72 s to 11 ms, against native's 10 ms. Array and record values are the
+next slice.
 
 **3. String self-reassign is not in-place.** Native lowers `held = held + c` to
 `__fern_str_append`, which grows the buffer in place; the self-host emits a
