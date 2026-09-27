@@ -1272,10 +1272,22 @@ pub struct Sub {
     // The runtime helpers' lowering, handed to the emit's state; independent of
     // `on`, since a helper produces whether or not the program's module did.
     rt_lower: (string) => irlower.LowerResult[],
+    // The typed module the producer lambda-lifted, which a register backend's
+    // emit reads erased rather than lifting again; `has_lifted` says it is set.
+    lifted: parser.Module,
+    has_lifted: boolean,
 }
 
 pub function no_sub(): Sub {
-    return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower };
+    var none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [] };
+    return Sub { on: false, bodies: [], extra: [], sigs: irlower.fn_sigs_empty(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false };
+}
+
+// The register emit's lambda-lifted module: the producer's, erased, when it
+// handed one over, else `annotated` lifted here.
+pub function sub_lifted(sub: Sub, annotated: parser.Module): parser.Module {
+    if (sub.has_lifted) { return parser.erase_str_module(sub.lifted); }
+    return lift_lambdas(annotated);
 }
 
 // The body the substitution produced for declaration `i`, else the AST

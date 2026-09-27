@@ -9084,7 +9084,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, sub: ircore.Sub): stri
         exit(1);
         return "";
     }
-    var lm: parser.Module = ircore.lift_lambdas(tm);
+    var lm: parser.Module = ircore.sub_lifted(sub, tm);
     var g: string = emit_module_ir_gated_sub(lm, [], sub);
     if (g != "") { return g; }
     ircore.eprint_ir_ineligible();

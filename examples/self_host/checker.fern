@@ -4106,6 +4106,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           typeinfo.TypeUnion(un) => {
             recv_type_name = un.name;
           },
+          typeinfo.TypeDyn(d) => {
+            return dyn_method_type(d.traits, name, s);
+          },
           _ => {
             // `t.0()` — a numeric field access whose element is a fn value is
             // a call THROUGH that value, not a method on the tuple.
@@ -10372,6 +10375,44 @@ function trait_assoc_req(reqs: parser.TraitReq[], tr: string, field: string, see
   return assoc_miss();
 }
 
+// trait_method_req finds method `field` among trait `tr`'s requirements, or a
+// supertrait's, as trait_assoc_req does for an associated function.
+function trait_method_req(reqs: parser.TraitReq[], tr: string, field: string, seen: string[]): AssocHit {
+  var idx: i32 = trait_req_idx(tr, reqs);
+  if (idx < 0) {
+    return assoc_miss();
+  }
+  var req: parser.TraitReq = reqs[idx];
+  if (util.has_str(seen, req.trait_name)) { return assoc_miss(); }
+  var path: string[] = seen.append(req.trait_name);
+  for rs in req.req_sigs {
+    if (rs.name == field) {
+      return AssocHit { found: true, ret: rs.ret_type, owner: req.trait_name };
+    }
+  }
+  for supertrait in req.supertraits {
+    var sh: AssocHit = trait_method_req(reqs, supertrait, field, path);
+    if (sh.found) {
+      return sh;
+    }
+  }
+  return assoc_miss();
+}
+
+// dyn_method_type is the result of calling `name` on a `dyn` value: the
+// return type one of its traits declares for it. A result spelling Self has
+// no one type behind a dyn, so it stays unknown.
+function dyn_method_type(traits: string, name: string, s: Scope): typeinfo.Type {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    var h: AssocHit = trait_method_req(s.trait_reqs, util.base_type_name(tr), name, []);
+    if (h.found) {
+      if (h.ret.len() == 0 || parser.subst_self(h.ret, "__dyn") != h.ret) { return t_unknown("dyn method result spells Self"); }
+      return s.resolve_type(h.ret);
+    }
+  }
+  return t_unknown("undefined method `" + name + "` on `dyn " + traits + "`");
+}
+
 // tp_assoc_req resolves `T.field(…)` against type parameter `T`'s declared
 // bounds: a hit when one of the `+`-joined bound traits requires `field` as
 // an associated function. Mirrors the gate on native checker.go's generic
@@ -10870,7 +10911,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
   while (di < c.args.len()) {
     var dest: typeinfo.Type = t_unknown("no declared parameter");
     if (di < dests.len()) { dest = dests[di]; }
-    out = util.append_diags(out, dest_call_diags(c.args[di], dest, false, s));
+    out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
     di = di + 1;
   }
   // E038: calling a NON-FUNCTION value (`x(3)` where x is an i32 /
@@ -11806,7 +11847,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     if (fsig.name.len() > 0 && vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
       fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
     }
-    out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, true, s));
+    out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
     vi = vi + 1;
   }
   if (sl.has_base) {
@@ -12026,11 +12067,7 @@ function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scop
 // element checked against that type by `array_elem_check`, so the literal's
 // own first-element-anchored E034 stands down: `[1, "a"]` is a valid
 // `dyn Show[]` (#10097).
-// `settles` says whether the destination settles what it receives, as a `var`,
-// a `return` and a struct field do: there an array literal's elements are read
-// at its element type. A call argument does not: native reads an array
-// argument's elements without the parameter's, and the two must agree.
-function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, settles: boolean, s: Scope): util.Diag[] {
+function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ds) = dest {
       if (ds.name == sl.type_name) { return call_diags_struct_lit(sl, ds.args, s, []); }
@@ -12041,8 +12078,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, settles: boolean, s: 
     if let ast.ExprArray(a) = e {
       var out: util.Diag[] = [];
       for element in a.elements {
-        if (settles) { out = util.append_diags(out, dest_call_diags(element, elem, true, s)); }
-        else { out = util.append_diags(out, call_diags(element, s)); }
+        out = util.append_diags(out, dest_call_diags(element, elem, s));
       }
       return out;
     }
@@ -12146,11 +12182,11 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         }
         var vdest: typeinfo.Type = t_unknown("no declared type");
         if (v.type_name.len() > 0) { vdest = vsc.resolve_type(v.type_name); }
-        out = util.append_diags(out, dest_call_diags(v.init, vdest, true, vsc));
+        out = util.append_diags(out, dest_call_diags(v.init, vdest, vsc));
         out = util.append_diags(out, array_elem_check(array_elem_type_of(vdest), v.init, vsc));
       },
       ast.StmtReturn(r) => {
-        out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, true, cur));
+        out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, cur));
         // E034: a composite-array `return` value's elements checked
         // against the function's declared element type (top-level
         // stmts carry an unknown ret_type sentinel and are skipped).
@@ -20682,10 +20718,19 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
 // destination, a typed operand, a parameter, a return) fixes the class unless
 // an earlier use already did. A later, different width is left for the checker
 // to report against the declaration this pass writes.
+//
+// A generic call whose type parameter only untyped literals bind takes the
+// width of the position that reads it, the way native's
+// settleGenericCallByHint settles it (#10176): `var x: (u64, u64) = both(1,
+// 2)` is `both(1u64, 2u64)`. The pass records that width against each literal
+// argument (cargs / ctags) and writes it as the literal's suffix. A call no
+// position types keeps its default: i32, or i64 for a wide literal argument.
 
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[] }
+// pend holds the open generic reads a literal local was compared or combined
+// with: each takes the width pend_id's class settles at, once the body is walked.
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[] }
 
-struct LitRewrite { keys: string[], tags: string[] }
+struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[] }
 
 const LIT_MARK: string = "literal local #";
 
@@ -20744,7 +20789,7 @@ function lit_find(st: LitInfer, k: i32): i32 {
 }
 
 function lit_new(st: LitInfer, key: string): LitInfer {
-  return LitInfer { parent: st.parent.append(st.parent.len()), width: st.width.append(t_unknown("open")), keys: st.keys.append(key) };
+  return LitInfer { ...st, parent: st.parent.append(st.parent.len()), width: st.width.append(t_unknown("open")), keys: st.keys.append(key) };
 }
 
 // lit_fix gives every open class among `ids` the integer type `w`.
@@ -20786,10 +20831,7 @@ function lit_is_cmp(op: string): boolean {
 
 // lit_demand: `e` is read at `want`, so an untyped tree takes it.
 function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
-  if (is_integer(want)) {
-    var (seed, ids) = lit_tree(e, s, []);
-    if (seed) { return lit_fix(st, ids, want); }
-  }
+  if (is_integer(want) && open_tree(e, s)) { return demand_open(e, want, s, st); }
   match (want) {
     typeinfo.TypeTuple(wt) => {
       if let ast.ExprTuple(tl) = e {
@@ -20813,7 +20855,7 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
     },
     _ => {}
   }
-  return lit_expr(e, s, st);
+  return lit_expr(e, s, gcall_demand(e, want, s, st));
 }
 
 // lit_arg: `e` stands alone — an untyped tree's members share one type, and
@@ -20835,17 +20877,240 @@ function lit_binary(b: ast.ExprBinary, s: Scope, st: LitInfer): LitInfer {
     for k in rids { all = all.append(k); }
     return lit_link(st, all);
   }
-  if (ls) {
+  var lo: boolean = open_tree(b.left, s);
+  var ro: boolean = open_tree(b.right, s);
+  if (ls) { return lit_expr(b.right, s, lit_beside(lids, b.right, ro, s, st)); }
+  if (rs) { return lit_expr(b.left, s, lit_beside(rids, b.left, lo, s, st)); }
+  return lit_expr(b.right, s, lit_expr(b.left, s, gcall_operands(b, lo, ro, s, st)));
+}
+
+// lit_beside: the literal locals `ids` of an untyped tree read beside `other`.
+// A typed operand fixes them. An open generic read shares their width: i64 when
+// a wide literal binds it, else whatever the locals settle at.
+function lit_beside(ids: i32[], other: ast.Expr, open: boolean, s: Scope, st: LitInfer): LitInfer {
+  if (ids.len() == 0) { return st; }
+  if (!open) { return lit_fix(st, ids, check_expr(other, s)); }
+  if (open_wide(other, s)) { return lit_fix(st, ids, t_i64()); }
+  var out: LitInfer = lit_link(st, ids);
+  return LitInfer { ...out, pend: out.pend.append(other), pend_id: out.pend_id.append(ids[0]), pend_scope: out.pend_scope.append(s) };
+}
+
+// gcall_operands: an open generic read beside a typed operand takes that
+// operand's width. Two open operands take the default the comparison or
+// arithmetic gives them: i64 when a wide literal binds either.
+function gcall_operands(b: ast.ExprBinary, lo: boolean, ro: boolean, s: Scope, st: LitInfer): LitInfer {
+  if (lo && !ro) { return demand_open(b.left, check_expr(b.right, s), s, st); }
+  if (ro && !lo) { return demand_open(b.right, check_expr(b.left, s), s, st); }
+  if (lo && ro && (open_wide(b.left, s) || open_wide(b.right, s))) {
+    return demand_open(b.right, t_i64(), s, demand_open(b.left, t_i64(), s, st));
+  }
+  return st;
+}
+
+// open_tree: an untyped integer tree whose leaves may also be open generic
+// reads — the shape native's settleInt descends to a generic call.
+function open_tree(e: ast.Expr, s: Scope): boolean {
+  var (seed, ids) = lit_tree(e, s, []);
+  if (seed || gcall_open(e, s)) { return true; }
+  if let ast.ExprUnary(u) = e {
+    return (u.op == "-" || u.op == "+") && open_tree(u.operand, s);
+  }
+  if let ast.ExprBinary(b) = e {
+    return int_operand_op(b.op) && open_tree(b.left, s) && open_tree(b.right, s);
+  }
+  return false;
+}
+
+// demand_open reads every leaf of an open tree at `want`.
+function demand_open(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  var (seed, ids) = lit_tree(e, s, []);
+  if (seed) { return lit_fix(st, ids, want); }
+  if let ast.ExprUnary(u) = e { return demand_open(u.operand, want, s, st); }
+  if let ast.ExprBinary(b) = e {
+    return demand_open(b.right, want, s, demand_open(b.left, want, s, st));
+  }
+  return lit_expr(e, s, gcall_demand(e, want, s, st));
+}
+
+// open_wide: a wide literal binds one of an open tree's generic reads.
+function open_wide(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprUnary(u) = e { return open_wide(u.operand, s); }
+  if let ast.ExprBinary(b) = e { return open_wide(b.left, s) || open_wide(b.right, s); }
+  var (ce, tvs) = gcall_open_tvars(e, s);
+  if let ast.ExprCall(c) = ce {
+    var sig: FuncSig = gcall_sig(c, s);
+    var k: i32 = 0;
+    while (k < sig.param_type_names.len() && k < c.args.len()) {
+      if (util.has_str(tvs, sig.param_type_names[k]) && wide_int_tree(c.args[k])) { return true; }
+      k = k + 1;
+    }
+  }
+  return false;
+}
+
+// wide_int_tree: an untyped integer tree holding a literal with no i32 reading.
+function wide_int_tree(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => { return int_literal_tree(e) && parser.literal_is_i64(n.text); },
+    ast.ExprUnary(u) => { return wide_int_tree(u.operand); },
+    ast.ExprBinary(b) => { return wide_int_tree(b.left) || wide_int_tree(b.right); },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// gcall_of: the generic call `e` reads — the call itself, or a tuple or struct
+// field of its result — with `want`, the type `e` is read at, lifted to the
+// call's whole result. False when `e` reads no generic call.
+function gcall_of(e: ast.Expr, want: typeinfo.Type, s: Scope): (ast.Expr, typeinfo.Type, boolean) {
+  if let ast.ExprFieldAccess(fa) = e {
+    var (lifted, ok) = field_want_lift(check_expr(fa.obj, s), fa.field, want, s);
+    if (!ok) { return (e, want, false); }
+    return gcall_of(fa.obj, lifted, s);
+  }
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) { return (e, want, false); }
+    return (e, want, gcall_sig(c, s).ret_type_name.len() > 0 && gcall_tvars(gcall_sig(c, s), s).len() > 0);
+  }
+  return (e, want, false);
+}
+
+// field_want_lift: the type a value of type `ot` is read at when its field
+// `field` is read at `want` — unknown in every other slot, which binds nothing.
+function field_want_lift(ot: typeinfo.Type, field: string, want: typeinfo.Type, s: Scope): (typeinfo.Type, boolean) {
+  if let typeinfo.TypeTuple(tt) = ot {
+    var idx: i32 = digit_string_to_i32(field);
+    if (idx < 0 || idx >= tt.elements.len()) { return (ot, false); }
+    return (t_tuple(unknown_slots(tt.elements.len()).with(idx, want)), true);
+  }
+  if let typeinfo.TypeStruct(sn) = ot {
+    var sig: StructSig = s.lookup_struct(sn.name);
+    var fi: i32 = field_index(sig, field);
+    if (fi < 0 || fi >= sig.field_type_names.len()) { return (ot, false); }
+    var ti: i32 = util.index_of_str(sig.type_params, sig.field_type_names[fi]);
+    if (ti < 0) { return (ot, false); }
+    return (t_struct_g(sn.name, unknown_slots(sig.type_params.len()).with(ti, want)), true);
+  }
+  return (ot, false);
+}
+
+function unknown_slots(n: i32): typeinfo.Type[] {
+  var out: typeinfo.Type[] = [];
+  while (out.len() < n) { out = out.append(t_unknown("not read")); }
+  return out;
+}
+
+// gcall_sig: the signature a call names, or an empty one.
+function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
+  if let ast.ExprIdent(cid) = c.callee {
+    if (s.has_sig(cid.name)) { return s.lookup_sig(cid.name); }
+  }
+  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), type_param_count: 0, type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], is_const: false };
+}
+
+// gcall_tvars: the type variables a signature declares some parameter AS —
+// recognised as the call binding does (gc_is_typevar_name).
+function gcall_tvars(sig: FuncSig, s: Scope): string[] {
+  var tvs: string[] = [];
+  for ptn in sig.param_type_names {
+    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.structs.names, s.unions.names)) {
+      tvs = tvs.append(ptn);
+    }
+  }
+  return tvs;
+}
+
+// lit_bound_typevar: every argument declared as `tp` is an untyped integer
+// tree, and no parameter mentions `tp` inside another type (`T[]`,
+// `Option[T]`), which would pin it on its own.
+function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope): boolean {
+  var n: i32 = 0;
+  var k: i32 = 0;
+  while (k < sig.param_type_names.len() && k < c.args.len()) {
+    if (sig.param_type_names[k] == tp) {
+      var (seed, ids) = lit_tree(c.args[k], s, []);
+      if (!seed && !int_literal_tree(c.args[k])) { return false; }
+      n = n + 1;
+    } else if (ref_mentions(parser.parse_type_ref(sig.param_type_names[k]), tp)) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return n > 0;
+}
+
+function ref_mentions(r: parser.TypeRef, tp: string): boolean {
+  if (r.base == tp) { return true; }
+  for a in r.args {
+    if (ref_mentions(a, tp)) { return true; }
+  }
+  return false;
+}
+
+// gcall_open: `e` reads a generic call's result through a type variable only
+// untyped literals bind, so its width is still open.
+function gcall_open(e: ast.Expr, s: Scope): boolean {
+  var (ce, tvs) = gcall_open_tvars(e, s);
+  return tvs.len() > 0;
+}
+
+// gcall_open_tvars: the generic call `e` reads, and the type variables of its
+// result that only untyped literals bind.
+function gcall_open_tvars(e: ast.Expr, s: Scope): (ast.Expr, string[]) {
+  var tvs: string[] = [];
+  var (ce, lifted, ok) = gcall_of(e, t_unknown("open"), s);
+  if (!ok) { return (e, tvs); }
+  if let ast.ExprCall(c) = ce {
+    var sig: FuncSig = gcall_sig(c, s);
+    var ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
+    for tp in gcall_tvars(sig, s) {
+      if (ref_mentions(ret, tp) && lit_bound_typevar(sig, c, tp, s)) { tvs = tvs.append(tp); }
+    }
+  }
+  return (ce, tvs);
+}
+
+// gcall_demand: `e`, a generic call or a field of one, is read at `want`. Each
+// type variable only untyped literals bind takes the integer type `want` binds
+// it to through the callee's result.
+function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  var (ce, lifted, ok) = gcall_of(e, want, s);
+  if (!ok) { return st; }
+  if let ast.ExprCall(c) = ce {
+    var sig: FuncSig = gcall_sig(c, s);
+    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, gcall_tvars(sig, s), s.structs.names, s.unions.names, [], []);
     var out: LitInfer = st;
-    if (lids.len() > 0) { out = lit_fix(out, lids, check_expr(b.right, s)); }
-    return lit_expr(b.right, s, out);
+    var i: i32 = 0;
+    while (i < bn.len()) {
+      if (is_integer(bt[i]) && lit_bound_typevar(sig, c, bn[i], s)) { out = gcall_settle(c, sig, bn[i], bt[i], s, out); }
+      i = i + 1;
+    }
+    return out;
   }
-  if (rs) {
-    var out2: LitInfer = st;
-    if (rids.len() > 0) { out2 = lit_fix(out2, rids, check_expr(b.left, s)); }
-    return lit_expr(b.left, s, out2);
+  return st;
+}
+
+// gcall_settle gives the arguments declared as `tp` the integer type `w`: a
+// literal local among them is fixed, and a literal is recorded for a suffix.
+function gcall_settle(c: ast.ExprCall, sig: FuncSig, tp: string, w: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  var tag: string = typeinfo.spelling(w);
+  var out: LitInfer = st;
+  var k: i32 = 0;
+  while (k < sig.param_type_names.len() && k < c.args.len()) {
+    if (sig.param_type_names[k] == tp) {
+      var (seed, ids) = lit_tree(c.args[k], s, []);
+      out = lit_fix(out, ids, w);
+      if (int_literal_tree(c.args[k]) && (tag == "i32" || lit_suffix_spelled(tag))) {
+        out = LitInfer { ...out, cargs: out.cargs.append(gcall_arg_key(c, k)), ctags: out.ctags.append(tag) };
+      }
+    }
+    k = k + 1;
   }
-  return lit_expr(b.right, s, lit_expr(b.left, s, st));
+  return out;
+}
+
+function gcall_arg_key(c: ast.ExprCall, k: i32): string {
+  return "c" + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col) + "#" + util.i32_to_string(k);
 }
 
 // lit_call: an argument is read at its parameter's type. A value block's
@@ -20861,7 +21126,7 @@ function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   var reads: boolean = false;
   for arg in c.args {
     var (seed, ids) = lit_tree(arg, s, []);
-    reads = reads || (seed && ids.len() > 0) || lit_composite(arg);
+    reads = reads || (seed && ids.len() > 0) || lit_composite(arg) || (!seed && open_tree(arg, s));
   }
   var pts: typeinfo.Type[] = [];
   if (reads) { pts = s.call_param_types(c); }
@@ -21172,7 +21437,36 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     }
     i = i + 1;
   }
-  return LitRewrite { keys: ok, tags: ot };
+  let (ck, ct) = agreed_tags(st.cargs, st.ctags);
+  return LitRewrite { keys: ok, tags: ot, cargs: ck, ctags: ct };
+}
+
+// agreed_tags keeps one tag per key, dropping a key two records disagree on.
+function agreed_tags(keys: string[], tags: string[]): (string[], string[]) {
+  var ok: string[] = [];
+  var ot: string[] = [];
+  var i: i32 = 0;
+  while (i < keys.len()) {
+    var at: i32 = util.index_of_str(ok, keys[i]);
+    if (at < 0) {
+      ok = ok.append(keys[i]);
+      ot = ot.append(tags[i]);
+    } else if (ot[at] != tags[i]) {
+      ot = ot.with(at, "");
+    }
+    i = i + 1;
+  }
+  var rk: string[] = [];
+  var rt: string[] = [];
+  var j: i32 = 0;
+  while (j < ok.len()) {
+    if (ot[j].len() > 0) {
+      rk = rk.append(ok[j]);
+      rt = rt.append(ot[j]);
+    }
+    j = j + 1;
+  }
+  return (rk, rt);
 }
 
 // The literal suffixes check_expr reads; a width with no suffix (usize) keeps
@@ -21211,13 +21505,75 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
 }
 
 function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, boolean) {
+  if let ast.ExprCall(c) = e {
+    if (lit_call_settled(c, rw)) { return (lit_rewrite_call(c, rw), rw, true); }
+  }
   return (e, rw, false);
 }
 
-// lit_candidate_at: a declaration the inference could type — the pre-scan
-// that keeps functions with none off the scoped walk.
-function lit_candidate_at(st: ast.Stmt, own found: boolean): boolean {
-  if (found) { return true; }
+function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
+  var k: i32 = 0;
+  while (k < c.args.len()) {
+    if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0) { return true; }
+    k = k + 1;
+  }
+  return false;
+}
+
+// lit_rewrite_call suffixes the call's settled literal arguments, then
+// rewrites inside the call as the walk would have.
+function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
+  var args: ast.Expr[] = [];
+  var k: i32 = 0;
+  while (k < c.args.len()) {
+    var a: ast.Expr = c.args[k];
+    var at: i32 = util.index_of_str(rw.cargs, gcall_arg_key(c, k));
+    if (at >= 0) { a = settle_int_tree(a, rw.ctags[at]); }
+    var (ae, aa, ah) = astwalk.map_expr_acc(a, rw, lit_rewrite_stmt, lit_rewrite_expr);
+    args = args.append(ae);
+    k = k + 1;
+  }
+  var (ce, ca, ch) = astwalk.map_expr_acc(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr);
+  return ast.ExprCall { ...c, callee: ce, args: args };
+}
+
+// LitScan is the pre-scan that keeps functions with nothing to infer off the
+// scoped walk: a declaration the inference could type, or a call of one of
+// the module's generic functions with an untyped literal argument.
+struct LitScan { found: boolean, generics: string[] }
+
+function lit_scan_stmt(st: ast.Stmt, own sc: LitScan): LitScan {
+  if (sc.found || !lit_candidate_at(st)) { return sc; }
+  return LitScan { ...sc, found: true };
+}
+
+function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
+  if (sc.found) { return sc; }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(cid) = c.callee {
+      if (lit_any_int_literal(c.args) && util.has_str(sc.generics, cid.name)) { return LitScan { ...sc, found: true }; }
+    }
+  }
+  return sc;
+}
+
+function lit_any_int_literal(args: ast.Expr[]): boolean {
+  for a in args {
+    if (int_literal_tree(a)) { return true; }
+  }
+  return false;
+}
+
+function generic_fn_names(funcs: parser.FuncDecl[]): string[] {
+  var out: string[] = [];
+  for fd in funcs {
+    if (fd.receiver_name.len() == 0 && (fd.type_params.len() > 0 || fd.all_type_params.len() > 0)) { out = out.append(fd.name); }
+  }
+  return out;
+}
+
+// lit_candidate_at: a declaration the inference could type.
+function lit_candidate_at(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtVar(v) => {
       return v.type_name.len() == 0 && !name_has_comma(v.name) && int_literal_tree(v.init);
@@ -21232,22 +21588,31 @@ function lit_candidate_at(st: ast.Stmt, own found: boolean): boolean {
   return false;
 }
 
-function lit_no_expr(e: ast.Expr, own found: boolean): boolean {
-  return found;
+function needs_lit_settle(stmts: ast.Stmt[], generics: string[]): boolean {
+  var sc: LitScan = LitScan { found: false, generics: generics };
+  for stmt in stmts {
+    sc = astwalk.fold_stmt_nodes(stmt, sc, lit_scan_stmt, lit_scan_expr, astwalk.descend_all);
+  }
+  return sc.found;
 }
 
-function needs_lit_settle(stmts: ast.Stmt[]): boolean {
-  var found: boolean = false;
-  for stmt in stmts {
-    found = astwalk.fold_stmt_nodes(stmt, found, lit_candidate_at, lit_no_expr, astwalk.descend_all);
+// lit_resolve_pending reads each pending generic read at the width its literal
+// locals settled at. Locals left open take the default, as the read does.
+function lit_resolve_pending(st: LitInfer): LitInfer {
+  var out: LitInfer = st;
+  var i: i32 = 0;
+  while (i < st.pend.len()) {
+    var w: typeinfo.Type = out.width[lit_find(out, st.pend_id[i])];
+    if (!is_unknown(w)) { out = demand_open(st.pend[i], w, st.pend_scope[i], out); }
+    i = i + 1;
   }
-  return found;
+  return out;
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  var st: LitInfer = lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [] });
+  var st: LitInfer = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [], cargs: [], ctags: [], pend: [], pend_id: [], pend_scope: [] }));
   var rw: LitRewrite = lit_rewrites(st);
-  if (rw.keys.len() == 0) { return stmts; }
+  if (rw.keys.len() == 0 && rw.cargs.len() == 0) { return stmts; }
   var (out, ra) = astwalk.map_stmts_acc(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr);
   return out;
 }
@@ -21255,18 +21620,20 @@ function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
 // settle_literal_locals writes each literal local's inferred type into the
 // module, ahead of the checker's diagnostics and of lowering.
 pub function settle_literal_locals(mod: parser.Module): parser.Module {
-  var any: boolean = needs_lit_settle(mod.top_stmts);
+  var generics: string[] = generic_fn_names(mod.funcs);
+  var any: boolean = needs_lit_settle(mod.top_stmts, generics);
   for fd in mod.funcs {
-    if (!any && needs_lit_settle(fd.body)) { any = true; }
+    if (!any && needs_lit_settle(fd.body, generics)) { any = true; }
   }
   if (!any) { return mod; }
   return settle_literal_locals_in(mod, build_module_tables(mod));
 }
 
 function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  var generics: string[] = generic_fn_names(mod.funcs);
   var nfuncs: parser.FuncDecl[] = [];
   for func in mod.funcs {
-    if (needs_lit_settle(func.body)) {
+    if (needs_lit_settle(func.body, generics)) {
       var fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
       nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: settle_lit_body(func.body, fs) });
     } else {
@@ -21274,7 +21641,7 @@ function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables): parser.
     }
   }
   var ntop: ast.Stmt[] = mod.top_stmts;
-  if (needs_lit_settle(mod.top_stmts)) {
+  if (needs_lit_settle(mod.top_stmts, generics)) {
     ntop = settle_lit_body(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };

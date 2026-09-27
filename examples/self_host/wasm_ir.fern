@@ -13547,12 +13547,13 @@ function emit_wasm_arr_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o
     var esz: i32 = 4;
     if (o.width == 64) { esz = 8; }
     // An empty literal gets the capacity its first push would grow to, as
-    // ssa_lift.lift_empty_arr gives it on the native ISAs. Its element width
-    // is not always known here, so the block holds four of the widest slot:
-    // cap counts elements, and an 8-byte push strides by 8 (#10461).
+    // ssa_lift.lift_empty_arr gives it on the native ISAs. Its width does not
+    // say what a push will store (a `T[]`, an unsettled destination), so the
+    // four slots are sized for the widest, 8-byte element.
     var cap: i32 = n;
-    if (n == 0) { cap = 4; esz = 8; }
-    parts = parts.append("    i32.const " + util.i32_to_string(cap * esz) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
+    var bytes: i32 = n * esz;
+    if (n == 0) { cap = 4; bytes = 32; }
+    parts = parts.append("    i32.const " + util.i32_to_string(bytes) + "\n    call $__fern_arr_box\n    local.set " + util.i32_to_string(arrtmp) + "\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const " + util.i32_to_string(n) + "\n    i32.store\n");
     parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n    i32.const 4\n    i32.add\n    i32.const " + util.i32_to_string(cap) + "\n    i32.store\n");
     var em: i32 = n - 1;
