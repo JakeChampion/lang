@@ -264,7 +264,8 @@ function churn(i: i32): i32 { var a: string = w(i) + w(i + 1); var b: string = w
 		{
 			// A self-update followed by a return-position update, with a
 			// field bound out before either: the bind is counted, so the
-			// first update's free only decs.
+			// first update's free only decs, and `s2` releases its own
+			// count (#10371).
 			name: "self_update_then_return_update",
 			src: ownParamReleaseHead + `@noinline
 function bump(own p: P): P {
@@ -273,7 +274,7 @@ function bump(own p: P): P {
     return P { ...p, n: p.n + s2.len() };
 }` +
 				ownParamReleaseMain(`var q: P = bump(P { s: w(i), n: i }); x = x + q.n + q.s.len();`),
-			want: 34, wantFrees: 500,
+			want: 34, balance: true,
 		},
 		{
 			// The LOCAL self-overwrite family with an enum field bound out
