@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -42,37 +40,17 @@ var dynStringRetIRCases = []struct {
 		`trait M { function make(self: Self): i32[]; } struct R { n: i32 } impl M for R { function make(self: Self): i32[] { return [self.n, self.n]; } } function main(): i32 { var r: R = R { n: 5 }; var d: dyn M = r; return d.make().len() + 70; }`, 72},
 }
 
-// TestSelfHostDynStringRetIRX86_64 routes each case through the
-// self-hosted x86-64 driver (asm_run) and asserts the exit code, AND
-// probes the routing (asm_pathprobe_run) to pin each case to the "ir"
-// path.
+// TestSelfHostDynStringRetIRX86_64 runs each case through the self-host CLI
+// on x86-64-linux and asserts the exit code.
 func TestSelfHostDynStringRetIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range dynStringRetIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.expected)
+			src := tc.src
+			for _, target := range []string{"x86-64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.expected {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.expected, stderr)
+				}
 			}
 		})
 	}

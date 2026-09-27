@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -137,38 +133,14 @@ func TestSelfHostAppendParamElemX86_64(t *testing.T) {
 // TestSelfHostAppendParamElemWasmIR — the wasm sibling. Exit codes only; the
 // leak counters are an x86-64 self-host backend feature.
 func TestSelfHostAppendParamElemWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping append param elem wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range appendParamElemCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(appendParamElemSrc(tc.inner)))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "appendparamelem_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != 12 {
-				t.Errorf("append param elem wasm IR %q read elements %03d, want 012", tc.name, got)
+			src := appendParamElemSrc(tc.inner)
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != 12 {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, 12, stderr)
+				}
 			}
 		})
 	}

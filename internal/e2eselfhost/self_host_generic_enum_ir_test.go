@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -190,40 +189,17 @@ func TestSelfHostGenericEnumIRX86_64(t *testing.T) {
 
 // TestSelfHostGenericEnumWasmIR is the wasm sibling: monomorphize_enums is a
 // target-independent parser pass, so the wasm IR backend gets generic enums for
-// free. Each case asserts the same oracle exit code via the wasm_ir_run driver.
+// free. Each case asserts the same oracle exit code through the self-host CLI
+// on wasm32-wasi.
 func TestSelfHostGenericEnumWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host generic-enum wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range genericEnumIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "ge_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.expected {
-				t.Errorf("generic-enum wasm IR %q = %d, want %d", tc.name, got, tc.expected)
+			src := tc.src
+			for _, target := range []string{"wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.expected {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.expected, stderr)
+				}
 			}
 		})
 	}

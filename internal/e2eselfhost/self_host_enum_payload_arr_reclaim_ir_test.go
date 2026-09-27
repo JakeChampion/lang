@@ -189,23 +189,14 @@ func TestSelfHostEnumPayloadArrReclaimIRX86_64(t *testing.T) {
 // that boxes an enum payload, and the one where a wrong release shows as a
 // SIGSEGV under qemu rather than a byte count.
 func TestSelfHostEnumPayloadArrReclaimIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := buildSelfHostCLI(t)
 	for _, tc := range enumPayloadArrReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d", tc.name, code, tc.want)
+			src := tc.src + "\n"
+			for _, target := range []string{"arm64-linux"} {
+				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
+				}
 			}
 		})
 	}
