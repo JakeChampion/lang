@@ -803,6 +803,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
+		// Only a nested `function` sees its own name (#10383): an arrow lambda
+		// bound by `var` calling that var, directly or one lambda deeper, is E001.
+		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
+		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
@@ -2568,6 +2572,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// control: the rule must read the program's import closure, not
 		// just flag every map_new it walks.
 		{"map-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// A recursive local is a nested `function`; an arrow lambda bound by
+		// `var` does not see its own name, so a self-call is E001 and a
+		// same-named OUTER binding is what it reads (#10383).
+		{"rec-local-fn-ok", "function demo(n: i32): i32 { function f(k: i32): i32 { if (k <= 0) { return n; } return f(k - 1); } return f(3); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow", "function demo(n: i32): i32 { var f = (): i32 => { if (n <= 0) { return 0; } return f(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-nested", "function demo(n: i32): i32 { var f = (): i32 => { var g2 = (): i32 => { return f(); }; return g2(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-reads-outer", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; if (true) { var f = (x: i32): i32 => { return f(x) * 2; }; return f(3); } return 0; }\n"},
 		{"map-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		// The literal spelling reaches the same rule by a different road: the
 		// compile parse desugars `Map { … }` to a __map_new_i32 / map_new

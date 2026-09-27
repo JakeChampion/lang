@@ -5385,25 +5385,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return check_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      // A local function `function f(...) { ... }` desugars to
-      // `var f = (...) => { ... }`; its own name must be in
-      // scope within the body so a recursive self-call resolves
-      // (matching the Go checker's recursive-local handling, and the
-      // hoist pass that lifts it). Bind f to its function type before
-      // checking the init. (For a plain non-recursive lambda the
-      // binding is simply unused.)
-      var init_scope: Scope = s;
-      match (v.init) {
-        ast.ExprLambda(lm) => {
-          var lpts: typeinfo.Type[] = [];
-          for param in lm.params {
-            lpts = lpts.append(s.resolve_param(param));
-          }
-          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
-          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
-        },
-        _ => {}
-      }
+      var init_scope: Scope = rec_local_scope(v, s);
       var t: typeinfo.Type = check_expr(v.init, init_scope);
       // A destructuring `var` / `let` declares its bindings under ONE
       // comma-joined name, paired with the marker channel — binding that
@@ -5671,21 +5653,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      // The recursive-local self-binding: `var f = (...) => { ... }` must
-      // have `f` in scope while its own body is inferred, as check_stmt does.
-      var init_scope: Scope = s;
-      match (v.init) {
-        ast.ExprLambda(lm) => {
-          var lpts: typeinfo.Type[] = [];
-          for param in lm.params {
-            lpts = lpts.append(s.resolve_param(param));
-          }
-          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
-          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
-        },
-        _ => {}
-      }
-      return s.bind(v.name, check_expr(v.init, init_scope));
+      return s.bind(v.name, check_expr(v.init, rec_local_scope(v, s)));
     },
     _ => {}
   }
@@ -5742,6 +5710,29 @@ function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names:
   var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, struct_names, union_names);
   if (fd.ret_slice) { return as_view(rt); }
   return rt;
+}
+
+// A lambda's own function type, as a binding of its name sees it.
+function lambda_fn_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  var pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(s.resolve_param(param));
+  }
+  return t_func_own(pts, lambda_owns(lm), lambda_ret_type(lm, s));
+}
+
+// rec_local_name is the name a `var`'s initialiser may call itself by, or "".
+function rec_local_name(v: ast.StmtVar): string {
+  if (ast.var_binds_itself(v)) { return v.name; }
+  return "";
+}
+
+// rec_local_scope is the scope a `var`'s initialiser is checked in.
+function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
+  if let ast.ExprLambda(lm) = v.init {
+    if (ast.var_binds_itself(v)) { return s.bind(v.name, lambda_fn_type(lm, s)); }
+  }
+  return s;
 }
 
 // The result of a lambda that spells none, until its body's exits settle it.
@@ -8195,7 +8186,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        out = util.append_diags(out, lret_expr(v.init, cur, unions, v.name));
+        out = util.append_diags(out, lret_expr(v.init, cur, unions, rec_local_name(v)));
       },
       ast.StmtReturn(r) => {
         out = util.append_diags(out, lret_expr(r.value, cur, unions, ""));
@@ -12111,21 +12102,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        // A function-valued local (`var f = (...) => {...}`,
-        // including a desugared local function declaration) must be
-        // in scope inside its own body — so a recursive self-call
-        // resolves rather than reporting E001 — and for the
-        // statements that follow it. Bind it to its function type
-        // before walking the init.
+        // A function-valued local is in scope for the statements that
+        // follow it; inside its own initialiser only as rec_local_scope admits.
         var vsc: Scope = cur;
         match (v.init) {
           ast.ExprLambda(lm) => {
-            var fpts: typeinfo.Type[] = [];
-            for param in lm.params {
-              fpts = fpts.append(cur.resolve_param(param));
-            }
-            vsc = cur.bind(v.name, t_func_own(fpts, lambda_owns(lm), lambda_ret_type(lm, cur)));
-            cur = vsc;
+            vsc = rec_local_scope(v, cur);
+            cur = cur.bind(v.name, lambda_fn_type(lm, cur));
           },
           _ => {
             // A function-valued local whose init is not a lambda — `var g = dbl;`,
@@ -19949,7 +19932,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
     ast.StmtVar(v) => {
       // Reuse the type resolved for the binding; the initializer sees s.
       var init = v.init;
-      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, v.name); }
+      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, rec_local_name(v)); }
       else { init = annotate_expr(v.init, s); }
       var callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
       if (callable.type_name == "fn") {

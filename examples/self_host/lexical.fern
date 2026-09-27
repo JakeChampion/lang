@@ -137,8 +137,7 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
     match (st) {
         ast.StmtVar(v) => {
             var before = s;
-            var recursive = false;
-            if let ast.ExprLambda(lm) = v.init { recursive = true; }
+            var recursive = ast.var_binds_itself(v);
             if (recursive) { before = bind_names(before, v.name, v.line, v.col); }
             var (init, tail) = expr(v.init, before);
             if (!recursive) { tail = bind_names(tail, v.name, v.line, v.col); }
