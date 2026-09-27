@@ -110,6 +110,17 @@ What nothing gates: a lambda that takes a `Platform` is not a handler on either
 compiler, and the self-host resolves a method call by name alone, so a
 same-named method on another type is followed there and not by native.
 
+### Experiment 3: the HTTP codec as a `fip` plane
+
+`TestFipHttpCodecAgreesAndDoesNotAllocate` in `internal/e2e` compiles
+`examples/fip/http_baseline.fern` and `examples/fip/http_fip.fern` for
+x86-64 and runs both: the `fip` plane must report zero steady-state
+allocations over 128,000 requests and the baseline must allocate, the two
+must agree on the served and refused counts and on the digest over every
+response byte, every one of the six refusal classes must fire, and both must
+report a latency tail. `docs/FIP-HTTP-CODEC.md` holds the numbers the gate
+protects. It does not measure throughput: a slower build passes.
+
 ## std/net addresses and errors
 
 `TestNetAddrInterp`, `TestNetAddrX86_64`, `TestNetAddrWasm` and
