@@ -16797,7 +16797,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
 								}
 							}
-							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp, OwnerTrait: boundTrait}
+							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp, OwnerTrait: boundTrait, Assoc: true}
 							return ast.SubstSelf(tm.Result, tp)
 						}
 					}

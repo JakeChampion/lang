@@ -1025,7 +1025,16 @@ pub function lift_lambdas_view(mod: parser.Module, view: parser.FuncDecl[]): par
     // wasm funnel would not help either -- pre-mono there is no
     // `__arrm_map__<elem>` call to recognise. Giving wasm the kernel means
     // running this pass post-mono on that route, which is its own change.
-    var lifted: parser.Module = irlower.lift_lambdas_view(scale_f64_maps_module(mod), view);
+    return with_builtin_enums(irlower.lift_lambdas_view(scale_f64_maps_module(mod), view));
+}
+
+// lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
+// `str` as a view.
+pub function lift_lambdas_typed(mod: parser.Module): parser.Module {
+    return with_builtin_enums(irlower.lift_lambdas_typed(scale_f64_maps_module(mod)));
+}
+
+function with_builtin_enums(lifted: parser.Module): parser.Module {
     return parser.Module { funcs: lifted.funcs, structs: parser.inject_builtin_enums(lifted.structs), aliases: lifted.aliases, imports: lifted.imports, top_stmts: lifted.top_stmts, enums: lifted.enums, resources: lifted.resources, exports: lifted.exports, impls: lifted.impls, trait_reqs: lifted.trait_reqs, trait_decls: lifted.trait_decls, inferred_consts: lifted.inferred_consts };
 }
 

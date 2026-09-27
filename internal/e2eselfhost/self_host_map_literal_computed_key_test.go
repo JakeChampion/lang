@@ -10,7 +10,7 @@ import (
 )
 
 // A `Map { … }` literal carries its KEY KIND in the constructor the parser
-// desugars it to — `map_new_i32` or `map_new` — and the chained `.insert`
+// desugars it to — `__map_new_i32` or `map_new` — and the chained `.insert`
 // dispatch reads that back to pick the key compare. The parser used to decide
 // it by matching the FIRST key against `ExprNumber` and nothing else, so every
 // non-literal key fell through to the STRING constructor (#6207).
