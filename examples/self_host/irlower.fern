@@ -280,6 +280,11 @@ pub struct LocalInfo {
     // a binding therefore takes NO transfer retain; retaining it leaves a second
     // claim with nothing to release it (#8070).
     moved_claim: boolean,
+    // own_handback: a flagged borrowed binding that took over a threaded `own`
+    // array parameter (bind_own_handback). A clear flag means it still holds
+    // the unit the caller passed, which a return hands back uncounted, as
+    // `return p` does.
+    own_handback: boolean,
     // var_bound / var_counted: bound by a `var` statement (not an own-lift,
     // whose bind buys the transfer claim), and whether the bound value is one
     // this frame provably holds a counted reference to. An `own` position
@@ -290,7 +295,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, is_usize: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -842,9 +847,9 @@ pub struct LowerFrame {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
-    // map_clone_sites: the site keys (target@line:col) of the map self-reassigns
-    // `m = m.insert(k, v)` at which an alias of m may be live, so the store
-    // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
+    // map_clone_sites: the site keys of the map mutations (`m = m.insert(k, v)`,
+    // `m.without(k)`) at which an alias of m may be live, so the mutation
+    // clones instead of writing in place (map_clone_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
     // param that is neither `own` nor inferred-moved (a mutated capture's
@@ -959,6 +964,10 @@ pub struct LowerFrame {
     // passed directly, at the BIND rather than the argument — the field can be
     // released between the two.
     own_lift_sites: string[],
+    // own_handback_sites: "line:col|src" for each top-level `var` that takes
+    // over the flagged `own` array parameter (or earlier such local) `src` at
+    // its last use (own_handbacks_of, bind_own_handback).
+    own_handback_sites: string[],
 }
 
 pub struct LowerState {
@@ -1340,14 +1349,30 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
 }
 
 // mark_enum_field_alias records that local `name` was bound from a DIRECT enum
-// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
-// alias of the source struct's enum box (#6121). Storing it into a container
-// then needs the same Perceus dup the direct read gets, because
-// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
-// reclaimed. Appended rather than pre-scanned: the bind always precedes the
-// store, and enum_field_read_type needs the slot types the scan does not have.
+// struct field read (`var tmp: N = first.node`), which shares the source
+// struct's enum box (#6121). Storing it into a container makes the container
+// one more owner, so the store takes the same Perceus dup the direct read gets.
+// Appended rather than pre-scanned: the bind always precedes the store, and
+// enum_field_read_type needs the slot types the scan does not have.
 pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
+}
+
+// credit_enum_field_alias grants the counted alias bound at `site`, which
+// collect_enum_field_alias_sites admitted, the release the source struct gives
+// the same box. The alias is never a sole owner, so both are rc-gated: the
+// __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the struct's
+// field release deep-drops (enum_arr_elems_walk_ok), else the box-only dec of
+// "SCENUMS:", because any other payload may have reached the box uncounted.
+// Whichever owner releases last does the payload work, in either order.
+function credit_enum_field_alias(s: LowerState, site: string, ety: string): LowerState {
+    var rn: string[] = s.frame.reclaimable_names;
+    if (enum_arr_elems_walk_ok(s.frame.structs, ety)) {
+        rn = rn.append("RCENUM:" + site).append("RCENUMS:" + site);
+    } else {
+        rn = rn.append("SCENUMS:" + site);
+    }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: rn } };
 }
 
 // is_enum_field_alias reports whether `name` carries the mark above. Rebinding
@@ -1376,32 +1401,34 @@ pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     return s.is_enum_field_alias(nm);
 }
 
-// struct_alias_ident_escapes reports whether `e` is a bare ident naming a
-// BORROWED STRUCT PARAMETER. That box belongs to the caller, which releases it
-// itself, so a container storing it takes a second owner and the store has to
-// be COUNTED — the struct sibling of enum_alias_ident_escapes above.
+// box_param_ident_escapes reports whether `e` is a bare ident naming a
+// BORROWED STRUCT or ENUM PARAMETER. That box belongs to the caller, which
+// releases it itself, so a container storing it takes a second owner and the
+// store has to be COUNTED — the parameter sibling of enum_alias_ident_escapes
+// above.
 //
 // A LOCAL is deliberately excluded: one that escapes into a container has
 // already lost its reclaim credit to the escape walk, so nothing releases it
 // and the container holds the only reference; retaining there leaks instead of
 // balancing. An `own` parameter is excluded from the other side — the caller
 // transferred its reference rather than keeping one (#7853).
-pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
+pub function box_param_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     var nm: string = ident_name_or_empty(e);
     if (nm.len() == 0 || s.is_own_param(nm)) { return false; }
     var sl: i32 = s.slot_of(nm);
     if (sl < 0 || sl >= s.frame.n_params) { return false; }
-    return decl_is_struct(s.frame.structs, s.struct_type_of_slot(sl));
+    var ty: string = s.struct_type_of_slot(sl);
+    return decl_is_struct(s.frame.structs, ty) || decl_is_enum(s.frame.structs, ty);
 }
 
 // stored_elem_is_borrow reports whether an element value about to be stored in a
 // container is a reference some other owner releases — an indexed struct or
-// array element, a borrowed struct parameter, an enum alias, a field its struct's
+// array element, a borrowed struct or enum parameter, an enum alias, a field its struct's
 // drop releases, a caller-owned string element — so the store has to be counted. It is the
 // question lower_append_elem_value asks of a value, gathered so a call result
 // standing in for one of its arguments can ask it of the argument.
 function stored_elem_is_borrow(e: ast.Expr, s: LowerState): boolean {
-    return indexed_box_elem_escapes(e, s) || struct_alias_ident_escapes(e, s)
+    return indexed_box_elem_escapes(e, s) || box_param_ident_escapes(e, s)
         || enum_alias_ident_escapes(e, s) || counted_field_read_reaches_drop(e, s)
         || str_param_elem_escapes(e, s) || handback_result_of_borrow(e, s);
 }
@@ -1449,7 +1476,7 @@ function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
 // such a read bound (LocalInfo.str_caller_elem — `var e = p[i]`, `for e in p`,
 // an alias of either). The caller frees that array deep at its own exit, so a
 // container storing the element takes a second owner and the store must be
-// COUNTED: the string sibling of struct_alias_ident_escapes. A frame-built
+// COUNTED: the string sibling of box_param_ident_escapes. A frame-built
 // LOCAL array's element is deliberately not here: sharing one withdraws its deep
 // free (strarr_unsafe_for), so the container holds the only release.
 pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
@@ -1478,7 +1505,7 @@ function retain_caller_elem_handoff(s: LowerState, arg: ast.Expr, callee: string
 // indexed_box_elem_escapes reports whether `e` is an index read of a STRUCT or
 // ARRAY element — a box the source array's own release drops, whoever owns that
 // array — so a container storing it takes a second owner and the store must be
-// COUNTED: the indexed sibling of struct_alias_ident_escapes. A string element
+// COUNTED: the indexed sibling of box_param_ident_escapes. A string element
 // is not here (str_param_elem_escapes and the local deep-free withdrawal cover
 // it), nor an enum element, whose read is already balanced.
 pub function indexed_box_elem_escapes(e: ast.Expr, s: LowerState): boolean {
@@ -1524,7 +1551,7 @@ function borrowed_arr_param_slot(e: ast.Expr, s: LowerState): i32 {
         if (s.is_own_param(nm)) { return 0 - 1; }
         return sl;
     }
-    if (s.is_borrowed_arr_slot(sl)) { return sl; }
+    if (s.is_borrowed_arr_slot(sl) && !s.locals[sl].own_handback) { return sl; }
     return 0 - 1;
 }
 
@@ -1577,6 +1604,65 @@ pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
     if (slot < 0 || slot >= s.locals.len()) { return 0 - 1; }
     if (slot >= s.frame.n_params) { return s.locals[slot].arr_own_flag; }
     return s.slot_of(ownflag_name(s.locals[slot].slot_name));
+}
+
+// own_array_flag_param: slot `slot` is an `own` array parameter this lowering
+// threads with an ownership flag (ownflag_name). A pointer-element `own` array
+// has no element-unit protocol here, so a callee that does not consume it
+// leaves the caller the release of the buffer it passed: a result that
+// differs from it is released by the caller's rebind, and an identical one is
+// handed back uncounted. The flag records which buffers are the frame's own.
+// It starts clear where the caller keeps that release, and set where the
+// frame's position consumes (callee_consumes_own_array), the unit then being
+// the frame's. A scalar-element one has its own protocol and is not flagged.
+function own_array_flag_param(s: LowerState, slot: i32): boolean {
+    if (slot < 0 || slot >= s.frame.n_params || !s.is_arr_slot(slot)) { return false; }
+    if (!s.is_own_param(s.locals[slot].slot_name) || owned_scalar_array_slot(s, slot)) { return false; }
+    return util.index_of_str(s.frame.sigs.own_positions, s.frame.cur_fn + "|" + util.i32_to_string(slot)) >= 0;
+}
+
+// own_handback_src_of: the name `v` takes over when it is one of
+// own_handbacks_of's binds, else "".
+pub function (s: LowerState) own_handback_src_of(v: ast.StmtVar): string {
+    var key: string = util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + "|";
+    for row in s.frame.own_handback_sites {
+        if (row.len() > key.len() && slice_unchecked(row, 0, key.len()) == key) { return slice_unchecked(row, key.len(), row.len()) + ""; }
+    }
+    return "";
+}
+
+// bind_own_handback: `slot` was just bound at an own_handbacks_of site from
+// `src`, a flagged `own` array parameter or a local that took one over. The
+// frame holds no count of src's unit, so the binding is a borrow carrying
+// src's ownership flag: while it still holds src's buffer the flag is src's,
+// and once it holds another the flag is set and a buffer src owned is
+// released, as a rebind of src would. src's flag is cleared. A return with the
+// flag clear hands the unit back uncounted (own_handback).
+function bind_own_handback(s: LowerState, slot: i32, src: i32): LowerState {
+    var st: LowerState = s.mark_borrowed_arr(slot, true);
+    var flag: i32 = st.locals.len();
+    st = st.add_local("$ownhb" + util.i32_to_string(slot));
+    st = LowerState { ...st, locals: st.locals.with(slot, LocalInfo { ...st.locals[slot], arr_own_flag: flag, own_handback: true }) };
+    var src_flag: i32 = st.ownflag_slot_of(src);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(src));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    if (src_flag >= 0) {
+        st = st.emit(ir.op_load_local(src_flag));
+        st = st.emit(ir.op_if(0));
+        st = st.release(src, "__fern_rc_dec", "own-handback-superseded");
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_else());
+    if (src_flag >= 0) { st = st.emit(ir.op_load_local(src_flag)); } else { st = st.emit(ir.op_const_i32(0)); }
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_end());
+    if (src_flag < 0) { return st; }
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(src_flag));
 }
 
 // mark_scalar_array_elems stamps a slot with the element representation its
@@ -4379,15 +4465,14 @@ function insert_value_is_ptr(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// map_read_aliases_arr_value: `<recv>.get(k)` / `<recv>.get_or(k, d)` where the
-// receiver is a map whose VALUE column is an array type — the read the comment at
-// the alias_inc site describes. `get_or`'s DEFAULT operand is irrelevant here: the
-// slot is retained either way, and a fresh default literal handed back instead
-// simply carries one extra count (a leak at worst, never a dangle).
+// map_read_aliases_arr_value: `<recv>.get_or(k, d)` where the receiver is a map
+// whose VALUE column is an array type — the read the comment at the alias_inc
+// site describes. The DEFAULT operand is irrelevant here: the slot is retained
+// either way, and a fresh default literal handed back instead simply carries one
+// extra count (a leak at worst, never a dangle). `get` is not such a read: it
+// hands back an Option box of its own, which the payload never escapes.
 function map_read_aliases_arr_value(fa: ast.ExprFieldAccess, nargs: i32, s: LowerState): boolean {
-    if (fa.field == "get" && nargs != 1) { return false; }
-    if (fa.field == "get_or" && nargs != 2) { return false; }
-    if (fa.field != "get" && fa.field != "get_or") { return false; }
+    if (fa.field != "get_or" || nargs != 2) { return false; }
     return map_value_type_is_arr(map_value_of(expr_map_type_tag(fa.obj, s)));
 }
 
@@ -4982,6 +5067,14 @@ pub function is_enum_array_field_type(structs: StructTab, t: string): boolean {
     if (n < 3) { return false; }
     if (slice_unchecked(t, n - 2, n) != "[]") { return false; }
     return is_enum_like_name(slice_unchecked(t, 0, n - 2), structs);
+}
+
+// is_box_elem_array_type: `t` is an array of a declared struct or enum, so each
+// element is an rc box the buffer's last owner releases.
+pub function is_box_elem_array_type(structs: StructTab, t: string): boolean {
+    if (!is_array_type_name(t)) { return false; }
+    var elem: string = slice_unchecked(t, 0, t.len() - 2) + "";
+    return decl_is_struct(structs, elem) || decl_is_enum(structs, elem);
 }
 
 // is_nested_array_field_type: a `T[][]` whose ELEMENT `T[]` is itself an
@@ -8227,8 +8320,9 @@ pub function str_expr_ownership(e: ast.Expr, s: LowerState): i32 {
 //   - __raw_string(p, n)                       — the Tier-2 raw box constructor
 // EXCLUDED here (need the `: string` disambiguation, handled in the caller): a
 // bare `a + b` (could be int add) and the `.<m>()` methods (`.reverse()` /
-// `.repeat()` also exist on arrays). `.to_string()` stays excluded entirely — it
-// is the identity/alias case on a string receiver and may return a struct field.
+// `.repeat()` also exist on arrays). `.to_string()` is a method, not an ident
+// callee, so it never reaches this test; str_local_binding_is_fresh admits it on
+// a stamped scalar receiver and refuses it on a string one.
 function str_free_producer_ident(c: ast.ExprCall): boolean {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -8265,14 +8359,17 @@ function str_free_producer_ident(c: ast.ExprCall): boolean {
 // DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
 // and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
-// (aliases a live string), `.replace()` / `.to_string()` (receiver-identity
-// fast-paths), and a general call (may return a borrowed param).
+// (aliases a live string), `.replace()` and a string receiver's `.to_string()`
+// (receiver-identity fast-paths), and a general call (may return a borrowed
+// param). A stamped scalar's `.to_string()` is admitted: only the
+// stamped_scalar receiver test separates it from the string receiver's alias.
 function str_local_binding_is_fresh(init: ast.Expr): boolean {
     match (init) {
         ast.ExprCall(c) => {
             if (str_free_producer_ident(c)) { return true; }
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "to_string") { return c.args.len() == 0 && stamped_scalar(cfa.obj); }
                     if (!str_fresh_alloc_method(cfa.field)) { return false; }
                     if (cfa.field == "repeat") { return c.args.len() == 1; }
                     return c.args.len() == 0;
@@ -8376,6 +8473,16 @@ function is_fresh_str_temp(e: ast.Expr, s: LowerState): boolean {
 // credit comes from the receiver-TYPE-gated trim collector instead. `replace`
 // returns the receiver unchanged when the needle is absent, so it stays out —
 // and `lines` / `split` return arrays, not strings.
+// stamped_scalar reports whether the checker typed `e` a number, whose
+// `to_string` is the builtin decimal-text producer and always allocates. A
+// struct's may return an alias of a field, and an unstamped receiver proves
+// nothing.
+function stamped_scalar(e: ast.Expr): boolean {
+    if let ast.ExprNumber(_) = e { return true; }
+    var t: string = ast.expr_ty(e);
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "f64" || t == "f32" || t == "u8" || t == "usize";
+}
+
 function str_fresh_alloc_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "repeat";
 }
@@ -8393,9 +8500,7 @@ function tostring_recv_is_scalar(e: ast.Expr, s: LowerState): boolean {
         ast.ExprNumber(_) => { return true; },
         ast.ExprUnary(u) => {
             if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-                var tgt: string = slice_unchecked(u.op, 3, u.op.len()) + "";
-                return tgt == "i32" || tgt == "i64" || tgt == "u32" || tgt == "u64"
-                    || tgt == "f64" || tgt == "f32" || tgt == "u8" || tgt == "usize";
+                return is_tostring_scalar_tag(slice_unchecked(u.op, 3, u.op.len()) + "");
             }
             // Negation / bitwise-not of a scalar is a scalar. `!` is excluded:
             // it yields a boolean, whose `to_string` is a source-declared method
@@ -8428,6 +8533,35 @@ function tostring_recv_is_scalar(e: ast.Expr, s: LowerState): boolean {
             if (s.locals[sl].is_strarr || s.locals[sl].is_arrarr || s.locals[sl].is_f64arr
                     || s.locals[sl].is_i64arr || s.locals[sl].is_closurearr) { return false; }
             return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// is_tostring_scalar_tag: `t` names a scalar type whose `to_string` is the
+// builtin decimal-text producer.
+function is_tostring_scalar_tag(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f64" || t == "f32" || t == "u8" || t == "usize";
+}
+
+// scalar_tostring_call: `c` is `x.to_string()` on a receiver the checker typed
+// scalar — tostring_recv_is_scalar's claim, read off the annotations for a walk
+// that runs without a frame.
+function scalar_tostring_call(c: ast.ExprCall): boolean {
+    if (c.args.len() != 0) { return false; }
+    match (c.callee) {
+        ast.ExprFieldAccess(fa) => {
+            if (fa.field != "to_string") { return false; }
+            match (fa.obj) {
+                ast.ExprNumber(_) => { return true; },
+                ast.ExprIdent(id) => { return is_tostring_scalar_tag(id.ty); },
+                ast.ExprBinary(b) => { return is_tostring_scalar_tag(b.ty); },
+                ast.ExprUnary(u) => { return is_tostring_scalar_tag(u.ty); },
+                ast.ExprCall(rc) => { return is_tostring_scalar_tag(rc.ty); },
+                _ => { return false; }
+            }
         },
         _ => { return false; }
     }
@@ -9195,7 +9329,7 @@ pub function composite_cmp_type(e: ast.Expr, s: LowerState): string {
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
 // for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. Mirrors the checker's
-// for_iter_is_range (which binds the loop var to i32).
+// for_iter_is_range.
 pub function for_iter_is_range(iter: ast.Expr): boolean {
     match (iter) {
         ast.ExprCall(c) => {
@@ -9274,7 +9408,7 @@ pub function ascription_target(init: ast.Expr): string {
 pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
     match (v.init) {
         ast.ExprUnary(au) => {
-            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         _ => { return v; }
     }
@@ -9420,7 +9554,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 // functions miscompile on the native backend — cf. #2720).
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
-    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };
@@ -9492,9 +9626,9 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     // var $s = aref[$i].to_json();
     var elem: ast.Expr = ast.ExprIndex { array: aref, index: iref, unchecked: false, ty: "", line: 0, col: 0 };
     var elemj: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     // var $k = 0;
-    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var copyl: ast.Stmt = to_json_bytecopy_stmt(on, sn, kn);
     var inc: ast.Stmt = ast.StmtAssign { target: inm, value: ast.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var body: ast.Stmt[] = [ifc, dvs, dk, copyl, inc];
@@ -9518,20 +9652,20 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
     }
     if (!is_ident) {
         var an: string = "$tjarr" + util.i32_to_string(n);
-        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         s2 = lower_stmt(snap, s);
         if (!s2.ok) { return s2; }
         aref = ast.ExprIdent { name: an, line: 0, col: 0, ty: "" };
     }
     // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(dout, s2);
     if (!s2.ok) { return s2; }
     // $tjout = $tjout.append(91 as u8);  — '['
     s2 = lower_stmt(to_json_append_stmt(on, ast.ExprNumber { text: "91", suffix: "", raw: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
     // var $tji = 0;
-    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(di, s2);
     if (!s2.ok) { return s2; }
     // the serialising loop (built in helpers to keep this function small)
@@ -9557,7 +9691,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var n: i32 = s.locals.len();
     var sn: string = "$fostr" + util.i32_to_string(n);
     var idx: string = "$fosi" + util.i32_to_string(n);
-    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(snv, s);
     if (!s2.ok) { return s2; }
     var sref: ast.Expr = ast.ExprIdent { name: sn, line: 0, col: 0, ty: "" };
@@ -9568,7 +9702,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_args: [], ty: "" };
     // Both locals are hidden, so the index runs over [0, len) of a string
     // nothing rebinds: the byte read needs no bounds check.
-    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var nbody: ast.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -14550,15 +14684,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         }
         return mgo;
     }
-    if (fa.field == "without" && c.args.len() == 1) {
-        // Functional delete: `m.without(k)` -> the map with k
-        // removed (reuses __fern_map_delete, like the AST path).
-        var mdel: LowerState = lower_expr(fa.obj, s);
-        if (!mdel.ok) { return mdel; }
-        mdel = lower_expr(c.args[0], mdel);
-        if (!mdel.ok) { return mdel; }
-        return mdel.emit(ir.op_map_delete(mkk2, meqfn, false, 0));
-    }
+    if (fa.field == "without" && c.args.len() == 1) { return lower_map_without(c, fa.obj, mtype, mkk2, meqfn, s); }
     if (fa.field == "cleared" && c.args.len() == 0) {
         // Functional clear: `m.cleared()` -> a fresh empty map
         // of the same key kind. Construction, not a clear op:
@@ -16253,7 +16379,7 @@ function tuple_field_share_kind(e: ast.Expr): string {
 }
 
 // lower_expr_array lowers an array literal, choosing the element width from the tracked type.
-function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
+function lower_expr_array(arr: ast.ExprArray, s: LowerState, returning: boolean): LowerState {
     // i32 array literal → the high-level `arr_make n` op. Each element
     // expr is lowered (pushing its i32 value, element 0 deepest), then
     // `arr_make` allocates the array, initialises its rc/len header and
@@ -16329,20 +16455,15 @@ function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
                     if (sa.moves_local_at(eid.name, eid.line, eid.col)) { sa = sa.note_moved_elided(sa.slot_of(eid.name)); }
                     else { sa = sa.retain_tos("arrlit-arrstruct-elem"); }
                 }
+                // A returned literal hands a parameter back, as the tuple literal does.
+                else if (!(returning && box_param_ident_escapes(arr.elements[i], sa))
+                    && stored_elem_is_borrow(arr.elements[i], sa)) { sa = sa.retain_tos("arrlit-borrowed-elem"); }
             },
-            // A field read (`[first.node]`) aliases a box the source struct's
-            // __struct_drop_<T> releases — retain it so that release only
-            // drops the dup (#6049).
+            // A value another owner releases — a field read (`[first.node]`,
+            // #6049), an indexed box (`[ps[i]]`), a caller-owned string element
+            // — is the same counted store an append makes.
             _ => {
-                if (counted_field_read_reaches_drop(arr.elements[i], sa)) {
-                    sa = sa.retain_tos("arrlit-counted-field");
-                }
-                // `[p[i]]` over a string[] PARAMETER (str_param_elem_escapes);
-                // the local-routed form is an ident and takes the
-                // slot_is_rc_container retain above.
-                else if (str_param_elem_escapes(arr.elements[i], sa)) {
-                    sa = sa.retain_tos("arrlit-param-str-elem");
-                }
+                if (stored_elem_is_borrow(arr.elements[i], sa)) { sa = sa.retain_tos("arrlit-borrowed-elem"); }
             }
         }
         i = i + 1;
@@ -17687,7 +17808,7 @@ function lower_expr_dispatch(e: ast.Expr, s: LowerState): LowerState {
         ast.ExprIdent(id) => { return lower_expr_ident(id, s); },
         ast.ExprBinary(b) => { return lower_expr_binary(b, e, s); },
         ast.ExprUnary(u) => { return lower_expr_unary(u, s); },
-        ast.ExprArray(arr) => { return lower_expr_array(arr, s); },
+        ast.ExprArray(arr) => { return lower_expr_array(arr, s, false); },
         ast.ExprTuple(tup) => { return lower_expr_tuple(tup, s, false); },
         ast.ExprIndex(ix) => { return lower_expr_index(ix, s); },
         ast.ExprSlice(slc) => { return lower_expr_slice(slc, s); },
@@ -20523,23 +20644,23 @@ function lower_stmt_grow_exempt_inner(st: ast.Stmt, s: LowerState): LowerState {
 function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
-        ast.StmtVar(v) =>{
+        ast.StmtVar(v) => {
             var sv: LowerState = lower_stmt_var(v, s);
             sv = mark_var_bound(v, sv);
             sv = emit_own_lift_retain(v, sv);
             sv = seed_snapshot_local(v, sv);
             return release_last_use_source(v, sv);
         },
-        ast.StmtAssign(a) =>{
+        ast.StmtAssign(a) => {
             if (call_owns_arg(a.value, a.target, s)) { return lower_own_rebind(a, s); }
             return settle_var_counted(a, lower_stmt_assign(a, s));
         },
         ast.StmtReturn(r) => { return lower_stmt_return(r, s); },
         ast.StmtIf(iff) => { return lower_stmt_if(iff, s); },
         ast.StmtWhile(wh) => { return lower_stmt_while(wh, s); },
-        ast.StmtFor(fr) =>{ return lower_stmt_for(fr, s); },
+        ast.StmtFor(fr) => { return lower_stmt_for(fr, s); },
         ast.StmtExpr(es) => { return lower_stmt_expr(es, s); },
-        ast.StmtMatch(m) =>{ return lower_stmt_match(m, s); },
+        ast.StmtMatch(m) => { return lower_stmt_match(m, s); },
         ast.StmtBreak(b) => {
             // br out to the target loop's exit block. b.tag is the relative loop
             // depth (0 = innermost; a labeled `break outer` was resolved to its
@@ -20838,7 +20959,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
             && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
             var rbl: LowerState = lower_expr(r.value, s);
             if (!rbl.ok) { return rbl; }
-            if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
+            if ((!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) && !s.locals[rps].own_handback) {
                 var rbf: i32 = rbl.ownflag_slot_of(rps);
                 if (rbf >= 0) {
                     rbl = rbl.emit(ir.op_load_local(rbf));
@@ -20858,6 +20979,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     var se: LowerState = s;
     match (r.value) {
         ast.ExprTuple(rtup) => { se = lower_expr_tuple(rtup, s, true); },
+        ast.ExprArray(rarr) => { se = lower_expr_array(rarr, s, true); },
         _ => { se = lower_expr(r.value, s); }
     }
     if (!se.ok) { return se; }
@@ -21290,7 +21412,8 @@ function lower_stmt_expr(es: ast.StmtExpr, s: LowerState): LowerState {
                         // tuple temps): every return is a direct tuple literal,
                         // so the result is a fresh sole-owner box. Release
                         // the flagged positions (a counted buffer in EVERY
-                        // return — tuple_ret_arrfree_flags; '2' a string[])
+                        // return — tuple_ret_arrfree_flags; '2' a string[],
+                        // '3' a struct or enum array)
                         // then free the box; '0' positions (scalars,
                         // aliased idents, pointer elements) are left to their
                         // owners / the safe-leak floor.
@@ -21309,6 +21432,10 @@ function lower_stmt_expr(es: ast.StmtExpr, s: LowerState): LowerState {
                                     se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
                                     se = se.release_tos(dth, "discard-tupret-elem");     // release the counted buffer
                                     se = se.emit(ir.op_drop());
+                                } else if (dtrf[tck] == b'3') {
+                                    se = se.emit(ir.op_load_local(tcslot));
+                                    se = se.emit(ir.op_tuple_get(tck));
+                                    se = emit_box_elem_array_release(se, csv_nth(se.tuple_ret_type(dcid.name), tck));
                                 }
                                 tck = tck + 1;
                             }
@@ -21398,7 +21525,7 @@ function lower_struct_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     var i: i32 = 0;
     while (i < bindings.len()) {
         var fa: ast.Expr = ast.ExprFieldAccess { obj: ast.ExprIdent { name: tmp, line: 0, col: 0, ty: "" }, field: fields[i], line: 0, col: 0, ty: "" };
-        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         dt = lower_stmt(sv, dt);
         if (!dt.ok) { return dt; }
         i = i + 1;
@@ -21835,9 +21962,8 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // record the flagged positions as element kinds, so the "TUP:" sweep's
     // give-back (and the loop-rebind reclaim store) releases the counted buffers
     // the returned box holds before the box dec — the bound-result half of
-    // the #4365 discarded-call deep drop. Flag '1' is the arr-box __fern_rc_dec
-    // shape ('a'), flag '2' a string[] field read ('S'); everything else stays
-    // '.' (leak-mode floor).
+    // the #4365 discarded-call deep drop. arrf_flag_kind maps each flag to its
+    // kind; a '0' position stays '.' (leak-mode floor).
     //
     // Gated on "TUPELEMOK:" exactly like the literal-init kinds below: an
     // element extracted to a NEW owner in THIS body (`return r.1`,
@@ -22091,6 +22217,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                         _ => {}
                     }
                     var fk: string = tuple_field_share_kind(tinit.elements[tki]);
+                    if (fk == "a" && is_box_elem_array_type(sb.frame.structs, sb.tuple_elem_tag(slot, tki))) { fk = "b"; }
                     if (fk.len() > 0) { kc = fk; tkany = true; }
                     tk = tk + kc;
                     tki = tki + 1;
@@ -22146,15 +22273,19 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
     // drops), else the payload leaks each iteration — the consuming-match reclaim is
     // top-level-only, so it never covers a loop-local (#4357).
+    // An enum-field alias carries alias_inc: its dup lands before the gated drop,
+    // so an old box equal to the new one only loses the alias's previous count.
     if (slot_is_reclaimable_rcenum(sb, slot)) {
+        if (vt.alias_inc) { sb = sb.retain_tos("enum-field-alias"); }
         return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
     }
-    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`):
-    // the re-declaration must release the box it supersedes. A shallow dec is the
-    // whole release — every payload is a scalar — so emit_arr_store's cow-guarded
-    // do_dec branch is exactly right, the same one a scalar-tuple rebind takes.
+    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`), or
+    // an enum-field alias taking the box-only release: the re-declaration must
+    // release the box it supersedes, with a shallow dec. Fresh, that is
+    // emit_arr_store's cow-guarded do_dec branch, the one a scalar-tuple rebind
+    // takes; an alias's alias_inc makes the dec unconditional.
     if (slot_is_reclaimable_scenum(sb, slot)) {
-        return emit_arr_store(sb, slot, false, true);
+        return emit_arr_store(sb, slot, vt.alias_inc, true);
     }
     match (v.init) {
         ast.ExprTuple(dtl) => {
@@ -22407,16 +22538,16 @@ match (v.init) {
         match (tfc.callee) {
             ast.ExprIdent(tfcid) => {
                 var tff: string = tuple_ret_flags_of(sb.frame.sigs.tuple_fresh_ret_fns, tfcid.name);
-                if ((util.contains(tff, "1") || util.contains(tff, "2"))
-                    && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
-                    var tfk: string = "";
-                    var tfi: i32 = 0;
-                    while (tfi < tff.len()) {
-                        if (tff[tfi] == b'1') { tfk = tfk + "a"; }
-                        else if (tff[tfi] == b'2') { tfk = tfk + "S"; }
-                        else { tfk = tfk + "."; }
-                        tfi = tfi + 1;
-                    }
+                var tfk: string = "";
+                var tfany: boolean = false;
+                var tfi: i32 = 0;
+                while (tfi < tff.len()) {
+                    var tfc_kind: string = arrf_flag_kind(tff[tfi]);
+                    if (tfc_kind != ".") { tfany = true; }
+                    tfk = tfk + tfc_kind;
+                    tfi = tfi + 1;
+                }
+                if (tfany && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
                     sb = sb.add_tup_elem_kinds(util.i32_to_string(slot) + "|" + tfk);
                 }
             },
@@ -22742,10 +22873,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
-    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
-    // the source struct's enum box (#6121). No dup here — an alias that never
-    // escapes must not outlive the struct — only the mark, so a later container
-    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    // `var tmp: N = first.node` (node: N, N an enum) shares the source struct's
+    // enum box. The bind's dup and release are the VarTypes classification's
+    // (#10310); the mark makes a later container store of `tmp` retain exactly as
+    // the direct `[first.node]` read does (#6121).
     if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
@@ -23256,6 +23387,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // buffer. Mark the new slot's array-ness either way.
     var is_arr: boolean = false;
     var alias_inc: boolean = false;
+    var own_alias_src: i32 = 0 - 1;
     match (v.init) {
         ast.ExprArray(_) => { is_arr = true; },
         ast.ExprIdent(id) => {
@@ -23294,7 +23426,8 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // pair native cancels at this site. moves_local_at keys on the
                 // Var's own position, which is what move_sites_toplevel_of
                 // records and the rcplan moveSites diff pins against native.
-                if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
+                if (se.own_handback_src_of(v).len() > 0) { own_alias_src = aid_slot; }
+                else if (se.moves_local_at(id.name, v.line, v.col)) { se = se.note_moved_elided(aid_slot); }
                 // Dead-alias cancellation (#4402 opt 1): a proven borrowed
                 // VIEW skips the retain; bind_var_slot elides the alias
                 // slot's sweep dec under the same predicate, and the
@@ -23477,6 +23610,15 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // requires (it reads is_arr_slot), and the alias-inc block below
             // retains the buffer so the slot's exit-sweep dec balances (#7208).
             if (nested_arr_field_read_type(v.init, se) != "") { is_arr = true; }
+            // A DIRECT enum field read the frame can release is a counted alias
+            // (#10310): the source struct releases its own count, so the alias
+            // needs one too. The dup and the credit land together or not at all.
+            var efty: string = enum_field_read_type(v.init, se);
+            var efsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+            if (efty != "" && reclaim_has(se.frame.reclaimable_names, "EALIAS:", efsite)) {
+                alias_inc = true;
+                se = credit_enum_field_alias(se, efsite, efty);
+            }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
             // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
@@ -23589,7 +23731,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // is_f64arr) flow from the same map_kv_elem_tag gate via the
                     // predicates below, so the slot's width stays consistent.
                     else if (map_kv_elem_tag(cfa.obj, cfa.field, cc.args.len(), se) != "") { is_arr = true; }
-                    // `var v: i32[] = m.get_or(k, d)` / `= m.get(k)` on an
+                    // `var v: i32[] = m.get_or(k, d)` on an
                     // ARRAY-valued map: the register map read hands back the
                     // column's raw pointer, an UNCOUNTED alias of a buffer the map
                     // still owns. Binding it to an array slot makes it a COUNTED
@@ -23803,6 +23945,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             },
             _ => {}
         }
+    }
+    if (struct_ty == "" && v.type_name.len() == 0) {
+        var (vbst, vbarr) = value_block_struct_type(v.init, se.frame.structs);
+        if (vbst != "") { struct_ty = vbst; is_arr = is_arr || vbarr; }
     }
     // Aliasing an array local (`var qs = ps`) — expr_struct_type returns
     // "" for an array (the value itself isn't a struct), so the ELEMENT
@@ -24115,7 +24261,13 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         struct_ty: struct_ty,
         opt_ty: opt_ty,
     };
-    return bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0) {
+        var hsrc: string = se.own_handback_src_of(v);
+        if (hsrc.len() > 0) { own_alias_src = se.slot_of(hsrc); }
+    }
+    var bound: LowerState = bind_var_slot(v, s, se, vt);
+    if (own_alias_src < 0 || !bound.ok) { return bound; }
+    return bind_own_handback(bound, bound.slot_of(v.name), own_alias_src);
 }
 
 // The tuple/struct destructuring bind: `var (a, b) = …`, reached when the
@@ -24321,7 +24473,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // level lowers as an ordinary destructure of that temp — the same
         // recursion the source spelling describes.
         if (dnest.len() > 0) {
-            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, dt);
+            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_view: false, fn_ret: "", fn_param_types: "" }, dt);
             if (!dt.ok) { return dt; }
         }
         dk = dk + 1;
@@ -24757,34 +24909,18 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                     else if (apelslot >= 0 && s.is_str_caller_elem_slot(apelslot)) {
                                         aps = aps.retain(apelslot, "append-param-str-elem");
                                     }
+                                    else if (box_param_ident_escapes(wc.args[0], aps)) {
+                                        aps = aps.retain(apelslot, "append-borrowed-param");
+                                    }
                                 },
-                                // A field read (`branches.append(nxt.node)`) escapes
-                                // the same way, against the release of the source
-                                // struct's __struct_drop_<T> (#6049). The inc is
-                                // emitted INLINE on the value already on the operand
-                                // stack (__fern_rc_inc returns its arg), so no reload.
+                                // A field read (`branches.append(nxt.node)`, #6049),
+                                // an indexed box, a caller-owned string element or a
+                                // call handing one back escapes the same way
+                                // (stored_elem_is_borrow). The inc is emitted INLINE
+                                // on the value already on the operand stack
+                                // (__fern_rc_inc returns its arg), so no reload.
                                 _ => {
-                                    if (counted_field_read_reaches_drop(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-counted-field");
-                                    }
-                                    // `xs.append(p[i])` over a string[] PARAMETER: the
-                                    // element belongs to the caller's array (see
-                                    // str_param_elem_escapes).
-                                    else if (str_param_elem_escapes(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-param-str-elem");
-                                    }
-                                    // `xs.append(ys[i])` over a struct or array
-                                    // element: ys's own release drops it, so the
-                                    // store is a second owner (indexed_box_elem_escapes).
-                                    else if (indexed_box_elem_escapes(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-indexed-elem");
-                                    }
-                                    // A call handing one of those back bare
-                                    // (handback_result_of_borrow): the result may be
-                                    // the argument's own box.
-                                    else if (handback_result_of_borrow(wc.args[0], aps)) {
-                                        aps = aps.retain_tos("append-handback");
-                                    }
+                                    if (stored_elem_is_borrow(wc.args[0], aps)) { aps = aps.retain_tos("append-borrowed-elem"); }
                                 }
                             }
                             // Sole-owner (unaliased) `a = a.append(v)`: the old
@@ -25282,7 +25418,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         var fdelem: string = "$fordes" + util.i32_to_string(s.locals.len());
         var fdbind: ast.Stmt = ast.StmtVar { name: fr.var_name, type_name: "",
             init: ast.ExprIdent { name: fdelem, line: fr.line, col: 0, ty: "" },
-            line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+            line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         var fdbody: ast.Stmt[] = [fdbind];
         var fdi: i32 = 0;
         while (fdi < fr.body.len()) { fdbody = fdbody.append(fr.body[fdi]); fdi = fdi + 1; }
@@ -25663,7 +25799,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         if (vdes.len() > 0) {
             fm = lower_stmt_var(ast.StmtVar { name: vdes, type_name: "",
                 init: ast.ExprIdent { name: vname, line: fr.line, col: 0, ty: "" },
-                line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, fm);
+                line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, fm);
             if (!fm.ok) { return fm; }
         }
         fm = lower_block(fr.body, fm);
@@ -25903,7 +26039,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
             ast.PatVariant(pv_at) => {
                 if (pv_at.at_binding.len() > 0) {
                     var at_init: ast.Expr = ast.ExprIdent { name: scrut, line: 0, col: 0, ty: "" };
-                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }];
+                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }];
                     var at_bi: i32 = 0;
                     while (at_bi < arm.body.len()) { at_body = at_body.append(arm.body[at_bi]); at_bi = at_bi + 1; }
                     var at_guard: ast.Expr = arm.guard;
@@ -27137,10 +27273,6 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
 function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, val: ast.Expr, maptype: string, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var mc: string = "$mc" + util.i32_to_string(n);
-    var mck: string = "$mck" + util.i32_to_string(n);
-    var mcv: string = "$mcv" + util.i32_to_string(n);
-    var mci: string = "$mci" + util.i32_to_string(n);
-    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     // The receiver's box before the rebind: released at the end against the
     // holders of m's alias group (#7235) when the group owns its releases.
     var mslot: i32 = s.slot_of(target);
@@ -27153,16 +27285,59 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
         st = st.emit(ir.op_load_local(mslot));
         st = st.emit(ir.op_store_local(moldslot));
     }
+    st = lower_map_clone(mc, recv, maptype, st);
+    if (!st.ok) { return st; }
+    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
+    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
+    var mcref: ast.Expr = ast.ExprIdent { name: mc, line: 0, col: 0, ty: "" };
+    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
+    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    if (!st.ok || moldslot < 0) { return st; }
+    var msite: string = st.reclaim_site_key(mslot);
+    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+}
+
+// lower_map_without lowers the functional delete `recv.without(key)`, the map
+// with key removed and whether it was there. A receiver an alias still reads
+// (map_clone_sites, #9835) is cloned first, so the alias keeps the box it holds
+// whole; the removed entry is not released, since the clone shares its column
+// elements with that box.
+function lower_map_without(c: ast.ExprCall, recv: ast.Expr, maptype: string, keykind: i32, eqfn: string, s: LowerState): LowerState {
+    var st: LowerState = s;
+    if (util.index_of_str(s.frame.map_clone_sites, reclaim_site_key_of(ident_name_or_empty(recv), c.line, c.col)) >= 0) {
+        var mc: string = "$mc" + util.i32_to_string(s.locals.len());
+        st = lower_map_clone(mc, recv, maptype, s);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_load_local(st.slot_of(mc)));
+    } else {
+        st = lower_expr(recv, s);
+        if (!st.ok) { return st; }
+    }
+    st = lower_expr(c.args[0], st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_map_delete(keykind, eqfn, false, 0));
+}
+
+// lower_map_clone binds a fresh local `mc` of type `maptype` to a copy of the
+// map `recv`: a `map_new` and one insert per entry over snapshots of its
+// columns. The clone shares the column elements with `recv`, uncounted.
+function lower_map_clone(mc: string, recv: ast.Expr, maptype: string, s: LowerState): LowerState {
+    var n: i32 = s.locals.len();
+    var mck: string = "$mck" + util.i32_to_string(n);
+    var mcv: string = "$mcv" + util.i32_to_string(n);
+    var mci: string = "$mci" + util.i32_to_string(n);
+    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    var st: LowerState = s;
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
     var keyscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     var valscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
     var mckref: ast.Expr = ast.ExprIdent { name: mck, line: 0, col: 0, ty: "" };
@@ -27174,15 +27349,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     var insargs: ast.Expr[] = [ast.ExprIndex { array: mckref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }, ast.ExprIndex { array: mcvref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }];
     var insexpr: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_args: [], ty: "" };
     var loopbody: ast.Stmt[] = [ast.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
-    st = lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
-    if (!st.ok) { return st; }
-    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
-    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
-    if (!st.ok || moldslot < 0) { return st; }
-    var msite: string = st.reclaim_site_key(mslot);
-    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+    return lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
@@ -28890,8 +29057,10 @@ pub function emit_str_reclaim_store(se: LowerState, slot: i32, alias_inc: boolea
 // eight bytes below the block — heap corruption, not a leak. `S` (a string[]
 // field the literal retained) is an arr-box too, but its elements are string
 // boxes, so it takes __fern_str_arr_free: the element walk when the buffer is
-// unique, the buffer dec otherwise. `t` is a struct box (the field drop, then the
-// box). `.` is a position the construction did not retain.
+// unique, the buffer dec otherwise. `b` is an array of struct or enum boxes
+// (emit_box_elem_array_release, element type from the slot's tuple tag). `t` is
+// a struct box (the field drop, then the box). `.` is a position the
+// construction did not retain.
 function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): LowerState {
     if (kinds.len() == 0) { return se; }
     var st: LowerState = se;
@@ -28904,6 +29073,10 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         if (kinds[ki] == b't') {
             st = emit_tup_struct_elem_release(st, slot, ki);
         }
+        else if (kinds[ki] == b'b') {
+            st = emit_load_tuple_path(st, slot, [ki]);
+            st = emit_box_elem_array_release(st, st.tuple_elem_tag(slot, ki));
+        }
         else if (kinds[ki] != b'.') {
             var helper: string = "__fern_rc_dec";
             if (kinds[ki] == b's') { helper = "__fern_str_free"; }
@@ -28915,6 +29088,28 @@ function emit_tup_elem_releases(se: LowerState, slot: i32, kinds: string): Lower
         ki = ki + 1;
     }
     return st.emit(ir.op_end());
+}
+
+// emit_box_elem_array_release consumes the array on the operand stack and
+// releases it as a record's drop releases a field of type `arrty`
+// (asmcore.struct_drop_field_ops): the element walk the type admits, under the
+// buffer's and each element's uniqueness, then the element boxes and the buffer.
+// A type without such a walk takes __fern_arrarr_free's box decs alone, and a
+// tag naming no struct or enum array the buffer dec alone.
+function emit_box_elem_array_release(se: LowerState, arrty: string): LowerState {
+    var scratch: string = "$bea" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var bslot: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(bslot));
+    if (!is_box_elem_array_type(st.frame.structs, arrty)) {
+        return st.emit(ir.op_load_local(bslot)).emit(ir.op_call_direct("__fern_rc_dec", 1)).emit(ir.op_drop());
+    }
+    var elem: string = slice_unchecked(arrty, 0, arrty.len() - 2) + "";
+    if (decl_is_struct(st.frame.structs, elem) && nested_field_deep_drop_ok(st.frame.structs, elem)) {
+        return emit_arrstruct_deep_free(st, bslot, elem);
+    }
+    if (enum_arr_elems_walk_ok(st.frame.structs, elem)) { return emit_arrenum_deep_free(st, bslot, elem, true); }
+    return st.emit(ir.op_load_local(bslot)).emit(ir.op_call_direct("__fern_arrarr_free", 1)).emit(ir.op_drop());
 }
 
 // emit_tup_struct_elem_release: a struct-box element's release — the deep FIELD
@@ -28940,8 +29135,8 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
 // ASSIGN-form rebind may replay against a box a DIFFERENT writer filled, with at
 // least one such position.
 //
-// 'a' and 'S' qualify unconditionally — an array element's release is one
-// type-fixed rc-guarded call whichever writer stored it. 's' qualifies because it is only ever
+// 'a', 'S' and 'b' qualify unconditionally — an array element's release is a
+// type-fixed rc-guarded release whichever writer stored it. 's' qualifies because it is only ever
 // recorded under the "TUPSTRW:" writer agreement (assigns_str_pos_owned), which
 // is exactly the proof that every writer left a counted owned string there. 't'
 // does not: a struct position's release is a deep field drop keyed on the var
@@ -28950,7 +29145,7 @@ function tup_kinds_rebind_safe(kinds: string): boolean {
     var any: boolean = false;
     var i: i32 = 0;
     while (i < kinds.len()) {
-        if (kinds[i] == b'a' || kinds[i] == b'S' || kinds[i] == b's') { any = true; }
+        if (kinds[i] == b'a' || kinds[i] == b'S' || kinds[i] == b'b' || kinds[i] == b's') { any = true; }
         else if (kinds[i] != b'.') { return false; }
         i = i + 1;
     }
@@ -29583,16 +29778,18 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
 // struct slot whose only rc-tracked fields are DIRECT enum fields (struct_enum_deep_
 // reinit_eligible: scalar + droppable-enum fields only) and DEEP-drops the OLD box:
 // for each enum field it extracts the field's enum box into a scratch local and runs
-// emit_enum_variant_drops on it (runtime variant dispatch → drop the variant's rc
-// payload, then free the enum box), THEN __fern_rc_dec frees the struct box itself.
+// emit_enum_variant_drops_gated on it (runtime variant dispatch → drop the variant's
+// rc payload, then dec the enum box), THEN __fern_rc_dec frees the struct box itself.
 // Unlike the array-only __field_reclaim path (emit_field_reclaim_store), this reclaims
 // the enum field's VARIANT PAYLOAD — the leak the shallow k_enum exit-drop leaves.
 //
 // SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
 // fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
-// enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
-// inc). A non-fresh (aliased) enum field is rejected at the gate and takes the leak-
-// safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
+// enum box + its payload starts out owned by the struct box alone (rc=1, no
+// construction alias-inc). A counted enum-field alias (`var g = h.e`, #10310) can
+// share the box afterwards, so the payload walk is __fern_rc_is_unique-gated. A
+// non-fresh (aliased) enum field is rejected at the gate and takes the leak-safe
+// shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
 // the fresh literal makes old != new implicit, so no separate cow guard is needed.
 // The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
 // fault on a null box) — a fresh literal always sets it, but the guard is defensive.
@@ -29622,7 +29819,7 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_bin("ne", 0, false));                                    // enum box != 0
             st = st.emit(ir.op_if(0));
-            st = emit_enum_variant_drops(st, etmp, ft);                                 // deep-drop payload + free enum box (zeroes etmp)
+            st = emit_enum_variant_drops_gated(st, etmp, ft, [], true);                 // deep-drop payload if unique, dec enum box (zeroes etmp)
             st = st.emit(ir.op_end());
         }
         fi = fi + 1;
@@ -30840,8 +31037,7 @@ function sfld_assign_site(asg: ast.StmtAssign): string {
 // superseded box's field drop gives the retain back just as the scope-exit sweep
 // does for the var form. Handed to the escape walker so the source's bare-ident use
 // there is read as the share it is rather than as a store into a container — under
-// "SFLD:" in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`,
-// whose walker matches the var form only.
+// "SFLD:" in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`.
 //
 // The two differ in WHAT the source keeps, not in when it may. A string's release
 // is its box, so the share costs nothing extra; a `string[]`'s release is an
@@ -33035,12 +33231,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rej = rej + 1;
     }
-    // Sweepable ALL-SCALAR enum locals ("SCENUMS:"): the final value's box, freed
-    // with the same shallow dec the rebind uses. emit_scalar_enum_box_free zeroes
+    // Sweepable ALL-SCALAR enum locals and box-only enum-field aliases
+    // ("SCENUMS:"): the final value's box, released with the shallow dec the
+    // rebind uses. emit_scalar_enum_box_free zeroes
     // the slot afterwards, so a second sweep on another return edge is a no-op.
+    // moved_elided is excluded for the rc-enum loop's reason above.
     var sej: i32 = st.frame.n_params;
     while (sej < st.locals.len()) {
-        if (!slot_list_has(keeps, sej) && slot_is_reclaimable_scenum(st, sej)) {
+        if (!slot_list_has(keeps, sej) && !slot_list_has(st.frame.moved_elided, sej) && slot_is_reclaimable_scenum(st, sej)) {
             st = emit_scalar_enum_box_free(st, sej);
         }
         sej = sej + 1;
@@ -33161,7 +33359,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var aej: i32 = st.frame.n_params;
     while (aej < st.locals.len()) {
         if (!slot_list_has(keeps, aej) && slot_is_reclaimable_arrenum(st, aej)) {
-            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej));
+            st = emit_arrenum_deep_free(st, aej, arrenum_enum_of_slot(st, aej), false);
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_store_local(aej));
         }
@@ -33251,6 +33449,8 @@ function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]):
 //   - `return <arr-local>.append(e)`                      — receiver moved;
 //   - an enum-variant construction `return V(a, …)`       — each bare array-local
 //     payload arg is moved into the (leaking) enum box (#3720);
+//   - a bare returned enum local ("SCENUMS:" / "RCENUMS:") — its count goes to
+//     the caller;
 //   - a struct literal whose enum-typed field is built from such a construction
 //     (`return S { node: Many(items), … }`) — the array under the enum payload;
 //   - a returned pointer-shaped field of a reclaimable struct local
@@ -33272,6 +33472,9 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // otherwise the box just handed to the caller is double-freed. The
             // sweep's struct loop skips slots in this keeps list.
             if (slot_is_reclaimable_struct(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // Enum move-on-return: a returned "SCENUMS:" / "RCENUMS:" local hands
+            // its count to the caller, so its exit sweep must not release it.
+            if ((slot_is_reclaimable_scenum(s, sl) || slot_is_reclaimable_rcenum_sweep(s, sl)) && !slot_list_has(out, sl)) { out = out.append(sl); }
             // String move-on-return (#2649): a returned reclaimable-string LOCAL
             // (an accumulator whose intermediates were freed by the consume-rebind)
             // is MOVED OUT to the caller — keep it from the exit string sweep so the
@@ -34719,25 +34922,75 @@ function aliased_array_names_of(body: ast.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
-// --- map alias liveness at a self-reassign (#7235) ---------------------------
+// --- map alias liveness at a mutation (#7235) --------------------------------
 //
-// map_clone_insert_sites_of returns the site keys (target@line:col) of every map
-// self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)` at which an alias of
-// `m` may be LIVE, so the store must clone the map (lower_map_clone_insert)
-// rather than mutate the box the alias still reads. An alias is live at the
-// insert when it is created earlier in lowering order, anywhere inside a loop
-// enclosing the insert (the back edge carries an alias bound textually AFTER the
-// insert into the next iteration's insert), or inside a defer. An insert with no
-// alias live at it mutates in place; a `var q = m` bound afterwards shares the
+// map_clone_sites_of returns the site keys of every map mutation at which an
+// alias of the receiver `m` may be LIVE, so the mutation must clone the map
+// rather than write the box the alias still reads: a self-reassign
+// `m = m.insert(k, v)` / `m = m.set(k, v)` keyed target@line:col of the
+// assignment (lower_map_clone_insert), and a `m.without(k)` call keyed
+// m@line:col of the call (lower_map_without, #9835). An alias is live at
+// the mutation when it is created earlier in lowering order, anywhere inside a
+// loop enclosing the mutation (the back edge carries an alias bound textually
+// AFTER it into the next iteration), or inside a defer. A mutation with no
+// alias live at it writes in place; a `var q = m` bound afterwards shares the
 // mutated box, which is what the alias reads on native too.
 //
-// Alias positions are alias_idents_in_value's: a bare-ident bind or assignment
-// value, or a container-literal element. An alias inside an `if` arm counts for
-// everything after the `if`, whichever way the branch went.
+// Alias positions are mcis_alias_names': both names of a bare-ident bind or
+// assignment, and a container-literal element. An alias inside an `if` arm
+// counts for everything after the `if`, whichever way the branch went.
 struct MapCloneScan { seen: string[], sites: string[] }
 
-function map_clone_insert_sites_of(body: ast.Stmt[]): string[] {
+function map_clone_sites_of(body: ast.Stmt[]): string[] {
     return mcis_stmts(body, no_names(), MapCloneScan { seen: [], sites: [] }).sites;
+}
+
+// mcis_alias_names adds the names a binding of `name` to `value` makes aliases:
+// alias_idents_in_value's, and `name` itself when `value` is a bare ident, since
+// a mutation through the new name writes the box the old one reads too.
+function mcis_alias_names(name: string, value: ast.Expr, seen: string[]): string[] {
+    var out: string[] = alias_idents_in_value(value, seen);
+    if (ident_name_or_empty(value).len() > 0) { out = push_str_unique(out, name); }
+    return out;
+}
+
+// mcis_loop_aliases is alias_names_in_stmts over a loop body with the binders
+// mcis_alias_names adds, so the back edge carries both names of an alias.
+function mcis_loop_aliases(body: ast.Stmt[], acc: string[]): string[] {
+    function visit(st: ast.Stmt, own a: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return mcis_alias_names(v.name, v.init, a); },
+            ast.StmtAssign(x) => { return mcis_alias_names(x.target, x.value, a); },
+            _ => { return a; }
+        }
+    }
+    var out: string[] = util.append_all(no_names(), acc);
+    for st in body { out = astwalk.fold_stmt_spine(st, out, visit); }
+    return out;
+}
+
+// mcis_without_sites adds the site of every `m.without(k)` in `e` whose
+// receiver has an alias: one in `sc.seen` or in `loop_aliases`.
+function mcis_without_sites(e: ast.Expr, loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    var seen: string[] = sc.seen;
+    function visit(x: ast.Expr, own acc: string[]): string[] {
+        match (x) {
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprFieldAccess(fa) => {
+                        var rn: string = ident_name_or_empty(fa.obj);
+                        if (fa.field == "without" && c.args.len() == 1 && rn.len() > 0 && (util.index_of_str(seen, rn) >= 0 || util.index_of_str(loop_aliases, rn) >= 0)) {
+                            return acc.append(reclaim_site_key_of(rn, c.line, c.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        return acc;
+    }
+    return MapCloneScan { ...sc, sites: util.append_all(sc.sites, astwalk.fold_expr(e, no_names(), visit)) };
 }
 
 function mcis_stmts(stmts: ast.Stmt[], loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
@@ -34754,17 +35007,25 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             if (assign_is_self_two_arg_method(a) && (util.index_of_str(sc.seen, a.target) >= 0 || util.index_of_str(loop_aliases, a.target) >= 0)) {
                 acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
             }
-            return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
+            acc = MapCloneScan { ...acc, seen: mcis_alias_names(a.target, a.value, acc.seen) };
+            return mcis_without_sites(a.value, loop_aliases, acc);
         },
-        ast.StmtVar(v) => { return MapCloneScan { ...sc, seen: alias_idents_in_value(v.init, sc.seen) }; },
+        ast.StmtVar(v) => {
+            var acc: MapCloneScan = MapCloneScan { ...sc, seen: mcis_alias_names(v.name, v.init, sc.seen) };
+            return mcis_without_sites(v.init, loop_aliases, acc);
+        },
         ast.StmtIf(iff) => {
-            var acc: MapCloneScan = mcis_stmts(iff.then_body, loop_aliases, sc);
+            var acc: MapCloneScan = mcis_without_sites(iff.cond, loop_aliases, sc);
+            acc = mcis_stmts(iff.then_body, loop_aliases, acc);
             return mcis_stmts(iff.else_body, loop_aliases, acc);
         },
-        ast.StmtWhile(w) => { return mcis_stmts(w.body, alias_names_in_stmts(w.body, loop_aliases), sc); },
-        ast.StmtFor(f) => { return mcis_stmts(f.body, alias_names_in_stmts(f.body, loop_aliases), sc); },
+        ast.StmtWhile(w) => {
+            var wal: string[] = mcis_loop_aliases(w.body, loop_aliases);
+            return mcis_stmts(w.body, wal, mcis_without_sites(w.cond, wal, sc));
+        },
+        ast.StmtFor(f) => { return mcis_stmts(f.body, mcis_loop_aliases(f.body, loop_aliases), mcis_without_sites(f.iter, loop_aliases, sc)); },
         ast.StmtMatch(m) => {
-            var acc: MapCloneScan = sc;
+            var acc: MapCloneScan = mcis_without_sites(m.scrutinee, loop_aliases, sc);
             var k: i32 = 0;
             while (k < m.arms.len()) { acc = mcis_stmts(m.arms[k].body, loop_aliases, acc); k = k + 1; }
             return acc;
@@ -34774,9 +35035,9 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             return mcis_stmt(d.action, loop_aliases, acc);
         },
         // Spelled out rather than wildcarded: a statement kind with a body this
-        // walk skipped would leave an insert inside it mutating in place.
-        ast.StmtReturn(_) => { return sc; },
-        ast.StmtExpr(_) => { return sc; },
+        // walk skipped would leave a mutation inside it writing in place.
+        ast.StmtReturn(r) => { return mcis_without_sites(r.value, loop_aliases, sc); },
+        ast.StmtExpr(x) => { return mcis_without_sites(x.value, loop_aliases, sc); },
         ast.StmtBreak(_) => { return sc; },
         ast.StmtContinue(_) => { return sc; },
         ast.StmtUnknown(_) => { return sc; },
@@ -36636,6 +36897,47 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], 
     return a;
 }
 
+// collect_enum_field_alias_sites tags "EALIAS:" the `var g = h.e` enum-field
+// aliases this frame may release (#10310): never reassigned, since the assign
+// path has no alias release, and not escaping by either the plan, which forgives
+// a counted sink, or the enum-field walk, which needs no type for `h` — the plan
+// taints an alias of a source it cannot type, such as a method receiver, though
+// the dup makes the alias an owner. Only a tagged alias is dup'd and credited;
+// any other stays the uncounted borrow it was.
+function collect_enum_field_alias_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (enum_field_alias_candidate(v.init, structs) && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                    var site: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
+                    if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
+                    if (esc_ok) { a = a.append("EALIAS:" + site); }
+                }
+            },
+            ast.StmtIf(iff) => { a = collect_enum_field_alias_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_enum_field_alias_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_enum_field_alias_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_enum_field_alias_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_enum_field_alias_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// enum_field_alias_candidate: `e` may be a struct field read (`h.e`) — the AST
+// cannot type it, so a qualified variant (`E.B`) and a tuple element are the
+// only field accesses it rules out.
+function enum_field_alias_candidate(e: ast.Expr, structs: StructTab): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { return !util.is_all_digits(fa.field) && variant_enum_owner(structs, fa.field) == ""; },
+        _ => { return false; }
+    }
+}
+
 function collect_fresh_rcenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var vi: i32 = 0;
@@ -36883,7 +37185,8 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1 }; }
     if (!call_arg_borrowable(s, callee, ai)
         && !arr_param_counted_at(s.frame.sigs.param_counted, callee, ai)
-        && !struct_param_counted_at(s.frame.sigs.param_counted, callee, ai)) {
+        && !struct_param_counted_at(s.frame.sigs.param_counted, callee, ai)
+        && !enum_param_counted_at(s.frame.sigs.param_counted, callee, ai)) {
         return StructArgStash { state: s, slot: 0 - 1 };
     }
     var ty: string = "";
@@ -36905,7 +37208,7 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
     var boxonly: boolean = false;
     if (ty.len() == 0) { boxonly = counted_ret_call_arg(arg, s); }
     if (ty.len() == 0 && !boxonly) {
-        var ety: string = fresh_enum_arg_type(s, arg, callee);
+        var ety: string = fresh_enum_arg_type(s, arg, callee, enum_param_counted_at(s.frame.sigs.param_counted, callee, ai));
         if (ety.len() == 0) { return StructArgStash { state: s, slot: 0 - 1 }; }
         var ean: string = "$lse" + util.i32_to_string(s.locals.len());
         var est: LowerState = s.add_local(ean);
@@ -36948,8 +37251,9 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
 // position the caller checked is enough. An rc-payload box's release is deep,
 // so it is admitted only where the callee returns no pointer at all and so
 // cannot hand a payload back uncounted — the gap the struct stash above closes
-// with its field-type set.
-function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): string {
+// with its field-type set — or where the position is `counted` ("ECNT:"), whose
+// callee only stores the parameter counted and never reads a payload out.
+function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string, counted: boolean): string {
     // A variant construction written at the call site (`f(Pr(Ok2(1), Ok2(2)))`)
     // is a sole-owned box whose payloads are fresh (fresh_scalar_enum_init /
     // fresh_rcpayload_enum_init), so it releases on the same terms as a fresh
@@ -36958,13 +37262,13 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     if (sctor.len() > 0) { return sctor; }
     var ctor: string = fresh_rcpayload_enum_init(arg, s.frame.structs, s.frame.sigs.str_fresh_ret_fns, [], false);
     if (ctor.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return ctor;
     }
     match (arg) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee); },
+                ast.ExprIdent(cid) => { return fresh_enum_call_arg_type(s, arg, cid.name, callee, counted); },
                 _ => { return ""; }
             }
         },
@@ -36973,11 +37277,11 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string): stri
     return "";
 }
 
-function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string): string {
+function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string, counted: boolean): string {
     if (s.slot_of(name) >= 0) { return ""; }
     var rce: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name);
     if (rce.len() > 0) {
-        if (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s)) { return ""; }
+        if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
         return rce;
     }
     if (enum_fresh_ret_call(arg, s.frame.sigs.return_fresh_struct_ret_fns)) {
@@ -37157,9 +37461,8 @@ function len_recv_callees_stmt(st: ast.Stmt, acc: string[]): string[] {
 }
 
 // discarded_tuple_ret_flags: the "TUPRET:<callee>|<flags>" entry's flags for a
-// discarded call to `callee`, "" when none. Flag k = '1' means tuple element k
-// is a fresh scalar-element array buffer the StmtExpr deep-drop releases before
-// the box.
+// discarded call to `callee`, "" when none, in tuple_ret_arrfree_flags'
+// alphabet: the StmtExpr deep-drop releases each flagged element before the box.
 function discarded_tuple_ret_flags(s: LowerState, callee: string): string {
     return tagged_value_of(s.frame.reclaimable_names, "TUPRET:", callee);
 }
@@ -37426,8 +37729,7 @@ function litstr_tostring_recv_body(stmts: ast.Stmt[], name: string): boolean {
 // --- `<scalar>.to_string()` string locals (#6599) -----------------------------
 //
 // `var s: string = i.to_string()` leaked its box on every backend: the method form
-// is excluded from str_free_producer_ident / str_local_binding_is_fresh, whose
-// comments give the reason — `.to_string()` is a "receiver-identity fast-path". That
+// was refused as a "receiver-identity fast-path" whatever its receiver. That
 // is true on a STRING receiver, where the call returns the receiver itself, so
 // freeing the result would release a box the source still owns. On a SCALAR receiver
 // it is the decimal-text builtin returning a fresh sole-owned box, which is the same
@@ -38759,6 +39061,15 @@ pub function tuple_ret_flags_of(entries: string[], name: string): string {
     return "";
 }
 
+// arrf_flag_kind: the tuple element kind (emit_tup_elem_releases) an ARRF: flag
+// names — '1' a buffer dec, '2' a string[], '3' a struct or enum array.
+function arrf_flag_kind(flag: u8): string {
+    if (flag == b'1') { return "a"; }
+    if (flag == b'2') { return "S"; }
+    if (flag == b'3') { return "b"; }
+    return ".";
+}
+
 // tuple_ret_elem_shape: one returned tuple element's shape character — 'a' for
 // a direct array literal (a fresh buffer the box sole-owns), 'f' / 'S' for an
 // array / string[] field read the literal retained (tuple_field_share_kind), 's'
@@ -38837,7 +39148,7 @@ function tuple_ret_local_init_shape(stmts: ast.Stmt[], name: string): string {
 // identifier, so prefixed entries never collide with the bare-name
 // membership checks, and every backend that threads this one list into
 // lower_func gets all three credits.
-pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): string[] {
     // A least fixpoint: a function joins once every return is a literal, a
     // frame-fresh local, or a call to a member — `drain` returning
     // `flush(w, b)` on its slow path joins the round after `flush`.
@@ -38868,7 +39179,7 @@ pub function tuple_fresh_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
             // read this function's own literals, so a function admitted through
             // a returned call records none: its discarded result stays leak-mode.
             if (!body_has_nonfresh_tuple_return(fn.body, fn.body, [])) {
-                var arrf: string = tuple_ret_arrfree_flags(fn);
+                var arrf: string = tuple_ret_arrfree_flags(fn, structs);
                 if (arrf.len() > 0) { out = out.append("ARRF:" + fn.name + "|" + arrf); }
             }
         }
@@ -39033,14 +39344,16 @@ function tag_is_scalar_elem_array(tag: string): boolean {
 // one rc dec releases: a direct array literal (fresh, so the box sole-owns it)
 // where the return-type annotation types k a scalar-element array, or an array
 // field read the literal retained. It is '2' when every return holds a retained
-// string[] field read, released by __fern_str_arr_free. An IDENT there in any
+// string[] field read, released by __fern_str_arr_free, and '3' when every
+// return holds a retained field read of a struct or enum array
+// (emit_box_elem_array_release). An IDENT there in any
 // return aliases a live local and keeps the position '0'. Any 8-byte SCALAR element (i64 /
 // u64 / f64) declines the whole entry: op_tuple_get is offset-uniform, and a
 // wide scalar would shift the later positions on wasm's 4-byte slots. Pointer
 // elements (string / struct / nested tuple / Option) occupy uniform slots, so
 // they are safe as '0' (leak-mode) positions — only their own boxes leak,
 // exactly today's floor.
-function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
+function tuple_ret_arrfree_flags(fn: parser.FuncDecl, structs: StructTab): string {
     var shapes: string[] = collect_tuple_ret_shapes(fn.body, fn.body, []);
     if (shapes.len() == 0) { return ""; }
     var n: i32 = shapes[0].len();
@@ -39063,6 +39376,7 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
             sj = sj + 1;
         }
         if (n_sfld == shapes.len()) { flags = flags + "2"; }
+        else if (n_fld == shapes.len() && is_box_elem_array_type(structs, tag)) { flags = flags + "3"; }
         else if (n_lit + n_fld == shapes.len() && (n_lit == 0 || tag_is_scalar_elem_array(tag))) { flags = flags + "1"; }
         else { flags = flags + "0"; }
         k = k + 1;
@@ -40618,6 +40932,9 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
+            // The assign form of the struct-literal field share above: the
+            // holder's rebind releases the superseded box's field.
+            if (util.index_of_str(sfld_ok, sfld_assign_site(a)) >= 0) { return false; }
             return strarr_expr_unsafe(a.value, name, borrowable);
         },
         ast.StmtIf(f) => {
@@ -41573,7 +41890,7 @@ function struct_counted_share_stmts(stmts: ast.Stmt[], name: string, structs: St
 // parameter's container — `for mod in mods { for fd in mod.funcs { funcs =
 // funcs.append(fd); } }` then `Module { ...mods[0], funcs: funcs, … }`
 // (checker.ensure_annotated_parts). The append stored the box uncounted
-// (an element binding is a local, not the parameter struct_alias_ident_escapes
+// (an element binding is a local, not the parameter box_param_ident_escapes
 // counts), so the array holds boxes the caller releases, and the deep walk
 // would free them under the caller — the emit-all fixpoint's gen1 read its
 // modules' function boxes back freed. Box-only is the sound release role for
@@ -41654,7 +41971,7 @@ function body_appends_borrowed_elem(stmts: ast.Stmt[], arr: string, params: ast.
 
 // append_arg_is_borrow: `e` is `arr.append(x)` where x is a borrowed name or a
 // read out of a caller-owned container. A bare parameter is not one: the
-// construction retains it (struct_alias_ident_escapes).
+// construction retains it (box_param_ident_escapes).
 function append_arg_is_borrow(e: ast.Expr, arr: string, params: ast.ParamDecl[], borrows: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -42771,6 +43088,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
+    out = collect_enum_field_alias_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -43996,13 +44314,15 @@ function body_returns_local_built_arr(stmts: ast.Stmt[]): boolean {
 // strarr_value_is_fresh: `e` produces a string box this frame constructs and
 // nothing else names — a literal (const_str builds a fresh rc=1 box per
 // evaluation), a concat / string-method producer (str_local_binding_is_fresh),
-// or a call to a whole-program str-fresh-ret free function. A bare ident /
-// param / field read is refused: it may alias a live box, and transferring it
-// out of the container would leave two owners of one reference.
+// a call to a whole-program str-fresh-ret free function, or a scalar's
+// `to_string()`. A bare ident / param / field read is refused: it may alias a
+// live box, and transferring it out of the container would leave two owners of
+// one reference.
 function strarr_value_is_fresh(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprString(_) => { return true; },
         ast.ExprCall(c) => {
+            if (scalar_tostring_call(c)) { return true; }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (util.index_of_str(str_fresh, cid.name) >= 0) { return true; }
@@ -49111,6 +49431,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
+// or an enum-field alias taking the box-only release (credit_enum_field_alias),
 // credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
 // reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
 // block-scoped local on block exit, and a lookup that refuses those would miss
@@ -55199,7 +55520,9 @@ function slot_is_reclaimable_arrenum(s: LowerState, i: i32): boolean {
 // struct sibling because this walk FREES each element box rather than deccing it,
 // so two owners both walking is a double free rather than a double dec. Only the
 // buffer dec stays unconditional — it is the release every owner must perform.
-function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): LowerState {
+// `shared` gates each element's payload walk on its own uniqueness, for a buffer
+// whose elements may have a second owner.
+function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string, shared: boolean): LowerState {
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
@@ -55232,7 +55555,8 @@ function emit_arrenum_deep_free(se: LowerState, slot: i32, ename: string): Lower
     st = st.emit(ir.op_load_local(idxslot));
     st = st.emit(ir.op_arr_get(32));                 // elem = arr[idx] (enum box ptr)
     st = st.emit(ir.op_store_local(elslot));
-    st = emit_enum_variant_drops(st, elslot, ename); // drop payload AND free the box
+    var no_moved: string[] = [];
+    st = emit_enum_variant_drops_gated(st, elslot, ename, no_moved, shared); // drop payload AND free the box
     st = st.emit(ir.op_br(0));                       // back-edge
     st = st.emit(ir.op_end());                       // end loop
     st = st.emit(ir.op_end()).exit_loop();           // end block
@@ -55257,7 +55581,7 @@ function emit_arrenum_reclaim_store(se: LowerState, slot: i32, ename: string): L
     st = st.emit(ir.op_load_local(tmp));             // new
     st = st.emit(ir.op_bin("ne", 0, false));
     st = st.emit(ir.op_if(0));
-    st = emit_arrenum_deep_free(st, slot, ename);    // free old structure
+    st = emit_arrenum_deep_free(st, slot, ename, false);    // free old structure
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));             // new
     return st.emit(ir.op_store_local(slot));
@@ -60844,7 +61168,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], is_usize: isusize[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_own: "", fn_own_arr: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, arr_own_flag: 0 - 1, moved_claim: false, var_bound: false, var_counted: false, own_handback: false });
         lzi = lzi + 1;
     }
     // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
@@ -60979,7 +61303,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: [], own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs), own_handback_sites: [] }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -60988,16 +61312,20 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         if (s.locals[cpi].is_cell) { s = s.mark_cell_elem(cpi, s.locals[cpi].cell_elem); }
         cpi = cpi + 1;
     }
-    // Consumed-threaded array params (ownflag_name): allocate and zero each flag
-    // before any body op, in parameter order, so slot numbering is deterministic.
-    // A declared `own` param is excluded — the caller moved its reference in.
+    s = with_own_handbacks(fn, s);
+    // Array params threaded with an ownership flag (ownflag_name): allocate and
+    // set each flag before any body op, in parameter order, so slot numbering is
+    // deterministic. A reassigned borrowed param and a reassigned flagged `own`
+    // one start clear; a flagged `own` one whose position consumes starts set.
     var ofl_own: string[] = own_param_names_of(fn);
     var ofl_i: i32 = 0;
     while (ofl_i < s.frame.n_params) {
         var ofl_nm: string = s.locals[ofl_i].slot_name;
-        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0 && util.index_of_str(ofl_own, ofl_nm) < 0) {
+        var ofl_mine: boolean = own_array_flag_param(s, ofl_i) && s.callee_consumes_own_array(fn.name, ofl_i);
+        var ofl_threaded: boolean = util.index_of_str(ofl_own, ofl_nm) < 0 || own_array_flag_param(s, ofl_i);
+        if (s.is_arr_slot(ofl_i) && (ofl_mine || (ofl_threaded && util.index_of_str(asg_targets, ofl_nm) >= 0))) {
             s = s.add_local(ownflag_name(ofl_nm));
-            s = s.emit(ir.op_const_i32(0));
+            if (ofl_mine) { s = s.emit(ir.op_const_i32(1)); } else { s = s.emit(ir.op_const_i32(0)); }
             s = s.emit(ir.op_store_local(s.slot_of(ownflag_name(ofl_nm))));
         }
         ofl_i = ofl_i + 1;
@@ -62419,7 +62747,7 @@ function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs): ast.Stmt[] {
                 continue;
             }
             var tn: string = "$mscrut_" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
-            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_view: false, fn_ret: "", fn_param_types: "" });
             out = out.append(ast.StmtMatch { ...m, scrutinee: ast.ExprIdent { name: tn, line: m.line, col: m.col, ty: "" }, arms: arms });
             continue;
         }
@@ -65035,30 +65363,6 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         // path and dispatches on the real type; an annotated binding already
         // supplies the type.
         else if (enum_ret_recordable(rt, fn, structs)) { elig = true; }
-        // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
-        // ret_type from the desugar, not the struct it actually returns — so
-        // trust the BODY, not the declaration. Infer a leaf-safe struct return
-        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
-        // .. }).x` recover the struct type at the `__lam_N()` call site.
-        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
-            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
-            if (inf.len() > 0) { elig = true; elem_t = inf; }
-            else {
-                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
-                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
-                // literal, so record the ELEMENT struct type (the slot is is_arr
-                // via array_ret_fns, so struct_type_of_slot reads as the element
-                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
-                // fixes.
-                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
-                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
-                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
-                // is lifted the same way, and `cs[i].m()` needs the element type
-                // for the same reason. A variant box is leak-only, so — as in the
-                // scalar enum arm — there is no leak-safety test to apply.
-                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
-            }
-        }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
         // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
@@ -65103,6 +65407,31 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
                         api = fn.params.len();
                     } else { api = api + 1; }
                 }
+            }
+        }
+        // A lifted if-/match-EXPRESSION (`__lam_N`) the checker did not annotate
+        // carries the desugar's default `i32` ret_type, not the struct it
+        // actually returns — so trust the BODY. Last, so an annotated
+        // declaration answers first. Infer a leaf-safe struct return
+        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
+        // .. }).x` recover the struct type at the `__lam_N()` call site.
+        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
+            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
+            if (inf.len() > 0) { elig = true; elem_t = inf; }
+            else {
+                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
+                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
+                // literal, so record the ELEMENT struct type (the slot is is_arr
+                // via array_ret_fns, so struct_type_of_slot reads as the element
+                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
+                // fixes.
+                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
+                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
+                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
+                // is lifted the same way, and `cs[i].m()` needs the element type
+                // for the same reason. A variant box is leak-only, so — as in the
+                // scalar enum arm — there is no leak-safety test to apply.
+                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
             }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
@@ -66294,10 +66623,11 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
     match (e) {
         ast.ExprIdent(id) => { if (id.name == pn) { return counted; } return true; },
         ast.ExprArray(a) => {
-            // Array and tuple construction inc an ARRAY element; whether they inc
-            // a STRING one is not established, so the string tier declines both
-            // rather than crediting a store that may never have retained.
-            var acnt: boolean = pfx == "ACNT:";
+            // Array construction incs an ARRAY element and a borrowed struct or
+            // enum parameter (box_param_ident_escapes); whether it incs a STRING
+            // one is not established, so the string tier declines it rather than
+            // crediting a store that may never have retained.
+            var acnt: boolean = pfx == "ACNT:" || pfx == "PCNT:" || pfx == "ECNT:";
             var i: i32 = 0;
             while (i < a.elements.len()) { if (!arrparam_use_ok(a.elements[i], pn, acnt, reg, pfx, structs, sfok)) { return false; } i = i + 1; }
             return true;
@@ -66338,11 +66668,11 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
                     // method may thread the receiver, so it is not credited.
                     var recv_counted: boolean = fa.field == "len";
                     if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg, pfx, structs, sfok)) { return false; }
-                    // `xs.append(p)` at the STRUCT tier is a COUNTED store: the
-                    // clone-append retains a borrowed-param struct element, so
-                    // the caller's post-call release nets to the reference the
-                    // array owns.
-                    if (pfx == "PCNT:" && fa.field == "append" && c.args.len() == 1) {
+                    // `xs.append(p)` at the STRUCT or ENUM tier is a COUNTED
+                    // store: every append retains a borrowed struct or enum
+                    // parameter, so the caller's post-call release nets to the
+                    // reference the array owns.
+                    if ((pfx == "PCNT:" || pfx == "ECNT:") && fa.field == "append" && c.args.len() == 1) {
                         return arrparam_use_ok(c.args[0], pn, true, reg, pfx, structs, sfok);
                     }
                 },
@@ -66391,7 +66721,20 @@ function arrparam_use_ok_stmt(st: ast.Stmt, pn: string, reg: string[], pfx: stri
     match (st) {
         ast.StmtVar(v) => { return arrparam_use_ok(v.init, pn, false, reg, pfx, structs, sfok); },
         ast.StmtAssign(a) => { return arrparam_use_ok(a.value, pn, false, reg, pfx, structs, sfok); },
-        ast.StmtReturn(r) => { return arrparam_use_ok(r.value, pn, false, reg, pfx, structs, sfok); },
+        ast.StmtReturn(r) => {
+            // A returned array literal stores a struct or enum parameter uncounted
+            // (lower_expr_array's `returning`), so it is no counted use there.
+            match (r.value) {
+                ast.ExprArray(ra) => {
+                    if (pfx == "PCNT:" || pfx == "ECNT:") {
+                        for el in ra.elements { if (!arrparam_use_ok(el, pn, false, reg, pfx, structs, sfok)) { return false; } }
+                        return true;
+                    }
+                },
+                _ => {}
+            }
+            return arrparam_use_ok(r.value, pn, false, reg, pfx, structs, sfok);
+        },
         ast.StmtExpr(e) => { return arrparam_use_ok(e.value, pn, false, reg, pfx, structs, sfok); },
         ast.StmtIf(f) => {
             return arrparam_use_ok(f.cond, pn, false, reg, pfx, structs, sfok)
@@ -66436,6 +66779,9 @@ pub function str_param_counted_at(reg: string[], callee: string, ai: i32): boole
 }
 pub function struct_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
     return param_counted_at(reg, "PCNT:", callee, ai);
+}
+pub function enum_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
+    return param_counted_at(reg, "ECNT:", callee, ai);
 }
 
 // borrow_reg_with_counted folds param_counted_of's verdict into the borrowability
@@ -68052,7 +68398,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
         opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
         strfld_ok_types: sfok,
-        tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
+        tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs, structs),
         own_positions: own_positions_of(funcs),
         own_scalar_arr_positions: own_scalar_arr_positions_of(funcs),
         own_consumed_positions: [],
@@ -69369,8 +69715,10 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
             // return-transfer retain), and the tuple's deep drop releases its
             // own claim, so the destination owns its reference. Map elements
             // stay tainted (their slot drop deep-frees the value column).
-            // The STRUCT-source half of native's arm is deliberately not
-            // ported — the conservative taint is the documented cut.
+            // Of the STRUCT-source half only a DIRECT enum field is ported: the
+            // enum-field alias bind dups it (#10310). Every other struct field
+            // read keeps the conservative taint.
+            if (decl_is_enum(structs, rc_fe_expr_type(e, types_n, types_t, structs))) { return false; }
             if (util.is_all_digits(fa.field)) {
                 match (fa.obj) {
                     ast.ExprIdent(_) => {
@@ -71717,7 +72065,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         pi = pi + 1;
     }
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var st: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, frame: LowerFrame { ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, dead_alias_bp: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: StringArraySources { arrays: [], elements: [] }, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), cur_key: struct_ret_key(fn), n_params: fn.params.len(), fail_why: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], own_lift_sites: [], own_handback_sites: [] }, xblock_pending: no_strs, optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -72314,12 +72662,11 @@ pub function is_fn_payload_spelling(t: string): boolean {
 // targets, so this is a gap to close rather than a rule of the language.
 //
 // FLOAT keys are listed even though E045 refuses every written float-key
-// spelling in both checkers now (#10009), because a written spelling is not
-// the only way one arrives: the self-host runs no diagnostic pass over a
-// MONOMORPHISED clone, so `build(2.5, 7)` through a `Map[T, i32]`-returning
-// generic reaches here with no diagnostic behind it (#10018). Native
-// re-checks its instantiations and reports; until the self-host does, this
-// is the only thing standing between that program and the string column.
+// spelling in both checkers (#10009), and the self-host checker re-checks the
+// instantiations of generic free functions as native does (#10018). A driver
+// that lowers without running the checker still reaches here with no
+// diagnostic behind it, and an instantiation the checker cannot bind is not
+// re-checked, so this is what stands between those and the string column.
 //
 // The COMPOSITES have no hash or equality to dispatch: a tuple, an array or a
 // slice is not a struct, so there is nothing for @derive(Eq) + @derive(Hash)
@@ -72761,7 +73108,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -72964,7 +73311,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
     if let ast.ExprLambda(lm) = value {
         if (lm.ret_type.len() == 0 && sig.fn_ret.len() > 0 && !parser.is_coarse_fn_tag(sig.fn_ret)) { init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret }; }
     }
-    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
+    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_view: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
 }
 // contract_spelling is how returned_lambda_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
@@ -73123,7 +73470,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         },
         ast.StmtVar(v) => {
             var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
-            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
         ast.StmtExpr(s) => {
@@ -73375,8 +73722,8 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
-    if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    if (lam.origin == ast.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -73546,7 +73893,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
@@ -73557,13 +73904,13 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var cj: i32 = 0;
     while (cj < caps.len()) {
         var idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" });
         cj = cj + 1;
     }
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -73644,11 +73991,11 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -73658,12 +74005,12 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
+    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs.decls[fi];
-            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: ast.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
@@ -73686,7 +74033,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: tgt.ret_str, ret_str_elem: tgt.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -74786,6 +75133,9 @@ function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
             ast.StmtReturn(r) => {
                 if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
             },
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && passthrough_arg_has_lambda(a.value, mfuncs)) { return true; }
+            },
             ast.StmtIf(iff) => {
                 if (iife_arms_have_lambda(iff.then_body, mfuncs)) { return true; }
                 if (iife_arms_have_lambda(iff.else_body, mfuncs)) { return true; }
@@ -74836,31 +75186,42 @@ function passthrough_arg_has_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
     return false;
 }
 
+// is_arm_value_store reports whether `a` is an arm yielding its value the way
+// the tuple / struct / nested-pattern match desugars do: by storing it into the
+// expression's value local (IfChain.value_local) rather than returning it.
+function is_arm_value_store(a: ast.StmtAssign): boolean {
+    return parser.is_value_local_name(lexical.source_name(a.target));
+}
+
+// iife_return_holds_fn_value: does an arm's returned value yield a fn? A
+// fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`) is a fn value
+// too, though lift_arg_is_fn_value declines it — that predicate answers "is
+// this worth env-boxing?", and an already-boxed local is not — so the
+// declared type answers it. A nested value-position if/match arm yields
+// whatever its own arms yield, so the question descends into it.
+function iife_return_holds_fn_value(v: ast.Expr, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    if (lift_arg_is_fn_value(v, mfuncs)) { return true; }
+    match (v) {
+        ast.ExprIdent(aid) => { return aid.ty == "fn"; },
+        ast.ExprCall(rc) => {
+            if let ast.ExprLambda(ril) = rc.callee {
+                return rc.args.len() == 0 && ril.params.len() == 0 && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs);
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && lift_arg_is_fn_value(a.value, mfuncs)) { return true; }
+            },
             ast.StmtReturn(r) => {
-                if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
-                // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
-                // is a fn value too, but lift_arg_is_fn_value declines it — that
-                // predicate answers "is this worth env-boxing?", and an already-
-                // boxed local is not. Here the question is "does this arm yield a
-                // fn?", so the declared type answers it.
-                match (r.value) {
-                    ast.ExprIdent(aid) => { if (aid.ty == "fn") { return true; } },
-                    // A nested value-position if/match arm yields whatever its own
-                    // arms yield, so the question descends into it.
-                    ast.ExprCall(rc) => {
-                        match (rc.callee) {
-                            ast.ExprLambda(ril) => {
-                                if (rc.args.len() == 0 && ril.params.len() == 0
-                                        && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs)) { return true; }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
+                if (iife_return_holds_fn_value(r.value, fd, structs, mfuncs)) { return true; }
             },
             ast.StmtIf(iff) => {
                 if (iife_arms_hold_fn_value(iff.then_body, fd, structs, mfuncs)) { return true; }
@@ -75123,7 +75484,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnptys = armptys;
     }
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -75702,7 +76063,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                 _ => {}
             }
             var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
-            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
         },
         ast.StmtReturn(r) => {
             // A callable result uses the same env-box ABI as callable
@@ -76016,14 +76377,14 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
     var src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "" };
-    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
     var cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "" };
     var idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_expr walks one expression, rewriting every lambda in it (prepending the
@@ -76174,7 +76535,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
     match (st) {
         ast.StmtVar(v) => {
             var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
+            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
         },
         ast.StmtAssign(a) => {
             var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
@@ -76480,7 +76841,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
+        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
         var nested: ast.ExprLambda[] = [];
         match (stmts[i]) {
             ast.StmtVar(v) => {
@@ -76727,7 +77088,7 @@ function iife_call_to(c: ast.ExprCall, nm: string): ast.Expr {
 // iife_bind is the hoisted `var <nm> = <lambda>;`. Untyped: the checker infers
 // the lambda's own type, exactly as it does for a written `var f = () => …`.
 function iife_bind(nm: string, lam: ast.Expr, line: i32, col: i32): ast.Stmt {
-    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 function name_source_iifes_stmts(stmts: ast.Stmt[], fdname: string, k0: i32): IifeNamed {
@@ -76897,7 +77258,23 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 //
 // An empty `view` means "use the module's own functions", so every caller that
 // does not thread a view is byte-identical to before.
+//
+// The lift is on every production route into the AST lowering, including the
+// per-module and stdin drivers that never reach module_with_builtins, so its
+// result has each `str` erased. A test-driver leg that lowers a parsed module
+// without it still sees `str`: irlower_run's default, -rc-plan, -str-own and
+// -verify* legs, and ir_const_numeric_run's x86-64 and arm64 legs.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
+    return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
+}
+
+// lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
+// `str` as a view.
+pub function lift_lambdas_typed(raw_mod: parser.Module): parser.Module {
+    return lift_lambdas_view_typed(raw_mod, []);
+}
+
+pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
     // as `f(5, 128)`. No-op for default-free modules.
@@ -77736,49 +78113,59 @@ pub function (s: LowerState) callee_consumes_own_array(name: string, idx: i32): 
 // own_consumed_positions_of closes `seeds` — "fn|idx" rows for the `own`
 // array positions of bodies the semantic lowering produced, which consume
 // their buffer — over the free functions this lowering emits: one that
-// passes its own `own` array parameter to a consuming position in a dying
-// shape (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
+// passes its own `own` array parameter, or a local that took it over at its
+// last use (`var a = p`, `var a = g(p)`), to a consuming position in a dying shape
+// (grow_dying_passes_stmt: `return g(p)`, `x = g(p)`) no longer holds
 // the buffer when it returns, so its callers must transfer theirs too. A
 // row only ever gains, so the rounds converge.
 pub function own_consumed_positions_of(funcs: parser.FuncDecl[], seeds: string[]): string[] {
     var out: string[] = seeds;
     var changed: boolean = out.len() > 0;
+    var ownpos: string[] = own_positions_of(funcs);
+    var scalar: string[] = own_scalar_arr_positions_of(funcs);
     while (changed) {
-        changed = false;
+        var before: i32 = out.len();
         for fn in funcs {
-            if (fn.receiver_name.len() > 0) { continue; }
-            var owned: string[] = [];
-            var pi: i32 = 0;
-            while (pi < fn.params.len()) {
-                if (fn.params[pi].own && is_array_type_name(fn.params[pi].type_name)) { owned = owned.append(fn.params[pi].name); }
-                pi = pi + 1;
-            }
-            if (owned.len() == 0) { continue; }
-            var sole: string[] = grow_sole_exempt_names_of(fn);
-            var passes: string[] = [];
-            var si: i32 = 0;
-            while (si < fn.body.len()) { passes = grow_dying_passes_stmt(fn.body[si], owned, sole, passes); si = si + 1; }
-            for entry in passes {
-                var b1: i32 = 0;
-                while (b1 < entry.len() && entry[b1] != b'|') { b1 = b1 + 1; }
-                var b2: i32 = b1 + 1;
-                while (b2 < entry.len() && entry[b2] != b'|') { b2 = b2 + 1; }
-                var cname: string = slice_unchecked(entry, 0, b1) + "";
-                var slot: i32 = util.digits_to_i32(slice_unchecked(entry, b1 + 1, b2));
-                var pname: string = slice_unchecked(entry, b2 + 1, entry.len()) + "";
-                if (cname.len() == 0 || cname[0] == b'@' || slot < 1) { continue; }
-                if (util.index_of_str(out, cname + "|" + util.i32_to_string(slot - 1)) < 0) { continue; }
-                var at: i32 = 0;
-                while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
-                var row: string = fn.name + "|" + util.i32_to_string(at);
-                if (at < fn.params.len() && util.index_of_str(out, row) < 0) {
-                    out = out.append(row);
-                    changed = true;
-                }
-            }
+            if (fn.receiver_name.len() == 0) { out = fn_consumed_positions(fn, out, ownpos, scalar); }
         }
+        changed = out.len() > before;
     }
     return out;
+}
+
+// fn_consumed_positions adds to `out` the rows of `fn`'s `own` array params
+// that it passes, itself or through a local that took it over at its last use
+// (own_handbacks_of, with the rows the lowering reads), to a consuming position
+// in a dying shape.
+function fn_consumed_positions(fn: parser.FuncDecl, out: string[], ownpos: string[], scalar: string[]): string[] {
+    var owned: string[] = [];
+    var roots: string[] = [];
+    for p in fn.params {
+        if (p.own && is_array_type_name(p.type_name)) {
+            owned = owned.append(p.name);
+            if (!is_leaksafe_array_field(p.type_name)) { roots = roots.append(p.name); }
+        }
+    }
+    if (owned.len() == 0) { return out; }
+    var hb: Handbacks = own_handbacks_of(fn, roots, append_all(ownpos, fn_value_own_rows(fn, ownpos, false)),
+        append_all(append_all(scalar, out), fn_value_own_rows(fn, scalar, true)));
+    var stands: string[] = append_all(owned, hb.roots);
+    owned = append_all(owned, hb.names);
+    var sole: string[] = grow_sole_exempt_names_of(fn);
+    var passes: string[] = [];
+    for st in fn.body { passes = grow_dying_passes_stmt(st, owned, sole, passes); }
+    var res: string[] = out;
+    for entry in passes {
+        var parts: string[] = split_bar(entry);
+        if (parts.len() != 3 || parts[0].len() == 0 || parts[0][0] == b'@' || util.digits_to_i32(parts[1]) < 1) { continue; }
+        if (util.index_of_str(res, parts[0] + "|" + util.i32_to_string(util.digits_to_i32(parts[1]) - 1)) < 0) { continue; }
+        var pname: string = parts[2];
+        if (util.index_of_str(owned, pname) >= 0) { pname = stands[util.index_of_str(owned, pname)]; }
+        var at: i32 = 0;
+        while (at < fn.params.len() && fn.params[at].name != pname) { at = at + 1; }
+        if (at < fn.params.len()) { res = push_str_unique(res, fn.name + "|" + util.i32_to_string(at)); }
+    }
+    return res;
 }
 
 // consume_sigs installs the consuming `own` array positions the produced
@@ -78128,7 +78515,11 @@ function grow_alias_filter(names: string[], alias: string[]): string[] {
 // — and the two co-indexed buffers of the module-wide registry then grew
 // INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
 // longer than `rows` and a bucket chain pointing past the end of `rows`.
-pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+//
+// `owned_binds` are the top-level `var` sites ("line:col") that take over a
+// threaded `own` parameter at its last use (bind_own_handback): the caller
+// handed that buffer over to be grown, so the binding is no alias.
+pub function grow_alias_names_of(fn: parser.FuncDecl, owned_binds: string[]): string[] {
     var srcs: string[] = [];
     if (fn.receiver_name.len() > 0) { srcs = srcs.append(fn.receiver_name); }
     for p in fn.params { srcs = srcs.append(p.name); }
@@ -78136,10 +78527,175 @@ pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
     var grew: boolean = true;
     while (grew) {
         var before: i32 = out.len();
-        out = grow_alias_scan(fn.body, srcs, out);
+        for st in fn.body {
+            if (util.index_of_str(owned_binds, var_site_key(st)) < 0) { out = grow_alias_scan_stmt(st, srcs, out); }
+        }
         grew = out.len() > before;
     }
     return out;
+}
+
+// var_site_key is the "line:col" of a `var` statement, "" for any other.
+function var_site_key(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtVar(v) => { return util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col); },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// Handbacks: the top-level `var`s of one function that take over a root at its
+// last use — the site ("line:col"), the name bound, the name taken over, and
+// the root that name stands for.
+pub struct Handbacks { sites: string[], names: string[], srcs: string[], roots: string[] }
+
+// with_own_handbacks records `fn`'s own_handbacks_of binds on the frame, rooted
+// at its flagged `own` array parameters, and the grow aliases that leaves.
+function with_own_handbacks(fn: parser.FuncDecl, s: LowerState): LowerState {
+    var sg: FnSigs = s.frame.sigs;
+    var roots: string[] = [];
+    var ri: i32 = 0;
+    while (ri < s.frame.n_params) {
+        if (own_array_flag_param(s, ri)) { roots = roots.append(s.locals[ri].slot_name); }
+        ri = ri + 1;
+    }
+    var hb: Handbacks = own_handbacks_of(fn, roots, append_all(sg.own_positions, fn_value_own_rows(fn, sg.own_positions, false)),
+        append_all(append_all(sg.own_scalar_arr_positions, sg.own_consumed_positions), fn_value_own_rows(fn, sg.own_scalar_arr_positions, true)));
+    var rows: string[] = [];
+    var i: i32 = 0;
+    while (i < hb.sites.len()) { rows = rows.append(hb.sites[i] + "|" + hb.srcs[i]); i = i + 1; }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, own_handback_sites: rows, grow_alias: grow_alias_names_of(fn, hb.sites) } };
+}
+
+// own_handbacks_of finds, in `fn`'s top-level statements, each `var a = …`
+// whose initialiser hands over whole (own_handback_arg) one of `roots` or an
+// earlier such `a`, naming it once and never again after. The lowering asks
+// this with its flagged `own` array parameters as roots (bind_own_handback);
+// own_consumed_positions_of asks it with the same roots and rows, so the two
+// cannot disagree about which local stands for which parameter.
+pub function own_handbacks_of(fn: parser.FuncDecl, roots: string[], own_at: string[], consumes: string[]): Handbacks {
+    var hb: Handbacks = Handbacks { sites: [], names: [], srcs: [], roots: [] };
+    var k: i32 = 0;
+    while (roots.len() > 0 && k < fn.body.len()) {
+        match (fn.body[k]) {
+            ast.StmtVar(v) => {
+                var src: string = own_handback_arg(v.init, own_at, consumes);
+                var root: string = "";
+                if (util.index_of_str(roots, src) >= 0) { root = src; }
+                var ni: i32 = util.index_of_str(hb.names, src);
+                if (ni >= 0) { root = hb.roots[ni]; }
+                if (root.len() > 0 && astwalk.count_ident_expr(v.init, src) == 1 && !named_after(fn.body, k, src)) {
+                    hb = Handbacks { sites: hb.sites.append(var_site_key(fn.body[k])), names: hb.names.append(v.name),
+                        srcs: hb.srcs.append(src), roots: hb.roots.append(root) };
+                }
+            },
+            _ => {}
+        }
+        k = k + 1;
+    }
+    return hb;
+}
+
+// own_handback_arg names the bare ident `init` hands over whole: the ident
+// itself, or a call argument at an `own` position ("callee|idx" in `own_at`)
+// whose callee does not consume it (`consumes`), so the callee hands it back
+// uncounted when it keeps it. "" for anything else.
+function own_handback_arg(init: ast.Expr, own_at: string[], consumes: string[]): string {
+    match (init) {
+        ast.ExprIdent(id) => { return id.name; },
+        ast.ExprCall(c) => {
+            var cname: string = direct_call_callee_name(init);
+            var i: i32 = 0;
+            while (cname.len() > 0 && i < c.args.len()) {
+                var an: string = ident_name_or_empty(c.args[i]);
+                var row: string = cname + "|" + util.i32_to_string(i);
+                if (an.len() > 0 && util.index_of_str(own_at, row) >= 0 && util.index_of_str(consumes, row) < 0) { return an; }
+                i = i + 1;
+            }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// fn_value_own_rows lists "name|idx" for the `own` positions of the function
+// values `fn` can call by name, read the way the lowering stamps them
+// (stamp_fnval_decl): a fn-typed parameter or `var` by its declared type, and a
+// `var` bound to a module function (`var f = g`, which the lift rewrites to a
+// `__mkclo$g$…` box) by that function's rows in `reg`. `reg` is
+// own_positions for every `own` position, or own_scalar_arr_positions with
+// `arrays_only`, the positions a call through the value moves outright.
+pub function fn_value_own_rows(fn: parser.FuncDecl, reg: string[], arrays_only: boolean): string[] {
+    var out: string[] = [];
+    for p in fn.params {
+        if (p.type_name == "fn") { out = append_all(out, own_rows_of(p.name, own_positions_of_spellings(p.fn_param_types, arrays_only))); }
+    }
+    return fn_value_own_rows_stmts(fn.body, fn.params, reg, arrays_only, out);
+}
+
+function fn_value_own_rows_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], reg: string[], arrays_only: boolean, acc: string[]): string[] {
+    var out: string[] = acc;
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => { out = append_all(out, fn_var_own_rows(v, params, reg, arrays_only)); },
+            ast.StmtIf(f) => {
+                out = fn_value_own_rows_stmts(f.then_body, params, reg, arrays_only, out);
+                out = fn_value_own_rows_stmts(f.else_body, params, reg, arrays_only, out);
+            },
+            ast.StmtWhile(w) => { out = fn_value_own_rows_stmts(w.body, params, reg, arrays_only, out); },
+            ast.StmtFor(fo) => { out = fn_value_own_rows_stmts(fo.body, params, reg, arrays_only, out); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { out = fn_value_own_rows_stmts(arm.body, params, reg, arrays_only, out); }
+            },
+            _ => {}
+        }
+    }
+    return out;
+}
+
+// fn_var_own_rows: one `var`'s rows, as stamp_fnval_decl reads its mask.
+function fn_var_own_rows(v: ast.StmtVar, params: ast.ParamDecl[], reg: string[], arrays_only: boolean): string[] {
+    var out: string[] = [];
+    var nm: string = ident_name_or_empty(v.init);
+    var shift: i32 = 0;
+    if let ast.ExprCall(mc) = v.init {
+        var cn: string = ident_name_or_empty(mc.callee);
+        if (cn.len() > 8 && slice_unchecked(cn, 0, 8) == "__mkclo$") {
+            nm = slice_unchecked(cn, 8, cn.len()) + "";
+            shift = 1;
+        }
+    }
+    var shadowed: boolean = false;
+    for p in params { if (p.name == nm) { shadowed = true; } }
+    if (nm.len() > 0 && !shadowed) { out = own_rows_of(v.name, own_positions_of_registry(reg, nm, shift)); }
+    var dp: ast.ParamDecl = decltypes.fn_param_from_var(v);
+    if (dp.type_name == "fn") { out = append_all(out, own_rows_of(v.name, own_positions_of_spellings(dp.fn_param_types, arrays_only))); }
+    return out;
+}
+
+// own_rows_of turns a comma-joined position list into "name|idx" rows.
+function own_rows_of(name: string, positions: string): string[] {
+    var out: string[] = [];
+    if (positions.len() == 0) { return out; }
+    for p in parser.split_top_commas(positions) { out = out.append(name + "|" + p); }
+    return out;
+}
+
+// named_after: `name` appears in a statement of `stmts` after index `k`, as an
+// assignment target or anywhere in an expression, lambda bodies included.
+function named_after(stmts: ast.Stmt[], k: i32, name: string): boolean {
+    function at(n: ast.Expr, own hit: boolean): boolean {
+        if (hit) { return true; }
+        if let ast.ExprIdent(id) = n { return id.name == name; }
+        return false;
+    }
+    var j: i32 = k + 1;
+    while (j < stmts.len()) {
+        if (astwalk.count_ident_stmts([stmts[j]], name) > 0 || astwalk.fold_stmt(stmts[j], false, at)) { return true; }
+        j = j + 1;
+    }
+    return false;
 }
 
 function grow_alias_scan(stmts: ast.Stmt[], srcs: string[], acc: string[]): string[] {
@@ -78271,6 +78827,21 @@ pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
 
 pub function (s: LowerState) with_fld_moves(keys: string[]): LowerState {
     return LowerState { ...s, fld_moves: keys };
+}
+
+// value_block_struct_type is the struct or enum a value block's checked result
+// names, with true when the result is an array of one, or "". It answers where
+// the block's leaf cannot: a tail naming a local the block itself declared.
+function value_block_struct_type(init: ast.Expr, structs: StructTab): (string, boolean) {
+    if let ast.ExprCall(c) = init {
+        if let ast.ExprLambda(lam) = c.callee {
+            var arr: boolean = is_array_type_name(lam.ret_type);
+            var et: string = lam.ret_type;
+            if (arr) { et = slice_unchecked(et, 0, et.len() - 2) + ""; }
+            if (parser.is_value_block_origin(lam.origin) && (decl_is_struct(structs, et) || is_enum_like_name(et, structs))) { return (et, arr); }
+        }
+    }
+    return ("", false);
 }
 
 function struct_ty_from_arr_alias(se: LowerState, v: ast.StmtVar, struct_ty: string): string {
@@ -80831,7 +81402,7 @@ function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState 
 function emit_own_borrowed_param_arg(id: ast.ExprIdent, scalar_array_move: boolean, s: LowerState): LowerState {
     var sl: i32 = s.slot_of(id.name);
     if (sl < 0) { return s; }
-    if (sl < s.frame.n_params && s.is_own_param(id.name)) { return s; }
+    if (sl < s.frame.n_params && s.is_own_param(id.name) && s.ownflag_slot_of(sl) < 0) { return s; }
     if (s.is_arr_slot(sl)) {
         if (sl >= s.frame.n_params && !s.is_borrowed_arr_slot(sl)) { return s; }
         if (!scalar_array_move) { return s; }

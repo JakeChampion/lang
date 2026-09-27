@@ -1413,6 +1413,33 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 			},
 		},
 		{
+			// The struct-source half of the same arm, for a DIRECT enum field
+			// only (#10310): the bind dups `h.e`, so `g` is an owner on both
+			// sides. The self-host records that dup as an alias-bind inc, where
+			// native's field-read inc has no row in the table; neither side's
+			// precise drop placement changed, and the self-host places none for
+			// an enum or struct local here.
+			name: "enum-field-extract-bind",
+			src: `enum E { A(i32), B }
+struct H { e: E, n: i32 }
+function peek(k: i32): i32 {
+	var h: H = H { e: A(k), n: 1 };
+	var g: E = h.e;
+	match (g) { A(v) => { return v; }, B => { return 0; } }
+}
+function main(): i32 { return peek(3); }`,
+			anchor: map[string]map[string]string{"peek": {
+				"freeEligible": "g,h",
+				"lastUses":     "g=2,h=1",
+			}},
+			diverge: map[string]map[string]divergence{
+				"peek": {
+					"aliasBindIncs": {native: "", selfhost: "5:2=g"},
+					"preciseDrops":  {native: "1=h,2=g", selfhost: ""},
+				},
+			},
+		},
+		{
 			// The STRING-param taint seed, which no other case reaches.
 			//
 			// rc_fe_run exempts a string param from its taint seed and says

@@ -179,6 +179,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		want []string // codes the self-host checker should print
 	}{
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},
+		// A literal local takes ONE integer type: its first width-fixing use
+		// decides it, i32 when none does (#10123). The self-host held it at i32
+		// from its binding and native let each use pick a width, so the same
+		// local read at two widths was accepted natively and miscompiled.
+		{"literal-local-widens", "function main(): i32 { var x = 5; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-narrows", "function main(): i32 { var x = 5; var y: u8 = x; return 0; }\n", nil},
+		{"literal-local-shift-count", "function main(): i32 { var x = 5; var z: u64 = 1 as u64 << x; return 0; }\n", nil},
+		{"literal-local-wider-operand", "function main(): i32 { var x = 5; var y: i64 = x + (1 as i64); return 0; }\n", nil},
+		{"literal-local-through-a-second-local", "function main(): i32 { var x = 5; var y = x + 1; var z: u64 = y; return 0; }\n", nil},
+		{"literal-local-assigned-typed", "function main(): i32 { var x = 0; var n: i64 = 7i64; x = n; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-parameter", "function take(v: u64): i32 { return 0; }\nfunction main(): i32 { var x = 3; var r = take(x); var y: u64 = x; return r; }\n", nil},
+		{"literal-local-struct-field", "struct P { a: i64 }\nfunction main(): i32 { var x = 3; var p = P { a: x }; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-array-sibling", "function main(): i32 { var x = 3; var xs: i64[] = [x, 2i64]; var y: i64 = x; return 0; }\n", nil},
+		{"literal-local-cast-does-not-decide", "function main(): i32 { var x = 5; var f: f64 = x as f64; var y: i64 = x; return 0; }\n", nil},
+		{"range-variable-shifts-u64", "function main(): i32 {\n    var t: i64 = 0 as i64;\n    for i in 0..64 {\n        var bits: i64 = (1 as u64 << i) as i64;\n        t = t + bits;\n    }\n    return 0;\n}\n", nil},
+		{"range-variable-typed-bound", "function main(): i32 { var n: i64 = 5i64; for i in 0..n { var k: i64 = i; } return 0; }\n", nil},
+		{"literal-local-two-widths", "function main(): i32 { var x = 5; var a: i32 = x; var b: i64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-two-widths-wrapped", "function main(): i32 {\n    var x = 2147483647;\n    x = x + 1;\n    var a: i32 = x;\n    var b: i64 = x;\n    if (b > 0i64) { return 1; }\n    if (a < 0) { return 2; }\n    return 3;\n}\n", []string{"E003"}},
+		{"literal-local-index-is-i32", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i = 1; var v = xs[i]; var w: i64 = i; return v; }\n", []string{"E003"}},
+		{"literal-local-float", "function main(): i32 { var x = 5; var f: f64 = x; return 0; }\n", []string{"E003"}},
+		{"literal-local-out-of-range", "function main(): i32 { var x = 300; var b: u8 = x; return 0; }\n", []string{"E047"}},
+		// An open literal local compared with, or combined with, one that has
+		// already settled takes its width, whichever order the two settle in.
+		{"literal-local-compared-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-compared-before-settling", "function main(): i32 { var hi = 255; var i = 250; if (i != hi) {} var b: u8 = i; var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-arithmetic-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; var d = hi - i; var e: u8 = d; return 0; }\n", nil},
+		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
+		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
+		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
 		// `fbip` exists for — drew E053 there and nothing natively, and
@@ -398,10 +427,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// call path is pinned by the self_host_cli_test exit-code test.
 		{"generic-call-mismatch", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { var x: string = ident(3); return 0; }\n", []string{"E003"}},
 		{"generic-call-clean", "function ident[T](v: T): T { return v; }\nfunction main(): i32 { return ident(3); }\n", nil},
-		// `str`, the borrowed-string view (#7293). The parser erases the
-		// spelling to "string", so view-ness re-enters the type system through
-		// the sidecars (StmtVar.is_str, FuncDecl.ret_str) and the
-		// slice_unchecked builtin; every owning sink then refuses the view
+		// `str`, the borrowed-string view (#7293). The spelling reaches the
+		// checker unerased (#9915), and slice_unchecked yields one; every
+		// owning sink then refuses the view
 		// exactly as native does — E003 on a var init and an assignment, E002
 		// on a return, E043 on a struct-literal field — while a `str`
 		// destination, an argument position (params are borrowed), and a
@@ -415,6 +443,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-annotated-clean", "function f(t: string): i32 { var v: str = slice_unchecked(t, 0, 3); return v.len(); }\nfunction main(): i32 { return f(\"abcdef\"); }\n", nil},
 		{"str-view-arg-borrow-clean", "function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n", nil},
 		{"str-ret-fn-into-str-clean", "function f(t: string): str { return slice_unchecked(t, 0, 3); }\nfunction main(): i32 { var v: str = f(\"abcdef\"); return v.len(); }\n", nil},
+		// A `str` struct field and tuple element are views too (#9915): each
+		// takes a view, and hands one to a `str` binding but not a `string`
+		// one. A `str` receiver shares the `string` method namespace.
+		{"str-view-into-str-field-clean", "struct H { s: str, n: i32 }\nfunction mk(t: string): H { return H { s: slice_unchecked(t, 0, 3), n: 1 }; }\nfunction main(): i32 { return mk(\"abcde\").n; }\n", nil},
+		{"str-field-into-string-var-e003", "struct H { s: str }\nfunction get(h: H): i32 { var v: string = h.s; return v.len(); }\nfunction main(): i32 { return get(H { s: \"abc\" }); }\n", []string{"E003"}},
+		{"str-field-into-str-var-clean", "struct H { s: str }\nfunction get(h: H): i32 { var v: str = h.s; return v.len(); }\nfunction main(): i32 { return get(H { s: \"abc\" }); }\n", nil},
+		{"str-tuple-elem-into-string-var-e003", "function main(): i32 { var p: (str, i32) = (\"abc\", 4); var v: string = p.0; return v.len(); }\n", []string{"E003"}},
+		{"str-tuple-elem-into-str-var-clean", "function main(): i32 { var p: (str, i32) = (\"abc\", 4); var v: str = p.0; return v.len() + p.1; }\n", nil},
+		{"str-tuple-result-elem-into-string-e003", "function mk(t: string): (str, i32) { return (slice_unchecked(t, 0, 2), 1); }\nfunction main(): i32 { var v: string = mk(\"abc\").0; return v.len(); }\n", []string{"E003"}},
+		{"str-receiver-method-clean", "function (s: str) first(): u8 { return s[0]; }\nfunction main(): i32 { var v: str = \"hey\"; return v.first() as i32; }\n", nil},
 		// `[T]`, the array view a slice or `.as_bytes()` yields (#9944). A view
 		// and an owned `T[]` convert in neither direction — var init, assignment,
 		// return, field, argument — except an owned argument lent to a `[T]`
@@ -794,6 +832,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"dyn-object-safe-ok", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"rec-local-ok", "function main(): i32 { function f(n: i32): i32 { if (n <= 0) { return 0; } return f(n - 1); } return f(3); }\n", nil},
 		{"rec-local-capture-ok", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }\n", nil},
+		// Only a nested `function` sees its own name (#10383): an arrow lambda
+		// bound by `var` calling that var, directly or one lambda deeper, is E001.
+		{"rec-local-arrow-e001", "function main(): i32 { var f = (n: i32): i32 => { if (n <= 0) { return 0; } return f(n - 1); }; return f(3); }\n", []string{"E001"}},
+		{"rec-local-arrow-nested-e001", "function main(): i32 { var f = (): i32 => { var g = (): i32 => { return f(); }; return g(); }; return f(); }\n", []string{"E001"}},
 		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice): the loop
 		// var is an i32 over the half-open interval. A clean program draws no
 		// codes from EITHER checker — the differential proves the self-host
@@ -1913,10 +1955,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// supports). Map programs need `import "core/map";` (Go reports E001
 		// otherwise — a Go-only rule the self-host doesn't model, so kept out
 		// of the corpus). Cross-checked against the Go checker.
-		// A declared `str[]` keeps its view elements (#10201): the parser erases
-		// the spelling to `string[]`, and the str_elem sidecar puts them back, so
-		// an element read into a `string` is E003 as it is natively. Local,
-		// parameter and function result each have their own sidecar.
+		// A declared `str[]` keeps its view elements (#10201), so an element
+		// read into a `string` is E003 as it is natively: from a local, a
+		// parameter and a function result.
 		{"e003-str-array-local-element-into-string", "function main(): i32 { var s: string = \"ab\"; var xs: str[] = [slice_unchecked(s, 0, 1)]; var t: string = xs[0]; return t.len(); }\n", []string{"E003"}},
 		{"e003-str-array-param-element-into-string", "function f(xs: str[]): i32 { var t: string = xs[0]; return t.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E003"}},
 		{"e003-str-array-result-element-into-string", "function mk(s: string): str[] { var xs: str[] = [slice_unchecked(s, 0, 1)]; return xs; }\nfunction main(): i32 { var t: string = mk(\"ab\")[0]; return t.len(); }\n", []string{"E003"}},
@@ -2052,10 +2093,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		// `str` inside a generic ARGUMENT keeps its verbatim spelling in the
-		// self-host (a bare `str` is erased to string at the parse
-		// boundary) — a real native type, so no E064 (regression pin for
-		// the generic-arg-widening false positive fixed alongside item 2).
+		// `str` inside a generic ARGUMENT is a real native type, so no E064
+		// (regression pin for the generic-arg-widening false positive fixed
+		// alongside item 2).
 		{"generic-arg-str-ok", "function f(o: Option[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E063: returning a `[T]` slice that views function-local storage is a
 		// use-after-free (the backing array dies with the frame). The check is
@@ -2530,6 +2570,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		// A method's parameter or result spelling the receiver's type
+		// parameter is bound by the receiver's instantiation, on an enum
+		// receiver as on a struct one (#10014).
+		{"method-enum-recv-bound-result-mismatch", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); var n: boolean = o.get_or(\"\"); return 0; }\n"},
+		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
+		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
+		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { var wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
@@ -2554,6 +2601,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		// control: the rule must read the program's import closure, not
 		// just flag every map_new it walks.
 		{"map-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
+		// A recursive local is a nested `function`; an arrow lambda bound by
+		// `var` does not see its own name, so a self-call is E001 and a
+		// same-named OUTER binding is what it reads (#10383).
+		{"rec-local-fn-ok", "function demo(n: i32): i32 { function f(k: i32): i32 { if (k <= 0) { return n; } return f(k - 1); } return f(3); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow", "function demo(n: i32): i32 { var f = (): i32 => { if (n <= 0) { return 0; } return f(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-nested", "function demo(n: i32): i32 { var f = (): i32 => { var g2 = (): i32 => { return f(); }; return g2(); }; return f(); }\nfunction main(): i32 { return demo(2); }\n"},
+		{"rec-local-arrow-reads-outer", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; if (true) { var f = (x: i32): i32 => { return f(x) * 2; }; return f(3); } return 0; }\n"},
 		{"map-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		// The literal spelling reaches the same rule by a different road: the
 		// compile parse desugars `Map { … }` to a __map_new_i32 / map_new
@@ -3130,7 +3184,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"string-is-empty-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }\n"},
 		{"string-trim-ok", "import \"std/string\";\nfunction main(): i32 { var s = \"  a \"; var t = s.trim(); return 0; }\n"},
 		// `str` through an IMPORTED method's declared return (#7293): std/string's
-		// trim family returns the borrowed view, recorded on FuncDecl.ret_str and
+		// trim family returns the borrowed view, declared `str` and
 		// carried through flatten into the method-sig table, so an owning sink
 		// refuses the view (E003 / E002) while a `str` binding, `.to_owned()`,
 		// and an argument position (params are borrowed) stay clean. The
