@@ -1,12 +1,6 @@
 package e2eselfhost
 
-import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // deferInLoopCases pin the self-host to the same defer-in-a-loop semantics the
 // interpreter and the native backends implement (#6379, #6836): each execution
@@ -66,6 +60,10 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); match (f(a, 5)) { Ok(v) =
 	// i == 1 taking the None arm.
 	{"match_arm_in_loop", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var o: Option[i32] = if (i == 1) { None } else { Some(i) }; match (o) { Some(v) => { defer a.set(a.get() * 10 + v + 1); }, None => { } } i = i + 1; } return a.get(); }
 function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 13},
+	// The same with a counted payload: the binding the replay reads is a
+	// string, bound at the top of f at its zero and replaced in the arm.
+	{"match_arm_in_loop_string", `function f(a: Cell[i32]): i32 { var i: i32 = 0; while (i < 3) { var o: Option[string] = if (i == 1) { None } else { Some("ab" + "c") }; match (o) { Some(v) => { defer a.set(a.get() * 10 + v.len()); }, None => { } } i = i + 1; } return a.get(); }
+function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 33},
 	// A labelled `continue` ends the inner iteration AND the outer one, so both
 	// run, innermost first: 0 -> 1 -> 5, then 16 -> 50.
 	{"labelled_continue_ends_both_iterations", `function f(a: Cell[i32]): i32 { var i: i32 = 0; outer: while (i < 2) { defer a.set(a.get() * 3 + 2); i = i + 1; var j: i32 = 0; while (j < 3) { defer a.set(a.get() * 3 + 1); if (j == 0) { continue outer; } j = j + 1; } } return a.get(); }
@@ -76,78 +74,17 @@ function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 50},
 function main(): i32 { var a: Cell[i32] = cell_new(0); return f(a); }`, 70},
 }
 
-// TestSelfHostDeferInLoopIRX86_64 runs the cases through the self-hosted x86-64
-// backend, asserting first that the module routes the IR path at all.
-func TestSelfHostDeferInLoopIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	for _, tc := range deferInLoopCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.main + "\n")
-			if path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src))); path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "deferinloop_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
-			}
-		})
-	}
-}
-
-// TestSelfHostDeferInLoopIRWasm runs the same cases through the self-hosted wasm
-// backend. The per-iteration replay is inserted by the parse-level
-// lower_defers_func, which every self-host backend shares, so agreement here and
-// on the x86-64 leg is what proves it is not backend-specific.
-func TestSelfHostDeferInLoopIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host defer-in-loop wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range deferInLoopCases {
-		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = strings.NewReader(tc.main + "\n")
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "dil_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("defer-in-loop wasm IR %q = %d, want %d", tc.name, got, tc.want)
-			}
-		})
+// TestSelfHostDeferInLoopIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code.
+func TestSelfHostDeferInLoopIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, tc := range deferInLoopCases {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, tc.main+"\n", target); code != tc.want {
+					t.Errorf("exited %d, want %d\n%s", code, tc.want, stderr)
+				}
+			})
+		}
 	}
 }
