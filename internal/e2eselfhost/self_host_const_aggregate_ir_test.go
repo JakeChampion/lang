@@ -64,9 +64,10 @@ var constAggCases = []struct {
 		198, 100000, 1},
 	// A constant moved into a container: the array owns a pointer to the shared
 	// block, and the exit sweep must not free it (the sentinel is what stops it).
+	// The one allocation is the array: `[]` is allocated with room for four.
 	{"constant-into-container",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { var ps: P[] = []; var i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } var s: i32 = 0; var j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
-		56, 2, 1},
+		56, 1, 1},
 	// The constant/REUSE interaction, in the shape the reuse suites test: two
 	// same-block literals where the second would otherwise reuse the first's dead
 	// box. TWO blocks and ZERO allocations — the reuse scanners run per STATEMENT
