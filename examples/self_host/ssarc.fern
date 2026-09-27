@@ -1504,7 +1504,7 @@ function types_error(f: ssasem.Func): string {
 }
 
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
-    var why: string = ssaunits.verify(f, modes, p);
+    var why: string = ssaunits.verify_planned(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
     if (why != "") { return why; }
@@ -3765,7 +3765,7 @@ function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan): string {
     var borrows: boolean = false;
     for m in modes { if (m == ssaunits.borrow_mode()) { borrows = true; } }
     if (!borrows) { return ""; }
-    var a: ssasem.Analysis = ssasem.analyze(f);
+    var a: ssasem.Analysis = plan.analysis;
     if (!a.ok) { return ""; }
     var flags: string = "";
     var any: boolean = false;
