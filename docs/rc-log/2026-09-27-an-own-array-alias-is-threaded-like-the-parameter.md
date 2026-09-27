@@ -34,7 +34,7 @@ So the fix makes the frame agree with the caller-releases rule everywhere:
   buffer, and flag 1 means it holds a replacement the frame minted. A rebind
   releases only a flag-1 value, and so does the exit.
 - A top-level `var a = p` where p is not named again
-  (`own_handback_sites_of`, `bind_own_handback`) binds `a` as a borrow that
+  (`own_handbacks_of`, `bind_own_handback`) binds `a` as a borrow that
   continues p's flag. A return of `a` with the flag clear hands the buffer
   back uncounted, as `return p` does. `var a = g(p)` with p at an `own`
   position that g does not consume is the same bind: while `a` holds p's
