@@ -8494,9 +8494,7 @@ function tostring_recv_is_scalar(e: ast.Expr, s: LowerState): boolean {
         ast.ExprNumber(_) => { return true; },
         ast.ExprUnary(u) => {
             if (u.op.len() > 3 && slice_unchecked(u.op, 0, 3) == "as_") {
-                var tgt: string = slice_unchecked(u.op, 3, u.op.len()) + "";
-                return tgt == "i32" || tgt == "i64" || tgt == "u32" || tgt == "u64"
-                    || tgt == "f64" || tgt == "f32" || tgt == "u8" || tgt == "usize";
+                return is_tostring_scalar_tag(slice_unchecked(u.op, 3, u.op.len()) + "");
             }
             // Negation / bitwise-not of a scalar is a scalar. `!` is excluded:
             // it yields a boolean, whose `to_string` is a source-declared method
@@ -8529,6 +8527,35 @@ function tostring_recv_is_scalar(e: ast.Expr, s: LowerState): boolean {
             if (s.locals[sl].is_strarr || s.locals[sl].is_arrarr || s.locals[sl].is_f64arr
                     || s.locals[sl].is_i64arr || s.locals[sl].is_closurearr) { return false; }
             return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// is_tostring_scalar_tag: `t` names a scalar type whose `to_string` is the
+// builtin decimal-text producer.
+function is_tostring_scalar_tag(t: string): boolean {
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64"
+        || t == "f64" || t == "f32" || t == "u8" || t == "usize";
+}
+
+// scalar_tostring_call: `c` is `x.to_string()` on a receiver the checker typed
+// scalar — tostring_recv_is_scalar's claim, read off the annotations for a walk
+// that runs without a frame.
+function scalar_tostring_call(c: ast.ExprCall): boolean {
+    if (c.args.len() != 0) { return false; }
+    match (c.callee) {
+        ast.ExprFieldAccess(fa) => {
+            if (fa.field != "to_string") { return false; }
+            match (fa.obj) {
+                ast.ExprNumber(_) => { return true; },
+                ast.ExprIdent(id) => { return is_tostring_scalar_tag(id.ty); },
+                ast.ExprBinary(b) => { return is_tostring_scalar_tag(b.ty); },
+                ast.ExprUnary(u) => { return is_tostring_scalar_tag(u.ty); },
+                ast.ExprCall(rc) => { return is_tostring_scalar_tag(rc.ty); },
+                _ => { return false; }
+            }
         },
         _ => { return false; }
     }
@@ -31001,8 +31028,7 @@ function sfld_assign_site(asg: ast.StmtAssign): string {
 // superseded box's field drop gives the retain back just as the scope-exit sweep
 // does for the var form. Handed to the escape walker so the source's bare-ident use
 // there is read as the share it is rather than as a store into a container — under
-// "SFLD:" in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`,
-// whose walker matches the var form only.
+// "SFLD:" in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`.
 //
 // The two differ in WHAT the source keeps, not in when it may. A string's release
 // is its box, so the share costs nothing extra; a `string[]`'s release is an
@@ -40897,6 +40923,9 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
+            // The assign form of the struct-literal field share above: the
+            // holder's rebind releases the superseded box's field.
+            if (util.index_of_str(sfld_ok, sfld_assign_site(a)) >= 0) { return false; }
             return strarr_expr_unsafe(a.value, name, borrowable);
         },
         ast.StmtIf(f) => {
@@ -44283,13 +44312,15 @@ function body_returns_local_built_arr(stmts: ast.Stmt[]): boolean {
 // strarr_value_is_fresh: `e` produces a string box this frame constructs and
 // nothing else names — a literal (const_str builds a fresh rc=1 box per
 // evaluation), a concat / string-method producer (str_local_binding_is_fresh),
-// or a call to a whole-program str-fresh-ret free function. A bare ident /
-// param / field read is refused: it may alias a live box, and transferring it
-// out of the container would leave two owners of one reference.
+// a call to a whole-program str-fresh-ret free function, or a scalar's
+// `to_string()`. A bare ident / param / field read is refused: it may alias a
+// live box, and transferring it out of the container would leave two owners of
+// one reference.
 function strarr_value_is_fresh(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprString(_) => { return true; },
         ast.ExprCall(c) => {
+            if (scalar_tostring_call(c)) { return true; }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (util.index_of_str(str_fresh, cid.name) >= 0) { return true; }
