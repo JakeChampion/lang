@@ -381,7 +381,15 @@ The socket helpers `__fern_tcp_listen`, `__fern_tcp_listen_with`,
 `__fern_tcp_recv`, `__fern_tcp_send` and `__fern_udp_send` are Fern bodies
 over `__syscall3`, `__syscall5` and `__syscall6` (#9853): four hand-written
 copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone, and the two
-controls never had any.
+controls never had any. The datagram sockets `__fern_udp_bind`,
+`__fern_udp_connect`, `__fern_udp_sendto` and `__fern_udp_recvfrom` arrived
+as Fern bodies on both compilers and never had a hand-written copy; the
+caller's `u8[]` reaches the kernel as `buf as usize` on the Go compiler,
+while the self-host body reads into a raw buffer and spreads the bytes one
+per slot, the way its `tcp_recv` fills a fresh array, and writes the
+sender's six bytes through `__raw_arr_ptr`. The wasm twins are in
+`wasi_udp.go` and `wasm_ir.fern`; there `udp_send` is the three of them
+in a row.
 
 The last three needed the **bytes floor**: `__str_bytes(s, scratch)` is
 the address of a string's bytes for the length `s.len()` reports, and

@@ -63,12 +63,15 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:sockets/udp-create-socket@0.2.0", []string{"create-udp-socket"}, nil)
 	checkInv(t, byName, "wasi:sockets/udp@0.2.0",
 		[]string{
+			"[method]incoming-datagram-stream.receive",
+			"[method]incoming-datagram-stream.subscribe",
 			"[method]outgoing-datagram-stream.check-send",
 			"[method]outgoing-datagram-stream.send",
 			"[method]outgoing-datagram-stream.subscribe",
 			"[method]udp-socket.start-bind",
 			"[method]udp-socket.finish-bind",
 			"[method]udp-socket.stream",
+			"[method]udp-socket.local-address",
 		},
 		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }

@@ -22,6 +22,9 @@ type ComposeRequest struct {
 	// chains, and a TCP connection's send/recv. DropInput / DropOutput
 	// are Reader/Writer close() → canon resource.drop.
 	BlockWrite, BlockRead bool
+	// UdpRecv adds incoming-datagram-stream.receive, whose list result
+	// needs the realloc lowering.
+	UdpRecv               bool
 	DropInput, DropOutput bool
 	DropError             bool // owned last-operation-failed payload
 
@@ -32,7 +35,7 @@ type ComposeRequest struct {
 
 	// Socket / HTTP method surfaces.
 	Tcp  bool // TCP server (listen/accept/close)
-	Udp  bool // send-only UDP client
+	Udp  bool // the datagram sockets
 	Http bool // wasi:http/incoming-handler
 
 	// TcpConnect adds the outbound-client chain (start-connect /
@@ -205,10 +208,15 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.check-send", kind: gMem, params: udpSelfRetParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.send", kind: gMem, params: udpSendParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.subscribe", kind: gNoOpt},
+			gImport{iface: udp, name: "[method]udp-socket.local-address", kind: gMem, params: udpSelfRetParams},
+			gImport{iface: udp, name: "[method]incoming-datagram-stream.subscribe", kind: gNoOpt},
 			gImport{iface: udp, name: "[resource-drop]udp-socket", kind: gDrop, resourceT: g.surfaced["udp-socket"]},
 			gImport{iface: udp, name: "[resource-drop]incoming-datagram-stream", kind: gDrop, resourceT: g.surfaced["incoming-datagram-stream"]},
 			gImport{iface: udp, name: "[resource-drop]outgoing-datagram-stream", kind: gDrop, resourceT: g.surfaced["outgoing-datagram-stream"]},
 		)
+	}
+	if req.UdpRecv {
+		g.add(gImport{iface: "wasi:sockets/udp@0.2.0", name: "[method]incoming-datagram-stream.receive", kind: gMemRealloc, params: composeTcpSelfI64RetParams})
 	}
 	if req.Tcp || req.Udp {
 		g.add(gImport{iface: "wasi:sockets/instance-network@0.2.0", name: "instance-network", kind: gNoOpt})

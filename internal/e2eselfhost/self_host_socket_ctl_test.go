@@ -11,8 +11,8 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// The self-host twin of internal/e2e's TestSocketCtl*: tcp_listen_with and
-// tcp_socket_ctl compiled by the production self-host driver on every
+// The self-host twin of internal/e2e's TestSocketCtl*: tcp_listen_with,
+// tcp_socket_ctl and the datagram sockets compiled by the production self-host driver on every
 // target it serves here, with complete semantic lowering required. The
 // native legs report exit 42; the wasm leg is a wasi:cli/run component,
 // which reports only 0 or 1, so there the verdict is the probe's stdout.
@@ -48,6 +48,8 @@ func checkSelfHostSocketCtl(t *testing.T, targets []string) {
 	}{
 		{"raw", e2eharness.SocketCtlProbe()},
 		{"std_net", e2eharness.NetSocketOptsProbe()},
+		{"udp", e2eharness.UdpSocketProbe()},
+		{"std_net_udp", e2eharness.NetUdpProbe()},
 	}
 	stdlib, err := filepath.Abs("../stdlib")
 	if err != nil {

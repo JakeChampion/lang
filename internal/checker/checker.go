@@ -2064,6 +2064,35 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
 		Result: ast.NumberType{},
 	}
+	// The datagram sockets (#9853). udp_bind(host_be, port): a socket bound
+	// to the IPv4 address packed in network order (0 for every address,
+	// port 0 for one the kernel picks), or -errno. It is closed with
+	// tcp_close and its port read with tcp_local_port, like any socket.
+	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_connect(fd, host_be, port): fixes the peer a bound socket sends
+	// to and receives from. 0, or -errno.
+	c.info.FuncSigs["udp_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_sendto(fd, host_be, port, data): one datagram to host:port, or to
+	// the connected peer when both are 0. The bytes accepted, or -errno.
+	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_recvfrom(fd, buf, from): one datagram read into buf, up to its
+	// length; the datagram's byte count (0 for an empty one), or -errno.
+	// A `from` of at least six bytes receives the sender's IPv4 address in
+	// network order and then its port, high byte first.
+	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, u8s},
+		Result: ast.NumberType{},
+	}
 	// read_file(path): Result[string, IoError] — reads the entire
 	// file into a single string. WASM builds need a preopen
 	// directory (e.g. `wasmtime --dir=.`); the path is

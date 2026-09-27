@@ -1022,9 +1022,9 @@ var importSpecs = map[string]importSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 	},
-	// ---- wasi:sockets/udp (send-only) for udp_send. Mirrors the tcp
-	// socket family: create → bind → stream(connect) → check-send →
-	// send, plus the three datagram resource drops. ----
+	// ---- wasi:sockets/udp for the datagram sockets (wasi_udp.go):
+	// create → bind → stream, receive and send with their readiness
+	// subscriptions, local-address, plus the three resource drops. ----
 	"wasi_sockets_create_udp_socket": {
 		// (family: i32, retptr: i32). family=0 → ipv4. retptr gets
 		// result<udp-socket, error-code> (disc @ +0, handle @ +4 on Ok).
@@ -1105,6 +1105,32 @@ var importSpecs = map[string]importSpec{
 		module:  "wasi:sockets/udp@0.2.0",
 		name:    "[resource-drop]udp-socket",
 		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_receive": {
+		// (self, max-results: u64, retptr) → (). retptr holds
+		// result<list<incoming-datagram>, error-code>: disc @ +0, the
+		// list's data @ +4 and count @ +8 on Ok, the error-code @ +4.
+		// Each 40-byte incoming-datagram is { data: (ptr@+0, len@+4),
+		// remote-address @ +8 }. An empty list means nothing pending.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]incoming-datagram-stream.receive",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64, encode.ValtypeI32},
+		results: nil,
+	},
+	"wasi_sockets_udp_incoming_subscribe": {
+		// (self) → pollable handle, ready when a datagram is pending.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]incoming-datagram-stream.subscribe",
+		params:  []byte{encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
+	"wasi_sockets_udp_local_address": {
+		// (self, retptr) → (). The same result shape as the tcp
+		// local-address: result<ip-socket-address, error-code>.
+		module:  "wasi:sockets/udp@0.2.0",
+		name:    "[method]udp-socket.local-address",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: nil,
 	},
 	"wasi_sockets_incoming_datagram_stream_drop": {
@@ -2461,22 +2487,43 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 		in.add("wasi_io_input_stream_drop")
 		in.add("wasi_io_output_stream_drop")
 	}
-	// udp_send is one self-contained helper: create → bind → stream
-	// (connect) → check-send → send → drop the three datagram resources.
-	if helpers.set["__fern_udp_send"] {
+	// The datagram sockets (wasi_udp.go). udp_bind owns the setup
+	// chain; udp_connect replaces the streams; tcp_close and
+	// tcp_local_port take a datagram record too, so with udp_bind in
+	// the module they import the udp drops and local-address as well.
+	if helpers.set["__fern_udp_bind"] {
 		in.add("wasi_sockets_instance_network")
 		in.add("wasi_sockets_create_udp_socket")
 		in.add("wasi_sockets_udp_start_bind")
 		in.add("wasi_sockets_udp_finish_bind")
 		in.add("wasi_sockets_udp_stream")
+		in.add("wasi_sockets_udp_socket_drop")
+	}
+	if helpers.set["__fern_udp_close"] {
+		in.add("wasi_sockets_udp_socket_drop")
+		in.add("wasi_sockets_incoming_datagram_stream_drop")
+		in.add("wasi_sockets_outgoing_datagram_stream_drop")
+	}
+	if helpers.set["__fern_udp_connect"] {
+		in.add("wasi_sockets_udp_stream")
+		in.add("wasi_sockets_incoming_datagram_stream_drop")
+		in.add("wasi_sockets_outgoing_datagram_stream_drop")
+	}
+	if helpers.set["__fern_udp_sendto"] {
 		in.add("wasi_sockets_udp_check_send")
 		in.add("wasi_sockets_udp_outgoing_subscribe")
 		in.add("wasi_io_pollable_block")
 		in.add("wasi_io_pollable_drop")
 		in.add("wasi_sockets_udp_send")
-		in.add("wasi_sockets_udp_socket_drop")
-		in.add("wasi_sockets_incoming_datagram_stream_drop")
-		in.add("wasi_sockets_outgoing_datagram_stream_drop")
+	}
+	if helpers.set["__fern_udp_recvfrom"] {
+		in.add("wasi_sockets_udp_receive")
+		in.add("wasi_sockets_udp_incoming_subscribe")
+		in.add("wasi_io_pollable_block")
+		in.add("wasi_io_pollable_drop")
+	}
+	if helpers.set["__fern_udp_bind"] && helpers.set["__fern_tcp_local_port"] {
+		in.add("wasi_sockets_udp_local_address")
 	}
 
 	// wasi:http wrapper. The single __http_entry helper pulls in

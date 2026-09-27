@@ -13291,17 +13291,19 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
 // is_socket_call recognises the socket primitives: the 1-operand ones that
 // take a descriptor (tcp_close / tcp_pollable / tcp_accept / tcp_local_port)
 // or a port (tcp_listen), the 2-operand client half (tcp_connect / tcp_send /
-// tcp_recv), and the one-shot datagram (udp_send). The ARITY is part of the
-// test so a call with the wrong number of arguments falls through to the
-// ordinary named-call path.
+// tcp_recv) and udp_bind, the 3-operand controls and datagram verbs, the
+// one-shot datagram (udp_send) and the 4-operand udp_sendto. The ARITY is
+// part of the test so a call with the wrong number of arguments falls
+// through to the ordinary named-call path.
 function is_socket_call(name: string, argc: i32): boolean {
     return argc > 0 && socket_call_arity(name) == argc;
 }
 
 function socket_call_arity(name: string): i32 {
     if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port"], name)) { return 1; }
-    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv"], name)) { return 2; }
-    if (util.has_str(["udp_send", "tcp_listen_with", "tcp_socket_ctl"], name)) { return 3; }
+    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind"], name)) { return 2; }
+    if (util.has_str(["udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_connect", "udp_recvfrom"], name)) { return 3; }
+    if (name == "udp_sendto") { return 4; }
     return 0;
 }
 
@@ -13309,9 +13311,10 @@ function socket_call_arity(name: string): i32 {
 // order, then the op. Each pushes one i32 — a descriptor, a port, a byte count
 // or a -errno — except tcp_recv, whose op pushes the u8[] box.
 //
-// The address is the one place the two families differ, and neither needs
-// anything special here: tcp_connect takes it as an i32 already in network
-// order, udp_send as a dotted-quad string the backend helper parses.
+// The address is the one place the families differ, and none needs
+// anything special here: tcp_connect and the datagram verbs take it as an
+// i32 already in network order, udp_send as a dotted-quad string the
+// backend helper parses.
 function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
@@ -13325,11 +13328,17 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     if (cid.name == "tcp_connect") { return a1.emit(ir.op_tcp_connect()); }
     if (cid.name == "tcp_send") { return a1.emit(ir.op_tcp_send()); }
     if (cid.name == "tcp_recv") { return a1.emit(ir.op_tcp_recv()); }
+    if (cid.name == "udp_bind") { return a1.emit(ir.op_udp_bind()); }
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     if (cid.name == "tcp_listen_with") { return a2.emit(ir.op_tcp_listen_with()); }
     if (cid.name == "tcp_socket_ctl") { return a2.emit(ir.op_tcp_socket_ctl()); }
-    return a2.emit(ir.op_udp_send());
+    if (cid.name == "udp_connect") { return a2.emit(ir.op_udp_connect()); }
+    if (cid.name == "udp_recvfrom") { return a2.emit(ir.op_udp_recvfrom()); }
+    if (cid.name == "udp_send") { return a2.emit(ir.op_udp_send()); }
+    var a3: LowerState = lower_expr(c.args[3], a2);
+    if (!a3.ok) { return a3; }
+    return a3.emit(ir.op_udp_sendto());
 }
 
 // is_dirlink_call recognises the single-step directory, link, working-

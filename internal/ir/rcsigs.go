@@ -539,6 +539,8 @@ var rcInert = map[string]bool{
 	"__fern_tcp_pollable": true,
 	"__fern_tcp_recv":     true, "__fern_tcp_send": true, "__fern_temp_dir": true,
 	"__fern_trunc_f64": true, "__fern_udp_send": true,
+	"__fern_udp_bind": true, "__fern_udp_connect": true,
+	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_wasm_block": true,
 	"__fern_wasm_poll":  true, "__fern_wasm_pollable_drop": true,
 	"__fern_wasm_timer_pollable": true, "__fern_write": true,

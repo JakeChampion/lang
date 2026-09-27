@@ -139,6 +139,9 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.TcpConnect = true
 		case strings.HasPrefix(m, "wasi:sockets/tcp"):
 			req.Tcp = true // wasi:sockets/tcp@ + tcp-create-socket@
+		case m == "wasi:sockets/udp@0.2.0" && n == "[method]incoming-datagram-stream.receive":
+			req.Udp = true
+			req.UdpRecv = true
 		case strings.HasPrefix(m, "wasi:sockets/udp"):
 			req.Udp = true
 		case m == "wasi:sockets/instance-network@0.2.0":

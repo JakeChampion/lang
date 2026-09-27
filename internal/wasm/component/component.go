@@ -1520,22 +1520,21 @@ func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSo
 }
 
 // WasiSocketsUdpInstanceTypeBody returns the type-section body for the
-// send-only subset of `wasi:sockets/udp@0.2.0` — what udp_send (one-shot
-// fire-and-forget datagram) needs: the udp-socket resource plus
-// start-bind / finish-bind / stream, and the outgoing-datagram-stream
-// resource plus check-send / send. The incoming-datagram-stream is
-// declared as a bare resource (stream() returns a tuple of both, and
-// the unused incoming half is dropped) but carries no methods — instance
-// subtyping lets a send-only client omit receive / subscribe.
+// subset of `wasi:sockets/udp@0.2.0` the datagram sockets use: the
+// udp-socket resource with start-bind / finish-bind / stream /
+// local-address, the outgoing-datagram-stream with check-send / send /
+// subscribe, and the incoming-datagram-stream with receive / subscribe.
 //
 // Unlike TCP, the datagram path is NOT wasi:io/streams: send takes a
 // `list<outgoing-datagram>` (each `{ data: list<u8>, remote-address:
-// option<ip-socket-address> }`). outgoing-datagram-stream also exposes
-// subscribe -> own<pollable>, so a sender can block until the stream
-// permits a datagram (wasmtime >=45 rejects a send that exceeds the
-// last check-send permit). It outer-aliases network / error-code /
-// ip-socket-address from sockets/network plus pollable from io/poll;
-// the caller surfaces those four and passes their type indices.
+// option<ip-socket-address> }`) and receive answers a
+// `list<incoming-datagram>` (each `{ data, remote-address }`). Both
+// streams expose subscribe -> own<pollable>, so a sender can block
+// until the stream permits a datagram (wasmtime >=45 rejects a send
+// that exceeds the last check-send permit) and a receiver until one is
+// pending. It outer-aliases network / error-code / ip-socket-address
+// from sockets/network plus pollable from io/poll; the caller surfaces
+// those four and passes their type indices.
 func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT uint32) []byte {
 	var decls []byte
 	idx := uint32(0)
@@ -1600,9 +1599,14 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 		{Name: "data", Valtype: byte(listU8)},
 		{Name: "remote-address", Valtype: byte(optAddr)},
 	})))
+	inDatagram := exportType("incoming-datagram", def(InnerTypeRecord([]RecordField{
+		{Name: "data", Valtype: byte(listU8)},
+		{Name: "remote-address", Valtype: byte(sockAddrT)},
+	})))
 	bUdp := def(InnerTypeBorrow(udpSock))
 	bNet := def(InnerTypeBorrow(netT))
 	bOut := def(InnerTypeBorrow(outStream))
+	bIn := def(InnerTypeBorrow(inStream))
 	ownPoll := def([]byte{0x69, byte(pollT)})
 	resEmptyErr := def(InnerTypeResultErr(errT))
 	ownIn := def([]byte{0x69, byte(inStream)})
@@ -1611,6 +1615,9 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 	resStream := def(InnerTypeResultOkErr(tupStreams, errT))
 	resU64 := def(InnerTypeResultOkErr(CValtypeU64, errT))
 	listDatagram := def(InnerTypeList(byte(outDatagram)))
+	listIn := def(InnerTypeList(byte(inDatagram)))
+	resListIn := def(InnerTypeResultOkErr(listIn, errT))
+	resAddr := def(InnerTypeResultOkErr(sockAddrT, errT))
 
 	method("[method]udp-socket.start-bind",
 		[]string{"self", "network", "local-address"}, []byte{byte(bUdp), byte(bNet), byte(sockAddrT)}, byte(resEmptyErr))
@@ -1619,6 +1626,9 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 	method("[method]outgoing-datagram-stream.check-send", []string{"self"}, []byte{byte(bOut)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.send", []string{"self", "datagrams"}, []byte{byte(bOut), byte(listDatagram)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.subscribe", []string{"self"}, []byte{byte(bOut)}, byte(ownPoll))
+	method("[method]udp-socket.local-address", []string{"self"}, []byte{byte(bUdp)}, byte(resAddr))
+	method("[method]incoming-datagram-stream.receive", []string{"self", "max-results"}, []byte{byte(bIn), CValtypeU64}, byte(resListIn))
+	method("[method]incoming-datagram-stream.subscribe", []string{"self"}, []byte{byte(bIn)}, byte(ownPoll))
 
 	body := []byte{0x01, 0x42}
 	body = leb128.UlebU64(body, uint64(declCount))

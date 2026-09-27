@@ -4463,6 +4463,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     var v: i32 = ssaunits.value_mode();
     var b: i32 = ssaunits.borrow_mode();
     var gids: typeinfo.Type = typeinfo.TypeArray { elem: t_i64(), view: false };
+    var bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
     var fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
     var win: typeinfo.Type = t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] });
     return [
@@ -4484,6 +4485,10 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "tcp_listen_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
         ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_bind", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_connect", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_sendto", params: [t_i32(), t_i32(), t_i32(), t_string()], modes: [v, v, v, b], result: t_i32() },
+        ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
         ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
