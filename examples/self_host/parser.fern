@@ -16043,7 +16043,8 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 //
 // This runs in desugar_prepass_module (inside module_with_builtins),
 // interp.eval_module and ssa.build_func. module_with_builtins feeds the IR
-// emit and the semantic substitution too, so EVERY consumer sees the
+// emit, and module_with_builtins_typed, which runs the same prepass, feeds the
+// semantic substitution, so EVERY consumer sees the
 // while-loop and `irlower.lower_range_for` is reached only by the
 // un-desugared modules `irlower_run.fern` reads directly. Its own lowering is
 // tighter than this one — reclaiming it would shrink both range forms (#9565).
