@@ -43101,6 +43101,18 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     var strs: string[] = collect_fresh_string_names(body, []);
     // …plus the calls a whole-program proof says return a fresh box (#6606).
     strs = collect_str_fresh_ret_call_names(body, str_fresh_ret, reassigned, strs);
+    // …plus the builtins whose freshness depends on the RECEIVER's declared type,
+    // which the syntactic predicate cannot see: a number's `.to_string()`, a
+    // `string[]`'s `.join(sep)`, a string's `.trim()`. A string receiver's
+    // `.to_string()` returns the receiver itself and stays out, as does a user
+    // method of any of these names.
+    // Body declarations FIRST, parameters after: the lookups take the first
+    // match, so a local shadowing a parameter still answers with its own type.
+    var tsn: string[] = param_decl_names(params, tostr_decl_names(body, []));
+    var tst: string[] = param_decl_types(params, tostr_decl_vals(body, []));
+    strs = collect_tostr_scalar_names(body, tsn, tst, strs);
+    strs = collect_join_strarr_names(body, tsn, tst, strs);
+    strs = collect_trim_local_names(body, tsn, tst, strs);
     // #4353: a fresh string handed to a union element of an rc-tuple this pass
     // already credited "TUPRC:" is no longer an escape — see the ExprTuple arm of
     // body_unsafe_for_tup. Tagged into the same list rather than threaded as a
@@ -43124,25 +43136,6 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     out = reclaimable_litstr_local(body, borrowable, tup_ok, lits, reassigned, recv_borrow, str_cands, strs, out);
     // String locals holding field reads (`keep = r.name`, `var t: string = r.name`).
     out = reclaimable_str_field_reassign(body, borrowable, recv_borrow, reassigned, str_cands, out);
-    // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
-    // above. See the collect_tostr_scalar_names block for why the receiver-type test
-    // cannot live in str_local_binding_is_fresh.
-    // Body declarations FIRST, parameters after: the lookups take the first
-    // match, so a local shadowing a parameter still answers with its own type.
-    var tsn: string[] = param_decl_names(params, tostr_decl_names(body, []));
-    var tst: string[] = param_decl_types(params, tostr_decl_vals(body, []));
-    var tss: string[] = collect_tostr_scalar_names(body, tsn, tst, []);
-    out = reclaimable_tostr_scalar(body, borrowable, tup_ok, reassigned, recv_borrow, strs, tss, out);
-    // `xs.join(sep)` string locals — same gates again, and the receiver-type test
-    // lives here for the same reason the `.to_string()` one does (join_strarr_init).
-    var jss: string[] = collect_join_strarr_names(body, tsn, tst, []);
-    out = reclaimable_join_strarr(body, borrowable, tup_ok, jss, reassigned, recv_borrow, strs, out);
-    // `<string>.trim()` locals — same gates again. Since #7393 the builtin trim
-    // returns an owned copy, so the credit is an ordinary "STR:" name with the
-    // ordinary full release; the collector's receiver-TYPE test is what keeps a
-    // user method named `trim` (which may return a field alias) uncredited.
-    var tms: string[] = collect_trim_local_names(body, tsn, tst, []);
-    out = reclaimable_trim_local(body, borrowable, tup_ok, reassigned, recv_borrow, strs, tms, out);
     // `<string>.replace(old, new)` locals — same gates, released behind the
     // identity guard (the slot's str_identity_src is what carries the receiver to
     // compare against).
@@ -80094,57 +80087,6 @@ while (li2 < lits.len()) {
         if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
     }
     li2 = li2 + 1;
-}
-
-    return out;
-}
-
-function reclaimable_tostr_scalar(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tss: string[], out: string[]): string[] {
-var ti2: i32 = 0;
-while (ti2 < tss.len()) {
-    var tnm: string = reclaim_site_name(tss[ti2]);
-    var tsal: string[] = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, []);
-    if (util.index_of_str(strs, tss[ti2]) < 0
-        && util.index_of_str(reassigned, tnm) < 0
-        && !body_unsafe_for_tup_alias(body, tnm, borrowable, tup_ok, recv_borrow, tsal)) {
-        out = out.append("STR:" + tss[ti2]);
-        out = credit_alias_sites(out, "STR:", tsal);
-    }
-    ti2 = ti2 + 1;
-}
-
-    return out;
-}
-
-function reclaimable_join_strarr(body: ast.Stmt[], borrowable: string[], tup_ok: string[], jss: string[], reassigned: string[], recv_borrow: string[], strs: string[], out: string[]): string[] {
-var ji: i32 = 0;
-while (ji < jss.len()) {
-    var jnm: string = reclaim_site_name(jss[ji]);
-    var jal: string[] = alias_bind_sites_of(body, jnm, borrowable, recv_borrow, body, []);
-    if (util.index_of_str(strs, jss[ji]) < 0
-        && util.index_of_str(reassigned, jnm) < 0
-        && !body_unsafe_for_tup_alias(body, jnm, borrowable, tup_ok, recv_borrow, jal)) {
-        out = out.append("STR:" + jss[ji]);
-        out = credit_alias_sites(out, "STR:", jal);
-    }
-    ji = ji + 1;
-}
-
-    return out;
-}
-
-function reclaimable_trim_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], reassigned: string[], recv_borrow: string[], strs: string[], tms: string[], out: string[]): string[] {
-var tmi: i32 = 0;
-while (tmi < tms.len()) {
-    var mnm: string = reclaim_site_name(tms[tmi]);
-    var mal: string[] = alias_bind_sites_of(body, mnm, borrowable, recv_borrow, body, []);
-    if (util.index_of_str(strs, tms[tmi]) < 0
-        && util.index_of_str(reassigned, mnm) < 0
-        && !body_unsafe_for_tup_alias(body, mnm, borrowable, tup_ok, recv_borrow, mal)) {
-        out = out.append("STR:" + tms[tmi]);
-        out = credit_alias_sites(out, "STR:", mal);
-    }
-    tmi = tmi + 1;
 }
 
     return out;
