@@ -47,9 +47,10 @@ function main(): i32 {
 `},
 		// with_deadline: a ready future returns Some(7) within the deadline -> 7.
 		{"with_deadline", `import "std/async";
+import "std/time";
 function main(): i32 {
     var fs: async.Future[i32][] = [Ready(7)];
-    var ds: Option[i32][] = async.with_deadline(100, fs);
+    var ds: Option[i32][] = async.with_deadline(time.duration_millis(100), fs);
     match (ds[0]) { Some(v) => { return v; }, None => { return 0; } }
     return 9;
 }

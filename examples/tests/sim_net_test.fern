@@ -1,6 +1,7 @@
 import "std/test";
 import "std/async";
 import "std/sim";
+import "std/time";
 
 // examples/tests/sim_net_test.fern — SimNet (docs/DST-PLATFORM-BRIEF.md
 // slice 2): scripted request/response endpoints driven through the
@@ -15,9 +16,9 @@ import "std/sim";
 // deliberately out of input order (30ms / 10ms / 20ms).
 function __three_upstreams(d: sim.Sim): sim.Net {
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "primary", 30000000 as i64);
-    n = n.serve(2, 80, "/k", "cache", 10000000 as i64);
-    n = n.serve(3, 80, "/k", "mirror", 20000000 as i64);
+    n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
+    n = n.serve(2, 80, "/k", "cache", time.duration_nanos(10000000 as i64));
+    n = n.serve(3, 80, "/k", "mirror", time.duration_nanos(20000000 as i64));
     return n;
 }
 
@@ -45,8 +46,8 @@ function test_gather_input_order(): test.TestOutcome {
 function test_race_picks_fast(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "slow", 40000000 as i64);
-    n = n.serve(2, 80, "/k", "fast", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "slow", time.duration_nanos(40000000 as i64));
+    n = n.serve(2, 80, "/k", "fast", time.duration_nanos(10000000 as i64));
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k")
@@ -66,13 +67,13 @@ function test_race_picks_fast(): test.TestOutcome {
 function test_deadline_drops_only_slow(): test.TestOutcome {
     var d: sim.Sim = sim.new(7);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "late", 40000000 as i64);
-    n = n.serve(2, 80, "/k", "early", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "late", time.duration_nanos(40000000 as i64));
+    n = n.serve(2, 80, "/k", "early", time.duration_nanos(10000000 as i64));
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { return test.fail("late endpoint resolved under a 25ms deadline"); }, None => { } }
     match (got[1]) {
         Some(v) => { if (v != "early") { return test.fail("wrong early body: " + v); } },
@@ -87,7 +88,7 @@ function test_deadline_drops_only_slow(): test.TestOutcome {
 function test_chunked_accumulates(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
     var got: string[] = async.gather_on(d, fs, "!");
     if (got[0] != "abcdefghij") { return test.fail("chunked body did not accumulate: " + got[0]); }
@@ -100,7 +101,7 @@ function test_chunked_accumulates(): test.TestOutcome {
 function test_chunked_resuspends_per_chunk(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     var f: async.Future[string] = n.fetch_future(1, 80, "/big");
     var toks: i32[] = [];
     var guard: i32 = 0;
@@ -129,7 +130,7 @@ function test_chunked_resuspends_per_chunk(): test.TestOutcome {
 function test_unregistered_is_ready_empty(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     var f: async.Future[string] = n.fetch_future(9, 80, "/k");
     match (f) {
         Ready(v) => { if (v != "") { return test.fail("dead upstream resolved to " + v); } },
@@ -143,8 +144,8 @@ function test_unregistered_is_ready_empty(): test.TestOutcome {
 function test_hits_and_wildcard(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
-    n = n.serve(2, 80, "", "any", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "", "any", time.duration_nanos(10000000 as i64));
     var f1: async.Future[string] = n.fetch_future(1, 80, "/k");
     var f2: async.Future[string] = n.fetch_future(1, 80, "/k");
     var f3: async.Future[string] = n.fetch_future(9, 80, "/k");

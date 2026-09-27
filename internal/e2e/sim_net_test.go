@@ -40,14 +40,15 @@ func TestRunnerSimNetExamplePasses(t *testing.T) {
 // suite without std/test (whose fs assertion helpers keep every TAP
 // file interp/self-host-gated — #5372). Exit 42 iff every check holds.
 const simNetNativeProgram = `import "std/async";
+import "std/time";
 import "std/sim";
 
 function main(): i32 {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "primary", 30000000 as i64);
-    n = n.serve(2, 80, "/k", "cache", 10000000 as i64);
-    n = n.serve(3, 80, "/k", "mirror", 20000000 as i64);
+    n = n.serve(1, 80, "/k", "primary", time.duration_nanos(30000000 as i64));
+    n = n.serve(2, 80, "/k", "cache", time.duration_nanos(10000000 as i64));
+    n = n.serve(3, 80, "/k", "mirror", time.duration_nanos(20000000 as i64));
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k"),
@@ -63,8 +64,8 @@ function main(): i32 {
 
     var rd: sim.Sim = sim.new(1);
     var rn: sim.Net = sim.net(rd);
-    rn = rn.serve(1, 80, "/k", "slow", 40000000 as i64);
-    rn = rn.serve(2, 80, "/k", "fast", 10000000 as i64);
+    rn = rn.serve(1, 80, "/k", "slow", time.duration_nanos(40000000 as i64));
+    rn = rn.serve(2, 80, "/k", "fast", time.duration_nanos(10000000 as i64));
     var rf: async.Future[string][] = [
         rn.fetch_future(1, 80, "/k"),
         rn.fetch_future(2, 80, "/k")
@@ -75,20 +76,20 @@ function main(): i32 {
 
     var dd: sim.Sim = sim.new(7);
     var dn: sim.Net = sim.net(dd);
-    dn = dn.serve(1, 80, "/k", "late", 40000000 as i64);
-    dn = dn.serve(2, 80, "/k", "early", 10000000 as i64);
+    dn = dn.serve(1, 80, "/k", "late", time.duration_nanos(40000000 as i64));
+    dn = dn.serve(2, 80, "/k", "early", time.duration_nanos(10000000 as i64));
     var df: async.Future[string][] = [
         dn.fetch_future(1, 80, "/k"),
         dn.fetch_future(2, 80, "/k")
     ];
-    var dl: Option[string][] = async.with_deadline_on(dd, 25, df);
+    var dl: Option[string][] = async.with_deadline_on(dd, time.duration_millis(25), df);
     match (dl[0]) { Some(x) => { return 8; }, None => { } }
     match (dl[1]) { Some(x) => { if (x != "early") { return 9; } }, None => { return 10; } }
     if (dd.now_ns() != 25000000) { return 11; }
 
     var cd: sim.Sim = sim.new(1);
     var cn: sim.Net = sim.net(cd);
-    cn = cn.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    cn = cn.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     var cf: async.Future[string][] = [cn.fetch_future(1, 80, "/big")];
     var cb: string[] = async.gather_on(cd, cf, "!");
     if (cb[0] != "abcdefghij") { return 12; }

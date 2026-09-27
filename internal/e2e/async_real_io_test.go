@@ -138,6 +138,7 @@ func TestAsyncWithDeadline(t *testing.T) {
 	dir := t.TempDir()
 
 	helper := `import "std/async";
+import "std/time";
 
 function start_timer(ms: i32): async.Future[i32] {
     var fd: i32 = timer_fd(ms);
@@ -154,7 +155,7 @@ function start_timer(ms: i32): async.Future[i32] {
 			name: "completes_in_time",
 			body: `function main(): i32 {
     var tasks: async.Future[i32][] = [start_timer(5)];
-    var r: Option[i32][] = async.with_deadline(5000, tasks);
+    var r: Option[i32][] = async.with_deadline(time.duration_millis(5000), tasks);
     match (r[0]) { Some(v) => { return v; }, None => { return 99; } }
 }`,
 			want: 5,
@@ -164,7 +165,7 @@ function start_timer(ms: i32): async.Future[i32] {
 			name: "times_out",
 			body: `function main(): i32 {
     var tasks: async.Future[i32][] = [start_timer(5000)];
-    var r: Option[i32][] = async.with_deadline(20, tasks);
+    var r: Option[i32][] = async.with_deadline(time.duration_millis(20), tasks);
     match (r[0]) { Some(v) => { return 99; }, None => { return 42; } }
 }`,
 			want: 42,

@@ -25,6 +25,8 @@
 // case, not a hand-duplicated `…Str` twin. This is the shape that
 // drops the i32-throughout restriction of the old `std/task` runtime.
 
+import "std/time";
+
 // A pending computation yielding a value of type `T`.
 //
 //   Ready(value)         — already resolved with this value.
@@ -229,26 +231,26 @@ pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i3
     return (-1, none_val);
 }
 
-// with_deadline(ms, fs) — await ALL futures, but bound the whole fan-out
-// by `ms` wall-clock milliseconds, returning an `Option[T]` per future:
+// with_deadline(deadline, fs) — await ALL futures, but bound the whole
+// fan-out by `deadline` of wall-clock time, returning an `Option[T]` per future:
 // `Some(value)` for one that resolved in time, `None` for one abandoned
 // at the deadline. (None — rather than a caller-supplied sentinel —
 // because a timed-out slot must be distinguishable from a real result
 // that happens to equal the sentinel, e.g. an empty body.) This is
 // happy-eyeballs with an SLA: fan out to
 // N upstreams, take whatever answers in time, drop the rest.
-pub function with_deadline[T](ms: i32, fs_in: Future[T][]): Option[T][] {
-    return with_deadline_on(real_driver(), ms, fs_in);
+pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T][] {
+    return with_deadline_on(real_driver(), deadline, fs_in);
 }
 
-// with_deadline_on(drv, ms, fs) — with_deadline with the clock and the
-// waits routed through an explicit Driver (std/sim substitutes a
+// with_deadline_on(drv, deadline, fs) — with_deadline with the clock and
+// the waits routed through an explicit Driver (std/sim substitutes a
 // virtual one, making the deadline exact instead of wall-clock).
-pub function with_deadline_on[D: Driver, T](drv: D, ms: i32, fs_in: Future[T][]): Option[T][] {
+pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: Future[T][]): Option[T][] {
     var fs: Future[T][] = fs_in;
     var start_ns: i64 = drv.now_ns();
     var ns_per_ms: i64 = 1000000;
-    var deadline_ns: i64 = (ms as i64) * ns_per_ms;
+    var deadline_ns: i64 = deadline.as_nanos();
     while (true) {
         if (__all_ready(fs)) { break; }
         var fds: i32[] = [];

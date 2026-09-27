@@ -21,7 +21,7 @@ func TestFetchGet(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -100,7 +100,7 @@ func TestFetchBinaryBody(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -190,7 +190,7 @@ func TestFetchAccumulatorStaysLinear(t *testing.T) {
 	const bodyLen = 1 << 20
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -275,7 +275,7 @@ func TestPlatformFetch(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -345,7 +345,7 @@ func TestFetchGetURL(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port

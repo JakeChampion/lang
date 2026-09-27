@@ -1,6 +1,7 @@
 import "std/test";
 import "std/async";
 import "std/sim";
+import "std/time";
 
 // examples/tests/sim_driver_test.fern — deterministic simulation testing
 // (docs/DST-PLATFORM-BRIEF.md slice 1): the std/sim virtual-clock Driver
@@ -20,7 +21,7 @@ function test_deadline_some_and_none(): test.TestOutcome {
         sim.future_at(d, 40000000, "late"),
         sim.future_at(d, 10000000, "early")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) { Some(v) => { return test.fail("late slot resolved under a 25ms deadline"); }, None => { } }
     match (got[1]) {
         Some(v) => { if (v != "early") { return test.fail("wrong winner value: " + v); } },
@@ -37,7 +38,7 @@ function test_deadline_all_in_time(): test.TestOutcome {
         sim.future_at(d, 20000000, 40),
         sim.future_at(d, 5000000, 2)
     ];
-    var got: Option[i32][] = async.with_deadline_on(d, 100, fs);
+    var got: Option[i32][] = async.with_deadline_on(d, time.duration_millis(100), fs);
     var sum: i32 = 0;
     match (got[0]) { Some(v) => { sum = sum + v; }, None => { return test.fail("slot 0 timed out"); } }
     match (got[1]) { Some(v) => { sum = sum + v; }, None => { return test.fail("slot 1 timed out"); } }

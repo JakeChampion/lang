@@ -46,7 +46,7 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), 10000);
+    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), time.duration_seconds(10 as i64));
 }
 `
 }
@@ -122,7 +122,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), 10000);"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), time.duration_seconds(10 as i64));"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -131,7 +131,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     var port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), 10000);
+    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), time.duration_seconds(10 as i64));
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)

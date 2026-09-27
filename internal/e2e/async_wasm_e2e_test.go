@@ -81,6 +81,7 @@ function main(): i32 {
 // seconds: 526ms a run against 147ms.
 func TestAsyncWasmWithDeadline(t *testing.T) {
 	src := `import "std/async";
+import "std/time";
 
 function start_timer(ns: i64, label: i32): async.Future[i32] {
     var p: i32 = wasm_timer_pollable(ns);
@@ -93,7 +94,7 @@ function start_timer(ns: i64, label: i32): async.Future[i32] {
 
 function main(): i32 {
     var fs: async.Future[i32][] = [start_timer(10000000, 7), start_timer(30000000000, 35)];
-    var r: Option[i32][] = async.with_deadline(500, fs);
+    var r: Option[i32][] = async.with_deadline(time.duration_millis(500), fs);
     if (r.len() != 2) { return 90; }
     match (r[0]) { Some(v) => { if (v != 7) { return 91; } }, None => { return 91; } }  // beat the 500ms deadline
     match (r[1]) { Some(v) => { return 92; }, None => { } }                              // missed it -> None
