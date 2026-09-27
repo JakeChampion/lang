@@ -1568,6 +1568,61 @@ function main(): i32 {
     }
     return t % 101;
 }`},
+	// The tuple and struct-pattern desugars yield an arm's value by storing it
+	// into the match's value local, not by returning it, so the hoist of a
+	// fn-valued value block has to count that store as an arm (#10333).
+	{name: "tuple-and-struct-match-of-capturing-lambdas", atLeast: 9, noLeak: true, src: `
+struct P { a: i32, b: i32 }
+function pick(p: P, base: i32): (i32) => i32 {
+    return match (p) { P { a: 0, b } => ((x: i32) => x - base + b), P { a: 1, b } => ((x: i32) => b), _ => ((x: i32) => x + 1) };
+}
+function main(): i32 {
+    var base: i32 = 5;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 60) {
+        var k: i32 = i;
+        var g: (i32) => i32 = (match ((i % 3, 0)) { (0, _) => ((x: i32) => x - base), (1, _) => ((x: i32) => k), _ => ((x: i32) => x + 1) });
+        var h: (i32) => i32 = pick(P { a: i % 3, b: i }, base);
+        t = t + g(3) % 7 + h(3) % 5;
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	// A value block's result is typed from its checked tail, not the parser's
+	// syntactic guess, so a tail naming a local bound from a match still says
+	// the struct array it holds (#10332): lifted when the block captures
+	// nothing, inlined when it does, and a single struct as well as an array.
+	{name: "value-block-tail-local-struct-array", atLeast: 2, noLeak: true, src: `
+struct P { x: i32, y: i32 }
+function main(): i32 {
+    var ps = { var j = 1; var q = match (j) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; q };
+    return ps[0].x * 10 + ps[0].y;
+}`},
+	{name: "value-block-tail-local-struct", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var r = { var q = if (i % 2 == 0) { R{name: "a" + "b", n: i} } else { R{name: "c", n: 1} }; q };
+        t = t + r.n + r.name.len();
+        i = i + 1;
+    }
+    return t % 101;
+}`},
+	{name: "value-block-tail-local-owning-struct-array-in-loop", atLeast: 1, noLeak: true, src: `
+struct R { name: string, n: i32 }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 20) {
+        var rs = { var q = if (i % 2 == 0) { [R{name: "a" + "b", n: i}] } else { [R{name: "c", n: 1}, R{name: "d", n: 2}] }; q };
+        t = t + rs[rs.len() - 1].n + rs[0].name.len();
+        i = i + 1;
+    }
+    return t % 101;
+}`},
 	// A record literal's type is the struct it names. It was read off the
 	// checker, which leaves a literal untyped when a field holds a value
 	// block over a template call, and the literal was refused whole even
@@ -2266,12 +2321,10 @@ function main(): i32 {
     return r.ops.len() % 100 + r.name.len();
 }
 `},
-	// A `str` binding in a module that declares a generic struct. The parser
-	// erases `str` to `string` at parse time and records the view-ness on the
-	// declaration's `is_str`; the struct monomorphiser rewrote every `var`
-	// annotation in every body and dropped that flag, so the checker typed
-	// the binding `string` against a `str` value and every function holding
-	// one refused. Produces 0 of 2 with the flag dropped.
+	// A `str` binding in a module that declares a generic struct. The struct
+	// monomorphiser rewrites every `var` annotation in every body; when that
+	// lost the binding's view-ness, the checker typed it `string` against a
+	// `str` value and every function holding one refused, producing 0 of 2.
 	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
 	// array arm and an empty array literal as an arm's value are both
 	// refused by the AST lowering ("immediately-invoked value block"), and
@@ -3040,10 +3093,10 @@ function main(): i32 {
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
 	// copy-on-write gate see a second holder. The AST lowering borrows the
-	// receiver and writes the sole-held box in place, so the write shows
-	// through `m`, and its `without` writes an ALIASED receiver in place too
-	// (#9835).
-	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "63|", src: `
+	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
+	// `rest` all name one box (#9834); only the delete `snapshot` still reads
+	// through copies (#9835).
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "94|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
@@ -3167,6 +3220,8 @@ function main(): i32 {
 `},
 	// The same shape through the standard library: every ordmap method with a
 	// bounded key is that clone, and the tree under it is produced with it.
+	// 65 of 65: core/cmp's numeric `add` impls reach only i32 and u64 (and
+	// bigint); the f32, f64, i64 and u32 ones are unreachable.
 	{name: "ordmap-bounded-method-clones", atLeast: 65, src: `
 import "std/ordmap";
 function main(): i32 {
@@ -4176,7 +4231,7 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// f64 it is, as a container of one does, so `Some(3.14)?` has a concrete
 	// union to test and unwrap (conformance f64_tryop_widen).
 	// An unannotated map literal takes its columns from its entries (#10208):
-	// the checker types the desugared `map_new_i32(n).insert(k, v)` chain, and
+	// the checker types the desugared `__map_new_i32(n).insert(k, v)` chain, and
 	// the chain's head takes that type where no destination names one.
 	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
 function main(): i32 {

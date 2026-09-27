@@ -22,7 +22,8 @@ func TestSelfHostLambdaScopeWalkX86_64(t *testing.T) {
 		{"nested parameters bind", "", "var f = (n: i32): i32 => { return n + outer; }; return f(1);", "outer;"},
 		{"write before local", "", "n = 1; var n = 2; return n;", "n;"},
 		{"write to local", "", "var n = 1; n = 2; return n;", ""},
-		{"recursive local lambda", "", "var recur = (n: i32): i32 => { return recur(n - 1) + outer; }; return recur(2);", "outer;"},
+		{"recursive nested function", "", "function recur(n: i32): i32 { return recur(n - 1) + outer; } return recur(2);", "outer;"},
+		{"arrow lambda does not see its var", "", "var recur = (n: i32): i32 => { return recur(n - 1) + outer; }; return recur(2);", "recur;outer;"},
 		{"tuple binders", "", "var (x, y) = pair; return x + y;", "pair;"},
 	}
 	var src strings.Builder

@@ -178,10 +178,7 @@ function t_string(): typeinfo.Type {
   return typeinfo.TypeString { tag: 0 };
 }
 
-// `str` — the borrowed-string view (#4813). The parser erases the SPELLING to
-// "string" (parse_type_name), so view-ness is carried by the sidecars (StmtVar.is_str,
-// FuncDecl.ret_str); this constructor is how they re-enter the type system.
-// tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
+// `str` — the borrowed-string view (#4813). tag 1 marks the view. type_eq, type_to_irtag and method dispatch stay
 // tag-blind — a view IS a string box everywhere but at an owning sink, which
 // is the one place type_assignable reads the tag (#7293).
 function t_str(): typeinfo.Type {
@@ -2087,8 +2084,8 @@ function is_resolvable_callee(name: string, s: Scope): boolean {
 
 // for_iter_is_range reports whether a for-loop iter is the synthetic
 // `__range(LOW, HIGH)` / `__range_incl(LOW, HIGH)` call the parser emits
-// for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker uses it
-// to bind the loop var to i32; irlower carries its own copy (different
+// for `for i in LOW..HIGH` / `for i in LOW..=HIGH`. The checker binds the
+// loop var from it (range_var_type); irlower carries its own copy (different
 // module) to drive the counted-loop lowering (half-open vs closed).
 function for_iter_is_range(iter: ast.Expr): boolean {
   match (iter) {
@@ -2306,7 +2303,7 @@ function mlit_entries_settle(e: ast.Expr, want: typeinfo.TypeMap, s: Scope): boo
 }
 
 // mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
-// it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
+// it: an `.insert(k, v)` chain bottoming out at the `map_new` / `__map_new_i32`
 // base. The literal's own key check (the first insert, above) reports E045 for
 // it already, so the destination check skips these and the two do not both
 // fire — native skips its MapLit destinations for the same reason. A bare
@@ -4329,15 +4326,23 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     if (c.args.len() != msig.param_types.len()) {
       return t_unknown("arity mismatch calling method `" + name + "`");
     }
+    // A signature spelling one of the receiver's type parameters (`function
+    // (b: Box[T]) get(): T`, `function (o: Option[T]) unwrap_or(fallback: T):
+    // T`, or a nested `T[]`) resolves it to `unknown` at collect time. On a
+    // concrete instantiation (`Box[i32]`, `Option[string]`) those parameters
+    // are bound to the receiver's arguments throughout the parameter and
+    // return spellings (#4346 piece 2); what stays unresolved is not checked.
+    var rmb: MethodBinding = method_binding(c, msig, nominal_args(recv_ty), s);
     var mi: i32 = 0;
     while (mi < c.args.len()) {
+      var want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
       var mat: typeinfo.Type = check_expr(c.args[mi], s);
-      if (!is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
+      if (!is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
         return t_unknown("arg-type mismatch calling method `" + name + "`");
       }
       mi = mi + 1;
     }
-    return generic_method_ret(c, msig, recv_ty, s);
+    return generic_method_ret(c, msig, rmb, s);
   }
   // If the ident is bound in scope to a TypeFunc,
   // dispatch as a closure call rather than a plain
@@ -4456,18 +4461,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // still be concrete at the call site. A spelling that DOES resolve never
   // binds, so a call with no variable in it reaches the fallthrough as before.
   if (type_contains_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
-    let (bn, bt) = arg_bindings(sig, c, s);
-    let (bbn, bbt) = bound_bindings(sig, s, bn, bt);
-    bn = bbn;
-    bt = bbt;
-    // A type parameter every one of whose arguments is an integer literal
-    // settles at the widest reading, not the first (#8722 part 4).
-    var wbi: i32 = 0;
-    while (wbi < bn.len()) {
-      let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
-      if (wok) { bt = bt.with(wbi, wty); }
-      wbi = wbi + 1;
-    }
+    var (bn, bt) = call_type_bindings(sig, c, s);
     // A declared type parameter no argument bound stays a VARIABLE in the
     // substitution. Resolving it by name instead would find a same-named
     // declared type and hand the call site a concrete result it never had.
@@ -4503,6 +4497,22 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
     bn = bn2;
     bt = bt2;
     i = i + 1;
+  }
+  return (bn, bt);
+}
+
+// call_type_bindings binds a generic call's type variables from its arguments
+// and from what their bounds' impls name. A type parameter every one of whose
+// arguments is an integer literal settles at the widest reading, not the first
+// (#8722 part 4).
+function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
+  let (an, at) = arg_bindings(sig, c, s);
+  var (bn, bt) = bound_bindings(sig, s, an, at);
+  var wbi: i32 = 0;
+  while (wbi < bn.len()) {
+    let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
+    if (wok) { bt = bt.with(wbi, wty); }
+    wbi = wbi + 1;
   }
   return (bn, bt);
 }
@@ -4874,7 +4884,6 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
     return t_i64();
   }
   return t_i32();
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
@@ -4931,7 +4940,6 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
     return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
   }
   return bound;
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
@@ -5044,7 +5052,6 @@ function check_binary_expr(b: ast.ExprBinary, s: Scope): typeinfo.Type {
     return t_unknown("logical op `" + b.op + "` requires bool operands");
   }
   return t_unknown("unknown binary op:" + b.op);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
@@ -5086,7 +5093,6 @@ function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
     return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
   }
   return t_unknown("unknown unary op:" + u.op);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
@@ -5113,7 +5119,6 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     i = i + 1;
   }
   return t_array(first);
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
@@ -5138,7 +5143,6 @@ function check_index_expr(x: ast.ExprIndex, s: Scope): typeinfo.Type {
     }
   }
   return t_unknown("unreachable index arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
@@ -5168,7 +5172,6 @@ function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
     }
   }
   return t_unknown("unreachable slice arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
@@ -5270,7 +5273,6 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
     return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
   }
   return typeinfo.TypeStruct { name: sl.type_name, args: largs };
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Type {
@@ -5326,7 +5328,6 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
     }
   }
   return t_unknown("unreachable field-access arm");
-  return t_unknown("unhandled Expr variant");
 }
 
 function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
@@ -5357,7 +5358,6 @@ function check_lambda_expr(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
     }
   }
   return t_func_own(pts, lambda_owns(lm), rt);
-  return t_unknown("unhandled Expr variant");
 }
 
 
@@ -5373,25 +5373,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       return check_stmt(d.action, s);
     },
     ast.StmtVar(v) => {
-      // A local function `function f(...) { ... }` desugars to
-      // `var f = (...) => { ... }`; its own name must be in
-      // scope within the body so a recursive self-call resolves
-      // (matching the Go checker's recursive-local handling, and the
-      // hoist pass that lifts it). Bind f to its function type before
-      // checking the init. (For a plain non-recursive lambda the
-      // binding is simply unused.)
-      var init_scope: Scope = s;
-      match (v.init) {
-        ast.ExprLambda(lm) => {
-          var lpts: typeinfo.Type[] = [];
-          for param in lm.params {
-            lpts = lpts.append(s.resolve_param(param));
-          }
-          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
-          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
-        },
-        _ => {}
-      }
+      var init_scope: Scope = rec_local_scope(v, s);
       var t: typeinfo.Type = check_expr(v.init, init_scope);
       // A destructuring `var` / `let` declares its bindings under ONE
       // comma-joined name, paired with the marker channel — binding that
@@ -5659,21 +5641,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
       if (v.type_name.len() > 0) {
         return s.bind(v.name, var_declared_type(v, s));
       }
-      // The recursive-local self-binding: `var f = (...) => { ... }` must
-      // have `f` in scope while its own body is inferred, as check_stmt does.
-      var init_scope: Scope = s;
-      match (v.init) {
-        ast.ExprLambda(lm) => {
-          var lpts: typeinfo.Type[] = [];
-          for param in lm.params {
-            lpts = lpts.append(s.resolve_param(param));
-          }
-          var lrt: typeinfo.Type = lambda_ret_type(lm, s);
-          init_scope = s.bind(v.name, t_func_own(lpts, lambda_owns(lm), lrt));
-        },
-        _ => {}
-      }
-      return s.bind(v.name, check_expr(v.init, init_scope));
+      return s.bind(v.name, check_expr(v.init, rec_local_scope(v, s)));
     },
     _ => {}
   }
@@ -5722,19 +5690,37 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // then passed to check_module's per-function body walk so calls
 // (including recursive / mutually-recursive ones) can resolve.
 // func_ret_type resolves a FuncDecl's declared return type, re-entering the
-// `str` / `[T]` view-ness the parse-time erasure recorded on ret_str (#7293)
-// and ret_slice (#9944).
+// `[T]` view-ness the parse-time erasure recorded on ret_slice (#9944).
 function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names: string[]): typeinfo.Type {
-  if (fd.ret_str) {
-    return t_str();
-  }
-  if (fd.ret_str_elem) { return t_array(t_str()); }
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
     return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
   }
   var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, struct_names, union_names);
   if (fd.ret_slice) { return as_view(rt); }
   return rt;
+}
+
+// A lambda's own function type, as a binding of its name sees it.
+function lambda_fn_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
+  var pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(s.resolve_param(param));
+  }
+  return t_func_own(pts, lambda_owns(lm), lambda_ret_type(lm, s));
+}
+
+// rec_local_name is the name a `var`'s initialiser may call itself by, or "".
+function rec_local_name(v: ast.StmtVar): string {
+  if (ast.var_binds_itself(v)) { return v.name; }
+  return "";
+}
+
+// rec_local_scope is the scope a `var`'s initialiser is checked in.
+function rec_local_scope(v: ast.StmtVar, s: Scope): Scope {
+  if let ast.ExprLambda(lm) = v.init {
+    if (ast.var_binds_itself(v)) { return s.bind(v.name, lambda_fn_type(lm, s)); }
+  }
+  return s;
 }
 
 // The result of a lambda that spells none, until its body's exits settle it.
@@ -5744,22 +5730,15 @@ const INFERRED_RESULT: string = "inferred lambda result";
 // is spelled in: the pair a declaration's `ret_fn_ret` carries.
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) { return t_unknown(INFERRED_RESULT); }
-  if (lm.ret_str) { return t_str(); }
-  if (lm.ret_str_elem) { return t_array(t_str()); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
     return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
   return s.resolve_type(lm.ret_type);
 }
 
-// var_declared_type resolves a StmtVar's annotation, re-entering the `str` /
-// `str[]` / `[T]` view-ness the parse-time erasure recorded on is_str (#7293),
-// str_elem and is_view (#9944).
+// var_declared_type resolves a StmtVar's annotation, re-entering the `[T]`
+// view-ness the parse-time erasure recorded on is_view (#9944).
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
-  if (v.is_str) {
-    return t_str();
-  }
-  if (v.str_elem) { return t_array(t_str()); }
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
     return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.structs.names, s.unions.names);
   }
@@ -5875,13 +5854,11 @@ function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig,
 }
 
 // generic_method_ret is a method call's result with its type variables
-// substituted: the receiver's from its instantiation (`Box[i32]`,
-// `Result[string, E]`), the written ones from the call, and the method's own
-// from its arguments (`r.and(Ok("vw"))` binds `U` to string). A variable
-// nothing binds stays unknown.
-function generic_method_ret(c: ast.ExprCall, msig: MethodSig, recv_ty: typeinfo.Type, s: Scope): typeinfo.Type {
+// substituted: the receiver's and the written ones as `mb` binds them, and the
+// method's own from its arguments (`r.and(Ok("vw"))` binds `U` to string). A
+// variable nothing binds stays unknown.
+function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding, s: Scope): typeinfo.Type {
   if (!type_contains_unknown(msig.ret_type) || msig.ret_type_name.len() == 0) { return msig.ret_type; }
-  var mb: MethodBinding = method_binding(c, msig, nominal_args(recv_ty), s);
   var bn: string[] = mb.names;
   var bt: typeinfo.Type[] = mb.types;
   var i: i32 = 0;
@@ -5918,6 +5895,18 @@ function binding_arg_type(a: ast.Expr, s: Scope): typeinfo.Type {
     }
   }
   return t;
+}
+
+// receiver_bound is `t`, spelled `spelling`, with the receiver's type
+// parameters bound as `mb` binds them, when `t` holds an erased one.
+function receiver_bound(t: typeinfo.Type, spelling: string, mb: MethodBinding, s: Scope): typeinfo.Type {
+  if (!type_contains_unknown(t) || spelling.len() == 0 || mb.names.len() == 0) { return t; }
+  return type_from_ref_subst(parser.parse_type_ref(spelling), mb.names, mb.types, s.structs.names, s.unions.names);
+}
+
+function param_type_name_at(msig: MethodSig, i: i32): string {
+  if (i < msig.param_type_names.len()) { return msig.param_type_names[i]; }
+  return "";
 }
 
 // same_nominal reports whether two types are both the struct, or both the
@@ -5984,7 +5973,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], struct_names: string[], u
         pts = pts.append(param_decl_type(param, fd.type_params, struct_names, union_names));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: fd.receiver_type, param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
     }
   }
   return out;
@@ -6673,8 +6662,6 @@ function param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: stri
 }
 
 function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
-  if (p.is_str) { return t_str(); }
-  if (p.str_elem) { return t_array(t_str()); }
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
@@ -8231,7 +8218,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        out = util.append_diags(out, lret_expr(v.init, cur, unions, v.name));
+        out = util.append_diags(out, lret_expr(v.init, cur, unions, rec_local_name(v)));
       },
       ast.StmtReturn(r) => {
         out = util.append_diags(out, lret_expr(r.value, cur, unions, ""));
@@ -9825,7 +9812,7 @@ function suffix_range_stmts(stmts: ast.Stmt[]): util.Diag[] {
 // (method / closure arity + argument types are left to later slices).
 // mlit_is_base reports whether an expression is the base constructor call
 // of a desugared map literal — `map_new(n)` (string keys) or
-// `map_new_i32(n)` (integer keys), which the parser's parse_map_lit emits
+// `__map_new_i32(n)` (integer keys), which the parser's parse_map_lit emits
 // before chaining `.insert(k, v)` per entry. Used to find a map literal's
 // FIRST `.insert` (whose object is this base) so its key type can be
 // checked (E045).
@@ -9850,7 +9837,7 @@ function mlit_is_base(e: ast.Expr): boolean {
 
 // is_map_new_name reports whether `name` is one of the empty-map constructors.
 function is_map_new_name(name: string): boolean {
-  return name == "map_new" || name == "map_new_i32";
+  return name == "map_new" || name == "__map_new_i32";
 }
 
 // unsettled_int_literal: is `e` an integer literal that has not been pinned to a
@@ -10875,7 +10862,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // it here rather than leaving it to codegen, and so does this. A map
       // LITERAL needs no arm of its own: the compile parse desugars
       // `Map { … }` to one of these two constructors, which is also why
-      // map_new_i32 is named here although native has no such spelling.
+      // __map_new_i32 is named here although native has no such spelling.
       // Reported at every site and thinned to the first by check_module,
       // matching native's one diagnostic per program.
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
@@ -11214,14 +11201,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               // assignability check is sound on real code
               // (verified across all self-host modules) —
               // no longer restricted to primitives.
+              var rmb: MethodBinding = method_binding(c, msig, sn.args, s);
               var mi: i32 = 0;
               while (mi < c.args.len()) {
                 var mat: typeinfo.Type = check_expr(c.args[mi], s);
-                out = util.append_diags(out, int_dest_range_diags(c.args[mi], msig.param_types[mi]));
+                var want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
+                out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
                 // Skip an opaque generic param type (see
                 // the free-function E038 note above).
-                if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
-                  out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                if (!is_unknown(mat) && !is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
+                  out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                 }
                 // E034: composite-array method argument
                 // elements vs the parameter element type.
@@ -12145,21 +12134,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
   for st in stmts {
     match (st) {
       ast.StmtVar(v) => {
-        // A function-valued local (`var f = (...) => {...}`,
-        // including a desugared local function declaration) must be
-        // in scope inside its own body — so a recursive self-call
-        // resolves rather than reporting E001 — and for the
-        // statements that follow it. Bind it to its function type
-        // before walking the init.
+        // A function-valued local is in scope for the statements that
+        // follow it; inside its own initialiser only as rec_local_scope admits.
         var vsc: Scope = cur;
         match (v.init) {
           ast.ExprLambda(lm) => {
-            var fpts: typeinfo.Type[] = [];
-            for param in lm.params {
-              fpts = fpts.append(cur.resolve_param(param));
-            }
-            vsc = cur.bind(v.name, t_func_own(fpts, lambda_owns(lm), lambda_ret_type(lm, cur)));
-            cur = vsc;
+            vsc = rec_local_scope(v, cur);
+            cur = cur.bind(v.name, lambda_fn_type(lm, cur));
           },
           _ => {
             // A function-valued local whose init is not a lambda — `var g = dbl;`,
@@ -12829,6 +12810,14 @@ function dup_name_before(names: string[], idx: i32): boolean {
 // are detectable from the decl tables alone (no positions, no type
 // inference): E007 (a struct field name repeated) and E018 (a function
 // parameter name repeated). These mirror the Go checker's E007 / E018.
+// receiver_namespace is the method table a receiver spelling registers in: a
+// `str` receiver shares the `string` methods, as native's ReceiverTypeName
+// maps it.
+function receiver_namespace(rt: string): string {
+  if (rt == "str") { return "string"; }
+  return rt;
+}
+
 // receiver_type_ok reports whether a method's receiver type names a valid
 // receiver — a primitive, or a declared struct / enum / union (alias). A
 // generic / Map / array receiver (`X[...]`) or a `dyn Trait` object is
@@ -12845,7 +12834,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   // methods; `u8` when std/i32's 21 ascii classifiers moved onto the
   // byte type (both #5629). That is the same bug twice, so the whole
   // integer family is listed now rather than one width at a time.
-  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
+  if (rt == "i32" || rt == "i64" || rt == "u8" || rt == "u32" || rt == "u64" || rt == "usize" || rt == "boolean" || rt == "string" || rt == "str" || rt == "f64" || rt == "f32" || rt == "float" || rt == "char") {
     return true;
   }
   for ch in rt {
@@ -13369,7 +13358,30 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 // keys admitted while walking `base = S { ...base, f: g(.., base.f, ..) }`
 // or the return of that literal (ow_field_move_fields). `borrowed` names
 // the parameters this frame does not own — never a base for that move.
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], last_use: string[] }
+//
+// `scope` is the checker's scope at the walk's position: an argument whose
+// checked type is scalar carries no reference, so handing it to a consuming
+// parameter transfers nothing and needs no proof of ownership (native's
+// scalarArgs).
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFunc[], structs: parser.StructDecl[], admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
+
+// ow_expr_is_scalar is native's definitelyScalar on the argument's checked type.
+function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_scalar_literal(e)) { return true; }
+  match (check_expr(e, ctx.scope)) {
+    typeinfo.TypeI32(_) => { return true; },
+    typeinfo.TypeBool(_) => { return true; },
+    typeinfo.TypeFloat(_) => { return true; },
+    typeinfo.TypeVoid(_) => { return true; },
+    _ => { return false; }
+  }
+}
+
+// A `+` is a fresh string only as concatenation (native's IsStringConcat).
+function ow_is_string_type(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeString(_) = t { return true; }
+  return false;
+}
 
 function ow_moved_has(m: MovedEntry[], name: string): boolean {
   for elem in m {
@@ -13427,7 +13439,8 @@ function ow_ownable_type(type_name: string): boolean {
 // ow_nested_ctx layers a nested function's parameters over the enclosing
 // owned set: an `own` parameter is owned inside the body it belongs to, and
 // any other parameter SHADOWS an outer owned name it repeats.
-function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
+function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
+  var params: ast.ParamDecl[] = lm.params;
   var names: string[] = ctx.owned;
   var borrowed: string[] = ctx.borrowed;
   for param in params {
@@ -13445,7 +13458,8 @@ function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
   }
   var bound: string[] = ctx.bound;
   for p in params { if (!util.has_str(bound, p.name)) { bound = bound.append(p.name); } }
-  return OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, last_use: ctx.last_use };
+  var nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use };
+  return nested;
 }
 
 function ow_names_del(names: string[], name: string): string[] {
@@ -13548,7 +13562,7 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_scalar_literal(e)) { return true; }
+  if (ow_expr_is_scalar(e, ctx)) { return true; }
   match (e) {
     ast.ExprStructLit(_) => {
       return true;
@@ -13563,7 +13577,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return true;
     },
     ast.ExprBinary(b) => {
-      return b.op == "+";
+      return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
     },
     ast.ExprIdent(id) => {
       if (ctx.admit.len() > 0 && ctx.admit == id.name) {
@@ -14391,7 +14405,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       // `function inner(own b)` could not transfer `b` onward, and a plain
       // parameter repeating an outer owned name would be read as that name
       // (#7452).
-      var lctx: OwnCtx = ow_nested_ctx(ctx, lm.params);
+      var lctx: OwnCtx = ow_nested_ctx(ctx, lm);
       var inner: OwnWalk = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
       return OwnWalk { moved: moved, diags: inner.diags };
     },
@@ -14484,7 +14498,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtFor(fr) => {
       var ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
-      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, ow_bind_ctx(ctx, fr.var_name));
+      var fctx: OwnCtx = ow_bind_ctx(ctx, fr.var_name);
+      var ld: util.Diag[] = ow_loop(fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
     ast.StmtMatch(m) => {
@@ -14496,10 +14511,12 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       var rs: OwnWalk = ru_expr(m.scrutinee, moved, ctx);
       var mv: MovedEntry[] = rs.moved;
       var d: util.Diag[] = rs.diags;
+      var whole: typeinfo.Type = check_expr(m.scrutinee, ctx.scope);
       for arm in m.arms {
         // A binder shadows for its arm either way; only the ownership
         // TRANSFER below depends on the scrutinee being owned.
         var actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
+        actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
           actx = ow_arm_payload_ctx(actx, arm.pattern);
         }
@@ -14531,6 +14548,7 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     m = r.moved;
     d = util.append_diags(d, r.diags);
     if let ast.StmtVar(v) = stmt { c = ow_bind_ctx(c, v.name); }
+    c = OwnCtx { ...c, scope: bind_stmt(stmt, c.scope) };
   }
   return OwnWalk { moved: m, diags: d };
 }
@@ -14570,7 +14588,8 @@ function ow_arm_bind_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
 // ow_bind_ctx layers one binding onto the set of names in scope — a `for`
 // variable or a match arm's binder, each of which shadows for its body only.
 function ow_bind_ctx(ctx: OwnCtx, name: string): OwnCtx {
-  if (name.len() == 0 || util.has_str(ctx.bound, name)) { return ctx; }
+  if (name.len() == 0) { return ctx; }
+  if (util.has_str(ctx.bound, name)) { return ctx; }
   return OwnCtx { ...ctx, bound: ctx.bound.append(name) };
 }
 
@@ -14856,22 +14875,43 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFunc[], builti
   return out;
 }
 
+// ow_result_borrows settles the least fixed point described at
+// ow_fresh_owners. After the first round only a function calling one the
+// previous round marked can change its answer, so only those are examined again.
 function ow_result_borrows(mod: parser.Module, ofuncs: OwnFunc[], builtins: string[]): string[] {
   var borrows: string[] = [];
-  var changed: boolean = true;
-  while (changed) {
-    changed = false;
-    for fn in mod.funcs {
-      if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
-      if (!ow_type_is_pointer(fn.ret_type, mod)) { continue; }
-      if (util.has_str(borrows, fn.name)) { continue; }
-      if (ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
+  var pending: parser.FuncDecl[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_name.len() > 0 || fn.type_params.len() > 0) { continue; }
+    if (ow_type_is_pointer(fn.ret_type, mod)) { pending = pending.append(fn); }
+  }
+  var first: boolean = true;
+  var marked: string[] = [];
+  while (first || marked.len() > 0) {
+    var now_marked: string[] = [];
+    var unmarked: parser.FuncDecl[] = [];
+    for fn in pending {
+      if ((first || ow_calls_any(fn, marked)) && ow_func_result_borrows(fn, mod, ofuncs, borrows, builtins)) {
         borrows = borrows.append(fn.name);
-        changed = true;
+        now_marked = now_marked.append(fn.name);
+      } else {
+        unmarked = unmarked.append(fn);
       }
     }
+    first = false;
+    marked = now_marked;
+    pending = unmarked;
   }
   return borrows;
+}
+
+function ow_calls_any(fn: parser.FuncDecl, names: string[]): boolean {
+  var hits: astwalk.CallSite[] = [];
+  for st in fn.body {
+    hits = astwalk.collect_calls_stmt(st, names, hits);
+    if (hits.len() > 0) { return true; }
+  }
+  return false;
 }
 
 // ow_fresh_owners is the complement: every pointer-returning function the
@@ -14916,16 +14956,19 @@ function ow_fresh_methods(mod: parser.Module, ofuncs: OwnFunc[], builtins: strin
 // could exercise it: those with owned params (the E050 walk) and — once
 // any owned-param function exists — every function (the E051 call-site
 // guard). No-op when the module declares no `own` parameter anywhere, so
-// ordinary programs are untouched.
-pub function own_diags(mod: parser.Module): util.Diag[] {
+// ordinary programs are untouched. The result-borrow fixpoint always spans the
+// module; only the bodies `focus` admits (in_focus) are walked.
+pub function own_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var ofuncs: OwnFunc[] = collect_own_funcs(mod.funcs);
   var builtins: string[] = ow_fresh_builtins();
   var borrows: string[] = ow_result_borrows(mod, ofuncs, builtins);
   var fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   var fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   var fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
+  var env: ModuleEnv = module_env(mod);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var owned: string[] = [];
     var borrowed: string[] = [];
     for param in fn.params {
@@ -14936,7 +14979,7 @@ pub function own_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (owned.len() > 0 || ofuncs.len() > 0) {
-      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), last_use: lu_last_use_args(fn, ofuncs) };
+      var ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
       var nomoved: MovedEntry[] = [];
       var r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
       out = util.append_diags(out, r.diags);
@@ -15231,9 +15274,10 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
   return out;
 }
 
-pub function e049_diags(mod: parser.Module): util.Diag[] {
+pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var encl: NameTy[] = [];
     for param in fn.params {
       encl = encl.append(NameTy { nm: param.name, ty: param.type_name });
@@ -15427,10 +15471,7 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
   // and the stdlib uses them pervasively (`var b: u8` in std/string,
   // `var p: usize` scratch pointers in core/int), so flagging them would
   // diverge from the oracle on every program importing those modules.
-  // `str` (the borrowed-string view, #4813): the self-host parser erases
-  // a BARE `str` to "string" at the parse boundary, but a `str` inside a
-  // generic argument (`Option[str]`) keeps its verbatim spelling — a real
-  // native type, so the generic-arg widening must not flag it.
+  // `str` (the borrowed-string view, #4813): a real native type.
   // `char` (the Unicode scalar, #5629): a real native type since slice 1,
   // and std/utf8 now returns `char[]` / `Option[char]`, so every program
   // importing std/string reaches it. It used to be listed below as
@@ -16241,12 +16282,10 @@ function e053_diags(efn: parser.FuncDecl, fips: string[], fbips: string[], varia
 
 // ---- E065: returning a `str` view of a function-local string ---------------
 // Port of the native checkStrEscape (checker.go): a function whose declared
-// return type is `str` (recorded on FuncDecl.ret_str before the parse-time
-// erasure) must not return a view of a function-LOCAL owned string — the
+// return type is `str` must not return a view of a function-LOCAL owned string — the
 // backing box is reclaimed when the frame drops. Mirrors the native chase:
 // a string literal is immortal, a parameter caller-owned; a local owned
-// `string` IS the backing storage; a local `str` binding (StmtVar.is_str)
-// views whatever its initializer views; and a call views whatever its
+// `string` IS the backing storage; a local `str` binding views whatever its initializer views; and a call views whatever its
 // callee's summary says it hands back (see ViewSum below). `sbacked`
 // accumulates locals known to be (views of) local string storage.
 // E065Walk is one statement walk's result: the diagnostics it found, the
@@ -16436,7 +16475,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
   for stmt in stmts {
     match (stmt) {
       ast.StmtVar(v) => {
-        if (v.is_str) {
+        if (v.type_name == "str") {
           // A `str` binding views its initializer: tainted only
           // when the init is (a view of) local string storage —
           // a backed ident, or a `slice_unchecked` whose SOURCE
@@ -16593,7 +16632,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
 function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): E065Walk {
   var params: string[] = view_positions(efn);
   var none: string[] = [];
-  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_str);
+  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_type == "str");
 }
 
 // e065_cursor_diags is E065 for a `MapIter`, the native checkCursorEscapes: a
@@ -17014,9 +17053,8 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 // The scalar list must track what ast.ReceiverTypeName names, since that
 // is the set native's pre-check reasons about: a name missing here is a
 // field native checks and this side silently skips, not a conservative
-// omission. `u8` and `char` were both missing. (`str` needs no entry —
-// the parser already records a `str` field's type as "string", which is
-// also what ReceiverTypeName maps it to.)
+// omission. `u8` and `char` were both missing. (`str` needs no entry: a field
+// is checked in its receiver namespace, where a `str` is a `string`.)
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
   if (fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string") {
     return true;
@@ -17148,7 +17186,7 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
   }
   var fi: i32 = 0;
   while (fi < ftys.len()) {
-    var fty: string = ftys[fi];
+    var fty: string = receiver_namespace(ftys[fi]);
     if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
       if (!e021_derive_conforms(mod, tr, tidx, fty)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
@@ -17500,9 +17538,10 @@ function e021_dyn_locals_of(stmts: ast.Stmt[]): string[] {
 // silent where native draws E021 — the same trait in a parameter or return type
 // was caught all along, which is what made the gap look like the whole check
 // being absent rather than one site of three (#7974).
-function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
+function e021_object_safety_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     for param in fn.params {
       var pt: string = e021_dyn_target(param.type_name);
       if (pt.len() > 0) {
@@ -17652,7 +17691,7 @@ function e060_set_of_name(dyns: string[], name: string): string {
 // definitely-wrong `as?` targets the target-shape arm flags. Mirrors the
 // zero-false-positive primitive gates of E033/E042/E059.
 function e060_is_primitive_name(t: string): boolean {
-  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "usize" || t == "char";
+  return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "f32" || t == "f64" || t == "boolean" || t == "string" || t == "str" || t == "usize" || t == "char";
 }
 
 // e060_e062_stmts walks every statement in `stmts`, flagging at each
@@ -17796,9 +17835,10 @@ function e060_decl_is_enum(mod: parser.Module, name: string): boolean {
 
 // e060_e062_diags: per function, collect the dyn-annotated params/locals then
 // walk the body for the two expression-level checks.
-function e060_e062_diags(mod: parser.Module): util.Diag[] {
+function e060_e062_diags(mod: parser.Module, focus: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
+    if (!in_focus(focus, fn)) { continue; }
     var dyns: string[] = [];
     for param in fn.params {
       dyns = dyns.append(param.name + "|" + e060_dyn_set_of(param.type_name));
@@ -17833,6 +17873,188 @@ function thin_map_import_diags(ds: util.Diag[]): util.Diag[] {
   return out;
 }
 
+// Inst is one instantiation of a generic free function: the template, the
+// concrete spelling of each of its type parameters, and how many clones deep
+// the call that asked for it sits.
+struct Inst { name: string, cts: string[], depth: i32 }
+
+// max_inst_depth bounds the instantiation worklist, as native bounds its
+// generic-struct rounds: `f[T](x: T)` calling `f([x])` asks for a new clone at
+// every depth.
+function max_inst_depth(): i32 { return 64; }
+
+// spellable reports whether `t` can be written back as an annotation a clone
+// carries: an unknown, an erased variable, and a callable (type_label prints no
+// parameter list for one) cannot.
+function spellable(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnknown(_) => { return false; },
+    typeinfo.TypeErased(_) => { return false; },
+    typeinfo.TypeFunc(_) => { return false; },
+    typeinfo.TypeVoid(_) => { return false; },
+    typeinfo.TypeArray(a) => { return spellable(a.elem); },
+    typeinfo.TypeMap(m) => { return spellable(m.key) && spellable(m.value); },
+    typeinfo.TypeTuple(tp) => {
+      for elem in tp.elements { if (!spellable(elem)) { return false; } }
+      return true;
+    },
+    typeinfo.TypeStruct(sd) => {
+      for arg in sd.args { if (!spellable(arg)) { return false; } }
+      return true;
+    },
+    typeinfo.TypeUnion(u) => {
+      for arg in u.args { if (!spellable(arg)) { return false; } }
+      return true;
+    },
+    _ => { return true; }
+  }
+  return true;
+}
+
+function template_index(gens: parser.FuncDecl[], name: string): i32 {
+  var i: i32 = 0;
+  while (i < gens.len()) {
+    if (gens[i].name == name) { return i; }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// call_inst is the instantiation a call to a generic free function asks for,
+// or one with an empty name when the callee is not one or a type parameter
+// stays unbound or unspellable.
+function call_inst(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32): Inst {
+  var none: Inst = Inst { name: "", cts: [], depth: depth };
+  if let ast.ExprIdent(id) = c.callee {
+    if (s.defines(id.name)) { return none; }
+    var sig: FuncSig = s.lookup_sig(id.name);
+    if (sig.type_param_count == 0) { return none; }
+    var gi: i32 = template_index(gens, id.name);
+    if (gi < 0) { return none; }
+    let (bn, bt) = call_type_bindings(sig, c, s);
+    var cts: string[] = [];
+    for tp in gens[gi].all_type_params {
+      var k: i32 = util.index_of_str(bn, tp);
+      if (k < 0 || !spellable(bt[k])) { return none; }
+      cts = cts.append(type_label(bt[k]));
+    }
+    return Inst { name: id.name, cts: cts, depth: depth };
+  }
+  return none;
+}
+
+// calls_a_generic is the syntactic test that lets a body with no call to a
+// generic free function skip inst_stmts, which types every statement.
+function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
+  function at_call(n: ast.Expr, own hit: boolean): boolean {
+    if (hit) { return true; }
+    if let ast.ExprCall(c) = n {
+      if let ast.ExprIdent(id) = c.callee { return s.lookup_sig(id.name).type_param_count > 0; }
+    }
+    return false;
+  }
+  var hit: boolean = false;
+  for st in stmts { hit = astwalk.fold_stmt(st, hit, at_call); }
+  return hit;
+}
+
+// inst_stmts collects the instantiations the calls in `stmts` ask for,
+// scope-threaded so an argument's type is the one the checker gives it there.
+function inst_stmts(stmts: ast.Stmt[], s: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+  var out: Inst[] = acc;
+  var cur: Scope = s;
+  for st in stmts {
+    out = inst_stmt(st, cur, gens, depth, out);
+    cur = bind_stmt(st, cur);
+  }
+  return out;
+}
+
+function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
+  function at_node(n: ast.Expr, own a: Inst[]): Inst[] {
+    match (n) {
+      ast.ExprCall(c) => {
+        var inst: Inst = call_inst(c, cur, gens, depth);
+        if (inst.name.len() > 0) { return a.append(inst); }
+        return a;
+      },
+      ast.ExprLambda(lm) => { return inst_stmts(lm.body, lambda_body_scope(lm, cur), gens, depth, a); },
+      _ => { return a; }
+    }
+  }
+  function not_into_lambda(n: ast.Expr): boolean {
+    if let ast.ExprLambda(_) = n { return false; }
+    return true;
+  }
+  var out: Inst[] = astwalk.fold_stmt_own_pruned(st, acc, at_node, not_into_lambda);
+  match (st) {
+    ast.StmtIf(f) => {
+      out = inst_stmts(f.then_body, cur, gens, depth, out);
+      out = inst_stmts(f.else_body, cur, gens, depth, out);
+    },
+    ast.StmtWhile(w) => { out = inst_stmts(w.body, cur, gens, depth, out); },
+    ast.StmtFor(fr) => { out = inst_stmts(fr.body, for_body_scope(fr, cur), gens, depth, out); },
+    ast.StmtMatch(m) => {
+      var whole: typeinfo.Type = check_expr(m.scrutinee, cur);
+      for arm in m.arms { out = inst_stmts(arm.body, annotate_arm_scope(arm, cur, whole), gens, depth, out); }
+    },
+    ast.StmtDefer(d) => {
+      var one: ast.Stmt[] = [d.action];
+      out = inst_stmts(one, cur, gens, depth, out);
+    },
+    _ => {}
+  }
+  return out;
+}
+
+// instantiated_clones is native's monomorphisation as far as the checker needs
+// it: one concrete copy of a generic free function per instantiation reachable
+// from non-generic code, following the copies' own calls. Native re-checks
+// what monomorphisation produced, so a type a rule refuses when written — a
+// `Map[T, i32]` at T = f64 — is refused when an instantiation produces it.
+function instantiated_clones(mod: parser.Module, env: ModuleEnv): parser.FuncDecl[] {
+  var clones: parser.FuncDecl[] = [];
+  var gens: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    if (fd.receiver_name.len() == 0 && fd.all_type_params.len() > 0) { gens = gens.append(fd); }
+  }
+  if (gens.len() == 0) { return clones; }
+  var msc: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+  var pending: Inst[] = [];
+  for fd in mod.funcs {
+    if (fd.all_type_params.len() == 0) { pending = body_insts(fd, env, msc, gens, 0, pending); }
+  }
+  if (calls_a_generic(mod.top_stmts, msc)) { pending = inst_stmts(mod.top_stmts, msc, gens, 0, pending); }
+  var keys: string[] = [];
+  var wi: i32 = 0;
+  while (wi < pending.len()) {
+    var inst: Inst = pending[wi];
+    wi = wi + 1;
+    var spelled: string = "";
+    for ct in inst.cts {
+      if (spelled.len() > 0) { spelled = spelled + ";"; }
+      spelled = spelled + ct;
+    }
+    var key: string = inst.name + "__" + parser.sanitize_key(spelled);
+    if (inst.depth >= max_inst_depth() || util.has_str(keys, key)) { continue; }
+    keys = keys.append(key);
+    var g: parser.FuncDecl = gens[template_index(gens, inst.name)];
+    var cl: parser.FuncDecl = parser.instantiate_func(g, key, g.all_type_params, inst.cts, mod.impls);
+    clones = clones.append(cl);
+    pending = body_insts(cl, env, msc, gens, inst.depth + 1, pending);
+  }
+  return clones;
+}
+
+function body_insts(fd: parser.FuncDecl, env: ModuleEnv, msc: Scope, gens: parser.FuncDecl[], depth: i32, acc: Inst[]): Inst[] {
+  if (!calls_a_generic(fd.body, msc)) { return acc; }
+  return inst_stmts(fd.body, build_func_scope(fd, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), gens, depth, acc);
+}
+
+// check_module checks a module and then, when that is clean, the concrete
+// copies of its generics — the order native's check and monomorph re-check
+// run in, so an instantiation's diagnostics are reported only for a program
+// whose templates passed.
 pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // Native's checker resolves named arguments and fills omitted defaults
   // before it types anything, and reports what does not resolve (E076 /
@@ -17841,20 +18063,51 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   // reached, and a driver that already filled sees the same diagnostics again
   // because a call that did not resolve was left as written.
   var (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
+  var mod: parser.Module = prepared_module(filled);
+  var mt: ModuleTypes = check_module_pass(mod, fda_diags, []);
+  if (mt.diags.len() > 0) { return mt; }
+  var clones: parser.FuncDecl[] = instantiated_clones(mod, module_env(mod));
+  if (clones.len() == 0) { return mt; }
+  var funcs: parser.FuncDecl[] = mod.funcs;
+  var names: string[] = [];
+  for cl in clones {
+    funcs = funcs.append(cl);
+    names = names.append(cl.name);
+  }
+  var rt: ModuleTypes = check_module_pass(parser.Module { ...mod, funcs: funcs }, [], names);
+  if (rt.diags.len() == 0) { return mt; }
+  return ModuleTypes { ...mt, all_well_typed: false, diags: rt.diags };
+}
+
+// in_focus: a pass with a non-empty `focus` walks only the bodies it names.
+// The re-check over a clean module's clones names them, since every other body
+// already answered.
+function in_focus(focus: string[], fd: parser.FuncDecl): boolean {
+  return focus.len() == 0 || util.has_str(focus, fd.name);
+}
+
+// prepared_module is a default-filled module as the checker types it.
+function prepared_module(filled: parser.Module): parser.Module {
   // A value block's local is declared from the first arm's syntax alone
   // (parser.if_expr_rt), and a `use` binding from nothing at all; re-declare
   // both from the types the program spells before anything is typed against
   // them, or a legal `string` / `i64` arm value reads as a store into an i32
   // (#8657) and the binding reads as unknown. Lowering gets the same rewrite
-  // through annotate_module.
-  var revalued: parser.Module = pretype_module(filled);
+  // through annotate_module, and both first get each literal local's type
+  // (#10123).
+  var revalued: parser.Module = pretype_module(settle_literal_locals(filled));
   // The built-in struct declarations (Platform, Stream, HeaderMap, the
   // std/time types, …) are injected into the struct table, not written in any
   // source, so a checker reading `mod.structs` as parsed sees only the
   // reserved NAMES and reports E064 / E021 against every use of one. Native
   // registers the same decls before it types anything; this is that
   // registration.
-  var mod: parser.Module = parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
+  return parser.Module { ...revalued, structs: parser.inject_builtin_enums(revalued.structs) };
+}
+
+// check_module_pass types a prepared module; `fda_diags` are the default
+// filling's diagnostics, reported first.
+function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: string[]): ModuleTypes {
   // Collect struct decls first; func sigs + union aliases
   // both use them to resolve names. Union aliases come next
   // so func sigs can reference union-typed params / returns.
@@ -17949,7 +18202,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
   }
   var i: i32 = 0;
   while (i < mod.funcs.len()) {
-    if (derive_body_suppressed(mod.funcs[i], derive_keys)) {
+    if (!in_focus(focus, mod.funcs[i]) || derive_body_suppressed(mod.funcs[i], derive_keys)) {
       i = i + 1;
       continue;
     }
@@ -17992,12 +18245,8 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // caller, so it cannot dangle. Reporting on both flags every
     // `T[]`-returning function that hands a local array back — a move,
     // and legal — which is what bigint / sort / cmp / unicode do.
-    // The flag comes from the parser, not from ret_type: parse_type_name
-    // erases `[T]` to `T[]` exactly as it erases `str` to `string`, so
-    // by here the two spellings are one (hence ret_str beside it). The
-    // flag comes from the parser rather than ret_type because
-    // parse_type_name erases `[T]` to `T[]`, exactly as it erases `str`
-    // to `string` (hence ret_str beside it).
+    // The flag comes from the parser rather than ret_type because
+    // parse_type_name erases `[T]` to `T[]`.
     if (mod.funcs[i].ret_slice) {
       body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
@@ -18122,7 +18371,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // parameters in all_type_params rather than type_params, so both must
     // be empty. Methods are skipped too — their receiver may bind type
     // parameters that aren't in scope for this resolver.
-    if (efn.type_params.len() == 0 && efn.all_type_params.len() == 0 && efn.receiver_name.len() == 0) {
+    if (in_focus(focus, efn) && efn.type_params.len() == 0 && efn.all_type_params.len() == 0 && efn.receiver_name.len() == 0) {
       for param in efn.params {
         var pu: string = e064_unknown_name(param.type_name, struct_names, union_names, e064_extra);
         if (pu.len() > 0) {
@@ -18154,7 +18403,9 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     }
   }
   for func in mod.funcs {
-    body_diags = util.append_diags(body_diags, e044_diags(func, struct_names, union_names, e044_void_fns));
+    if (in_focus(focus, func)) {
+      body_diags = util.append_diags(body_diags, e044_diags(func, struct_names, union_names, e044_void_fns));
+    }
   }
   // E053 (`fip` no-allocation verification), E065 (`str` view escaping a
   // function-local string), and E032 (`use` binding-type inference).
@@ -18168,7 +18419,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     if (func.fbip) {
       fbip_names = fbip_names.append(func.name);
     }
-    if (func.ret_str) {
+    if (func.ret_type == "str") {
       str_ret_names = str_ret_names.append(func.name);
     }
   }
@@ -18198,7 +18449,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     // ones: a view of the owned string one of them BUILT dangles once
     // this frame drops it, so `slice_unchecked(mkstr(), 0, 1)` needs
     // mkstr's summary. Only `str` returns are REPORTED against.
-    if (sfn.ret_str || sfn.ret_type == "string") {
+    if (sfn.ret_type == "str" || sfn.ret_type == "string") {
       e065_fns = e065_fns.append(sfn);
       e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs));
       var initial: boolean[] = [];
@@ -18236,6 +18487,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     }
   }
   for xfn in mod.funcs {
+    if (!in_focus(focus, xfn)) { continue; }
     var xsc: Scope = build_func_scope(xfn, st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
     for param in xfn.params {
       body_diags = util.append_diags(body_diags, e045_annot_diags(param.type_name, xfn.line, xfn.col, xsc));
@@ -18247,7 +18499,7 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, util.append_all(fip_names, fip_builtin_callees(mod.funcs)), fbip_names, e053_variants, xsc));
     }
-    if (xfn.ret_str) {
+    if (xfn.ret_type == "str") {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
     body_diags = util.append_diags(body_diags, e065_cursor_diags(xfn));
@@ -18286,8 +18538,11 @@ pub function check_module(raw_mod: parser.Module): ModuleTypes {
     return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: false, diags: cgd };
   }
   // own_diags (E050/E051) and e049_diags (E049) walk whole-function bodies
-  // for move / capture analysis.
-  var dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, collect_decl_diags(mod)), body_diags), own_diags(mod)), e049_diags(mod)), e021_diags(mod)), derive_diags), e021_object_safety_diags(mod)), e060_e062_diags(mod)));
+  // for move / capture analysis. The declarations and impls are a re-check's
+  // template module's, which the first pass found clean.
+  var decl_diags: util.Diag[] = [];
+  if (focus.len() == 0) { decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), e021_diags(mod)), derive_diags); }
+  var dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, focus)), e049_diags(mod, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {
     well_typed = false;
   }
@@ -19524,9 +19779,39 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     ls = ls.bind(lm.params[i].name, pts[i]);
     i = i + 1;
   }
+  // A value block's result spelling is the parser's guess from the tail's
+  // syntax, so a checked tail that names a whole type replaces it.
   var typed: ast.ExprLambda = lm;
-  if (lm.ret_type.len() == 0) { typed = inferred_lambda_result(lm, ls); }
+  if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) { typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0); }
   return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
+// names_whole_type reports whether `t` is a complete type: nothing unknown in
+// it, and no generic union named with fewer arguments than it declares — a
+// bare `None` checks as the `Option` family, which no binding has.
+function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
+  if (type_contains_unknown(t)) { return false; }
+  match (t) {
+    typeinfo.TypeUnion(u) => { return u.args.len() >= union_arity(s, u.name) && all_names_whole(u.args, s); },
+    typeinfo.TypeArray(a) => { return names_whole_type(a.elem, s); },
+    typeinfo.TypeTuple(tt) => { return all_names_whole(tt.elements, s); },
+    typeinfo.TypeMap(m) => { return names_whole_type(m.key, s) && names_whole_type(m.value, s); },
+    typeinfo.TypeStruct(sd) => { return all_names_whole(sd.args, s); },
+    _ => { return true; }
+  }
+  return true;
+}
+
+function all_names_whole(ts: typeinfo.Type[], s: Scope): boolean {
+  for t in ts { if (!names_whole_type(t, s)) { return false; } }
+  return true;
+}
+
+// union_arity is how many type arguments the union `name` takes.
+function union_arity(s: Scope, name: string): i32 {
+  if (name == "Option") { return 1; }
+  if (name == "Result") { return 2; }
+  return s.lookup_union(name).type_params.len();
 }
 
 // A lambda spelling no result is hoisted as a declaration spelling none, and
@@ -19537,10 +19822,11 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
 // empty: a result nested inside another type that holds a function, which no
 // spelling carries, and a bare literal, which adapts to the width of whatever
 // receives the lambda.
-function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope): ast.ExprLambda {
+function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean): ast.ExprLambda {
   var (returned, at) = first_returned(lm.body, body_scope);
   if (bare_return(returned) || int_literal_tree(returned)) { return lm; }
   var t: typeinfo.Type = check_expr(returned, at);
+  if (need_whole && !names_whole_type(t, at)) { return lm; }
   if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return lm; } }
   if (is_unknown(t)) { return lm; }
   if let typeinfo.TypeFunc(_) = t {
@@ -19590,11 +19876,26 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 
 struct ForBinding { scope: Scope, valid: boolean }
 
+// range_var_type: a range loop's variable has its bounds' type — the first
+// bound that is not an untyped literal decides it, and two untyped bounds
+// leave the i32 default.
+function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
+  if let ast.ExprCall(c) = iter {
+    for bound in c.args {
+      if (!int_literal_tree(bound)) {
+        var t: typeinfo.Type = check_expr(bound, s);
+        if (is_integer(t)) { return t; }
+      }
+    }
+  }
+  return t_i32();
+}
+
 // Checking, diagnostics and annotation share the iterator's binding types.
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   var body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return ForBinding { scope: bind_for_element(body, fr.var_name, t_i32()), valid: !name_has_comma(fr.var_name) };
+    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !name_has_comma(fr.var_name) };
   }
   var it: typeinfo.Type = check_expr(fr.iter, s);
   match (it) {
@@ -19679,7 +19980,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
     ast.StmtVar(v) => {
       // Reuse the type resolved for the binding; the initializer sees s.
       var init = v.init;
-      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, v.name); }
+      if let ast.ExprLambda(lm) = v.init { init = annotate_lambda_expr(lm, s, rec_local_name(v)); }
       else { init = annotate_expr(v.init, s); }
       var callable: ast.ParamDecl = decltypes.fn_param_from_type(v.name, after.lookup(v.name));
       if (callable.type_name == "fn") {
@@ -19748,7 +20049,7 @@ pub function annotate_module(mod: parser.Module): parser.Module {
 }
 
 function annotate_module_in(mod: parser.Module, mt: ModuleTables): parser.Module {
-  var rmod: parser.Module = pretype_module_in(mod, mt);
+  var rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, mt), mt);
   var nfuncs: parser.FuncDecl[] = [];
   for func in rmod.funcs {
     nfuncs = nfuncs.append(annotate_func(func, mt));
@@ -20312,7 +20613,7 @@ function use_typed(c: ast.ExprCall, s: Scope): ast.ExprCall {
     if (p.type_name.len() == 0) {
       var sp: string = typeinfo.spelling(t);
       if (sp.len() == 0) { return c; }
-      p = ast.ParamDecl { ...lm.params[0], type_name: sp, is_str: sp == "str" };
+      p = ast.ParamDecl { ...lm.params[0], type_name: sp };
     }
     var nparams: ast.ParamDecl[] = [p];
     var i: i32 = 1;
@@ -20369,6 +20670,623 @@ function pretype_module_in(mod: parser.Module, mt: ModuleTables): parser.Module 
   var ntop: ast.Stmt[] = mod.top_stmts;
   if (top_hit) {
     ntop = pretype_stmts(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
+  }
+  return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
+}
+
+// ---------------------------------------------------------------------------
+// Literal locals (#10123).
+//
+// An unannotated local seeded by an untyped integer — `var x = 5`, or the
+// variable of a range loop over untyped bounds — takes ONE integer type: the
+// first use that fixes a width decides it, and it is i32 when no use does.
+// Native settles such a local while it types the body
+// (internal/checker/literal_local.go). This checker types from an immutable
+// AST, so settle_literal_locals infers each local's width first and writes it
+// into the source: an annotation on the `var`, a suffix on the literals of the
+// range bounds. The checker and the lowering then read one declared type. An
+// i32 local is left as written.
+//
+// The inference is union-find over the literal locals of one function. Two
+// locals an untyped expression joins (`var y = x + 1`, `x < y`, `x = y`) share
+// a class; a use that reads a class member at a typed integer (an annotated
+// destination, a typed operand, a parameter, a return) fixes the class unless
+// an earlier use already did. A later, different width is left for the checker
+// to report against the declaration this pass writes.
+
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[] }
+
+struct LitRewrite { keys: string[], tags: string[] }
+
+const LIT_MARK: string = "literal local #";
+
+// A literal local is bound in the inference scope under a marker type naming
+// its class, so the checker's own scoping decides which declaration a name
+// reads.
+function lit_marker(k: i32): typeinfo.Type {
+  return t_unknown(LIT_MARK + util.i32_to_string(k));
+}
+
+function lit_id(t: typeinfo.Type): i32 {
+  if let typeinfo.TypeUnknown(u) = t {
+    var n: i32 = LIT_MARK.len();
+    if (u.reason.len() <= n || slice_unchecked(u.reason, 0, n) != LIT_MARK) { return 0 - 1; }
+    var k: i32 = 0;
+    var i: i32 = n;
+    while (i < u.reason.len()) {
+      k = k * 10 + (u.reason[i] as i32) - 48;
+      i = i + 1;
+    }
+    return k;
+  }
+  return 0 - 1;
+}
+
+// lit_tree reports whether `e` is an untyped integer tree — unsuffixed
+// literals and literal locals under sign and arithmetic operators, the shape
+// native's settleInt descends — and appends the literal locals it reads.
+function lit_tree(e: ast.Expr, s: Scope, ids: i32[]): (boolean, i32[]) {
+  match (e) {
+    ast.ExprNumber(_) => { return (unsettled_int_literal(e), ids); },
+    ast.ExprIdent(id) => {
+      var k: i32 = lit_id(s.lookup(id.name));
+      if (k < 0) { return (false, ids); }
+      return (true, ids.append(k));
+    },
+    ast.ExprUnary(u) => {
+      if (u.op == "-" || u.op == "+") { return lit_tree(u.operand, s, ids); }
+      return (false, ids);
+    },
+    ast.ExprBinary(b) => {
+      if (!int_operand_op(b.op)) { return (false, ids); }
+      var (l, lids) = lit_tree(b.left, s, ids);
+      var (r, rids) = lit_tree(b.right, s, lids);
+      return (l && r, rids);
+    },
+    _ => { return (false, ids); }
+  }
+  return (false, ids);
+}
+
+function lit_find(st: LitInfer, k: i32): i32 {
+  var r: i32 = k;
+  while (st.parent[r] != r) { r = st.parent[r]; }
+  return r;
+}
+
+function lit_new(st: LitInfer, key: string): LitInfer {
+  return LitInfer { parent: st.parent.append(st.parent.len()), width: st.width.append(t_unknown("open")), keys: st.keys.append(key) };
+}
+
+// lit_fix gives every open class among `ids` the integer type `w`.
+function lit_fix(st: LitInfer, ids: i32[], w: typeinfo.Type): LitInfer {
+  if (!is_integer(w)) { return st; }
+  var out: LitInfer = st;
+  for k in ids {
+    var r: i32 = lit_find(out, k);
+    if (is_unknown(out.width[r])) { out = LitInfer { ...out, width: out.width.with(r, w) }; }
+  }
+  return out;
+}
+
+// lit_link joins the classes of `ids`. Two classes already fixed stay apart:
+// their members disagree, and the checker reports it where one is read.
+function lit_link(st: LitInfer, ids: i32[]): LitInfer {
+  var out: LitInfer = st;
+  var i: i32 = 1;
+  while (i < ids.len()) {
+    var ra: i32 = lit_find(out, ids[0]);
+    var rb: i32 = lit_find(out, ids[i]);
+    var afixed: boolean = !is_unknown(out.width[ra]);
+    var bfixed: boolean = !is_unknown(out.width[rb]);
+    if (ra != rb && !(afixed && bfixed)) {
+      if (bfixed) {
+        out = LitInfer { ...out, parent: out.parent.with(ra, rb) };
+      } else {
+        out = LitInfer { ...out, parent: out.parent.with(rb, ra) };
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function lit_is_cmp(op: string): boolean {
+  return op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=";
+}
+
+// lit_demand: `e` is read at `want`, so an untyped tree takes it.
+function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
+  if (is_integer(want)) {
+    var (seed, ids) = lit_tree(e, s, []);
+    if (seed) { return lit_fix(st, ids, want); }
+  }
+  match (want) {
+    typeinfo.TypeTuple(wt) => {
+      if let ast.ExprTuple(tl) = e {
+        if (tl.elements.len() == wt.elements.len()) {
+          var out: LitInfer = st;
+          var i: i32 = 0;
+          while (i < tl.elements.len()) {
+            out = lit_demand(tl.elements[i], wt.elements[i], s, out);
+            i = i + 1;
+          }
+          return out;
+        }
+      }
+    },
+    typeinfo.TypeArray(wa) => {
+      if let ast.ExprArray(arr) = e {
+        var out: LitInfer = st;
+        for el in arr.elements { out = lit_demand(el, wa.elem, s, out); }
+        return out;
+      }
+    },
+    _ => {}
+  }
+  return lit_expr(e, s, st);
+}
+
+// lit_arg: `e` stands alone — an untyped tree's members share one type, and
+// anything else is walked for the uses inside it.
+function lit_arg(e: ast.Expr, s: Scope, st: LitInfer): LitInfer {
+  var (seed, ids) = lit_tree(e, s, []);
+  if (seed) { return lit_link(st, ids); }
+  return lit_expr(e, s, st);
+}
+
+function lit_binary(b: ast.ExprBinary, s: Scope, st: LitInfer): LitInfer {
+  if (!int_operand_op(b.op) && !lit_is_cmp(b.op)) {
+    return lit_expr(b.right, s, lit_expr(b.left, s, st));
+  }
+  var (ls, lids) = lit_tree(b.left, s, []);
+  var (rs, rids) = lit_tree(b.right, s, []);
+  if (ls && rs) {
+    var all: i32[] = lids;
+    for k in rids { all = all.append(k); }
+    return lit_link(st, all);
+  }
+  if (ls) {
+    var out: LitInfer = st;
+    if (lids.len() > 0) { out = lit_fix(out, lids, check_expr(b.right, s)); }
+    return lit_expr(b.right, s, out);
+  }
+  if (rs) {
+    var out2: LitInfer = st;
+    if (rids.len() > 0) { out2 = lit_fix(out2, rids, check_expr(b.left, s)); }
+    return lit_expr(b.left, s, out2);
+  }
+  return lit_expr(b.right, s, lit_expr(b.left, s, st));
+}
+
+// lit_call: an argument is read at its parameter's type. A value block's
+// value reaches whatever the block sits in, which its desugared lambda's
+// result does not spell, so its returns are walked without a destination.
+function lit_call(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
+  if (parser.is_value_block(c)) {
+    if let ast.ExprLambda(vb) = c.callee {
+      return lit_stmts(vb.body, lambda_body_scope(vb, s).with_ret_type(t_unknown("value block")), st);
+    }
+  }
+  var out: LitInfer = lit_expr(c.callee, s, st);
+  var reads: boolean = false;
+  for arg in c.args {
+    var (seed, ids) = lit_tree(arg, s, []);
+    reads = reads || (seed && ids.len() > 0) || lit_composite(arg);
+  }
+  var pts: typeinfo.Type[] = [];
+  if (reads) { pts = s.call_param_types(c); }
+  var i: i32 = 0;
+  while (i < c.args.len()) {
+    if (i < pts.len()) {
+      out = lit_demand(c.args[i], pts[i], s, out);
+    } else {
+      out = lit_arg(c.args[i], s, out);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function lit_composite(e: ast.Expr): boolean {
+  if let ast.ExprTuple(_) = e { return true; }
+  if let ast.ExprArray(_) = e { return true; }
+  return false;
+}
+
+// lit_array: the elements of an array literal share one type, so an untyped
+// element takes a typed sibling's.
+function lit_array(arr: ast.ExprArray, s: Scope, st: LitInfer): LitInfer {
+  var out: LitInfer = st;
+  var ids: i32[] = [];
+  var sibling: typeinfo.Type = t_unknown("no typed element");
+  for el in arr.elements {
+    var (seed, eids) = lit_tree(el, s, []);
+    if (seed) {
+      for k in eids { ids = ids.append(k); }
+    } else {
+      out = lit_expr(el, s, out);
+      if (is_unknown(sibling) && ids.len() > 0) { sibling = check_expr(el, s); }
+    }
+  }
+  if (ids.len() == 0) { return out; }
+  if (is_unknown(sibling) && ids.len() < arr.elements.len()) {
+    for el in arr.elements {
+      var (seed2, e2) = lit_tree(el, s, []);
+      if (!seed2 && is_unknown(sibling)) { sibling = check_expr(el, s); }
+    }
+  }
+  return lit_fix(lit_link(out, ids), ids, sibling);
+}
+
+function lit_struct_lit(sl: ast.ExprStructLit, s: Scope, st: LitInfer): LitInfer {
+  var out: LitInfer = st;
+  var sig: StructSig = s.lookup_struct(sl.type_name);
+  var i: i32 = 0;
+  while (i < sl.field_values.len()) {
+    var want: typeinfo.Type = t_unknown("no field");
+    if (sig.type_params.len() == 0 && i < sl.field_names.len()) {
+      var j: i32 = 0;
+      while (j < sig.field_names.len()) {
+        if (sig.field_names[j] == sl.field_names[i] && j < sig.field_types.len()) { want = sig.field_types[j]; }
+        j = j + 1;
+      }
+    }
+    out = lit_demand(sl.field_values[i], want, s, out);
+    i = i + 1;
+  }
+  if (sl.has_base) { out = lit_expr(sl.base, s, out); }
+  return out;
+}
+
+// lit_index: a position is an i32, and a map's key its key type.
+function lit_index(ix: ast.ExprIndex, s: Scope, st: LitInfer): LitInfer {
+  var (seed, ids) = lit_tree(ix.index, s, []);
+  if (!seed) { return lit_expr(ix.index, s, st); }
+  if (ids.len() == 0) { return st; }
+  var want: typeinfo.Type = t_i32();
+  if let typeinfo.TypeMap(tm) = check_expr(ix.array, s) { want = tm.key; }
+  return lit_fix(st, ids, want);
+}
+
+// lit_expr walks an expression whose own value no context types, for the
+// uses of literal locals inside it.
+function lit_expr(e: ast.Expr, s: Scope, st: LitInfer): LitInfer {
+  match (e) {
+    ast.ExprBinary(b) => { return lit_binary(b, s, st); },
+    ast.ExprUnary(u) => { return lit_arg(u.operand, s, st); },
+    ast.ExprCall(c) => { return lit_call(c, s, st); },
+    ast.ExprArray(arr) => { return lit_array(arr, s, st); },
+    ast.ExprStructLit(sl) => { return lit_struct_lit(sl, s, st); },
+    ast.ExprLambda(lm) => { return lit_lambda(lm, s, st); },
+    ast.ExprTuple(tl) => {
+      var out: LitInfer = st;
+      for el in tl.elements { out = lit_arg(el, s, out); }
+      return out;
+    },
+    ast.ExprIndex(ix) => { return lit_index(ix, s, lit_arg(ix.array, s, st)); },
+    ast.ExprSlice(sx) => {
+      var out2: LitInfer = lit_arg(sx.array, s, st);
+      if (!sx.open_start) { out2 = lit_demand(sx.start, t_i32(), s, out2); }
+      if (!sx.open_end) { out2 = lit_demand(sx.end, t_i32(), s, out2); }
+      return out2;
+    },
+    ast.ExprFieldAccess(fa) => { return lit_arg(fa.obj, s, st); },
+    ast.ExprMapLit(ml) => {
+      var out3: LitInfer = st;
+      for k in ml.keys { out3 = lit_arg(k, s, out3); }
+      for v in ml.vals { out3 = lit_arg(v, s, out3); }
+      return out3;
+    },
+    ast.ExprFString(fs) => {
+      var out4: LitInfer = st;
+      var q: i32 = 0;
+      while (q < fs.exprs.len()) {
+        if (fs.is_expr[q]) { out4 = lit_arg(fs.exprs[q], s, out4); }
+        q = q + 1;
+      }
+      return out4;
+    },
+    _ => { return st; }
+  }
+  return st;
+}
+
+// lit_lambda walks a lambda body in its own scope. A lambda that spells no
+// result takes one from its returns when it is checked, so a literal local it
+// returns is committed there: to the width its class already has, else i32 —
+// native's settleLitReturns.
+function lit_lambda(lm: ast.ExprLambda, s: Scope, st: LitInfer): LitInfer {
+  var bs: Scope = lambda_body_scope(lm, s);
+  var out: LitInfer = lit_stmts(lm.body, bs, st);
+  if (lm.ret_type.len() > 0) { return out; }
+  var ids: i32[] = lit_return_ids(lm.body, bs, []);
+  if (ids.len() == 0) { return out; }
+  var w: typeinfo.Type = t_i32();
+  for k in ids {
+    var r: i32 = lit_find(out, k);
+    if (!is_unknown(out.width[r]) && type_eq(w, t_i32())) { w = out.width[r]; }
+  }
+  return lit_fix(out, ids, w);
+}
+
+function lit_return_ids(stmts: ast.Stmt[], s: Scope, ids: i32[]): i32[] {
+  var cur: Scope = s;
+  for stmt in stmts {
+    match (stmt) {
+      ast.StmtReturn(r) => {
+        var (seed, rids) = lit_tree(r.value, cur, []);
+        if (seed) { for k in rids { ids = ids.append(k); } }
+      },
+      ast.StmtIf(f) => {
+        ids = lit_return_ids(f.then_body, cur, ids);
+        ids = lit_return_ids(f.else_body, cur, ids);
+      },
+      ast.StmtWhile(w) => { ids = lit_return_ids(w.body, cur, ids); },
+      ast.StmtFor(fr) => { ids = lit_return_ids(fr.body, for_body_scope(fr, cur), ids); },
+      ast.StmtMatch(m) => {
+        for arm in m.arms { ids = lit_return_ids(arm.body, cur, ids); }
+      },
+      _ => {}
+    }
+    cur = bind_stmt(stmt, cur);
+  }
+  return ids;
+}
+
+function lit_var_key(v: ast.StmtVar): string {
+  return "v" + util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ":" + v.name;
+}
+
+function lit_for_key(fr: ast.StmtFor, lo: ast.Expr): string {
+  return "f" + util.i32_to_string(fr.line) + ":" + util.i32_to_string(ast.expr_line(lo)) + ":" + util.i32_to_string(ast.expr_col(lo)) + ":" + fr.var_name;
+}
+
+function lit_range_bounds(iter: ast.Expr): ast.Expr[] {
+  if let ast.ExprCall(c) = iter { return c.args; }
+  return [];
+}
+
+// lit_range: `for i in LOW..HIGH` declares `i` from LOW and compares it with
+// HIGH, so all three share a type — the one a typed bound has, when either
+// has one.
+function lit_range(fr: ast.StmtFor, s: Scope, st: LitInfer): LitInfer {
+  var bounds: ast.Expr[] = lit_range_bounds(fr.iter);
+  var (ls, lids) = lit_tree(bounds[0], s, []);
+  var (hs, hids) = lit_tree(bounds[1], s, []);
+  var out: LitInfer = st;
+  if (!ls) { out = lit_expr(bounds[0], s, out); }
+  if (!hs) { out = lit_expr(bounds[1], s, out); }
+  var body: Scope = for_body_scope(fr, s);
+  if (ls) {
+    var k: i32 = out.parent.len();
+    out = lit_new(out, lit_for_key(fr, bounds[0]));
+    var ids: i32[] = [k];
+    for a in lids { ids = ids.append(a); }
+    if (hs) {
+      for b in hids { ids = ids.append(b); }
+      out = lit_link(out, ids);
+    } else {
+      out = lit_fix(lit_link(out, ids), ids, check_expr(bounds[1], s));
+    }
+    body = body.bind(fr.var_name, lit_marker(k));
+  } else if (hs) {
+    out = lit_fix(out, hids, check_expr(bounds[0], s));
+  }
+  return lit_stmts(fr.body, body, out);
+}
+
+function lit_stmts(stmts: ast.Stmt[], s: Scope, st: LitInfer): LitInfer {
+  var cur: Scope = s;
+  var out: LitInfer = st;
+  for stmt in stmts {
+    var (ns, nst) = lit_stmt(stmt, cur, out);
+    cur = ns;
+    out = nst;
+  }
+  return out;
+}
+
+function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
+  match (stmt) {
+    ast.StmtVar(v) => {
+      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+      }
+      if (v.type_name.len() > 0) {
+        return (bind_stmt(stmt, s), lit_demand(v.init, var_declared_type(v, s), s, st));
+      }
+      var (seed, ids) = lit_tree(v.init, s, []);
+      if (!seed) {
+        return (bind_stmt(stmt, s), lit_expr(v.init, s, st));
+      }
+      var k: i32 = st.parent.len();
+      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(st, lit_var_key(v)), ids.append(k)));
+    },
+    ast.StmtAssign(a) => {
+      var tk: i32 = lit_id(s.lookup(a.target));
+      if (tk < 0) {
+        return (s, lit_demand(a.value, s.lookup(a.target), s, st));
+      }
+      var (seed2, ids2) = lit_tree(a.value, s, []);
+      if (seed2) {
+        return (s, lit_link(st, ids2.append(tk)));
+      }
+      var walked: LitInfer = lit_expr(a.value, s, st);
+      return (s, lit_fix(walked, [tk], check_expr(a.value, s)));
+    },
+    ast.StmtReturn(r) => {
+      return (s, lit_demand(r.value, s.ret_type, s, st));
+    },
+    ast.StmtExpr(x) => {
+      return (s, lit_expr(x.value, s, st));
+    },
+    ast.StmtIf(f) => {
+      var ci: LitInfer = lit_expr(f.cond, s, st);
+      return (s, lit_stmts(f.else_body, s, lit_stmts(f.then_body, s, ci)));
+    },
+    ast.StmtWhile(w) => {
+      return (s, lit_stmts(w.body, s, lit_expr(w.cond, s, st)));
+    },
+    ast.StmtFor(fr) => {
+      if (for_iter_is_range(fr.iter)) {
+        return (s, lit_range(fr, s, st));
+      }
+      return (s, lit_stmts(fr.body, for_body_scope(fr, s), lit_expr(fr.iter, s, st)));
+    },
+    ast.StmtMatch(m) => {
+      var out: LitInfer = lit_arg(m.scrutinee, s, st);
+      var whole: typeinfo.Type = check_expr(m.scrutinee, s);
+      for arm in m.arms {
+        var asc: Scope = annotate_arm_scope(arm, s, whole);
+        if (arm.has_guard) { out = lit_expr(arm.guard, asc, out); }
+        out = lit_stmts(arm.body, asc, out);
+      }
+      return (s, out);
+    },
+    ast.StmtDefer(d) => {
+      var (ds, dst) = lit_stmt(d.action, s, st);
+      return (s, dst);
+    },
+    _ => { return (s, st); }
+  }
+  return (s, st);
+}
+
+// lit_rewrites lists the declarations whose class settled at a type other
+// than i32, with the spelling to write. A key two candidates share — two
+// synthesized declarations at one position — is dropped when they disagree.
+function lit_rewrites(st: LitInfer): LitRewrite {
+  var keys: string[] = [];
+  var tags: string[] = [];
+  var k: i32 = 0;
+  while (k < st.keys.len()) {
+    var w: typeinfo.Type = st.width[lit_find(st, k)];
+    var tag: string = "i32";
+    if (!is_unknown(w)) { tag = typeinfo.spelling(w); }
+    var at: i32 = util.index_of_str(keys, st.keys[k]);
+    if (at < 0) {
+      keys = keys.append(st.keys[k]);
+      tags = tags.append(tag);
+    } else if (tags[at] != tag) {
+      tags = tags.with(at, "");
+    }
+    k = k + 1;
+  }
+  var ok: string[] = [];
+  var ot: string[] = [];
+  var i: i32 = 0;
+  while (i < keys.len()) {
+    if (tags[i].len() > 0 && tags[i] != "i32") {
+      ok = ok.append(keys[i]);
+      ot = ot.append(tags[i]);
+    }
+    i = i + 1;
+  }
+  return LitRewrite { keys: ok, tags: ot };
+}
+
+// The literal suffixes check_expr reads; a width with no suffix (usize) keeps
+// its bounds as written.
+function lit_suffix_spelled(tag: string): boolean {
+  return tag == "i64" || tag == "u64" || tag == "u32" || tag == "u8";
+}
+
+function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, boolean) {
+  match (st) {
+    ast.StmtVar(v) => {
+      if (v.type_name.len() > 0) { return (st, rw, false); }
+      var at: i32 = util.index_of_str(rw.keys, lit_var_key(v));
+      if (at < 0) { return (st, rw, false); }
+      var (ie, ia, ih) = astwalk.map_expr_acc(v.init, rw, lit_rewrite_stmt, lit_rewrite_expr);
+      return (ast.StmtVar { ...v, type_name: rw.tags[at], init: ie }, rw, true);
+    },
+    ast.StmtFor(fr) => {
+      if (!for_iter_is_range(fr.iter)) { return (st, rw, false); }
+      var bounds: ast.Expr[] = lit_range_bounds(fr.iter);
+      var at2: i32 = util.index_of_str(rw.keys, lit_for_key(fr, bounds[0]));
+      if (at2 < 0 || !lit_suffix_spelled(rw.tags[at2])) { return (st, rw, false); }
+      var tag: string = rw.tags[at2];
+      var nb: ast.Expr[] = [];
+      for bound in bounds {
+        if (int_literal_tree(bound)) { nb = nb.append(settle_int_tree(bound, tag)); } else { nb = nb.append(bound); }
+      }
+      var iter: ast.Expr = fr.iter;
+      if let ast.ExprCall(c) = fr.iter { iter = ast.ExprCall { ...c, args: nb }; }
+      var (body, ba) = astwalk.map_stmts_acc(fr.body, rw, lit_rewrite_stmt, lit_rewrite_expr);
+      return (ast.StmtFor { ...fr, iter: iter, body: body }, rw, true);
+    },
+    _ => { return (st, rw, false); }
+  }
+  return (st, rw, false);
+}
+
+function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, boolean) {
+  return (e, rw, false);
+}
+
+// lit_candidate_at: a declaration the inference could type — the pre-scan
+// that keeps functions with none off the scoped walk.
+function lit_candidate_at(st: ast.Stmt, own found: boolean): boolean {
+  if (found) { return true; }
+  match (st) {
+    ast.StmtVar(v) => {
+      return v.type_name.len() == 0 && !name_has_comma(v.name) && int_literal_tree(v.init);
+    },
+    ast.StmtFor(fr) => {
+      if (!for_iter_is_range(fr.iter)) { return false; }
+      var bounds: ast.Expr[] = lit_range_bounds(fr.iter);
+      return int_literal_tree(bounds[0]) || int_literal_tree(bounds[1]);
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
+function lit_no_expr(e: ast.Expr, own found: boolean): boolean {
+  return found;
+}
+
+function needs_lit_settle(stmts: ast.Stmt[]): boolean {
+  var found: boolean = false;
+  for stmt in stmts {
+    found = astwalk.fold_stmt_nodes(stmt, found, lit_candidate_at, lit_no_expr, astwalk.descend_all);
+  }
+  return found;
+}
+
+function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
+  var st: LitInfer = lit_stmts(stmts, s, LitInfer { parent: [], width: [], keys: [] });
+  var rw: LitRewrite = lit_rewrites(st);
+  if (rw.keys.len() == 0) { return stmts; }
+  var (out, ra) = astwalk.map_stmts_acc(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr);
+  return out;
+}
+
+// settle_literal_locals writes each literal local's inferred type into the
+// module, ahead of the checker's diagnostics and of lowering.
+pub function settle_literal_locals(mod: parser.Module): parser.Module {
+  var any: boolean = needs_lit_settle(mod.top_stmts);
+  for fd in mod.funcs {
+    if (!any && needs_lit_settle(fd.body)) { any = true; }
+  }
+  if (!any) { return mod; }
+  return settle_literal_locals_in(mod, build_module_tables(mod));
+}
+
+function settle_literal_locals_in(mod: parser.Module, mt: ModuleTables): parser.Module {
+  var nfuncs: parser.FuncDecl[] = [];
+  for func in mod.funcs {
+    if (needs_lit_settle(func.body)) {
+      var fs: Scope = build_func_scope(func, mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs);
+      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: settle_lit_body(func.body, fs) });
+    } else {
+      nfuncs = nfuncs.append(func);
+    }
+  }
+  var ntop: ast.Stmt[] = mod.top_stmts;
+  if (needs_lit_settle(mod.top_stmts)) {
+    ntop = settle_lit_body(mod.top_stmts, new_scope_full(mt.sigs, mt.structs, mt.unions, mt.methods, mt.imports, mt.impls, mt.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }

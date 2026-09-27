@@ -254,10 +254,8 @@ function main(): i32 {
             // census counts against the default target.
             var desc: platforms.Descriptor = platforms.for_target("arm64-linux");
             merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
-            // The pipeline every real driver runs before it lowers:
-            // `ircore.lift_lambdas(parser.module_with_builtins(merged))`
-            // (asm_load_run, asm_modload_run, asm_ir_run, asm_ir_elig_run,
-            // asm_pathprobe_run). This used to hand-roll a prefix of it —
+            // The pipeline the CLI's typed route runs before it lowers:
+            // `lift_lambdas_typed(parser.module_with_builtins_typed(merged))`. This used to hand-roll a prefix of it —
             // the three method-generic registrations and the enum injection —
             // and skip the rest, so it measured a module the compiler never
             // lowers and charged the difference to the boundary. It cost a
@@ -265,9 +263,9 @@ function main(): i32 {
             // here and produces whole in production, because
             // `hoist_local_funcs_module` is one of the passes that was missing
             // (#9773, #9778).
-            merged = parser.module_with_builtins(merged);
-            merged = irlower.lift_lambdas(merged);
-            var tab: irlower.StructTab = irlower.struct_tab(merged.structs);
+            merged = parser.module_with_builtins_typed(merged);
+            merged = irlower.lift_lambdas_typed(merged);
+            var tab: irlower.StructTab = irlower.struct_tab(parser.erase_str_structs(merged.structs));
 
             report(merged, tab);
             return 0;

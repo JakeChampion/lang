@@ -28,13 +28,13 @@ function shadow(ctx: Context, names: string[]): Context {
 }
 
 // Each list owns its scope. An ordinary initializer still sees the old
-// binding; a recursive lambda initializer sees its own declared function.
+// binding; a nested function's sees its own declared function.
 function body(stmts: ast.Stmt[], ctx: Context): (ast.Stmt[], Context) {
     var out: ast.Stmt[] = [];
     for stmt in stmts {
         var initctx: Context = ctx;
         if let ast.StmtVar(v) = stmt {
-            if let ast.ExprLambda(lm) = v.init {
+            if (ast.var_binds_itself(v)) {
                 initctx = shadow(ctx, astwalk.append_bound_name([], v.name));
             }
         }
