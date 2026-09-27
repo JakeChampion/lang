@@ -91,3 +91,128 @@ function __fern_utf8_valid(data: usize, len: usize): i32 {
     }
     return 1;
 }
+
+// The socket floor (#9853): one body per helper over `__syscall3`, with the
+// syscall numbers and the sockaddr layout keyed by target. Each answers a
+// descriptor or the kernel's -errno, as the builtins it backs always have.
+
+function __sys_socket(): i32 {
+    if (target_arch() == "x86-64") { return 41; }
+    if (target_os() == "darwin") { return 97; }
+    return 198;
+}
+function __sys_bind(): i32 {
+    if (target_arch() == "x86-64") { return 49; }
+    if (target_os() == "darwin") { return 104; }
+    return 200;
+}
+function __sys_listen(): i32 {
+    if (target_arch() == "x86-64") { return 50; }
+    if (target_os() == "darwin") { return 106; }
+    return 201;
+}
+function __sys_accept(): i32 {
+    if (target_arch() == "x86-64") { return 43; }
+    if (target_os() == "darwin") { return 30; }
+    return 202;
+}
+function __sys_connect(): i32 {
+    if (target_arch() == "x86-64") { return 42; }
+    if (target_os() == "darwin") { return 98; }
+    return 203;
+}
+function __sys_getsockname(): i32 {
+    if (target_arch() == "x86-64") { return 51; }
+    if (target_os() == "darwin") { return 32; }
+    return 204;
+}
+function __sys_close(): i32 {
+    if (target_arch() == "x86-64") { return 3; }
+    if (target_os() == "darwin") { return 6; }
+    return 57;
+}
+
+// A sockaddr_in in a fresh 16-byte block: Darwin leads with sin_len and a
+// one-byte family, Linux with a two-byte family; then the port in network
+// order, the address as its packed network-order bytes, and eight zero bytes.
+function __sockaddr_in(port: i32, host_be: i32): usize {
+    var sa: usize = __alloc(16);
+    if (target_os() == "darwin") {
+        __store_u8(sa, 16);
+        __store_u8(sa + 1, 2);
+    } else {
+        __store_u8(sa, 2);
+        __store_u8(sa + 1, 0);
+    }
+    __store_u8(sa + 2, (port >> 8) & 255);
+    __store_u8(sa + 3, port & 255);
+    __store_u8(sa + 4, host_be & 255);
+    __store_u8(sa + 5, (host_be >> 8) & 255);
+    __store_u8(sa + 6, (host_be >> 16) & 255);
+    __store_u8(sa + 7, (host_be >> 24) & 255);
+    var z: usize = 8;
+    while (z < 16) {
+        __store_u8(sa + z, 0);
+        z = z + 1;
+    }
+    return sa;
+}
+
+// __fern_tcp_listen(port) is a socket listening on 0.0.0.0:port with a
+// backlog of 128, or the -errno of the step that failed with the socket
+// closed again.
+function __fern_tcp_listen(port: i32): i32 {
+    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_in(port, 0);
+    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, 16);
+    if (r >= 0) { r = __syscall3(__sys_listen(), fd, 128, 0); }
+    __free(sa, 16);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
+}
+
+// __fern_tcp_connect(host_be, port) is a socket connected to the IPv4
+// address packed in network order, or -errno with the socket closed again.
+function __fern_tcp_connect(host_be: i32, port: i32): i32 {
+    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_in(port, host_be);
+    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, 16);
+    __free(sa, 16);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
+}
+
+function __fern_tcp_accept(fd: i32): i32 {
+    return __syscall3(__sys_accept(), fd as i64, 0, 0) as i32;
+}
+
+function __fern_tcp_close(fd: i32): i32 {
+    return __syscall3(__sys_close(), fd as i64, 0, 0) as i32;
+}
+
+// A native pollable is the descriptor itself.
+function __fern_tcp_pollable(fd: i32): i32 {
+    return fd;
+}
+
+// __fern_tcp_local_port(fd) reads the bound port back through getsockname:
+// the two network-order bytes at offset 2 of the address, which sit there on
+// Darwin too, since sin_len displaces the family and not the port. The
+// socklen_t the call reads and writes follows the address in the same block.
+function __fern_tcp_local_port(fd: i32): i32 {
+    var sa: usize = __alloc(20);
+    __store_i32(sa + 16, 16);
+    var r: i64 = __syscall3(__sys_getsockname(), fd as i64, sa as i64, (sa + 16) as i64);
+    var port: i32 = (__load_u8(sa + 2) << 8) | __load_u8(sa + 3);
+    __free(sa, 20);
+    if (r < 0) { return r as i32; }
+    return port;
+}

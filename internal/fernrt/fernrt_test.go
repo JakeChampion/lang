@@ -7,32 +7,40 @@ import (
 	"github.com/jakechampion/lang/internal/ir"
 )
 
-// The source must front-end cleanly and lower for every pointer width a
-// backend asks with; a helper that fails here would fail inside every Emit
-// that needs it.
-func TestEveryHelperLowersForEveryPointerWidth(t *testing.T) {
+// The targets the backends ask with.
+var targets = []Target{
+	{PtrW: 8, OS: "linux", Arch: "x86-64"},
+	{PtrW: 8, OS: "linux", Arch: "arm64"},
+	{PtrW: 8, OS: "darwin", Arch: "arm64"},
+	{PtrW: 4, OS: "wasi", Arch: "wasm32"},
+}
+
+// The source must front-end cleanly and lower for every target a backend
+// asks with; a helper that fails here would fail inside every Emit that
+// needs it.
+func TestEveryHelperLowersForEveryTarget(t *testing.T) {
 	names := Names()
 	if len(names) == 0 {
 		t.Fatal("runtime.fern defines no helpers")
 	}
-	for _, ptrW := range []int{4, 8} {
+	for _, tg := range targets {
 		for _, name := range names {
-			decl, fn, err := Func(name, ptrW)
+			decl, fn, err := Func(name, tg)
 			if err != nil {
-				t.Fatalf("Func(%q, %d): %v", name, ptrW, err)
+				t.Fatalf("Func(%q, %v): %v", name, tg, err)
 			}
 			if decl.Name != name || fn.Name != name {
-				t.Errorf("Func(%q, %d) returned %q / %q", name, ptrW, decl.Name, fn.Name)
+				t.Errorf("Func(%q, %v) returned %q / %q", name, tg, decl.Name, fn.Name)
 			}
-			if fn.PtrW != ptrW {
-				t.Errorf("%s at ptrW=%d lowered with PtrW=%d", name, ptrW, fn.PtrW)
+			if fn.PtrW != tg.PtrW {
+				t.Errorf("%s for %v lowered with PtrW=%d", name, tg, fn.PtrW)
 			}
 			if len(fn.Ops) == 0 {
-				t.Errorf("%s at ptrW=%d lowered to no ops", name, ptrW)
+				t.Errorf("%s for %v lowered to no ops", name, tg)
 			}
 		}
 	}
-	if _, _, err := Func("__fern_no_such_helper", 8); err == nil {
+	if _, _, err := Func("__fern_no_such_helper", targets[0]); err == nil {
 		t.Error("Func on an undefined helper returned no error")
 	}
 	if Has("__fern_no_such_helper") || !Has("__fern_utf8_valid") {
@@ -46,11 +54,20 @@ func TestEveryHelperLowersForEveryPointerWidth(t *testing.T) {
 // operation the helper implements would be the circularity the floor exists
 // to avoid.
 func TestHelpersCallOnlyTheFloorOrEachOther(t *testing.T) {
-	for _, name := range Names() {
-		_, fn, err := Func(name, 8)
-		if err != nil {
-			t.Fatal(err)
+	for _, tg := range targets {
+		for _, name := range Names() {
+			_, fn, err := Func(name, tg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkFloorOnly(t, name, fn)
 		}
+	}
+}
+
+func checkFloorOnly(t *testing.T, name string, fn *ir.Func) {
+	t.Helper()
+	{
 		for _, op := range fn.Ops {
 			switch op.Kind {
 			case ir.OpCallDirect:
@@ -83,7 +100,7 @@ func TestHelpersLowerUnderCover(t *testing.T) {
 		cache = map[cacheKey]*lowered{}
 		mu.Unlock()
 	})
-	_, fn, err := Func("__fern_utf8_valid", 8)
+	_, fn, err := Func("__fern_utf8_valid", targets[0])
 	if err != nil {
 		t.Fatalf("Func under -cover: %v", err)
 	}

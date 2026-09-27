@@ -93,13 +93,30 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// The raw floor passes its syscall number at run time, so no allowlist
-// covers it: a sandboxed build is refused, naming the callee, rather than
-// handed a filter that kills the program at its first call. Without the
-// sandbox the same program emits and records nothing for the raw site.
+// The raw floor's number is recorded when it is a literal — the shape every
+// runtime helper written in Fern uses — so the seccomp allowlist stays
+// exact. A number computed at run time can not be: a sandboxed build is
+// refused, naming the callee, rather than handed a filter that kills the
+// program at its first call, and without the sandbox the site records
+// nothing.
 func TestRawSyscallRefusedUnderSandbox(t *testing.T) {
-	const src = `function main(): i32 {
+	const literal = `function main(): i32 {
     var closed: i64 = __syscall3(3, 0 - 1, 0, 0);
+    if (closed != 0 - 9) { return 1; }
+    return 0;
+}
+`
+	_, syscalls := emitAsmAndSyscalls(t, literal)
+	recorded := false
+	for _, n := range syscalls {
+		recorded = recorded || n == 3
+	}
+	if !recorded {
+		t.Fatal("a raw syscall with a literal number was not recorded")
+	}
+	const src = `function main(): i32 {
+    var nr: i32 = __load_i32(__alloc(4)) + 3;
+    var closed: i64 = __syscall3(nr, 0 - 1, 0, 0);
     if (closed != 0 - 9) { return 1; }
     return 0;
 }

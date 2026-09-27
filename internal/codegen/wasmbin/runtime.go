@@ -1392,6 +1392,11 @@ func injectFernHelpers(prog *ir.Program, needs *runtimeNeeds, opts EmitOptions) 
 	for {
 		var pending []string
 		for _, name := range needs.order {
+			// A hand-built wasi body is this target's twin of a native
+			// helper written on the syscall floor, and takes precedence.
+			if _, wasi := runtimeHelperSpecs[name]; wasi {
+				continue
+			}
 			if fernrt.Has(name) && !injected[name] {
 				pending = append(pending, name)
 			}
@@ -1400,7 +1405,7 @@ func injectFernHelpers(prog *ir.Program, needs *runtimeNeeds, opts EmitOptions) 
 			break
 		}
 		for _, name := range pending {
-			_, fn, err := fernrt.Func(name, 4)
+			_, fn, err := fernrt.Func(name, fernrt.Target{PtrW: 4, OS: "wasi", Arch: "wasm32"})
 			if err != nil {
 				return nil, nil, err
 			}

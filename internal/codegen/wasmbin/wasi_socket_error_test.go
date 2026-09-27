@@ -25,7 +25,7 @@ func TestWasiSocketErrorReturns(t *testing.T) {
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	_, fn, err := fernrt.Func("__fern_wasi_socket_errno", 4)
+	_, fn, err := fernrt.Func("__fern_wasi_socket_errno", fernrt.Target{PtrW: 4, OS: "wasi", Arch: "wasm32"})
 	if err != nil {
 		t.Fatal(err)
 	}
