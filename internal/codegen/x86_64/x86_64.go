@@ -4006,6 +4006,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_socket_ctl"
 		case "tcp_connect_with":
 			target = "__fern_tcp_connect_with"
+		case "unix_listen":
+			target = "__fern_unix_listen"
+		case "unix_connect":
+			target = "__fern_unix_connect"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
 		case "udp_bind":
@@ -7043,8 +7047,10 @@ func reg64(r32 string) string {
 //
 // `narrow` means the copy took only the low 32 bits of the accumulator, so
 // the rewrite writes the 32-bit name of dst: a 64-bit load becomes a 32-bit
-// load of the same low bytes, and a 32-bit write already zero-extends. A
-// sign extension to 64 bits has no 32-bit-destination form, so it refuses.
+// load of the same low bytes, a register source becomes its own 32-bit
+// name, and a 32-bit write already zero-extends. A qword-sized memory
+// operand, an immediate wider than 32 bits and a sign extension to 64 bits
+// have no 32-bit-destination form, so they refuse.
 // An address (`lea`) refuses too, by choice: `lea edi, [rip + L]` would
 // keep the low bits the copy took, but this emitter never means an address
 // truncated to 32 bits, so the shape is left alone rather than folded.
@@ -7068,12 +7074,35 @@ func renameAccDest(op, dst string, narrow bool) (string, bool) {
 				if narrow && acc == "rax" && (m == "lea" || m == "movsxd") {
 					return "", false
 				}
+				if narrow && acc == "rax" && m == "mov" {
+					src, ok := narrowMovSource(src)
+					if !ok {
+						return "", false
+					}
+					return "\tmov " + reg32(dst) + ", " + src, true
+				}
 				d = reg32(dst)
 			}
 			return "\t" + m + " " + d + ", " + src, true
 		}
 	}
 	return "", false
+}
+
+// narrowMovSource is the source operand of `mov rax, src` as a 32-bit
+// destination reads it: a 64-bit register by its 32-bit name, an immediate
+// as long as a dword holds it, an unsized memory operand as its low dword.
+func narrowMovSource(src string) (string, bool) {
+	if r := reg32(src); r != src {
+		return r, true
+	}
+	if strings.Contains(src, "qword ptr") {
+		return "", false
+	}
+	if v, err := strconv.ParseInt(src, 0, 64); err == nil && (v < math.MinInt32 || v > math.MaxUint32) {
+		return "", false
+	}
+	return src, true
 }
 
 // foldLeaIntoLoad recognises P13's pair and returns the load with the
