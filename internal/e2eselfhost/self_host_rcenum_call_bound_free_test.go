@@ -185,15 +185,13 @@ function main(): i32 {
 			want: 9, allocs: 100, frees: 100,
 		},
 		{
-			// THE NEGATIVE CONTROL. `passthru` returns its PARAM, so every return is
-			// not a fresh direct construction and the fn never enters the "RCE:"
-			// registry — the call bind stays unresolved and nothing is freed here.
-			// 200 / 0, unchanged by this slice: it leaks, which is the safe
-			// direction, and native reclaims it through a different admission.
-			//
-			// If this row ever reports frees > 0 without a matching admission, the
-			// widening has reached a producer that hands back a box it does not own.
-			name: "non_registered_producer_refused",
+			// A callee returning its PARAM is not an "RCE:" producer, but it is an
+			// "ENUM:" member: the return retains `e`, so `v` carries a count of its
+			// own and `s`, lent at a counted position, keeps its release (#10410).
+			// `s` is dead right after the lend, so its last-use drop runs while `v`
+			// still shares the box. That drop's payload walk is is_unique-gated;
+			// ungated, it freed the array under `v` (99).
+			name: "param_handback_counted",
 			src: `enum E { A(i32[]), B }
 function passthru(e: E): E { return e; }
 function round(i: i32): i32 {
@@ -204,7 +202,7 @@ function round(i: i32): i32 {
     return a % 101;
 }
 ` + recfMain,
-			want: 6, allocs: 200, frees: 0,
+			want: 6, allocs: 200, frees: 200,
 		},
 		{
 			// A GUARDED arm whose payload is stored out. consumed_rcpayload_enum_frees
