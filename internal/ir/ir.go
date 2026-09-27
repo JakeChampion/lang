@@ -16094,7 +16094,9 @@ func (b *builder) callBody(n *ast.Call) error {
 					return err
 				}
 			}
+			b.emitF32ToMapSlot(n.TypeArgs[1])
 			b.emitMapCall("__method_Map_get_or", 3, n.TypeArgs[0])
+			b.emitMapSlotToF32(n.TypeArgs[1])
 			// Map[K, string].get_or native single-word retain: the
 			// runtime hands back the string data pointer un-retained
 			// (see the !keyKind3 inline above) — co-own it so the map's
@@ -16571,6 +16573,9 @@ func (b *builder) callBody(n *ast.Call) error {
 		if toOwnParam && ai < exitArg {
 			b.teeOperandDrop(b.loweredValueType(a))
 		}
+		if ai == 2 && (id.Name == "__method_Map_set" || id.Name == "__method_Map_get_or") && len(n.TypeArgs) >= 2 {
+			b.emitF32ToMapSlot(n.TypeArgs[1])
+		}
 	}
 	b.pendingDrops = b.pendingDrops[:dropMark]
 	argCount := int32(len(n.Args))
@@ -16639,6 +16644,9 @@ func (b *builder) callBody(n *ast.Call) error {
 			growBracket := b.growBracketArgs(n, id.Name)
 			b.emitGrowBracket(growBracket, OpRcInc, "__fern_rc_inc")
 			b.emit(Op{Kind: kind, Str: id.Name, I32: argCount, Width: width, Ext: extArgTypes(argTypes)})
+			if (id.Name == "__method_Map_get_or" || id.Name == "__method_MapIter_value") && len(n.TypeArgs) >= 2 {
+				b.emitMapSlotToF32(n.TypeArgs[1])
+			}
 			if kind == OpCallDirectPair && !b.suppressPairRebox {
 				// Re-pack the (tag, payload) pair into a heap
 				// box so existing callers (var assignment,
@@ -23415,7 +23423,35 @@ func (b *builder) pushMapMethodArg(arg ast.Expr, t ast.Type, shouldBox bool, slo
 	if shouldBox {
 		return b.boxIntoCell(arg, t, slotLabel)
 	}
-	return b.expr(arg)
+	if err := b.expr(arg); err != nil {
+		return err
+	}
+	b.emitF32ToMapSlot(t)
+	return nil
+}
+
+// isF32 reports an `f32`: the one float a map's integer K / V slot holds
+// unboxed, as its 32-bit pattern.
+func isF32(t ast.Type) bool {
+	f, ok := t.(ast.FloatType)
+	return ok && f.NormalWidth() == 32
+}
+
+// emitF32ToMapSlot turns the f32 on top of the stack into the bit pattern the
+// map runtime's integer slot holds, and emitMapSlotToF32 turns a slot word the
+// runtime hands back into the f32 again. Both are identities for any other
+// type. The SSA backends hold a float as an f64 and wasm types the operand,
+// so without them an f32 reaches the slot as the wrong bits or not at all.
+func (b *builder) emitF32ToMapSlot(t ast.Type) {
+	if isF32(t) {
+		b.emit(Op{Kind: OpReinterpretI32F32})
+	}
+}
+
+func (b *builder) emitMapSlotToF32(t ast.Type) {
+	if isF32(t) {
+		b.emit(Op{Kind: OpReinterpretF32I32})
+	}
 }
 
 // keyedMapFns names the derived hash / eq function VALUES a kind-3
@@ -23605,6 +23641,9 @@ func (b *builder) emitNativeStringKeyMapSet(n *ast.Call, kType ast.Type) error {
 	if err := b.expr(n.Args[2]); err != nil {
 		return err
 	}
+	if len(n.TypeArgs) >= 2 {
+		b.emitF32ToMapSlot(n.TypeArgs[1])
+	}
 	b.emitMapCall("__method_Map_set", 3, kType)
 	b.freeDiscardedSetKey(keySlot, preLen)
 	return nil
@@ -23783,6 +23822,9 @@ func (b *builder) emitMapGetRebox(n *ast.Call, kType, vType ast.Type, boxedV boo
 	// Non-boxed: the payload IS the V value (an i32 in the low
 	// bits, or a pointer-shaped V address). payloadStoreOpFor
 	// narrows / widens to the V slot correctly.
+	if !boxedV {
+		b.emitMapSlotToF32(vType)
+	}
 	b.emit(payloadStoreOpFor(vType, b.ptrW))
 	b.emit(Op{Kind: OpEnd})
 	// The helper's `Option[usize]` is a per-call transient: its payload has
@@ -23828,12 +23870,20 @@ func (b *builder) emitStringKMapCall(n *ast.Call, kType ast.Type, methodName str
 	if err != nil {
 		return err
 	}
+	var vType ast.Type
+	if len(n.TypeArgs) >= 2 {
+		vType = n.TypeArgs[1]
+	}
 	for i := 2; i < len(n.Args); i++ {
 		if err := b.expr(n.Args[i]); err != nil {
 			return err
 		}
+		b.emitF32ToMapSlot(vType)
 	}
 	b.emit(Op{Kind: OpCallDirect, Str: methodName, I32: argCount})
+	if methodName == "__method_Map_get_or" {
+		b.emitMapSlotToF32(vType)
+	}
 	// Read-only methods (has / get_or) don't retain the key cell — only
 	// set does, and set never routes here. Reclaim the transient cell.
 	if methodName != "__method_Map_set" {
