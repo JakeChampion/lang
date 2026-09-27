@@ -19774,6 +19774,11 @@ func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
 
 func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	switch x := e.(type) {
+	case *ast.Ident:
+		// A read of a literal local that the settle just fixed.
+		if ll := c.litIdents[x]; ll != nil && ll.fixed {
+			return ll.width
+		}
 	case *ast.NumberLit:
 		if x.IsFloat {
 			return ast.FloatType{Width: x.FloatWidth}

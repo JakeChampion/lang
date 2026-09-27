@@ -200,6 +200,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-local-index-is-i32", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i = 1; var v = xs[i]; var w: i64 = i; return v; }\n", []string{"E003"}},
 		{"literal-local-float", "function main(): i32 { var x = 5; var f: f64 = x; return 0; }\n", []string{"E003"}},
 		{"literal-local-out-of-range", "function main(): i32 { var x = 300; var b: u8 = x; return 0; }\n", []string{"E047"}},
+		// An open literal local compared with, or combined with, one that has
+		// already settled takes its width, whichever order the two settle in.
+		{"literal-local-compared-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-compared-before-settling", "function main(): i32 { var hi = 255; var i = 250; if (i != hi) {} var b: u8 = i; var c: u8 = hi; return 0; }\n", nil},
+		{"literal-local-arithmetic-with-settled", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; var d = hi - i; var e: u8 = d; return 0; }\n", nil},
+		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
+		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
 		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
