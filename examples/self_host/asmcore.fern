@@ -4876,7 +4876,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "__alloc_u8") { return ty_array_i32(); }
     if (id.name == "random_bytes") { return ty_array_i32(); }
     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
-    if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }
+    if (id.name == "__map_new_i32") { return ty_map_i32(ty_unknown()); }
     if (id.name == "cell_new" && c.args.len() == 1) { return ty_cell(infer_expr_type(c.args[0], s)); }
     if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
             || id.name == "__floor_f64" || id.name == "__ceil_f64"
@@ -6118,12 +6118,12 @@ pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
 // only a `var m: Map[K, V] = map_new(n)` annotation pins them — native
 // rejects the chain with E038 per argument + E003 at the binding). The
 // self-host inference instead KEY-KINDS a bare ctor result by its NAME
-// (map_new = string-keyed, map_new_i32 = i32-keyed), so a chain whose key
+// (map_new = string-keyed, __map_new_i32 = i32-keyed), so a chain whose key
 // arguments DISAGREE with the ctor's key kind was accepted by check and the
 // emitters MISCOMPILED it — an i32 key dispatched through the string-keyed
 // map runtime (SIGSEGV at runtime). Reject exactly that mismatch: an
 // arg-taking map method (insert / get / get_or / has / without) whose chain
-// ROOT is a bare map_new [map_new_i32] call and whose KEY argument is a
+// ROOT is a bare map_new [__map_new_i32] call and whose KEY argument is a
 // number [string] literal. A KIND-CONSISTENT chain is deliberately admitted
 // (narrower than native): the parser's own `Map { … }` literal desugar IS
 // such a chain (ctor picked from the first key's form), and consistent
@@ -6138,7 +6138,7 @@ function map_chain_root_ctor(e: ast.Expr): string {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    if (cid.name == "map_new" || cid.name == "map_new_i32") { return cid.name; }
+                    if (cid.name == "map_new" || cid.name == "__map_new_i32") { return cid.name; }
                     return "";
                 },
                 ast.ExprFieldAccess(fa) => {
@@ -6167,7 +6167,7 @@ function map_chain_check_expr(e: ast.Expr, fname: string, errs: util.Diag[]): ut
                             var mism: boolean = false;
                             match (c.args[0]) {
                                 ast.ExprNumber(_) => { if (mroot == "map_new") { mism = true; } },
-                                ast.ExprString(_) => { if (mroot == "map_new_i32") { mism = true; } },
+                                ast.ExprString(_) => { if (mroot == "__map_new_i32") { mism = true; } },
                                 _ => {}
                             }
                             if (mism) {

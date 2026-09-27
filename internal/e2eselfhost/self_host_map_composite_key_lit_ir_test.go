@@ -14,7 +14,7 @@ import (
 //
 // E045 used to reject every non-i32, non-string key, which native accepts. The
 // rejection was essential rather than merely strict: `map_new` and
-// `map_new_i32` are the only two constructor spellings, so a composite key has
+// `__map_new_i32` are the only two constructor spellings, so a composite key has
 // neither and the literal's desugared chain based itself on `map_new` — the
 // STRING one. `insert` was typed as returning its receiver unchanged and
 // `map_new` types its columns unknown, so the chain stayed unknown-keyed and

@@ -4178,7 +4178,7 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// f64 it is, as a container of one does, so `Some(3.14)?` has a concrete
 	// union to test and unwrap (conformance f64_tryop_widen).
 	// An unannotated map literal takes its columns from its entries (#10208):
-	// the checker types the desugared `map_new_i32(n).insert(k, v)` chain, and
+	// the checker types the desugared `__map_new_i32(n).insert(k, v)` chain, and
 	// the chain's head takes that type where no destination names one.
 	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
 function main(): i32 {

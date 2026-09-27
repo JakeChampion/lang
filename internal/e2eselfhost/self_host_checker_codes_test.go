@@ -2556,7 +2556,7 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"map-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		// The literal spelling reaches the same rule by a different road: the
-		// compile parse desugars `Map { … }` to a map_new_i32 / map_new
+		// compile parse desugars `Map { … }` to a __map_new_i32 / map_new
 		// chain, so the constructor the walk sees is not the one written.
 		{"map-literal-without-core-map-import", "function main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
 		{"map-literal-with-core-map-import", "import \"core/map\";\nfunction main(): i32 { var m: Map[i32, i32] = Map { 1: 2 }; return m.get_or(1, 0) - 2; }\n"},
