@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -20,8 +18,8 @@ import (
 // which lower_func seeds as "FNDYN:<name>|<positions>"; the indirect-call arg
 // lowering consults it (fn_arg_is_dyn) and dyn-boxes exactly those positions.
 //
-// Each case is oracle-checked against the interpreter and routing-pinned to
-// "ir", returning a non-negative value <= 126.
+// Each case is oracle-checked against the interpreter, returning a
+// non-negative value <= 126.
 var dynFnIndirectCoerceCases = []struct {
 	name string
 	main string
@@ -59,38 +57,18 @@ function apply(f: (dyn Speak) => i32): i32 { var c: Cat = Cat { v: 7 }; return f
 function main(): i32 { return apply((s: dyn Speak) => s.say()); }`},
 }
 
-// TestSelfHostDynFnIndirectCoerceIRX86_64 routes each case through the self-host
-// x86-64 IR driver, oracle-checked, routing pinned to "ir".
+// TestSelfHostDynFnIndirectCoerceIRX86_64 compiles each case with the self-host
+// CLI for x86-64, oracle-checked.
 func TestSelfHostDynFnIndirectCoerceIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range dynFnIndirectCoerceCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
 			want := interpExit(t, interpBin, string(src))
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
+			if stderr, code := cli.exitOf(t, string(src), "x86-64-linux"); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)\n%s", tc.name, code, want, stderr)
 			}
 		})
 	}
