@@ -61,6 +61,7 @@ var BuiltinCaps = map[string]string{
 	"tcp_connect_with": "net",
 	"unix_listen":      "net",
 	"unix_connect":     "net",
+	"tcp_recv_into":    "net",
 
 	"read_file":        "fs",
 	"read_file_bytes":  "fs",
@@ -287,6 +288,9 @@ var Ungated = map[string]bool{
 	"f64_bits":                    true,
 	"f64_from_bits":               true,
 	"poll":                        true,
+	"reactor_new":                 true,
+	"reactor_ctl":                 true,
+	"reactor_wait":                true,
 	"wasm_block":                  true,
 	"wasm_poll":                   true,
 	"wasm_pollable_drop":          true,

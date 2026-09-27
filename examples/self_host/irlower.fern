@@ -13296,14 +13296,14 @@ function lower_call_proc(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): Lo
 // part of the test so a call with the wrong number of arguments falls
 // through to the ordinary named-call path.
 function is_socket_call(name: string, argc: i32): boolean {
-    return argc > 0 && socket_call_arity(name) == argc;
+    return (argc > 0 || name == "reactor_new") && socket_call_arity(name) == argc;
 }
 
 function socket_call_arity(name: string): i32 {
     if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port", "unix_connect"], name)) { return 1; }
-    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen"], name)) { return 2; }
-    if (util.has_str(["udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with"], name)) { return 3; }
-    if (name == "udp_sendto") { return 4; }
+    if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen", "tcp_recv_into"], name)) { return 2; }
+    if (util.has_str(["udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait"], name)) { return 3; }
+    if (util.has_str(["udp_sendto", "reactor_ctl"], name)) { return 4; }
     return 0;
 }
 
@@ -13316,6 +13316,7 @@ function socket_call_arity(name: string): i32 {
 // i32 already in network order, udp_send as a dotted-quad string the
 // backend helper parses.
 function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): LowerState {
+    if (cid.name == "reactor_new") { return s.emit(ir.op_reactor_new()); }
     var a0: LowerState = lower_expr(c.args[0], s);
     if (!a0.ok) { return a0; }
     if (cid.name == "tcp_close") { return a0.emit(ir.op_tcp_close()); }
@@ -13331,6 +13332,7 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     if (cid.name == "tcp_recv") { return a1.emit(ir.op_tcp_recv()); }
     if (cid.name == "udp_bind") { return a1.emit(ir.op_udp_bind()); }
     if (cid.name == "unix_listen") { return a1.emit(ir.op_unix_listen()); }
+    if (cid.name == "tcp_recv_into") { return a1.emit(ir.op_tcp_recv_into()); }
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     if (cid.name == "tcp_listen_with") { return a2.emit(ir.op_tcp_listen_with()); }
@@ -13338,9 +13340,11 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     if (cid.name == "udp_connect") { return a2.emit(ir.op_udp_connect()); }
     if (cid.name == "udp_recvfrom") { return a2.emit(ir.op_udp_recvfrom()); }
     if (cid.name == "tcp_connect_with") { return a2.emit(ir.op_tcp_connect_with()); }
+    if (cid.name == "reactor_wait") { return a2.emit(ir.op_reactor_wait()); }
     if (cid.name == "udp_send") { return a2.emit(ir.op_udp_send()); }
     var a3: LowerState = lower_expr(c.args[3], a2);
     if (!a3.ok) { return a3; }
+    if (cid.name == "reactor_ctl") { return a3.emit(ir.op_reactor_ctl()); }
     return a3.emit(ir.op_udp_sendto());
 }
 

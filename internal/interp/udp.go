@@ -189,17 +189,7 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 	case 4:
 		err = syscall.Shutdown(fd, int(arg))
 	case 5:
-		if _, err = syscall.Getpeername(fd); err != nil {
-			pending, gerr := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ERROR)
-			switch {
-			case gerr != nil:
-				err = gerr
-			case pending != 0:
-				err = syscall.Errno(pending)
-			default:
-				err = syscall.EINPROGRESS
-			}
-		}
+		err = connectResult(fd)
 	}
 	if err != nil {
 		return negErrno(err), true

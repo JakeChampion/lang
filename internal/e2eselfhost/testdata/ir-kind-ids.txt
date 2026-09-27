@@ -317,3 +317,7 @@ udp_recvfrom=337
 tcp_connect_with=338
 unix_listen=339
 unix_connect=340
+reactor_new=341
+reactor_ctl=342
+reactor_wait=343
+tcp_recv_into=344

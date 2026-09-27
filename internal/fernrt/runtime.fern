@@ -426,6 +426,172 @@ function __fern_tcp_pollable(fd: i32): i32 {
     return fd;
 }
 
+// The reactor floor (#9853): a readiness set that outlives one wait, epoll
+// on Linux and kqueue on Darwin. `reactor_new()` is the set's descriptor,
+// `reactor_ctl(r, op, fd, arg)` changes it (op 1 watches fd for the
+// interest in arg, 1 readable and 2 writable, op 2 stops watching it, op 3
+// closes the set) and `reactor_wait(r, events, timeout_ms)` fills `events`
+// with (fd, readiness) pairs, readiness 1 readable, 2 writable and 4 an
+// error or hang-up: the pair count, 0 on the timeout (-1 waits without
+// one), or -errno.
+function __sys_epoll_create1(): i32 {
+    if (target_arch() == "x86-64") { return 291; }
+    return 20;
+}
+function __sys_epoll_ctl(): i32 {
+    if (target_arch() == "x86-64") { return 233; }
+    return 21;
+}
+function __sys_epoll_pwait(): i32 {
+    if (target_arch() == "x86-64") { return 281; }
+    return 22;
+}
+function __sys_kqueue(): i32 { return 362; }
+function __sys_kevent(): i32 { return 363; }
+
+// struct epoll_event is packed on x86-64 (12 bytes, data at 4) and
+// naturally aligned on arm64 (16 bytes, data at 8).
+function __epoll_event_size(): i32 {
+    if (target_arch() == "x86-64") { return 12; }
+    return 16;
+}
+function __epoll_data_at(): i32 {
+    if (target_arch() == "x86-64") { return 4; }
+    return 8;
+}
+
+function __fern_reactor_new(): i32 {
+    if (target_os() == "darwin") { return __syscall3(__sys_kqueue(), 0, 0, 0) as i32; }
+    return __syscall3(__sys_epoll_create1(), 524288, 0, 0) as i32;
+}
+
+// One struct kevent (32 bytes) at p: the fd, the filter (-1 read, -2
+// write), the flags, and zero fflags, data and udata.
+function __kevent_change(p: usize, fd: i32, filter: i32, flags: i32): i32 {
+    __store_i32(p, fd);
+    __store_i32(p + 4, 0);
+    __store_u8(p + 8, filter & 255);
+    __store_u8(p + 9, (filter >> 8) & 255);
+    __store_u8(p + 10, flags & 255);
+    __store_u8(p + 11, (flags >> 8) & 255);
+    __store_i32(p + 12, 0);
+    __store_i32(p + 16, 0);
+    __store_i32(p + 20, 0);
+    __store_i32(p + 24, 0);
+    __store_i32(p + 28, 0);
+    return 0;
+}
+
+// kqueue keeps one entry per filter, so an interest is two changes: EV_ADD
+// with EV_ENABLE (5) for a filter wanted and EV_DELETE (2) for one not,
+// where deleting a filter that was never added is ENOENT and not an error.
+function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
+    var ch: usize = __alloc(32);
+    var r: i64 = 0;
+    var filter: i32 = 0 - 1;
+    var bit: i32 = 1;
+    while (bit <= 2 && r >= 0) {
+        var flags: i32 = 2;
+        if ((interest & bit) != 0) { flags = 5; }
+        __kevent_change(ch, fd, filter, flags);
+        var e: i64 = __syscall6(__sys_kevent(), kq, ch as i64, 1, 0, 0, 0);
+        if (e < 0 && !(flags == 2 && e == 0 - 2)) { r = e; }
+        filter = filter - 1;
+        bit = bit + bit;
+    }
+    __free(ch, 32);
+    return r as i32;
+}
+
+// EPOLL_CTL_ADD, or EPOLL_CTL_MOD once the fd is in the set (EEXIST), for
+// an interest; EPOLL_CTL_DEL for none.
+function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
+    var ev: usize = __alloc(16);
+    var bits: i32 = 0;
+    if ((interest & 1) != 0) { bits = bits | 1; }
+    if ((interest & 2) != 0) { bits = bits | 4; }
+    __store_i32(ev, bits);
+    __store_i32(ev + (__epoll_data_at() as usize), fd);
+    __store_i32(ev + (__epoll_data_at() as usize) + 4, 0);
+    var r: i64 = 0;
+    if (interest == 0) {
+        r = __syscall4(__sys_epoll_ctl(), ep, 2, fd as i64, ev as i64);
+    } else {
+        r = __syscall4(__sys_epoll_ctl(), ep, 1, fd as i64, ev as i64);
+        if (r == 0 - 17) { r = __syscall4(__sys_epoll_ctl(), ep, 3, fd as i64, ev as i64); }
+    }
+    __free(ev, 16);
+    return r as i32;
+}
+
+function __fern_reactor_ctl(r: i32, op: i32, fd: i32, arg: i32): i32 {
+    if (op == 3) { return __syscall3(__sys_close(), r as i64, 0, 0) as i32; }
+    if (op != 1 && op != 2) { return 0 - 22; }
+    var interest: i32 = arg & 3;
+    if (op == 2) { interest = 0; }
+    if (target_os() == "darwin") { return __kqueue_watch(r as i64, fd, interest); }
+    return __epoll_watch(r as i64, fd, interest);
+}
+
+// The pairs go into `events` as i32 words, fd then readiness.
+function __reactor_event(events: usize, i: i32, fd: i32, ready: i32): i32 {
+    var p: usize = events + ((i * 8) as usize);
+    __store_i32(p, fd);
+    __store_i32(p + 4, ready);
+    return 0;
+}
+
+function __epoll_wait_into(ep: i64, events: usize, cap: i32, timeout_ms: i32): i32 {
+    var size: i32 = __epoll_event_size();
+    var buf: usize = __alloc(cap * size);
+    var n: i64 = __syscall6(__sys_epoll_pwait(), ep, buf as i64, cap as i64, timeout_ms as i64, 0, 8);
+    var i: i32 = 0;
+    while (i < n) {
+        var e: usize = buf + ((i * size) as usize);
+        var bits: i32 = __load_i32(e);
+        var ready: i32 = 0;
+        if ((bits & 1) != 0) { ready = ready | 1; }
+        if ((bits & 4) != 0) { ready = ready | 2; }
+        if ((bits & 24) != 0) { ready = ready | 4; }
+        __reactor_event(events, i, __load_i32(e + (__epoll_data_at() as usize)), ready);
+        i = i + 1;
+    }
+    __free(buf, cap * size);
+    return n as i32;
+}
+
+function __kqueue_wait_into(kq: i64, events: usize, cap: i32, timeout_ms: i32): i32 {
+    var buf: usize = __alloc(cap * 32 + 16);
+    var ts: usize = buf + ((cap * 32) as usize);
+    var tmo: usize = 0 as usize;
+    if (timeout_ms >= 0) {
+        __store_i32(ts, timeout_ms / 1000);
+        __store_i32(ts + 4, 0);
+        __store_i32(ts + 8, (timeout_ms % 1000) * 1000000);
+        __store_i32(ts + 12, 0);
+        tmo = ts;
+    }
+    var n: i64 = __syscall6(__sys_kevent(), kq, 0, 0, buf as i64, cap as i64, tmo as i64);
+    var i: i32 = 0;
+    while (i < n) {
+        var e: usize = buf + ((i * 32) as usize);
+        var ready: i32 = 2;
+        if (__load_u8(e + 8) == 255) { ready = 1; }
+        if ((__load_u8(e + 11) & 192) != 0) { ready = ready | 4; }
+        __reactor_event(events, i, __load_i32(e), ready);
+        i = i + 1;
+    }
+    __free(buf, cap * 32 + 16);
+    return n as i32;
+}
+
+function __fern_reactor_wait(r: i32, events: i32[], timeout_ms: i32): i32 {
+    var cap: i32 = events.len() / 2;
+    if (cap <= 0) { return 0 - 22; }
+    if (target_os() == "darwin") { return __kqueue_wait_into(r as i64, events as usize, cap, timeout_ms); }
+    return __epoll_wait_into(r as i64, events as usize, cap, timeout_ms);
+}
+
 // __fern_tcp_local_port(fd) reads the bound port back through getsockname:
 // the two network-order bytes at offset 2 of the address, which sit there on
 // Darwin too, since sin_len displaces the family and not the port. The
@@ -451,6 +617,13 @@ function __fern_tcp_recv(fd: i32, max: i32): u8[] {
     if (n < 0) { n = 0; }
     __arr_set_len(buf, n as i32);
     return buf;
+}
+
+// __fern_tcp_recv_into(fd, buf) reads once into the caller's buffer, up to
+// its length: the byte count, 0 at EOF, or -errno (-EAGAIN on a
+// non-blocking socket with nothing to read).
+function __fern_tcp_recv_into(fd: i32, buf: u8[]): i32 {
+    return __syscall3(__sys_read(), fd as i64, (buf as usize) as i64, buf.len() as i64) as i32;
 }
 
 // sendto(fd, p, n, MSG_NOSIGNAL, sa, salen): the bytes accepted, or -errno.

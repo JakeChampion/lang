@@ -4010,6 +4010,14 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_unix_listen"
 		case "unix_connect":
 			target = "__fern_unix_connect"
+		case "reactor_new":
+			target = "__fern_reactor_new"
+		case "reactor_ctl":
+			target = "__fern_reactor_ctl"
+		case "reactor_wait":
+			target = "__fern_reactor_wait"
+		case "tcp_recv_into":
+			target = "__fern_tcp_recv_into"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
 		case "udp_bind":

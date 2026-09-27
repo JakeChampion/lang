@@ -984,6 +984,10 @@ pub function op_tcp_connect_with(): Op { return op0("tcp_connect_with"); }
 // listener (or -errno); `unix_connect` [path] -> i32 connection (or -errno).
 pub function op_unix_listen(): Op { return op0("unix_listen"); }
 pub function op_unix_connect(): Op { return op0("unix_connect"); }
+pub function op_reactor_new(): Op { return op0("reactor_new"); }
+pub function op_reactor_ctl(): Op { return op0("reactor_ctl"); }
+pub function op_reactor_wait(): Op { return op0("reactor_wait"); }
+pub function op_tcp_recv_into(): Op { return op0("tcp_recv_into"); }
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -2549,6 +2553,8 @@ function kind_id_len11(name: string): i32 {
 
 function kind_id_len11_r(name: string): i32 {
     if (name == "remove_file") { return 173; }
+    if (name == "reactor_new") { return 341; }
+    if (name == "reactor_ctl") { return 342; }
     if (name == "raw_scratch") { return 205; }
     if (name == "raw_environ") { return 207; }
     if (name == "raw_arr_box") { return 224; }
@@ -2590,6 +2596,7 @@ function kind_id_len12(name: string): i32 {
 
 function kind_id_len12_r(name: string): i32 {
     if (name == "raw_load_ptr") { return 85; }
+    if (name == "reactor_wait") { return 343; }
     if (name == "read_dir_all") { return 310; }
     if (name == "reader_close") { return 179; }
     if (name == "random_bytes") { return 185; }
@@ -2610,6 +2617,7 @@ function kind_id_len13(name: string): i32 {
     if (c == b'f' && name == "f32_from_bits") { return 15; }
     if (c == b'f' && name == "f64_from_bits") { return 17; }
     if (c == b'm' && name == "mapiter_value") { return 136; }
+    if (c == b't' && name == "tcp_recv_into") { return 344; }
     if (c == b'm' && name == "map_hash_seed") { return 222; }
     if (c == b'p' && name == "process_alive") { return 271; }
     if (c == b'b' && name == "buf_push_byte") { return 294; }
@@ -2915,6 +2923,10 @@ function kind_name_4(id: i32): string {
     if (id == 338) { return "tcp_connect_with"; }
     if (id == 339) { return "unix_listen"; }
     if (id == 340) { return "unix_connect"; }
+    if (id == 341) { return "reactor_new"; }
+    if (id == 342) { return "reactor_ctl"; }
+    if (id == 343) { return "reactor_wait"; }
+    if (id == 344) { return "tcp_recv_into"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 306) { return "buf_push_u64"; }
@@ -3083,6 +3095,7 @@ function pops0(t: i32): boolean {
     return t == 1 || t == 2 || t == 3 || t == 4 || t == 5 || t == 6      // const_*
         || t == 18                                                       // load_local
         || t == 79 || t == 80 || t == 315                                // ptr_width, heap_bump_bytes, heap_alloc_count
+        || t == 341                                                      // reactor_new
         || t == 229                                                      // heap_mark
         || t == 117 || t == 119                                          // strbuf_reset, strbuf_take
         || t == 121                                                      // opt_none
@@ -3196,6 +3209,7 @@ function pops2_io(t: i32): boolean {
         || t == 311                                                      // fd_dup_onto (fd, newfd)
         || t == 178 || t == 187                                          // read_chunk, poll
         || t == 110 || t == 114 || t == 115 || t == 334 || t == 339      // tcp_connect, tcp_send, tcp_recv, udp_bind, unix_listen
+        || t == 344                                                      // tcp_recv_into (fd, buf)
         || t == 202 || t == 213 || t == 308                              // writer_write, proc_exec, write_some
         || t == 278;                                                     // signal_mask (how, mask)
 }
@@ -3207,6 +3221,7 @@ function pops3(t: i32): boolean {
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
         || t == 332 || t == 333 || t == 335 || t == 337 || t == 338      // tcp_listen_with, tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
+        || t == 343                                                      // reactor_wait (r, events, timeout_ms)
         || t == 242                                                      // reader_seek (fd, offset, whence)
         || t == 330                                                      // reader_splice (fd, out_fd, max)
         || t == 280                                                      // proc_exec_as (path, argv, envp)
@@ -3249,6 +3264,7 @@ pub function op_pops(o: Op): i32 {
     if (pops3(t)) { return 3; }
     if (t == 204) { return 4; }                       // syscall3: nr + 3 args
     if (t == 336) { return 4; }                       // udp_sendto: fd + host + port + data
+    if (t == 342) { return 4; }                       // reactor_ctl: r + op + fd + arg
     if (t == 206) { return 5; }                       // syscall4
     if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n
     if (t == 228) { return 6; }                       // syscall5

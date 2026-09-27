@@ -2382,6 +2382,41 @@ func WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	return body
 }
 
+// WasiIoStreamsReadWriteReactorInstanceTypeBody is the read-write body
+// with the reactor's surface: input-stream.subscribe and
+// output-stream.subscribe, each `func() -> own<pollable>` with the
+// pollable outer-aliased from io/poll, and the non-blocking
+// input-stream.read with blocking-read's signature. Appended after decl
+// 15 so every index the read-write body fixes is unchanged; exports take
+// a decl slot but no type index, so the types continue from 14.
+func WasiIoStreamsReadWriteReactorInstanceTypeBody(outerErrorTypeidx, pollableT uint32) []byte {
+	body := WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx)
+	body[2] = 0x18                                           // 24 decls
+	body = append(body, OuterAliasTypeDecl(1, pollableT)...) // type 14
+	body = append(body, 0x01, 0x69, 0x0e)                    // type 15: own<pollable=14>
+	// type 16: subscribe(self: borrow-in=8) -> own<pollable>=15
+	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x08}, 0x0f)...)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.subscribe")))
+	body = append(body, "[method]input-stream.subscribe"...)
+	body = append(body, 0x01, 0x10)
+	// type 17: subscribe(self: borrow-out=7) -> own<pollable>=15
+	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x07}, 0x0f)...)
+	body = append(body, 0x04, 0x00, byte(len("[method]output-stream.subscribe")))
+	body = append(body, "[method]output-stream.subscribe"...)
+	body = append(body, 0x01, 0x11)
+	// type 18: read(self: borrow-in=8, len: u64) -> result<list<u8>, stream-error>=11
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x08,
+		0x03, 'l', 'e', 'n', CValtypeU64,
+		0x00, 0x0b,
+	)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.read")))
+	body = append(body, "[method]input-stream.read"...)
+	body = append(body, 0x01, 0x12)
+	return body
+}
+
 // WasiIoStreamsReadInstanceTypeBody is the read-side counterpart
 // of WasiIoStreamsInstanceTypeBody: declares the input-stream
 // resource + the `blocking-read` method

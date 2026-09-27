@@ -3329,6 +3329,10 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
     if (ins.str == "tcp_connect_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect_with()) }; }
     if (ins.str == "unix_listen") { return Lowered { found: true, r: emit(r, ir.op_unix_listen()) }; }
     if (ins.str == "unix_connect") { return Lowered { found: true, r: emit(r, ir.op_unix_connect()) }; }
+    if (ins.str == "reactor_new") { return Lowered { found: true, r: emit(r, ir.op_reactor_new()) }; }
+    if (ins.str == "reactor_ctl") { return Lowered { found: true, r: emit(r, ir.op_reactor_ctl()) }; }
+    if (ins.str == "reactor_wait") { return Lowered { found: true, r: emit(r, ir.op_reactor_wait()) }; }
+    if (ins.str == "tcp_recv_into") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv_into()) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
     if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }
