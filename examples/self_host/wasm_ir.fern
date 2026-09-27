@@ -563,6 +563,7 @@ pub function const_agg_block_bytes(packed: string): i32 {
     // record's is [type_id@0][f_i@8+i*8]. One 8-byte slot holds its single
     // element either way, so the block is one value long.
     if (ir.const_struct_fn_body(packed).len() > 0) { return 24; }
+    if (ir.const_struct_is_empty_array(packed)) { return 16; }
     return 16 + ir.const_struct_values(packed).len() * 8;
 }
 
@@ -9890,6 +9891,8 @@ function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab, 
             // add, and the merged table is in hand here.
             body = body + le32_escape(1) + le32_escape(1)
                 + le32_escape(util.index_of_str(fn_table, fnbody)) + le32_escape(0);
+        } else if (ir.const_struct_is_empty_array(cv[i])) {
+            body = body + le32_escape(0) + le32_escape(0);
         } else {
             body = body + le32_escape(struct_type_id(structs, ir.const_struct_type(cv[i]))) + le32_escape(0);
             var vi: i32 = 0;

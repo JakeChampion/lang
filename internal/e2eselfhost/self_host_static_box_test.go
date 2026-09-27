@@ -10,13 +10,16 @@ import "testing"
 // and rebuild's first record a loop counter, so each still allocates once a
 // round. rebuild's second record is constant, so the first one's box is
 // released where it dies rather than held for a construction that no longer
-// takes it.
+// takes it. An empty array literal is one static box too: leaf's record
+// allocates and its args do not, and later's push onto those args makes the
+// allocation the literal no longer does.
 const staticBoxProgram = `struct P { x: i32, y: i32, on: boolean }
 struct TInt { width: i32, signed: boolean }
 struct TVoid {}
 struct TName { n: string }
 type Ty = TInt | TVoid | TName;
 enum Shade { Dark, Light(i32), Mixed(i32, boolean) }
+struct Inst { kind: i32, args: i32[] }
 @noinline function origin(): P { return P { x: 0 - 3, y: 7, on: true }; }
 @noinline function t_int(): Ty { return TInt { width: 32, signed: true }; }
 @noinline function t_void(): Ty { return TVoid {}; }
@@ -40,6 +43,22 @@ enum Shade { Dark, Light(i32), Mixed(i32, boolean) }
     var n: i32 = a.x;
     var b: P = P { x: 4, y: 5, on: false };
     return n + b.y;
+}
+@noinline function leaf(k: i32): Inst { return Inst { kind: k, args: [] }; }
+@noinline function later(i: Inst, v: i32): Inst { return Inst { ...i, args: i.args.append(v) }; }
+@noinline function leaf_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var x: Inst = leaf(i); t = t + x.args.len() + x.kind; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function later_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var x: Inst = later(leaf(i), 7); t = t + x.args.len() + x.args[0]; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function origin_rounds(): i32 {
     var before: i64 = __heap_alloc_count();
@@ -95,15 +114,19 @@ function main(): i32 {
     print_int(named_rounds()); print("");
     print_int(fresh_rounds()); print("");
     print_int(rebuild_rounds()); print("");
+    print_int(leaf_rounds()); print("");
+    print_int(later_rounds()); print("");
     return 0;
 }
 `
 
 func TestSelfHostStaticBoxes(t *testing.T) {
-	// Before static boxes the first three lines ended 100, 200 and 100.
-	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n"
+	// Before static boxes the first three lines ended 100, 200 and 100, and
+	// leaf_rounds ended 200.
+	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800300\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
-			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds"},
+			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",
+			"leaf", "later", "leaf_rounds", "later_rounds"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }

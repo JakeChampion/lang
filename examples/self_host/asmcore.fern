@@ -5313,6 +5313,7 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
     if (body.len() > 0) {
         return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
     }
+    if (ir.const_struct_is_empty_array(packed)) { return ConstAggPack { state: s, text: "0|" }; }
     var shp: ShapeRefOut = shape_ref(s, ir.const_struct_type(packed));
     var text: string = shp.label + "|";
     var vals: string[] = ir.const_struct_values(packed);
@@ -6834,7 +6835,10 @@ pub function emit_const_agg_data_from(s: EmitState, first: i32): EmitState {
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
         var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
-        st = st.write("    .quad " + util.i32_to_string(vals.len() + 1) + "\n");   // cap @ data-16
+        // An empty array's capacity is 0, or a push would write into it.
+        var cap: i32 = vals.len() + 1;
+        if (shp == "0") { cap = 0; }
+        st = st.write("    .quad " + util.i32_to_string(cap) + "\n");   // cap @ data-16
         st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
         st = st.write(const_agg_label(st, i) + ":\n");
         st = st.write("    .quad " + shp + "\n");
