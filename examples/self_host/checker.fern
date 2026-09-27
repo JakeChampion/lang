@@ -1296,7 +1296,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, type_param_count: i32, type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -2164,7 +2164,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), type_param_count: 0, type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -4454,7 +4454,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
   // generic function over-rejected on the unknown result (`return ident(3);`).
   // (A return type param that appears only nested — `Option[T]` — or in no
   // parameter isn't inferred here and stays unknown, a further slice.)
-  if (sig.type_param_count > 0 && is_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
+  if (sig.all_type_params.len() > 0 && is_unknown(sig.ret_type) && sig.ret_type_name.len() > 0) {
     let (rtv, rtv_bound) = ret_typevar_arg_type(sig, c, s);
     if (rtv_bound) { return rtv; }
   }
@@ -4539,6 +4539,44 @@ function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[],
   return (bn, bt);
 }
 
+// elemless_array: an array whose element nothing has typed, as an empty
+// literal's is. It binds no type variable (#10499).
+function elemless_array(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t { return is_unknown(a.elem); }
+  return false;
+}
+
+// uninferred_call_diags reports E040 for a type variable nothing binds: no
+// explicit type argument, argument or bound, and absent from the result, where
+// a destination could. Only an empty array literal counts as an argument that
+// binds nothing; one the checker types in part is left to native.
+function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name: string): util.Diag[] {
+  var out: util.Diag[] = [];
+  if (c.type_args.len() > 0) { return out; }
+  var ret: parser.TypeRef = parser.parse_type_ref(sig.ret_type_name);
+  for tp in sig.all_type_params {
+    if (util.index_of_str(bn, tp) < 0 && !ref_mentions(ret, tp) && only_empty_arrays_at(sig, c, tp)) {
+      out = out.append(dg_at("E040", "could not infer type parameter " + tp + " for " + name + " — supply it explicitly at the call site (e.g. " + name + "[i32](...)) or annotate the binding", c.line, c.col));
+    }
+  }
+  return out;
+}
+
+function only_empty_arrays_at(sig: FuncSig, c: ast.ExprCall, tp: string): boolean {
+  var k: i32 = 0;
+  while (k < sig.param_type_names.len() && k < c.args.len()) {
+    if (ref_mentions(parser.parse_type_ref(sig.param_type_names[k]), tp)) {
+      if let ast.ExprArray(a) = c.args[k] {
+        if (a.elements.len() > 0) { return false; }
+      } else {
+        return false;
+      }
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
 // bound_arg_diags reports E021 where a bounded parameter's impl names other
 // trait arguments than its bound does under the call's bindings:
 // `to_array[T, I: Iterator[T]]` at `I = Range`, whose impl is `Iterator[i32]`,
@@ -4620,7 +4658,7 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
     if let ast.ExprIdent(id) = c.callee {
       if (s.defines(id.name)) { return none; }
       var sig: FuncSig = s.lookup_sig(id.name);
-      if (sig.type_param_count == 0 || sig.ret_type_name.len() == 0 || c.args.len() != sig.param_types.len()) { return none; }
+      if (sig.all_type_params.len() == 0 || sig.ret_type_name.len() == 0 || c.args.len() != sig.param_types.len()) { return none; }
       let (bn, bt) = arg_bindings(sig, c, s);
       let (cn, ct) = bound_bindings(sig, s, bn, bt);
       if (bound_arg_diags(sig, c, cn, ct, s).len() > 0) { return none; }
@@ -5792,7 +5830,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), type_param_count: fd.all_type_params.len(), type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -6501,7 +6539,7 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && !is_unknown(at) && gc_is_typevar_name(r.base, tparams, struct_names, union_names) && util.index_of_str(ns, r.base) < 0) {
+  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, struct_names, union_names) && util.index_of_str(ns, r.base) < 0) {
     ns = ns.append(r.base);
     ts = ts.append(at);
   }
@@ -11017,13 +11055,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         var sig: FuncSig = s.lookup_sig(id.name);
         // E040: a GENERIC function called with explicit
         // call-site type arguments whose count doesn't match
-        // its declared type-parameter count. Only fires for an
-        // actually-generic function (type_param_count > 0) when
-        // type args were written (`f[i32](x)`); a bare call
-        // relies on inference, and type args on a non-generic
+        // its declared type-parameter count. Only fires for a
+        // generic function when type args were written
+        // (`f[i32](x)`); a bare call relies on inference
+        // (uninferred_call_diags), and type args on a non-generic
         // function are ignored (matching the Go checker).
-        if (sig.name.len() > 0 && sig.type_param_count > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.type_param_count) {
-          out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.type_param_count) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col));
+        if (sig.name.len() > 0 && sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
+          out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.all_type_params.len()) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col));
         }
         if (sig.name.len() > 0) {
           if (c.args.len() != sig.param_types.len()) {
@@ -11061,10 +11099,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
               ai = ai + 1;
             }
-            if (sig.type_param_count > 0) {
+            if (sig.all_type_params.len() > 0) {
               let (abn, abt) = arg_bindings(sig, c, s);
               let (fbn, fbt) = bound_bindings(sig, s, abn, abt);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name));
             }
           }
         }
@@ -17972,7 +18011,7 @@ function call_inst(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i3
   if let ast.ExprIdent(id) = c.callee {
     if (s.defines(id.name)) { return none; }
     var sig: FuncSig = s.lookup_sig(id.name);
-    if (sig.type_param_count == 0) { return none; }
+    if (sig.all_type_params.len() == 0) { return none; }
     var gi: i32 = template_index(gens, id.name);
     if (gi < 0) { return none; }
     let (bn, bt) = call_type_bindings(sig, c, s);
@@ -17993,7 +18032,7 @@ function calls_a_generic(stmts: ast.Stmt[], s: Scope): boolean {
   function at_call(n: ast.Expr, own hit: boolean): boolean {
     if (hit) { return true; }
     if let ast.ExprCall(c) = n {
-      if let ast.ExprIdent(id) = c.callee { return s.lookup_sig(id.name).type_param_count > 0; }
+      if let ast.ExprIdent(id) = c.callee { return s.lookup_sig(id.name).all_type_params.len() > 0; }
     }
     return false;
   }
@@ -21024,7 +21063,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
   if let ast.ExprIdent(cid) = c.callee {
     if (s.has_sig(cid.name)) { return s.lookup_sig(cid.name); }
   }
-  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), type_param_count: 0, type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], is_const: false };
+  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], is_const: false };
 }
 
 // gcall_tvars: the type variables a signature declares some parameter AS —
