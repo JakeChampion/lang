@@ -2268,12 +2268,10 @@ function main(): i32 {
     return r.ops.len() % 100 + r.name.len();
 }
 `},
-	// A `str` binding in a module that declares a generic struct. The parser
-	// erases `str` to `string` at parse time and records the view-ness on the
-	// declaration's `is_str`; the struct monomorphiser rewrote every `var`
-	// annotation in every body and dropped that flag, so the checker typed
-	// the binding `string` against a `str` value and every function holding
-	// one refused. Produces 0 of 2 with the flag dropped.
+	// A `str` binding in a module that declares a generic struct. The struct
+	// monomorphiser rewrites every `var` annotation in every body; when that
+	// lost the binding's view-ness, the checker typed it `string` against a
+	// `str` value and every function holding one refused, producing 0 of 2.
 	// Beyond the AST lowering: a match on a bare `Some(x)` scrutinee with an
 	// array arm and an empty array literal as an arm's value are both
 	// refused by the AST lowering ("immediately-invoked value block"), and
@@ -3042,10 +3040,10 @@ function main(): i32 {
 	// caller's map as it was, and `without` leaves its receiver whole for the
 	// bindings that still read it. The receiver's retain is what makes the
 	// copy-on-write gate see a second holder. The AST lowering borrows the
-	// receiver and writes the sole-held box in place, so the write shows
-	// through `m`, and its `without` writes an ALIASED receiver in place too
-	// (#9835).
-	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "63|", src: `
+	// receiver and writes the sole-held box in place, so `m`, `n`, `g` and
+	// `rest` all name one box (#9834); only the delete `snapshot` still reads
+	// through copies (#9835).
+	{name: "a-map-the-frame-still-reads-is-not-written", atLeast: 2, noLeak: true, want: "85|", astAnswers: "94|", src: `
 import "core/map";
 function grown(m: Map[i32, i32], k: i32): Map[i32, i32] { return m.insert(k, k * 3); }
 function main(): i32 {
@@ -4178,7 +4176,7 @@ function main(): i32 { if (ms(5000) > 4000) { return 0; } return 1; }
 	// f64 it is, as a container of one does, so `Some(3.14)?` has a concrete
 	// union to test and unwrap (conformance f64_tryop_widen).
 	// An unannotated map literal takes its columns from its entries (#10208):
-	// the checker types the desugared `map_new_i32(n).insert(k, v)` chain, and
+	// the checker types the desugared `__map_new_i32(n).insert(k, v)` chain, and
 	// the chain's head takes that type where no destination names one.
 	{name: "an-unannotated-map-literal-names-its-columns", atLeast: 1, noLeak: true, src: `import "core/map";
 function main(): i32 {

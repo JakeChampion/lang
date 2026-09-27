@@ -842,9 +842,9 @@ pub struct LowerFrame {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
-    // map_clone_sites: the site keys (target@line:col) of the map self-reassigns
-    // `m = m.insert(k, v)` at which an alias of m may be live, so the store
-    // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
+    // map_clone_sites: the site keys of the map mutations (`m = m.insert(k, v)`,
+    // `m.without(k)`) at which an alias of m may be live, so the mutation
+    // clones instead of writing in place (map_clone_sites_of, #7235).
     map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
     // param that is neither `own` nor inferred-moved (a mutated capture's
@@ -1340,14 +1340,30 @@ pub function (s: LowerState) is_view_frame_name(name: string): boolean {
 }
 
 // mark_enum_field_alias records that local `name` was bound from a DIRECT enum
-// struct field read (`var tmp: N = first.node`), so the local is an UNCOUNTED
-// alias of the source struct's enum box (#6121). Storing it into a container
-// then needs the same Perceus dup the direct read gets, because
-// __struct_drop_<T>'s k_enum arm decs that box when the source struct is
-// reclaimed. Appended rather than pre-scanned: the bind always precedes the
-// store, and enum_field_read_type needs the slot types the scan does not have.
+// struct field read (`var tmp: N = first.node`), which shares the source
+// struct's enum box (#6121). Storing it into a container makes the container
+// one more owner, so the store takes the same Perceus dup the direct read gets.
+// Appended rather than pre-scanned: the bind always precedes the store, and
+// enum_field_read_type needs the slot types the scan does not have.
 pub function (s: LowerState) mark_enum_field_alias(name: string): LowerState {
     return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: s.frame.reclaimable_names.append("ENUMALIAS:" + name) } };
+}
+
+// credit_enum_field_alias grants the counted alias bound at `site`, which
+// collect_enum_field_alias_sites admitted, the release the source struct gives
+// the same box. The alias is never a sole owner, so both are rc-gated: the
+// __fern_rc_is_unique-gated deep drop of "RCENUM:"/"RCENUMS:" where the struct's
+// field release deep-drops (enum_arr_elems_walk_ok), else the box-only dec of
+// "SCENUMS:", because any other payload may have reached the box uncounted.
+// Whichever owner releases last does the payload work, in either order.
+function credit_enum_field_alias(s: LowerState, site: string, ety: string): LowerState {
+    var rn: string[] = s.frame.reclaimable_names;
+    if (enum_arr_elems_walk_ok(s.frame.structs, ety)) {
+        rn = rn.append("RCENUM:" + site).append("RCENUMS:" + site);
+    } else {
+        rn = rn.append("SCENUMS:" + site);
+    }
+    return LowerState { ...s, frame: LowerFrame { ...s.frame, reclaimable_names: rn } };
 }
 
 // is_enum_field_alias reports whether `name` carries the mark above. Rebinding
@@ -3953,7 +3969,7 @@ pub function (s: LowerState) slot_map_type(name: string): string {
 // string keys, -1 if `e` is not a map. Unlike map_type_of (which only types a
 // map LOCAL slot), this recognises the chained map-construction expressions a
 // `Map { k: v, … }` literal desugars to: `map_new[_i32](n).insert(k0,v0)
-// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `map_new_i32` (i32),
+// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `__map_new_i32` (i32),
 // and an `.insert` / `.set` / `.delete` mutator returns the same map — so the
 // kind propagates up the chain. Lets `.insert` on a map-typed call result lower
 // through the IR (#2884 follow-up: Map literals), not just on a bare local.
@@ -3968,7 +3984,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (cid.name == "map_new" && c.args.len() == 1) { return 0; }
-                    if (cid.name == "map_new_i32" && c.args.len() == 1) { return 1; }
+                    if (cid.name == "__map_new_i32" && c.args.len() == 1) { return 1; }
                     return 0 - 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -4012,7 +4028,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
 }
 
 // map_lit_ctor_root reports whether `e` is a `Map { … }` literal's desugared
-// constructor chain: a bare `map_new` / `map_new_i32` call, or an `.insert` /
+// constructor chain: a bare `map_new` / `__map_new_i32` call, or an `.insert` /
 // `.set` / `.delete` on one. A map LOCAL's chain roots at an IDENT instead, and
 // its declared `Map[K, V]` is authoritative, so that answers false.
 function map_lit_ctor_root(e: ast.Expr): boolean {
@@ -4020,7 +4036,7 @@ function map_lit_ctor_root(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    return (cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1;
+                    return (cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
                     if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
@@ -4243,7 +4259,7 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
 // $__fern_map_set retains a pointer value and $__fern_map_release deep-releases
 // it. Mirrors the wasm AST path's `is_string_expr || struct || array` check. Used
 // at the insert-lowering sites IN ADDITION to the receiver-derived map value
-// type, because the FIRST insert of a chain (`map_new_i32().insert(k, v)`) has a
+// type, because the FIRST insert of a chain (`__map_new_i32().insert(k, v)`) has a
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
@@ -9274,7 +9290,7 @@ pub function ascription_target(init: ast.Expr): string {
 pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
     match (v.init) {
         ast.ExprUnary(au) => {
-            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         _ => { return v; }
     }
@@ -9420,7 +9436,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 // functions miscompile on the native backend — cf. #2720).
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
-    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };
@@ -9492,9 +9508,9 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     // var $s = aref[$i].to_json();
     var elem: ast.Expr = ast.ExprIndex { array: aref, index: iref, unchecked: false, ty: "", line: 0, col: 0 };
     var elemj: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     // var $k = 0;
-    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var copyl: ast.Stmt = to_json_bytecopy_stmt(on, sn, kn);
     var inc: ast.Stmt = ast.StmtAssign { target: inm, value: ast.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var body: ast.Stmt[] = [ifc, dvs, dk, copyl, inc];
@@ -9518,20 +9534,20 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
     }
     if (!is_ident) {
         var an: string = "$tjarr" + util.i32_to_string(n);
-        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         s2 = lower_stmt(snap, s);
         if (!s2.ok) { return s2; }
         aref = ast.ExprIdent { name: an, line: 0, col: 0, ty: "" };
     }
     // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(dout, s2);
     if (!s2.ok) { return s2; }
     // $tjout = $tjout.append(91 as u8);  — '['
     s2 = lower_stmt(to_json_append_stmt(on, ast.ExprNumber { text: "91", suffix: "", raw: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
     // var $tji = 0;
-    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(di, s2);
     if (!s2.ok) { return s2; }
     // the serialising loop (built in helpers to keep this function small)
@@ -9557,7 +9573,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var n: i32 = s.locals.len();
     var sn: string = "$fostr" + util.i32_to_string(n);
     var idx: string = "$fosi" + util.i32_to_string(n);
-    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(snv, s);
     if (!s2.ok) { return s2; }
     var sref: ast.Expr = ast.ExprIdent { name: sn, line: 0, col: 0, ty: "" };
@@ -9568,7 +9584,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_args: [], ty: "" };
     // Both locals are hidden, so the index runs over [0, len) of a string
     // nothing rebinds: the byte read needs no bounds check.
-    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var nbody: ast.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -12290,11 +12306,11 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!vctor.ok) { return vctor; }
         return vctor.emit(ir.op_struct_make(cid.name, c.args.len(), cdecl));
     }
-    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
+    if ((cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1) {
         var mn: LowerState = lower_expr(c.args[0], s);
         if (!mn.ok) { return mn; }
         var mkk: i32 = 0;
-        if (cid.name == "map_new_i32") { mkk = 1; }
+        if (cid.name == "__map_new_i32") { mkk = 1; }
         return mn.emit(ir.op_map_new(mkk, ""));
     }
     // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
@@ -14393,7 +14409,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
     // differing only past that field collapsed. meqfn was already right here;
     // only the kind was wrong.
     // The KEY EXPRESSION overrides a scalar/string key tag. `map_new` and
-    // `map_new_i32` are the only two constructor spellings, so a COMPOSITE
+    // `__map_new_i32` are the only two constructor spellings, so a COMPOSITE
     // (struct / enum) key has none and a `Map { … }` literal's desugared
     // chain bases itself on `map_new` — the STRING one — which is what the
     // tag is recovered from here. A struct / enum literal names its own
@@ -14550,15 +14566,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         }
         return mgo;
     }
-    if (fa.field == "without" && c.args.len() == 1) {
-        // Functional delete: `m.without(k)` -> the map with k
-        // removed (reuses __fern_map_delete, like the AST path).
-        var mdel: LowerState = lower_expr(fa.obj, s);
-        if (!mdel.ok) { return mdel; }
-        mdel = lower_expr(c.args[0], mdel);
-        if (!mdel.ok) { return mdel; }
-        return mdel.emit(ir.op_map_delete(mkk2, meqfn, false, 0));
-    }
+    if (fa.field == "without" && c.args.len() == 1) { return lower_map_without(c, fa.obj, mtype, mkk2, meqfn, s); }
     if (fa.field == "cleared" && c.args.len() == 0) {
         // Functional clear: `m.cleared()` -> a fresh empty map
         // of the same key kind. Construction, not a clear op:
@@ -15082,7 +15090,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // lowers (recursively, so the inner inserts lower the same way)
     // to a map on the stack; op_map_set consumes [map, key, value]
     // and returns the map. The key kind comes from expr_map_kind
-    // (map_new vs map_new_i32 at the chain's base). Read methods on
+    // (map_new vs __map_new_i32 at the chain's base). Read methods on
     // a map-literal expression aren't needed — the literal binds to
     // a typed local, and reads go through the map-local path above.
     if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
@@ -21398,7 +21406,7 @@ function lower_struct_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     var i: i32 = 0;
     while (i < bindings.len()) {
         var fa: ast.Expr = ast.ExprFieldAccess { obj: ast.ExprIdent { name: tmp, line: 0, col: 0, ty: "" }, field: fields[i], line: 0, col: 0, ty: "" };
-        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         dt = lower_stmt(sv, dt);
         if (!dt.ok) { return dt; }
         i = i + 1;
@@ -22146,15 +22154,19 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // prior enum's payload + box (emit_enum_deep_reinit_store → emit_enum_variant_
     // drops), else the payload leaks each iteration — the consuming-match reclaim is
     // top-level-only, so it never covers a loop-local (#4357).
+    // An enum-field alias carries alias_inc: its dup lands before the gated drop,
+    // so an old box equal to the new one only loses the alias's previous count.
     if (slot_is_reclaimable_rcenum(sb, slot)) {
+        if (vt.alias_inc) { sb = sb.retain_tos("enum-field-alias"); }
         return emit_enum_deep_reinit_store(sb, slot, sb.struct_type_of_slot(slot));
     }
-    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`):
-    // the re-declaration must release the box it supersedes. A shallow dec is the
-    // whole release — every payload is a scalar — so emit_arr_store's cow-guarded
-    // do_dec branch is exactly right, the same one a scalar-tuple rebind takes.
+    // A reclaimable ALL-SCALAR enum loop-local (`while { var m: M = A(i); }`), or
+    // an enum-field alias taking the box-only release: the re-declaration must
+    // release the box it supersedes, with a shallow dec. Fresh, that is
+    // emit_arr_store's cow-guarded do_dec branch, the one a scalar-tuple rebind
+    // takes; an alias's alias_inc makes the dec unconditional.
     if (slot_is_reclaimable_scenum(sb, slot)) {
-        return emit_arr_store(sb, slot, false, true);
+        return emit_arr_store(sb, slot, vt.alias_inc, true);
     }
     match (v.init) {
         ast.ExprTuple(dtl) => {
@@ -22583,7 +22595,7 @@ match (v.init) {
     ast.ExprCall(mc) => {
         match (mc.callee) {
             ast.ExprIdent(mcid) => {
-                if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                if ((mcid.name == "map_new" || mcid.name == "__map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                     // The legacy shorthand tag, asked for the same way the rest
                     // of the lowering asks: an integer key is the integer
                     // column whatever it is spelled. The annotated-constructor
@@ -22742,10 +22754,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // the scalar-element field (scalar_arr_field_type != ""); array-of-
     // struct / array-of-enum fields still bail (deep-drop recursion is a
     // later slice).
-    // `var tmp: N = first.node` (node: N, N an enum) binds an UNCOUNTED alias of
-    // the source struct's enum box (#6121). No dup here — an alias that never
-    // escapes must not outlive the struct — only the mark, so a later container
-    // store of `tmp` retains exactly as the direct `[first.node]` read does.
+    // `var tmp: N = first.node` (node: N, N an enum) shares the source struct's
+    // enum box. The bind's dup and release are the VarTypes classification's
+    // (#10310); the mark makes a later container store of `tmp` retain exactly as
+    // the direct `[first.node]` read does (#6121).
     if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
@@ -23149,7 +23161,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprCall(mnc) => {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                    if ((mnid.name == "map_new" || mnid.name == "__map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                         var kkind: i32 = 0 - 1;
                         var kt2: string = map_key_of(v.type_name);
                         // The same question map_key_kind_of answers everywhere
@@ -23477,6 +23489,15 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // requires (it reads is_arr_slot), and the alias-inc block below
             // retains the buffer so the slot's exit-sweep dec balances (#7208).
             if (nested_arr_field_read_type(v.init, se) != "") { is_arr = true; }
+            // A DIRECT enum field read the frame can release is a counted alias
+            // (#10310): the source struct releases its own count, so the alias
+            // needs one too. The dup and the credit land together or not at all.
+            var efty: string = enum_field_read_type(v.init, se);
+            var efsite: string = reclaim_site_key_of(v.name, v.line, v.col);
+            if (efty != "" && reclaim_has(se.frame.reclaimable_names, "EALIAS:", efsite)) {
+                alias_inc = true;
+                se = credit_enum_field_alias(se, efsite, efty);
+            }
             // #4355: `var t = s.name` — a STRING field read of a local whose
             // consume-rebind routes through the string-widened
             // __field_reclaim_<T>. The read is UNCOUNTED (strings have no
@@ -24321,7 +24342,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // level lowers as an ordinary destructure of that temp — the same
         // recursion the source spelling describes.
         if (dnest.len() > 0) {
-            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, dt);
+            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_view: false, fn_ret: "", fn_param_types: "" }, dt);
             if (!dt.ok) { return dt; }
         }
         dk = dk + 1;
@@ -24369,7 +24390,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
 // a struct name on `m = m.insert(k, P { … })` / `.set(…)`. The unannotated binding
-// `var m = map_new_i32(n)` has no insert to read a value type from, so it records
+// `var m = __map_new_i32(n)` has no insert to read a value type from, so it records
 // `Map[K, i32]`; when the first insert arrives as a separate assignment the slot
 // would keep that tag forever and a later `var p = m.get_or(…)` could not recover
 // P — the read bailed the function. Fact-only: both tags are
@@ -25282,7 +25303,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         var fdelem: string = "$fordes" + util.i32_to_string(s.locals.len());
         var fdbind: ast.Stmt = ast.StmtVar { name: fr.var_name, type_name: "",
             init: ast.ExprIdent { name: fdelem, line: fr.line, col: 0, ty: "" },
-            line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+            line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         var fdbody: ast.Stmt[] = [fdbind];
         var fdi: i32 = 0;
         while (fdi < fr.body.len()) { fdbody = fdbody.append(fr.body[fdi]); fdi = fdi + 1; }
@@ -25663,7 +25684,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         if (vdes.len() > 0) {
             fm = lower_stmt_var(ast.StmtVar { name: vdes, type_name: "",
                 init: ast.ExprIdent { name: vname, line: fr.line, col: 0, ty: "" },
-                line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, fm);
+                line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, fm);
             if (!fm.ok) { return fm; }
         }
         fm = lower_block(fr.body, fm);
@@ -25903,7 +25924,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
             ast.PatVariant(pv_at) => {
                 if (pv_at.at_binding.len() > 0) {
                     var at_init: ast.Expr = ast.ExprIdent { name: scrut, line: 0, col: 0, ty: "" };
-                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }];
+                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }];
                     var at_bi: i32 = 0;
                     while (at_bi < arm.body.len()) { at_body = at_body.append(arm.body[at_bi]); at_bi = at_bi + 1; }
                     var at_guard: ast.Expr = arm.guard;
@@ -27137,10 +27158,6 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
 function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, val: ast.Expr, maptype: string, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var mc: string = "$mc" + util.i32_to_string(n);
-    var mck: string = "$mck" + util.i32_to_string(n);
-    var mcv: string = "$mcv" + util.i32_to_string(n);
-    var mci: string = "$mci" + util.i32_to_string(n);
-    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
     // The receiver's box before the rebind: released at the end against the
     // holders of m's alias group (#7235) when the group owns its releases.
     var mslot: i32 = s.slot_of(target);
@@ -27153,16 +27170,59 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
         st = st.emit(ir.op_load_local(mslot));
         st = st.emit(ir.op_store_local(moldslot));
     }
+    st = lower_map_clone(mc, recv, maptype, st);
+    if (!st.ok) { return st; }
+    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
+    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
+    var mcref: ast.Expr = ast.ExprIdent { name: mc, line: 0, col: 0, ty: "" };
+    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
+    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    if (!st.ok || moldslot < 0) { return st; }
+    var msite: string = st.reclaim_site_key(mslot);
+    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+}
+
+// lower_map_without lowers the functional delete `recv.without(key)`, the map
+// with key removed and whether it was there. A receiver an alias still reads
+// (map_clone_sites, #9835) is cloned first, so the alias keeps the box it holds
+// whole; the removed entry is not released, since the clone shares its column
+// elements with that box.
+function lower_map_without(c: ast.ExprCall, recv: ast.Expr, maptype: string, keykind: i32, eqfn: string, s: LowerState): LowerState {
+    var st: LowerState = s;
+    if (util.index_of_str(s.frame.map_clone_sites, reclaim_site_key_of(ident_name_or_empty(recv), c.line, c.col)) >= 0) {
+        var mc: string = "$mc" + util.i32_to_string(s.locals.len());
+        st = lower_map_clone(mc, recv, maptype, s);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_load_local(st.slot_of(mc)));
+    } else {
+        st = lower_expr(recv, s);
+        if (!st.ok) { return st; }
+    }
+    st = lower_expr(c.args[0], st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_map_delete(keykind, eqfn, false, 0));
+}
+
+// lower_map_clone binds a fresh local `mc` of type `maptype` to a copy of the
+// map `recv`: a `map_new` and one insert per entry over snapshots of its
+// columns. The clone shares the column elements with `recv`, uncounted.
+function lower_map_clone(mc: string, recv: ast.Expr, maptype: string, s: LowerState): LowerState {
+    var n: i32 = s.locals.len();
+    var mck: string = "$mck" + util.i32_to_string(n);
+    var mcv: string = "$mcv" + util.i32_to_string(n);
+    var mci: string = "$mci" + util.i32_to_string(n);
+    var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    var st: LowerState = s;
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
     var keyscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     var valscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
     var mckref: ast.Expr = ast.ExprIdent { name: mck, line: 0, col: 0, ty: "" };
@@ -27174,15 +27234,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     var insargs: ast.Expr[] = [ast.ExprIndex { array: mckref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }, ast.ExprIndex { array: mcvref, index: mciref, unchecked: false, ty: "", line: 0, col: 0 }];
     var insexpr: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: insargs, line: 0, col: 0, type_args: [], ty: "" };
     var loopbody: ast.Stmt[] = [ast.StmtAssign { target: mc, value: insexpr, line: 0, col: 0, target_line: 0, target_col: 0 }];
-    st = lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
-    if (!st.ok) { return st; }
-    // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
-    // unaliased so its in-place insert is sound, and the fresh clone binds to m).
-    var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
-    if (!st.ok || moldslot < 0) { return st; }
-    var msite: string = st.reclaim_site_key(mslot);
-    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
+    return lower_stmt(ast.StmtFor { var_name: mci, iter: range, body: loopbody, label: "", line: 0 }, st);
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
@@ -29583,16 +29635,18 @@ function emit_struct_deep_reinit_store(se: LowerState, slot: i32, sty: string): 
 // struct slot whose only rc-tracked fields are DIRECT enum fields (struct_enum_deep_
 // reinit_eligible: scalar + droppable-enum fields only) and DEEP-drops the OLD box:
 // for each enum field it extracts the field's enum box into a scratch local and runs
-// emit_enum_variant_drops on it (runtime variant dispatch → drop the variant's rc
-// payload, then free the enum box), THEN __fern_rc_dec frees the struct box itself.
+// emit_enum_variant_drops_gated on it (runtime variant dispatch → drop the variant's
+// rc payload, then dec the enum box), THEN __fern_rc_dec frees the struct box itself.
 // Unlike the array-only __field_reclaim path (emit_field_reclaim_store), this reclaims
 // the enum field's VARIANT PAYLOAD — the leak the shallow k_enum exit-drop leaves.
 //
 // SOUNDNESS: fires ONLY when the init is a fresh no-base struct literal whose enum
 // fields are all FRESH variant ctors (struct_lit_all_enum_fields_fresh), so each
-// enum box + its payload is the struct box's sole owner (rc=1, no construction alias-
-// inc). A non-fresh (aliased) enum field is rejected at the gate and takes the leak-
-// safe shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
+// enum box + its payload starts out owned by the struct box alone (rc=1, no
+// construction alias-inc). A counted enum-field alias (`var g = h.e`, #10310) can
+// share the box afterwards, so the payload walk is __fern_rc_is_unique-gated. A
+// non-fresh (aliased) enum field is rejected at the gate and takes the leak-safe
+// shallow path. Null-guarded (`old != 0`) for the first-iteration zeroed slot;
 // the fresh literal makes old != new implicit, so no separate cow guard is needed.
 // The enum field box is itself null-guarded (op_variant_is reads the tag, so it would
 // fault on a null box) — a fresh literal always sets it, but the guard is defensive.
@@ -29622,7 +29676,7 @@ function emit_struct_enum_deep_reinit_store(se: LowerState, slot: i32, sty: stri
             st = st.emit(ir.op_const_i32(0));
             st = st.emit(ir.op_bin("ne", 0, false));                                    // enum box != 0
             st = st.emit(ir.op_if(0));
-            st = emit_enum_variant_drops(st, etmp, ft);                                 // deep-drop payload + free enum box (zeroes etmp)
+            st = emit_enum_variant_drops_gated(st, etmp, ft, [], true);                 // deep-drop payload if unique, dec enum box (zeroes etmp)
             st = st.emit(ir.op_end());
         }
         fi = fi + 1;
@@ -33035,12 +33089,14 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         rej = rej + 1;
     }
-    // Sweepable ALL-SCALAR enum locals ("SCENUMS:"): the final value's box, freed
-    // with the same shallow dec the rebind uses. emit_scalar_enum_box_free zeroes
+    // Sweepable ALL-SCALAR enum locals and box-only enum-field aliases
+    // ("SCENUMS:"): the final value's box, released with the shallow dec the
+    // rebind uses. emit_scalar_enum_box_free zeroes
     // the slot afterwards, so a second sweep on another return edge is a no-op.
+    // moved_elided is excluded for the rc-enum loop's reason above.
     var sej: i32 = st.frame.n_params;
     while (sej < st.locals.len()) {
-        if (!slot_list_has(keeps, sej) && slot_is_reclaimable_scenum(st, sej)) {
+        if (!slot_list_has(keeps, sej) && !slot_list_has(st.frame.moved_elided, sej) && slot_is_reclaimable_scenum(st, sej)) {
             st = emit_scalar_enum_box_free(st, sej);
         }
         sej = sej + 1;
@@ -33251,6 +33307,8 @@ function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]):
 //   - `return <arr-local>.append(e)`                      — receiver moved;
 //   - an enum-variant construction `return V(a, …)`       — each bare array-local
 //     payload arg is moved into the (leaking) enum box (#3720);
+//   - a bare returned enum local ("SCENUMS:" / "RCENUMS:") — its count goes to
+//     the caller;
 //   - a struct literal whose enum-typed field is built from such a construction
 //     (`return S { node: Many(items), … }`) — the array under the enum payload;
 //   - a returned pointer-shaped field of a reclaimable struct local
@@ -33272,6 +33330,9 @@ function returned_moved_arr_slots(e: ast.Expr, s: LowerState, acc: i32[]): i32[]
             // otherwise the box just handed to the caller is double-freed. The
             // sweep's struct loop skips slots in this keeps list.
             if (slot_is_reclaimable_struct(s, sl) && !slot_list_has(out, sl)) { out = out.append(sl); }
+            // Enum move-on-return: a returned "SCENUMS:" / "RCENUMS:" local hands
+            // its count to the caller, so its exit sweep must not release it.
+            if ((slot_is_reclaimable_scenum(s, sl) || slot_is_reclaimable_rcenum_sweep(s, sl)) && !slot_list_has(out, sl)) { out = out.append(sl); }
             // String move-on-return (#2649): a returned reclaimable-string LOCAL
             // (an accumulator whose intermediates were freed by the consume-rebind)
             // is MOVED OUT to the caller — keep it from the exit string sweep so the
@@ -34719,25 +34780,75 @@ function aliased_array_names_of(body: ast.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
-// --- map alias liveness at a self-reassign (#7235) ---------------------------
+// --- map alias liveness at a mutation (#7235) --------------------------------
 //
-// map_clone_insert_sites_of returns the site keys (target@line:col) of every map
-// self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)` at which an alias of
-// `m` may be LIVE, so the store must clone the map (lower_map_clone_insert)
-// rather than mutate the box the alias still reads. An alias is live at the
-// insert when it is created earlier in lowering order, anywhere inside a loop
-// enclosing the insert (the back edge carries an alias bound textually AFTER the
-// insert into the next iteration's insert), or inside a defer. An insert with no
-// alias live at it mutates in place; a `var q = m` bound afterwards shares the
+// map_clone_sites_of returns the site keys of every map mutation at which an
+// alias of the receiver `m` may be LIVE, so the mutation must clone the map
+// rather than write the box the alias still reads: a self-reassign
+// `m = m.insert(k, v)` / `m = m.set(k, v)` keyed target@line:col of the
+// assignment (lower_map_clone_insert), and a `m.without(k)` call keyed
+// m@line:col of the call (lower_map_without, #9835). An alias is live at
+// the mutation when it is created earlier in lowering order, anywhere inside a
+// loop enclosing the mutation (the back edge carries an alias bound textually
+// AFTER it into the next iteration), or inside a defer. A mutation with no
+// alias live at it writes in place; a `var q = m` bound afterwards shares the
 // mutated box, which is what the alias reads on native too.
 //
-// Alias positions are alias_idents_in_value's: a bare-ident bind or assignment
-// value, or a container-literal element. An alias inside an `if` arm counts for
-// everything after the `if`, whichever way the branch went.
+// Alias positions are mcis_alias_names': both names of a bare-ident bind or
+// assignment, and a container-literal element. An alias inside an `if` arm
+// counts for everything after the `if`, whichever way the branch went.
 struct MapCloneScan { seen: string[], sites: string[] }
 
-function map_clone_insert_sites_of(body: ast.Stmt[]): string[] {
+function map_clone_sites_of(body: ast.Stmt[]): string[] {
     return mcis_stmts(body, no_names(), MapCloneScan { seen: [], sites: [] }).sites;
+}
+
+// mcis_alias_names adds the names a binding of `name` to `value` makes aliases:
+// alias_idents_in_value's, and `name` itself when `value` is a bare ident, since
+// a mutation through the new name writes the box the old one reads too.
+function mcis_alias_names(name: string, value: ast.Expr, seen: string[]): string[] {
+    var out: string[] = alias_idents_in_value(value, seen);
+    if (ident_name_or_empty(value).len() > 0) { out = push_str_unique(out, name); }
+    return out;
+}
+
+// mcis_loop_aliases is alias_names_in_stmts over a loop body with the binders
+// mcis_alias_names adds, so the back edge carries both names of an alias.
+function mcis_loop_aliases(body: ast.Stmt[], acc: string[]): string[] {
+    function visit(st: ast.Stmt, own a: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return mcis_alias_names(v.name, v.init, a); },
+            ast.StmtAssign(x) => { return mcis_alias_names(x.target, x.value, a); },
+            _ => { return a; }
+        }
+    }
+    var out: string[] = util.append_all(no_names(), acc);
+    for st in body { out = astwalk.fold_stmt_spine(st, out, visit); }
+    return out;
+}
+
+// mcis_without_sites adds the site of every `m.without(k)` in `e` whose
+// receiver has an alias: one in `sc.seen` or in `loop_aliases`.
+function mcis_without_sites(e: ast.Expr, loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    var seen: string[] = sc.seen;
+    function visit(x: ast.Expr, own acc: string[]): string[] {
+        match (x) {
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprFieldAccess(fa) => {
+                        var rn: string = ident_name_or_empty(fa.obj);
+                        if (fa.field == "without" && c.args.len() == 1 && rn.len() > 0 && (util.index_of_str(seen, rn) >= 0 || util.index_of_str(loop_aliases, rn) >= 0)) {
+                            return acc.append(reclaim_site_key_of(rn, c.line, c.col));
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        return acc;
+    }
+    return MapCloneScan { ...sc, sites: util.append_all(sc.sites, astwalk.fold_expr(e, no_names(), visit)) };
 }
 
 function mcis_stmts(stmts: ast.Stmt[], loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
@@ -34754,17 +34865,25 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             if (assign_is_self_two_arg_method(a) && (util.index_of_str(sc.seen, a.target) >= 0 || util.index_of_str(loop_aliases, a.target) >= 0)) {
                 acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
             }
-            return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
+            acc = MapCloneScan { ...acc, seen: mcis_alias_names(a.target, a.value, acc.seen) };
+            return mcis_without_sites(a.value, loop_aliases, acc);
         },
-        ast.StmtVar(v) => { return MapCloneScan { ...sc, seen: alias_idents_in_value(v.init, sc.seen) }; },
+        ast.StmtVar(v) => {
+            var acc: MapCloneScan = MapCloneScan { ...sc, seen: mcis_alias_names(v.name, v.init, sc.seen) };
+            return mcis_without_sites(v.init, loop_aliases, acc);
+        },
         ast.StmtIf(iff) => {
-            var acc: MapCloneScan = mcis_stmts(iff.then_body, loop_aliases, sc);
+            var acc: MapCloneScan = mcis_without_sites(iff.cond, loop_aliases, sc);
+            acc = mcis_stmts(iff.then_body, loop_aliases, acc);
             return mcis_stmts(iff.else_body, loop_aliases, acc);
         },
-        ast.StmtWhile(w) => { return mcis_stmts(w.body, alias_names_in_stmts(w.body, loop_aliases), sc); },
-        ast.StmtFor(f) => { return mcis_stmts(f.body, alias_names_in_stmts(f.body, loop_aliases), sc); },
+        ast.StmtWhile(w) => {
+            var wal: string[] = mcis_loop_aliases(w.body, loop_aliases);
+            return mcis_stmts(w.body, wal, mcis_without_sites(w.cond, wal, sc));
+        },
+        ast.StmtFor(f) => { return mcis_stmts(f.body, mcis_loop_aliases(f.body, loop_aliases), mcis_without_sites(f.iter, loop_aliases, sc)); },
         ast.StmtMatch(m) => {
-            var acc: MapCloneScan = sc;
+            var acc: MapCloneScan = mcis_without_sites(m.scrutinee, loop_aliases, sc);
             var k: i32 = 0;
             while (k < m.arms.len()) { acc = mcis_stmts(m.arms[k].body, loop_aliases, acc); k = k + 1; }
             return acc;
@@ -34774,9 +34893,9 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
             return mcis_stmt(d.action, loop_aliases, acc);
         },
         // Spelled out rather than wildcarded: a statement kind with a body this
-        // walk skipped would leave an insert inside it mutating in place.
-        ast.StmtReturn(_) => { return sc; },
-        ast.StmtExpr(_) => { return sc; },
+        // walk skipped would leave a mutation inside it writing in place.
+        ast.StmtReturn(r) => { return mcis_without_sites(r.value, loop_aliases, sc); },
+        ast.StmtExpr(x) => { return mcis_without_sites(x.value, loop_aliases, sc); },
         ast.StmtBreak(_) => { return sc; },
         ast.StmtContinue(_) => { return sc; },
         ast.StmtUnknown(_) => { return sc; },
@@ -36634,6 +36753,47 @@ function collect_fresh_scenum_names(stmts: ast.Stmt[], fn_reassigned: string[], 
         }
     }
     return a;
+}
+
+// collect_enum_field_alias_sites tags "EALIAS:" the `var g = h.e` enum-field
+// aliases this frame may release (#10310): never reassigned, since the assign
+// path has no alias release, and not escaping by either the plan, which forgives
+// a counted sink, or the enum-field walk, which needs no type for `h` — the plan
+// taints an alias of a source it cannot type, such as a method receiver, though
+// the dup makes the alias an owner. Only a tagged alias is dup'd and credited;
+// any other stays the uncounted borrow it was.
+function collect_enum_field_alias_sites(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, borrowable: string[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (enum_field_alias_candidate(v.init, structs) && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                    var site: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
+                    if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
+                    if (esc_ok) { a = a.append("EALIAS:" + site); }
+                }
+            },
+            ast.StmtIf(iff) => { a = collect_enum_field_alias_sites(iff.then_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); a = collect_enum_field_alias_sites(iff.else_body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_enum_field_alias_sites(w.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_enum_field_alias_sites(fo.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_enum_field_alias_sites(arm.body, fn_reassigned, true, structs, borrowable, plan_on, plan_fe, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// enum_field_alias_candidate: `e` may be a struct field read (`h.e`) — the AST
+// cannot type it, so a qualified variant (`E.B`) and a tuple element are the
+// only field accesses it rules out.
+function enum_field_alias_candidate(e: ast.Expr, structs: StructTab): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { return !util.is_all_digits(fa.field) && variant_enum_owner(structs, fa.field) == ""; },
+        _ => { return false; }
+    }
 }
 
 function collect_fresh_rcenum_names(stmts: ast.Stmt[], fn_reassigned: string[], nested: boolean, structs: StructTab, opt_fresh_ret: SigReg, borrowable: string[], str_fresh: string[], msites: string[], acc: string[]): string[] {
@@ -39307,7 +39467,7 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], param
 
 // reclaimable_names_of = fresh-bound struct names that never escape.
 // is_fresh_map_init: an init producing a FRESH map value — a `map_new()` /
-// `map_new_i32()` call, or a `Map { … }` literal (which desugars to
+// `__map_new_i32()` call, or a `Map { … }` literal (which desugars to
 // `map_new[_i32](n).insert(k0,v0).insert(…)`, a `.insert()` method chain whose root
 // is the map_new call). A bare-ident (`var m2 = m1`) or a map-returning call is NOT
 // fresh here (an alias / an un-owned move), so it is left to leak — conservative.
@@ -39315,7 +39475,7 @@ function is_fresh_map_init(e: ast.Expr): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") { return is_fresh_map_init(fa.obj); }
                     return false;
@@ -39556,7 +39716,7 @@ function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
@@ -42771,6 +42931,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // scope-exit sweep release the box with a plain rc-dec.
     var scenums: string[] = collect_fresh_scenum_names(body, reassigned, false, structs, borrowable, plan_on, plan_fe, []);
     out = reclaimable_scenum(scenums, out);
+    out = collect_enum_field_alias_sites(body, reassigned, false, structs, borrowable, plan_on, plan_fe, out);
     // Fresh heap-string locals (`var s: string = a + b` / `.to_upper()` / chr(..)
     // / …): credited under a "STR:" prefix so only slot_is_reclaimable_str matches
     // (the struct / tuple / snapshot consumers never do). Two gates before a name
@@ -49118,6 +49279,7 @@ function slot_is_reclaimable_rcenum_sweep(s: LowerState, i: i32): boolean {
 }
 
 // slot_is_reclaimable_scenum: an all-scalar ENUM local with no consuming match,
+// or an enum-field alias taking the box-only release (credit_enum_field_alias),
 // credited "SCENUMS:" (#6758 follow-up). Accepts a RETIRED slot for the same
 // reason slot_is_reclaimable_rcenum_sweep does: retire_locals renames a
 // block-scoped local on block exit, and a lookup that refuses those would miss
@@ -60986,7 +61148,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var da_bp: string[] = dead_alias_borrow_params_of(fn, structs);
     var dalias: DeadAliases = dead_alias_of(fn.body, asg_targets, fn_moves_all.names, da_bp, is_scalar_type_name(fn.ret_type));
     var persistent_ops: ir.OpBuffer = ir.op_buffer();
-    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
+    var s: LowerState = LowerState { ops: persistent_ops, locals: locals0, ctrl: 0, loop_blk: noloop, frame: LowerFrame { ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dalias.sites, dead_alias_bp: da_bp, spread_sites: spread_sites_of(fn.body, structs, []), type_params: fn.type_params, strarr_sources: string_array_sources_of(fn), structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_sites_of(fn.body), borrowed_names: borrowed, try_cleanup: tclean, defer_slots: [], defer_guard: "", append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn, sg.cnt_struct_ret_fns), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, cur_key: struct_ret_key(fn), n_params: names.len(), fail_why: "", moved_names: fn_moves_top.names, moved_elided: [], move_sites: fn_moves_top.sites, fld_bases: field_move_bases_of(fn, sg), own_lift_sites: own_lift_retain_sites_of(fn, sg, structs) }, xblock_pending: [], optret_pending: [], grow_exempt: [], ok: true, selfrebind: "", fld_moves: [] };
     // A `Cell[T]` PARAM takes the element-width columns a `var c: Cell[T]`
     // local gets from its annotation, so its `get` reads at the element's
     // width rather than as an i32.
@@ -62399,7 +62561,7 @@ function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs): ast.Stmt[] {
                 continue;
             }
             var tn: string = "$mscrut_" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
-            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_view: false, fn_ret: "", fn_param_types: "" });
             out = out.append(ast.StmtMatch { ...m, scrutinee: ast.ExprIdent { name: tn, line: m.line, col: m.col, ty: "" }, arms: arms });
             continue;
         }
@@ -69316,8 +69478,10 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
             // return-transfer retain), and the tuple's deep drop releases its
             // own claim, so the destination owns its reference. Map elements
             // stay tainted (their slot drop deep-frees the value column).
-            // The STRUCT-source half of native's arm is deliberately not
-            // ported — the conservative taint is the documented cut.
+            // Of the STRUCT-source half only a DIRECT enum field is ported: the
+            // enum-field alias bind dups it (#10310). Every other struct field
+            // read keeps the conservative taint.
+            if (decl_is_enum(structs, rc_fe_expr_type(e, types_n, types_t, structs))) { return false; }
             if (util.is_all_digits(fa.field)) {
                 match (fa.obj) {
                     ast.ExprIdent(_) => {
@@ -72451,7 +72615,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             if (c.args.len() != 1) { return false; }
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 _ => { return false; }
             }
         },
@@ -72464,7 +72628,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
 // except for the chain base of a `Map { … }` literal, where it builds the box
 // from the `Map[K, V]` in hand instead of from the constructor's NAME.
 //
-// `map_new` / `map_new_i32` are the only two spellings, and the parser picks
+// `map_new` / `__map_new_i32` are the only two spellings, and the parser picks
 // between them without types: a struct / enum key has no spelling at all and a
 // key set it cannot classify falls back to `map_new` — the STRING one either
 // way. The generic constructor arm reads the kind off that callee name, so the
@@ -72708,7 +72872,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -72911,7 +73075,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
     if let ast.ExprLambda(lm) = value {
         if (lm.ret_type.len() == 0 && sig.fn_ret.len() > 0 && !parser.is_coarse_fn_tag(sig.fn_ret)) { init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret }; }
     }
-    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
+    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_view: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
 }
 // contract_spelling is how returned_lambda_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
@@ -73070,7 +73234,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         },
         ast.StmtVar(v) => {
             var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
-            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
         ast.StmtExpr(s) => {
@@ -73323,7 +73487,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
     if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -73493,7 +73657,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
@@ -73504,13 +73668,13 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var cj: i32 = 0;
     while (cj < caps.len()) {
         var idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" });
         cj = cj + 1;
     }
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -73591,11 +73755,11 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -73605,12 +73769,12 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
+    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs.decls[fi];
-            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: ast.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
@@ -73633,7 +73797,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: tgt.ret_str, ret_str_elem: tgt.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -75070,7 +75234,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnptys = armptys;
     }
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -75649,7 +75813,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                 _ => {}
             }
             var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
-            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
         },
         ast.StmtReturn(r) => {
             // A callable result uses the same env-box ABI as callable
@@ -75963,14 +76127,14 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
     var src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "" };
-    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
     var cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "" };
     var idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_expr walks one expression, rewriting every lambda in it (prepending the
@@ -76121,7 +76285,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
     match (st) {
         ast.StmtVar(v) => {
             var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
+            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
         },
         ast.StmtAssign(a) => {
             var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
@@ -76427,7 +76591,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
+        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
         var nested: ast.ExprLambda[] = [];
         match (stmts[i]) {
             ast.StmtVar(v) => {
@@ -76674,7 +76838,7 @@ function iife_call_to(c: ast.ExprCall, nm: string): ast.Expr {
 // iife_bind is the hoisted `var <nm> = <lambda>;`. Untyped: the checker infers
 // the lambda's own type, exactly as it does for a written `var f = () => …`.
 function iife_bind(nm: string, lam: ast.Expr, line: i32, col: i32): ast.Stmt {
-    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 function name_source_iifes_stmts(stmts: ast.Stmt[], fdname: string, k0: i32): IifeNamed {
@@ -76844,7 +77008,23 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 //
 // An empty `view` means "use the module's own functions", so every caller that
 // does not thread a view is byte-identical to before.
+//
+// The lift is on every production route into the AST lowering, including the
+// per-module and stdin drivers that never reach module_with_builtins, so its
+// result has each `str` erased. A test-driver leg that lowers a parsed module
+// without it still sees `str`: irlower_run's default, -rc-plan, -str-own and
+// -verify* legs, and ir_const_numeric_run's x86-64 and arm64 legs.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
+    return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
+}
+
+// lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
+// `str` as a view.
+pub function lift_lambdas_typed(raw_mod: parser.Module): parser.Module {
+    return lift_lambdas_view_typed(raw_mod, []);
+}
+
+pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
     // as `f(5, 128)`. No-op for default-free modules.
