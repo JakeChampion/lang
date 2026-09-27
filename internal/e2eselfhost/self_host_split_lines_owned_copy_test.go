@@ -54,7 +54,7 @@ function round(i: i32): i32 {
     return (ps[0][0] as i32 + ps.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 700, frees: 400,
+			want: 29, allocs: 600, frees: 300,
 		},
 		{
 			// The lines sibling — same mechanism, same pre-fix wrong answer.
@@ -68,7 +68,7 @@ function round(i: i32): i32 {
     return (rs[0][0] as i32 + rs.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 700, frees: 400,
+			want: 29, allocs: 600, frees: 300,
 		},
 		{
 			// Same-frame split, receiver read after — correct under the views
@@ -83,7 +83,7 @@ function round(i: i32): i32 {
     return (ps[0][0] as i32 + ps.len() + s.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 28, allocs: 600, frees: 600,
+			want: 28, allocs: 500, frees: 500,
 		},
 	}
 }
