@@ -41,7 +41,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[] }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -187,7 +187,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [] }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -1294,6 +1294,9 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     // Per append or with result: whether its receiver is read after it, by
     // this block or on the way out, directly or through a dependent.
     var kept: boolean[] = bits(f.graph.nvals);
+    // Per parameter: whether an edge carries it into a phi while it, or a
+    // value depending on it, is still live in the target.
+    var entry_kept: boolean[] = bits(f.graph.nvals);
     var vi0: i32 = 0;
     while (vi0 < f.graph.nvals) { grows = grows.append(0 - 1); grow_fields = grow_fields.append(0 - 1); vi0 = vi0 + 1; }
     var steps: Step[] = [];
@@ -1341,6 +1344,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
             }
             for target in successors(b) {
                 var si: i32 = ssalive.position(analysis.flow, target);
+                entry_kept = entry_kept_of(f, analysis, b, si, entry_kept);
                 var dead: i32[] = ssalive.out_not_in(analysis.flow, bi, si);
                 steps = steps.append(choose_ids(step(b.id, edge_point(), target), edge_supplies(f, b, si, owned), dead, owned));
             }
@@ -1350,7 +1354,19 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var literal: boolean[] = literals(f);
     why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept };
+    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept };
+}
+
+function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
+    var succ: ssa.SBlock = f.graph.blocks[si];
+    var pi: i32 = 0;
+    while (succ.preds[pi] != b.id) { pi = pi + 1; }
+    for ins in succ.insts {
+        if (ins.kind_tag != 8) { continue; }
+        var v: i32 = ins.args[pi];
+        if (v >= 0 && v < f.graph.nparams && ssalive.live_in_has(a.flow, si, v)) { out = out.with(v, true); }
+    }
+    return out;
 }
 
 function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][]): string {
