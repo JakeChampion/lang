@@ -5,12 +5,13 @@ import "testing"
 // The Map family on `-backend ssa -target x86-64-linux`, against the DEFAULT
 // x86-64 backend on stdout, stderr and exit status. The Map is core/map.fern
 // on both sides; what this backend supplies is the allocator pair, the byte
-// fill, the hash seed, and the two drops, plus the call-site alias from
+// fill, the hash seed, and the rc helpers, plus the call-site alias from
 // `map_new` to `map_new_impl`. Iteration order depends on the per-process
 // seed, so every case prints an order-independent observation.
 var x86SSAMapCases = []struct {
 	name string
 	src  string
+	want string // stdout both backends must print, when set
 }{
 	{
 		name: "string_keys_insert_get_has_len_without_and_cleared",
@@ -95,7 +96,7 @@ function main(): i32 {
 	},
 	{
 		// Many short-lived maps: each is dropped at scope exit through
-		// __fern_map_drop, and the seed is drawn once for all of them.
+		// __map_drop_impl, and the seed is drawn once for all of them.
 		name: "many_maps_in_a_loop",
 		src: `import "std/i32";
 import "core/map";
@@ -112,6 +113,21 @@ function main(): i32 {
   stdout().write("total=" + total.to_string() + "\n");
   return 0;
 }`,
+	},
+	{
+		// A handle dropped at a zero count is an over-release on both
+		// backends: the drop hands it to __fern_rc_dec, which counts it.
+		name: "over_released_handle_is_counted",
+		src: `import "std/i32";
+import "core/map";
+function main(): i32 {
+  var h: usize = map_new_impl(4, 0, 0);
+  __store_i32(h - 8, 0);
+  __map_drop_impl(h);
+  stdout().write("underflows=" + __rc_underflow_count().to_string() + "\n");
+  return 0;
+}`,
+		want: "underflows=1\n",
 	},
 }
 
@@ -138,6 +154,9 @@ func TestX86_64SSAMapFamilyMatchesDefaultBackend(t *testing.T) {
 			}
 			if ssaOut == "" {
 				t.Errorf("no output at all: the program did not reach its prints")
+			}
+			if c.want != "" && ssaOut != c.want {
+				t.Errorf("stdout = %q, want %q", ssaOut, c.want)
 			}
 		})
 	}

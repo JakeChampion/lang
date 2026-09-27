@@ -137,7 +137,6 @@ var rcRuntimeSigs = map[string]RcSig{
 	"__fern_arr_dec":      one(0, RcRelease, true),
 	"__fern_box_free":     one(0, RcRelease, true),
 	"__fern_cell_free":    one(0, RcRelease, true),
-	"__fern_map_drop":     one(0, RcRelease, true),
 	"__fern_closure_drop": one(0, RcRelease, true),
 	"__fern_drop_arr_ptr": one(0, RcRelease, true),
 	"__fern_drop_arr_str": one(0, RcRelease, true),
@@ -631,6 +630,7 @@ var generatedDropNames = map[string]bool{
 	"__drop_arr_closure":   true,
 	"__drop_closure_value": true,
 	"__map_drop_values":    true,
+	"__map_drop_impl":      true,
 }
 
 // RcHelperSig reports what a call to name does to the caller's

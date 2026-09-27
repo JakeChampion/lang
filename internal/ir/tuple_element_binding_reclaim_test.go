@@ -125,12 +125,12 @@ function churn(n: i32): i32 {
 
 function main(): i32 { return churn(4); }
 `
-	fn := funcByName(lowerForTest(t, src), "churn")
+	fn := funcByName(lowerPipelineSrc(t, src), "churn")
 
 	// Half one: the map is released. Before #8276 this was zero — the
 	// projection was refused ownership, so nothing in the loop ever dropped
 	// the map and the whole table leaked once an iteration.
-	if n := callCount(fn, "__fern_map_drop"); n == 0 {
+	if n := callCount(fn, "__map_drop_impl"); n == 0 {
 		t.Error("churn emits no map drops: the tuple element is not credited, so the loop leaks its map every iteration (#8434)")
 	}
 

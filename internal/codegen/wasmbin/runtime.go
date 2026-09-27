@@ -1023,13 +1023,6 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_arr_dec")
 					needs.add("__free")
 					needs.add("__fern_alloc")
-				case "__fern_map_drop":
-					needs.add("__fern_map_drop")
-					if ast.RcFreeEnabled {
-						// Flag-on, the drop frees the buf + handle.
-						needs.add("__free")
-						needs.add("__fern_alloc")
-					}
 				case "__fern_box_free":
 					needs.add("__fern_box_free")
 					needs.add("__free")
@@ -2271,14 +2264,7 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildArrDecBody,
 	},
-	"__fern_map_drop": {
-		// (m) → m. Phase 3 map reclamation handler; on the last
-		// reference (rc==1) frees the buf (size = 24 + cap*(4+8))
-		// then the 16-byte handle. See buildMapDropBody.
-		params:  []byte{encode.ValtypeI32},
-		results: []byte{encode.ValtypeI32},
-		body:    buildMapDropBody,
-	},
+
 	"__fern_box_free": {
 		// (data, size) → data. Phase 3 struct/enum box reclamation;
 		// the IR pre-gates on rc==1, so this just frees base = data-8
@@ -3649,115 +3635,6 @@ func buildArrDecBody(helperIdxs map[string]uint32) []byte {
 	}
 	body = inst.InstEnd(body)
 	// return data
-	body = inst.InstLocalGet(body, 0)
-	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
-	return inst.PutFunctionBody(nil, locals, body)
-}
-
-// buildMapDropBody — (m) → m. Phase 3 map reclamation handler (wasm
-// mirror of the native helpers). A Map handle `m` has its rc at
-// [m-8] and its buf pointer at [m+0]. On the last reference (rc==1)
-// the storage returns to the freelist: the buf (size = 24 +
-// cap*(4+entryStride), cap at [buf+0], entryStride = 2*ptrW = 8 on
-// wasm32) then the 16-byte handle cell (base = m-8). Entry keys/values
-// are NOT walked — their accounting is untouched (they leak, as
-// before). On rc>1 the handle is dec'd. Same null / low-address /
-// sentinel / underflow guards as buildArrDecBody. Returns m.
-//
-// Locals: 0=m (param); 1=rc, 2=buf, 3=cap.
-func buildMapDropBody(helperIdxs map[string]uint32) []byte {
-	free := helperIdxs["__free"]
-	var body []byte
-	// null guard → return m
-	body = inst.InstLocalGet(body, 0)
-	body = numeric.InstI32Eqz(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
-	// low-address guard → return m
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, rcLowAddrGuard)
-	body = numeric.InstI32LtU(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
-	// rc = mem[m-8]; sentinel guard → return m
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Sub(body)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalTee(body, 1) // $rc
-	body = inst.InstI32Const(body, int32(-0x80000000))
-	body = numeric.InstI32And(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 0)
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
-	// if rc == 1: free buf + handle; else maybe-bump-underflow + dec.
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstI32Const(body, 1)
-	body = numeric.InstI32Eq(body)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	{
-		// buf = mem[m] → local 2
-		body = inst.InstLocalGet(body, 0)
-		body = memory.InstI32Load(body, 2, 0)
-		body = inst.InstLocalTee(body, 2)
-		// if buf is at or above the rc guard (covers null + every static
-		// region): free it.
-		body = inst.InstI32Const(body, rcLowAddrGuard)
-		body = numeric.InstI32GeU(body)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		{
-			// cap = mem[buf] → local 3
-			body = inst.InstLocalGet(body, 2)
-			body = memory.InstI32Load(body, 2, 0)
-			body = inst.InstLocalSet(body, 3)
-			// __free(base = buf, size = 24+8 + cap*(4+entryStride=8+1 ctrl) =
-			// 32 + cap*13) — must match core/map's __map_buf_bytes.
-			body = inst.InstLocalGet(body, 2) // base
-			body = inst.InstI32Const(body, ast.MapHeaderBytes+8)
-			body = inst.InstLocalGet(body, 3)
-			body = inst.InstI32Const(body, 13)
-			body = numeric.InstI32Mul(body)
-			body = numeric.InstI32Add(body) // size
-			body = inst.InstCall(body, free)
-		}
-		body = inst.InstEnd(body)
-		// __free(base = m - 8, size = 16) — the handle cell
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI32Const(body, 8)
-		body = numeric.InstI32Sub(body)    // base
-		body = inst.InstI32Const(body, 16) // size
-		body = inst.InstCall(body, free)
-	}
-	body = inst.InstElse(body)
-	{
-		// if rc <= 0: bump the over-release counter.
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstI32Const(body, 0)
-		body = numeric.InstI32LeS(body)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		body = inst.InstI32Const(body, rcUnderflowAddr)
-		body = inst.InstI32Const(body, rcUnderflowAddr)
-		body = memory.InstI32Load(body, 2, 0)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstEnd(body)
-		// mem[m-8] = rc - 1
-		body = inst.InstLocalGet(body, 0)
-		body = inst.InstI32Const(body, 8)
-		body = numeric.InstI32Sub(body)
-		body = inst.InstLocalGet(body, 1)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Sub(body)
-		body = memory.InstI32Store(body, 2, 0)
-	}
-	body = inst.InstEnd(body)
-	// return m
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
