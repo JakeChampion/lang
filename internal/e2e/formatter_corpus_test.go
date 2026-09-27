@@ -121,7 +121,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 			// user's source. `-fmt -w` would make that permanent, and the names
 			// carry a counter or the loop's line/column, so the same code moved
 			// down a line reformats to different text.
-			for _, synth := range []string{"__range_hi_", "__foreach_iter_", "__foreach_idx_", "__foreach_len_", "__forc_"} {
+			for _, synth := range []string{"__range_hi_", "__range_go_", "__foreach_iter_", "__foreach_idx_", "__foreach_len_", "__forc_"} {
 				if strings.Contains(once, synth) && !strings.Contains(string(src), synth) {
 					t.Errorf("formatted output leaks the synthetic name %q, which the source does not spell\n--- formatted ---\n%s", synth, once)
 				}

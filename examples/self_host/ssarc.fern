@@ -357,6 +357,8 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 // bracket is on the field and the record's own count answers for any holder
 // no caller names. The frame itself must be done reading the parameter too
 // (`kept`): growing its box in place would change the value it reads next.
+// Declining is enough because a borrowed parameter's unit is never moved:
+// its retain stands through the push, which the rc test then reads as shared.
 // An array reached any other way the frame does not own —
 // an element of a borrowed array of arrays, say — has no bracket standing
 // behind it, and growing it in place would rewrite what the container still
@@ -1243,10 +1245,10 @@ function successors(t: ssa.STerm): i32[] {
     return [];
 }
 
-function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], from: i32, target: i32): irlower.LowerResult {
+function edge(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32): irlower.LowerResult {
     var step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
-    r = supplies(r, f, p, step, false);
     var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+    r = supplies(r, f, p, owed_on_entry(step, dest, links), false);
     var pi: i32 = 0;
     while (dest.preds[pi] != from) { pi = pi + 1; }
     // All phi sources remain on the operand stack while old edge units are
@@ -2307,15 +2309,16 @@ function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     return emit(r, ir.op_end());
 }
 
-// A chain of appends on a borrowed parameter, `b = b.append(x); return
-// b.append(y)`. Retaining each result as `append_borrowed` does would leave
-// the caller's box at two counts, and the next push would copy it whole. So
-// a result whose only use is as the next append's receiver is a LINK: it
+// Appends threaded through a borrowed parameter, `b = b.append(x); return
+// b.append(y)` or the same in a loop. Retaining each result as
+// `append_borrowed` does would leave the caller's box at two counts, and the
+// next push would copy it whole. So such a value is a LINK (`links_of`): it
 // still carries the unit the plan gives it, but encoded at run time. A link
 // that is still the parameter's box (`root`) has not taken its unit, and the
 // push onto it is the non-consuming one again. Any other link is a fresh box
 // of the frame's own at one count, which the consuming push grows in place.
-// The last append of the chain takes the unit that is owed.
+// The unit that is owed is taken where the value stops being a link: by an
+// append whose result is not one, or at the return (`take_owed`).
 struct Link { root: i32, out: boolean }
 
 function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, link: Link): irlower.LowerResult {
@@ -2336,70 +2339,190 @@ function append_linked(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     return emit(r, ir.op_load_local(scratch));
 }
 
-// The links in one block, by position: `roots` is the parameter the append's
-// receiver is a link of (-1 when it is not one), `outs` whether its result is
-// one. A chain starts at an append whose receiver's retain was deferred onto a
-// borrowed parameter. It continues while the result's only use in the whole
-// function is the receiver of a later append in this block, which the plan
-// moves the unit into, so no path can drop a link or read it anywhere else.
-struct Chains { roots: i32[], outs: boolean[] }
-
-function block_chains(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock): Chains {
-    var roots: i32[] = [];
-    var outs: boolean[] = [];
-    var links: i32[] = [];
-    var link_roots: i32[] = [];
-    var pos: i32 = 0;
-    while (pos < b.insts.len()) {
-        var ins: ssa.SInst = b.insts[pos];
-        var root: i32 = 0 - 1;
-        var start: i32 = 0 - 1;
-        if (ins.kind_tag == ssasem.append() && p.grows[ins.result] < 0) {
-            var at_link: i32 = util.index_of_i32(links, ins.args[0]);
-            if (at_link >= 0) { root = link_roots[at_link]; }
-            start = root;
-            if (start < 0 && deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins)) { start = ins.args[0]; }
+// The links of a function, by value: the parameter each link's unit is owed
+// on, -1 for a value that is not one. A link is an append onto the parameter
+// whose retain was deferred, an append onto a link, or a phi whose every
+// input is the parameter or a link of it, which is how a loop carries one.
+//
+// Every use of a link has to understand the encoding, so a candidate stays
+// only while each supply naming it MOVES it into one of three places: the
+// receiver of an append, a link phi, or the return, which takes the unit that
+// is owed. A read that takes no unit is fine, since the box is live either
+// way. A drop, a hand-off, a retain or a steal is not, and neither is a
+// parameter the frame reads anywhere else: it is removed, and whatever
+// depended on it goes with it on the next round.
+function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
+    var top: i32 = 0 - 2;
+    var state: i32[] = [];
+    var v: i32 = 0;
+    while (v < f.graph.nvals) { state = state.append(0 - 1); v = v + 1; }
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len()) {
+        for ins in f.graph.blocks[bi].insts {
+            if (link_kind(f, p, ins)) { state = state.with(ins.result, top); }
         }
-        var out: boolean = start >= 0 && linked_use(f, p, idx, b, pos);
-        roots = roots.append(root);
-        outs = outs.append(out);
-        if (out) {
-            links = links.append(ins.result);
-            link_roots = link_roots.append(start);
-        }
-        pos = pos + 1;
+        bi = bi + 1;
     }
-    return Chains { roots: roots, outs: outs };
+    var roots: boolean[] = link_roots(f, p, idx);
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var next: i32[] = propagate(f, p, idx, state, roots);
+        next = prune(f, p, next);
+        v = 0;
+        while (v < next.len()) { if (next[v] != state[v]) { changed = true; } v = v + 1; }
+        state = next;
+    }
+    v = 0;
+    while (v < state.len()) { if (state[v] == top) { state = state.with(v, 0 - 1); } v = v + 1; }
+    return state;
 }
 
-function linked_use(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pos: i32): boolean {
-    var v: i32 = b.insts[pos].result;
-    if (uses(f, v) != 1) { return false; }
-    var q: i32 = pos + 1;
-    while (q < b.insts.len()) {
-        var nxt: ssa.SInst = b.insts[q];
-        if (nxt.kind_tag == ssasem.append() && nxt.args[0] == v && p.grows[nxt.result] < 0) {
-            for supply in at(p, idx, b.id, q, 0 - 1).supplies {
-                if (supply.slot == 0 && supply.value == v && supply.mode == ssaunits.move_unit()) { return true; }
-            }
-            return false;
-        }
-        q = q + 1;
-    }
+function link_kind(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
+    if (ins.kind_tag == ssasem.append()) { return p.grows[ins.result] < 0; }
+    return ins.kind_tag == 8 && is_array_type(f.values[ins.result]);
+}
+
+function is_array_type(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeArray(_) = t { return true; }
     return false;
 }
 
-// How many operands, phi inputs and terminator operands read `v`.
-function uses(f: ssasem.Func, v: i32): i32 {
-    var n: i32 = 0;
-    for blk in f.graph.blocks {
-        for ins in blk.insts {
-            for a in ins.args { if (a == v) { n = n + 1; } }
-        }
-        if (blk.term.kind_tag == 1 && blk.term.value == v) { n = n + 1; }
-        if (blk.term.kind_tag == 3 && blk.term.cond == v) { n = n + 1; }
+// The parameters a link may be owed on: borrowed arrays whose every use is
+// an append that defers its retain onto them or an input to a phi, so the
+// frame never reads one after its box may have grown.
+function link_roots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): boolean[] {
+    var ok: boolean[] = [];
+    var v: i32 = 0;
+    while (v < f.graph.nparams) {
+        ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]));
+        v = v + 1;
     }
-    return n;
+    for b in f.graph.blocks {
+        var pos: i32 = 0;
+        for ins in b.insts {
+            var i: i32 = 0;
+            for a in ins.args {
+                if (a >= 0 && a < f.graph.nparams && ok[a]) {
+                    var fits: boolean = ins.kind_tag == 8;
+                    if (ins.kind_tag == ssasem.append() && i == 0 && p.grows[ins.result] < 0) {
+                        fits = deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins);
+                    }
+                    if (!fits) { ok = ok.with(a, false); }
+                }
+                i = i + 1;
+            }
+            pos = pos + 1;
+        }
+        if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < f.graph.nparams) { ok = ok.with(b.term.value, false); }
+        if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < f.graph.nparams) { ok = ok.with(b.term.cond, false); }
+    }
+    return ok;
+}
+
+// One round of the candidates' roots, read off their inputs. A root only
+// descends: unknown, then a parameter, then none.
+function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[], roots: boolean[]): i32[] {
+    var top: i32 = 0 - 2;
+    var out: i32[] = state;
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (state[ins.result] == 0 - 1) { continue; }
+            var root: i32 = top;
+            if (ins.kind_tag == ssasem.append()) {
+                root = input_root(f, state, roots, ins.args[0]);
+            } else {
+                for a in ins.args {
+                    var r0: i32 = input_root(f, state, roots, a);
+                    if (r0 == 0 - 1 || (root >= 0 && r0 >= 0 && r0 != root)) { root = 0 - 1; }
+                    else if (r0 >= 0 && root == top) { root = r0; }
+                }
+            }
+            if (root != top || state[ins.result] == top) { out = out.with(ins.result, root); }
+        }
+    }
+    return out;
+}
+
+function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32 {
+    if (a < 0) { return 0 - 1; }
+    if (a < f.graph.nparams) {
+        if (roots[a]) { return a; }
+        return 0 - 1;
+    }
+    return state[a];
+}
+
+// Candidates with a use the encoding cannot reach, removed.
+function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
+    var out: i32[] = state;
+    for step in p.steps {
+        for d in step.drops { out = unlink(out, d); }
+        for h in step.hand_roots { out = unlink(out, h); }
+        for supply in step.supplies {
+            if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, state, step, supply)) {
+                out = unlink(out, supply.value);
+            }
+        }
+    }
+    return out;
+}
+
+function unlink(own state: i32[], v: i32): i32[] {
+    if (v < 0 || v >= state.len()) { return state; }
+    return state.with(v, 0 - 1);
+}
+
+function linked_supply(f: ssasem.Func, p: ssaunits.Plan, state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
+    if (supply.mode != ssaunits.move_unit()) { return false; }
+    var b: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.block)];
+    if (step.point == ssaunits.return_point()) { return b.term.kind_tag == 1 && b.term.value == supply.value; }
+    if (step.point == ssaunits.edge_point()) {
+        var dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, step.target)];
+        if (supply.slot < 0 || supply.slot >= dest.insts.len()) { return false; }
+        var phi: ssa.SInst = dest.insts[supply.slot];
+        return phi.kind_tag == 8 && same_root(state[phi.result], state[supply.value]);
+    }
+    if (step.point < 0) { return false; }
+    var ins: ssa.SInst = b.insts[step.point];
+    return ins.kind_tag == ssasem.append() && supply.slot == 0 && ins.args[0] == supply.value && p.grows[ins.result] < 0;
+}
+
+function same_root(a: i32, b: i32): boolean {
+    if (a == 0 - 1 || b == 0 - 1) { return false; }
+    return a == b || a == 0 - 2 || b == 0 - 2;
+}
+
+// The append's view of the links: the root its receiver is a link of, and
+// whether its own result is one.
+function link_at(f: ssasem.Func, links: i32[], ins: ssa.SInst): Link {
+    if (ins.kind_tag != ssasem.append()) { return Link { root: 0 - 1, out: false }; }
+    var root: i32 = 0 - 1;
+    if (ins.args[0] >= f.graph.nparams) { root = links[ins.args[0]]; }
+    return Link { root: root, out: links[ins.result] >= 0 };
+}
+
+// An edge's supplies less the retain of a parameter into a link phi of it:
+// the phi still holds the parameter's box, whose unit stays owed.
+function owed_on_entry(step: ssaunits.Step, dest: ssa.SBlock, links: i32[]): ssaunits.Step {
+    var kept: ssaunits.Supply[] = [];
+    for supply in step.supplies {
+        var owed: boolean = supply.mode == ssaunits.retain_unit() && supply.slot >= 0 && supply.slot < dest.insts.len()
+            && dest.insts[supply.slot].kind_tag == 8 && links[dest.insts[supply.slot].result] == supply.value;
+        if (!owed) { kept = kept.append(supply); }
+    }
+    return ssaunits.Step { ...step, supplies: kept };
+}
+
+// The unit a link owes, taken where it leaves the frame: a retain when it is
+// still the parameter's box, nothing when it is a box of the frame's own.
+function take_owed(own r: irlower.LowerResult, v: i32, root: i32): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(v));
+    r = emit(r, ir.op_load_local(root));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = helper(r, v, "__fern_rc_inc");
+    return emit(r, ir.op_end());
 }
 
 // The push onto a FIELD buffer of a record this frame reads no further
@@ -3155,11 +3278,10 @@ function builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lower
     return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
+function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irlower.StructTab, grows: ssaunits.GrowRow[]): irlower.LowerResult {
     r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f);
     var pos: i32 = 0;
     var pairs: ReusePairs = reuse_pairs(f, p, idx, b);
-    var chains: Chains = block_chains(f, p, idx, b);
     for ins in b.insts {
         if (ins.kind_tag != 6 && ins.kind_tag != 8) {
             var step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
@@ -3176,7 +3298,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
             // reads one token slot and the runtime decides.
             if (pairs.selfs[pos] >= 0) { r = reuse_token(r, f, pairs.selfs[pos]); }
             if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) { r = reuse_construct(r, f, ins); }
-            else { r = instruction(r, f, p, ins, structs, defer0, Link { root: chains.roots[pos], out: chains.outs[pos] }); }
+            else { r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins)); }
             r = bracket_give(r, f, held);
             if (pairs.tokens[pos] >= 0) { r = reuse_token(r, f, pairs.tokens[pos]); }
             r = drops_less(r, step, f, pairs.tokens[pos], pairs.selfs[pos], ssaunits.shell_root(f, p, ins));
@@ -3190,7 +3312,7 @@ function block_body(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
 // reaches by branching to it: a `block` ends before that index, a `loop`
 // starts at it. An `if` arm is a label of its own that no branch targets.
 // `steps` is the plan's step index (ssaunits.step_index).
-struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][] }
+struct Emit { r: irlower.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[] }
 
 function label_if(): i32 { return 0 - 1; }
 
@@ -3221,7 +3343,7 @@ function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
 }
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
-    e = Emit { ...e, r: edge(e.r, f, p, e.steps, f.graph.blocks[order[position]].id, target) };
+    e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, f.graph.blocks[order[position]].id, target) };
     var dest: i32 = rank(f.graph, order, target);
     if (dest == position + 1) { return e; }
     var d: i32 = depth(e, dest);
@@ -3234,6 +3356,9 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 1 || b.term.kind_tag == 4) {
         var ret: ssaunits.Step = at(p, e.steps, b.id, ssaunits.return_point(), 0 - 1);
         e = Emit { ...e, r: supplies(e.r, f, p, ret, false) };
+        if (b.term.kind_tag == 1 && b.term.value >= 0 && e.links[b.term.value] >= 0) {
+            e = Emit { ...e, r: take_owed(e.r, b.term.value, e.links[b.term.value]) };
+        }
         e = Emit { ...e, r: drops(e.r, ret, f) };
         // The unreachable end aborts as a failed bounds check does, then
         // returns a zero the abort never lets the stack shape reach.
@@ -3284,7 +3409,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
             e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
             position = l.loop_end[position] + 1;
         } else {
-            e = Emit { ...e, r: block_body(e.r, f, p, e.steps, f.graph.blocks[l.order[position]], structs, grows) };
+            e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows) };
             e = terminator(e, f, p, l.order, position);
             position = position + 1;
         }
@@ -3589,7 +3714,8 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlo
     if (why != "") { return empty(why); }
     var layout: ssalayout.Layout = ssalayout.compute(f.graph);
     if (!layout.ok) { return empty("physical RC needs reducible graph"); }
-    var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: ssaunits.step_index(p) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+    var steps: i32[][] = ssaunits.step_index(p);
+    var e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links_of(f, p, steps) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
     if (e.why != "") { return empty(e.why); }
     var optimized: ir.OptimizedOps = ir.optimize_ops(e.r.ops, e.r.n_params, e.r.n_locals);
     return irlower.LowerResult { ...e.r, ops: optimized.ops, n_locals: optimized.n_locals };

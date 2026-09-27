@@ -318,7 +318,7 @@ TestSelfHostIRVerifyProvidedCorpusClean 57
 TestSelfHostIRVerifyRcCorpusClean 3
 TestSelfHostIRVerifyStackCorpusClean 3
 TestSelfHostIdentifierCountsX86_64 2
-TestSelfHostIifeI64AnnotIRX86_64 2
+TestSelfHostIifeI64AnnotIR 2
 TestSelfHostImplBounds 3
 TestSelfHostImportAliasIR 2
 TestSelfHostImportAsyncFunctionChecks 11
@@ -443,9 +443,9 @@ TestSelfHostOpenedHandleNeverLandsOnStdoutX86_64 2
 TestSelfHostOperatorOverloadRootsIRX86_64 2
 TestSelfHostOptAliasBindIRArm64 2
 TestSelfHostOptAliasBindX86_64 2
-TestSelfHostOptArithNarrowBindIRX86_64 2
-TestSelfHostOptArithNarrowF64IRX86_64 2
-TestSelfHostOptMakeI64IRX86_64 2
+TestSelfHostOptArithNarrowBindIR 2
+TestSelfHostOptArithNarrowF64IR 2
+TestSelfHostOptMakeI64IR 2
 TestSelfHostOptResultCombinatorsIR 2
 TestSelfHostOptStructPayloadFieldIR 2
 TestSelfHostOptUnusedWideBindIR 2

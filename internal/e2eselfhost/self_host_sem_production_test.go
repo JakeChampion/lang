@@ -1878,7 +1878,7 @@ function main(): i32 { return (chained(6) + relayed(1)) & 255; }
 	// counting while-loop matched only the half-open `__range` — so every
 	// module using `..=` reached this boundary with a call it has no contract
 	// for and fell to the AST lowering whole. The loop bodies here are the
-	// shapes the break test decides: HIGH included, a single-element range that
+	// shapes the loop exit decides: HIGH included, a single-element range that
 	// runs ONCE where the half-open form runs not at all, and a reversed one
 	// that still runs zero times.
 	{name: "inclusive-range", atLeast: 3, src: `
