@@ -342,7 +342,7 @@
 # type-variable respelling pass and its printer inverse (#9577). The other
 # rows keep their numbers. Measured with FERN_WARM_DRIVER=fern.fern
 # FERN_DRIVER_SIZE_REPORT on the merged tree.
-fern.fern 13654985
+fern.fern 13753865
 asm_load_run.fern 9924729
 asm_modload_run.fern 9400865
 asm_ir_run.fern 9111545
