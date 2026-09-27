@@ -18104,9 +18104,11 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
     return e;
 }
 
-// A type variable is also a value in one position, the object of `T.default()`.
-// A value binding of the same name shadows it there, as in native, so that
-// respelling walks the body with the value names in scope. TvScope is the
+// A type variable also reaches two expression positions: the object of
+// `T.default()`, and the bracket of `f[T](x)`, which parses as an index until
+// retag_type_arg_indexes settles it as a type argument. A value binding of the
+// same name shadows it in both, as in native, so that respelling walks the
+// body with the value names in scope. TvScope is the
 // walk's accumulator: the declaration's variables, their respellings, and the
 // value names bound so far.
 struct TvScope { vars: string[], cts: string[], values: string[] }
@@ -18135,17 +18137,26 @@ function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
     return out;
 }
 
-// tv_obj_expr owns the respelled object and the lambda scope boundary; the
-// shared spine owns every other container.
+// tv_obj_ident is the respelled identifier when `e` names a type variable no
+// value shadows, else `e`.
+function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
+    if let ast.ExprIdent(id) = e {
+        var k: i32 = tp_index(id.name, sc.vars);
+        if (k >= 0 && !str_in(sc.values, id.name)) { return ast.ExprIdent { ...id, name: sc.cts[k] }; }
+    }
+    return e;
+}
+
+// tv_obj_expr owns the two variable positions and the lambda scope boundary;
+// the shared spine owns every other container.
 function tv_obj_expr(e: ast.Expr, sc: TvScope): (ast.Expr, TvScope, boolean) {
     match (e) {
         ast.ExprFieldAccess(fa) => {
-            if let ast.ExprIdent(id) = fa.obj {
-                var k: i32 = tp_index(id.name, sc.vars);
-                if (k >= 0 && !str_in(sc.values, id.name)) {
-                    return (ast.ExprFieldAccess { ...fa, obj: ast.ExprIdent { ...id, name: sc.cts[k] } }, sc, true);
-                }
-            }
+            if let ast.ExprIdent(_) = fa.obj { return (ast.ExprFieldAccess { ...fa, obj: tv_obj_ident(fa.obj, sc) }, sc, true); }
+            return (e, sc, false);
+        },
+        ast.ExprIndex(ix) => {
+            if let ast.ExprIdent(_) = ix.index { return (ast.ExprIndex { ...ix, array: tv_obj_in(ix.array, sc), index: tv_obj_ident(ix.index, sc) }, sc, true); }
             return (e, sc, false);
         },
         ast.ExprLambda(lm) => {

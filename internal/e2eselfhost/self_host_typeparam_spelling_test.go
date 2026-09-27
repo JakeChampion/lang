@@ -97,6 +97,14 @@ function main(): i32 { return first([7, 8]) + count(["a", "b", "c"]) * 10; }
 function pick3[T: cmp.Eq](T: T): T { return T; }
 function main(): i32 { return pick3(40) + pick3("abc").len(); }
 `, 43},
+	// `f[T](x)` parses as an index until the type argument is recognised, so
+	// its bracket is respelled like any type variable — but an index that is a
+	// value of the same name stays a value.
+	{"type-param-in-call-bracket-and-value-index", `function at[T](xs: T[], T: i32): T { return xs[T]; }
+function id[T](a: T): T { return a; }
+function pass[T](a: T): T { return id[T](a); }
+function main(): i32 { return at([10, 20, 30], 2) + pass(5); }
+`, 35},
 	// Out of the value's scope, `T.default()` names the type variable again.
 	{"type-param-object-after-shadow-scope", `import "core/cmp";
 function mk[T: cmp.Default](x: T): T {
