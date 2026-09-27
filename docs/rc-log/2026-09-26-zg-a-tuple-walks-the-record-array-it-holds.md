@@ -50,7 +50,7 @@ The readers, which must move together when either alphabet grows:
 - The literal's kinds record `b` for an `a` share whose slot tag is a struct or
   enum array.
 - `mark_tuple_elem_binding` maps flags through `arrf_flag_kind`.
-- The discarded-call `ARRF:` release in `lower_stmt_inner` releases a `3`
+- The discarded-call `ARRF:` release in `lower_stmt_expr` releases a `3`
   position with the tag from `tuple_ret_type`.
 - `tuple_ret_arrfree_flags` writes `3` where every return holds a retained field
   read of a struct or enum array. It now takes the struct table.

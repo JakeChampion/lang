@@ -180,7 +180,7 @@ func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
 					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
 				}
 				if pinned {
-					assertCensusPinned(t, stderr, pin)
+					assertLeakPinned(t, stderr, pin, "main's unreleased enum local and passed struct array")
 				} else {
 					assertBalancedCensus(t, stderr)
 				}
@@ -213,20 +213,5 @@ func TestSelfHostArrlitBorrowedElemNative(t *testing.T) {
 			}
 			assertBalancedCensus(t, stderr)
 		})
-	}
-}
-
-// assertCensusPinned: a lowering where main keeps its own leak left exactly
-// its pinned allocs and frees. Fewer frees is a lost release; more frees moves
-// the pin.
-func assertCensusPinned(t *testing.T, stderr string, want [2]int64) {
-	t.Helper()
-	summary := leakSummaryLine(stderr)
-	var allocs, frees, live int64
-	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
-		t.Fatalf("parse %q: %v", summary, err)
-	}
-	if got := [2]int64{allocs, frees}; got != want {
-		t.Errorf("%s, pinned allocs=%d frees=%d", summary, want[0], want[1])
 	}
 }
