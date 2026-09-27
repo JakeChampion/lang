@@ -16021,8 +16021,20 @@ pub function lower_defers_prepass_module(mod: Module): Module {
 //         <body>                     // advances the counter — break/continue work
 //     }
 //
-// The closed form `LOW..=HIGH` is the same loop with a `>` break, so it runs
-// one more round. Its call is spelled `__range_incl`.
+// The closed form `LOW..=HIGH` (spelled `__range_incl`) cannot test `i > hi`
+// after the increment: when HIGH is its type's maximum the increment wraps and
+// the test never holds (#10359). It runs on a flag instead, cleared on the
+// round that reaches HIGH:
+//
+//     var i = LOW;
+//     var $hi_<var> = HIGH;
+//     var $go_<var> = i <= $hi_<var>;
+//     i = i - 1;
+//     while ($go_<var>) {
+//         i = i + 1;
+//         $go_<var> = i != $hi_<var>;
+//         <body>
+//     }
 //
 // Empty / reversed ranges (`5..5`, `9..3`) run zero iterations. The helpers
 // return BARE Stmt[] (never a struct wrapping a fresh array) to avoid the
@@ -16053,11 +16065,18 @@ function range_call_name(iter: ast.Expr): string {
     return "";
 }
 
-// The break test the desugared loop takes: `>=` leaves HIGH out of the
-// half-open form, `>` keeps it in the closed one.
-function range_break_op(iter: ast.Expr): string {
-    if (range_call_name(iter) == "__range_incl") { return ">"; }
-    return ">=";
+// The closed-form loop: see the flag shape above.
+function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
+    var v: string = fr.var_name;
+    var go_name: string = "$go_" + v;
+    var one: ast.Expr = e_number("1", "", false);
+    var govar: ast.Stmt = s_var(go_name, "boolean", e_binary("<=", e_ident(v), e_ident(hi_name)));
+    var back: ast.Stmt = s_assign(v, e_binary("-", e_ident(v), one));
+    var incr: ast.Stmt = s_assign(v, e_binary("+", e_ident(v), one));
+    var last: ast.Stmt = s_assign(go_name, e_binary("!=", e_ident(v), e_ident(hi_name)));
+    var wbody: ast.Stmt[] = [incr, last];
+    for st in dbody { wbody = wbody.append(st); }
+    return [ivar, hivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
 }
 
 // dr_expr rewrites the range-fors living inside an EXPRESSION — in practice a
@@ -16096,10 +16115,13 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
             var rargs: ast.Expr[] = iter_range_args(fr.iter);
             if (rargs.len() == 2) {
                 var hi_name: string = "$hi_" + fr.var_name;
-                var ivar: ast.Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
                 var hivar: ast.Stmt = s_var(hi_name, "i32", rargs[1]);
+                if (range_call_name(fr.iter) == "__range_incl") {
+                    return inclusive_range_loop(fr, dbody, s_var(fr.var_name, "i32", rargs[0]), hivar, hi_name);
+                }
+                var ivar: ast.Stmt = s_var(fr.var_name, "i32", e_binary("-", rargs[0], e_number("1", "", false)));
                 var incr: ast.Stmt = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
-                var brk: ast.Stmt = s_if(e_binary(range_break_op(fr.iter), e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+                var brk: ast.Stmt = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
                 var wbody: ast.Stmt[] = [incr, brk];
                 var k: i32 = 0;
                 while (k < dbody.len()) { wbody = wbody.append(dbody[k]); k = k + 1; }

@@ -101,8 +101,9 @@ function with_row(rows: GrowRow[], callee: string, param: i32, field: i32): Grow
 // The rows this function's plan contributes, given the rows `table` already
 // holds for its callees: one per borrowed parameter position an admitted
 // in-place grow or write reaches, directly through an append or a with of its
-// own, or through a buffer it hands on unbracketed to a callee whose row says
-// that position may grow. A with on a buffer the plan did not admit copies,
+// own, through an append whose receiver a phi or an earlier append carries
+// from the parameter (ssarc's links grow those in place), or through a buffer
+// it hands on unbracketed to a callee whose row says that position may grow. A with on a buffer the plan did not admit copies,
 // so it contributes no row. An owned parameter needs no caller bracket — its caller moved the
 // unit in, or retained and so made the record's own count answer "shared".
 pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]): GrowRow[] {
@@ -115,6 +116,12 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
             var field: i32 = 0 - 1;
             if (p.grows[ins.result] >= 0) { root = p.grows[ins.result]; field = p.grow_fields[ins.result]; }
             else if (ins.kind_tag == ssasem.with()) { continue; }
+            if (field < 0) {
+                for param in carried_params(f, defs, root) {
+                    if (!p.owned[param]) { out = with_row(out, callee, defs[param].imm, 0 - 1); }
+                }
+                continue;
+            }
             if (defs[root].kind_tag != 6 || p.owned[root]) { continue; }
             out = with_row(out, callee, defs[root].imm, field);
         }
@@ -133,6 +140,26 @@ pub function grow_rows(callee: string, f: ssasem.Func, p: Plan, table: GrowRow[]
             }
             i = i + 1;
         }
+    }
+    return out;
+}
+
+// The parameters whose box `v` may be, through phis and the receivers of
+// appends.
+function carried_params(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32[] {
+    var out: i32[] = [];
+    var seen: boolean[] = bits(f.graph.nvals);
+    var work: i32[] = [v];
+    var k: i32 = 0;
+    while (k < work.len()) {
+        var w: i32 = work[k];
+        k = k + 1;
+        if (w < 0 || seen[w]) { continue; }
+        seen = seen.with(w, true);
+        var d: ssa.SInst = defs[w];
+        if (d.kind_tag == 6) { out = out.append(w); }
+        else if (d.kind_tag == ssasem.append()) { work = work.append(d.args[0]); }
+        else if (d.kind_tag == 8) { for a in d.args { work = work.append(a); } }
     }
     return out;
 }

@@ -4946,6 +4946,8 @@ function infer_expr_unary_type(u: ast.ExprUnary, s: EmitState): Ty {
         // pre-IR check gate (#4327) rejected valid Option returns.
         return ty_from_name(ct);
     }
+    // `x as? T` is `Option[T]`.
+    if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") { return ty_from_name("Option[" + slice_unchecked(u.op, 4, u.op.len()) + "]"); }
     // `expr?` (parsed as unary `try_`) HAS the operand's Ok/Some payload
     // type — a Result[T, E] unwraps to T, an Option[T] to T. Without this
     // the `?` result fell through to i32 below, so `var o: Option[i32] =

@@ -5057,6 +5057,10 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       if (u.op == "try_") {
         return try_success_type(s, ot);
       }
+      // `x as? T` is `Option[T]`; E059 / E060 police the operand and target.
+      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+        return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
+      }
       return t_unknown("unknown unary op:" + u.op);
     },
     ast.ExprCall(c) => {
@@ -13696,28 +13700,21 @@ function lu_jump_escapes(st: ast.Stmt, depth: i32): boolean {
   match (st) {
     ast.StmtBreak(b) => { return depth == 0 || b.label.len() > 0; },
     ast.StmtContinue(c) => { return depth == 0 || c.label.len() > 0; },
-    ast.StmtIf(f) => {
-      for s in f.then_body { if (lu_jump_escapes(s, depth)) { return true; } }
-      for s in f.else_body { if (lu_jump_escapes(s, depth)) { return true; } }
-      return false;
-    },
-    ast.StmtWhile(w) => {
-      for s in w.body { if (lu_jump_escapes(s, depth + 1)) { return true; } }
-      return false;
-    },
-    ast.StmtFor(fo) => {
-      for s in fo.body { if (lu_jump_escapes(s, depth + 1)) { return true; } }
-      return false;
-    },
+    ast.StmtIf(f) => { return lu_jumps_escape(f.then_body, depth) || lu_jumps_escape(f.else_body, depth); },
+    ast.StmtWhile(w) => { return lu_jumps_escape(w.body, depth + 1); },
+    ast.StmtFor(fo) => { return lu_jumps_escape(fo.body, depth + 1); },
     ast.StmtMatch(m) => {
-      for arm in m.arms {
-        for s in arm.body { if (lu_jump_escapes(s, depth)) { return true; } }
-      }
+      for arm in m.arms { if (lu_jumps_escape(arm.body, depth)) { return true; } }
       return false;
     },
     ast.StmtDefer(d) => { return lu_jump_escapes(d.action, depth); },
     _ => { return false; }
   }
+  return false;
+}
+
+function lu_jumps_escape(stmts: ast.Stmt[], depth: i32): boolean {
+  for s in stmts { if (lu_jump_escapes(s, depth)) { return true; } }
   return false;
 }
 
@@ -13749,6 +13746,19 @@ function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.Expr
   var name: string = aid.name;
   if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) { return false; }
   var once: boolean = astwalk.count_ident_expr(call, name) == 1;
+  if (lu_rebind_site(site, name, once, is_root)) { return true; }
+  if (site.in_loop || !once || !lu_admitted(fx, name)) { return false; }
+  if (lu_is_last(fx, aid)) {
+    // An enclosing call that also names x already holds it (#9879).
+    return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
+  }
+  if (site.in_iife || lu_arr_position(fx, callee, i)) { return false; }
+  return lu_returns_before_reading(site, name);
+}
+
+// lu_rebind_site: the statement holding the call supersedes `name` whatever
+// follows it.
+function lu_rebind_site(site: LuSite, name: string, once: boolean, is_root: boolean): boolean {
   match (site.stmts[site.idx]) {
     // `x = f(.., x, ..)`, the call anywhere in the value.
     ast.StmtAssign(a) => {
@@ -13773,13 +13783,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, callee: string, i: i32, aid: ast.Expr
     },
     _ => {}
   }
-  if (site.in_loop || !once || !lu_admitted(fx, name)) { return false; }
-  if (lu_is_last(fx, aid)) {
-    // An enclosing call that also names x already holds it (#9879).
-    return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
-  }
-  if (site.in_iife || lu_arr_position(fx, callee, i)) { return false; }
-  return lu_returns_before_reading(site, name);
+  return false;
 }
 
 // lu_call collects the keys of `c`'s own-position arguments that die at it.
@@ -13803,6 +13807,18 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
 
 // lu_children lists an expression's operands. A lambda has none here: its body
 // is lowered as a function of its own.
+function lu_map_lit_children(ml: ast.ExprMapLit, own out: ast.Expr[]): ast.Expr[] {
+  var k: i32 = 0;
+  while (k < ml.keys.len()) { out = out.append(ml.keys[k]); out = out.append(ml.vals[k]); k = k + 1; }
+  return out;
+}
+
+function lu_fstring_children(fs: ast.ExprFString, own out: ast.Expr[]): ast.Expr[] {
+  var k: i32 = 0;
+  while (k < fs.exprs.len()) { if (fs.is_expr[k]) { out = out.append(fs.exprs[k]); } k = k + 1; }
+  return out;
+}
+
 function lu_children(e: ast.Expr): ast.Expr[] {
   var out: ast.Expr[] = [];
   match (e) {
@@ -13814,14 +13830,8 @@ function lu_children(e: ast.Expr): ast.Expr[] {
     },
     ast.ExprArray(a) => { for el in a.elements { out = out.append(el); } },
     ast.ExprTuple(t) => { for el in t.elements { out = out.append(el); } },
-    ast.ExprMapLit(ml) => {
-      var k: i32 = 0;
-      while (k < ml.keys.len()) { out = out.append(ml.keys[k]); out = out.append(ml.vals[k]); k = k + 1; }
-    },
-    ast.ExprFString(fs) => {
-      var k: i32 = 0;
-      while (k < fs.exprs.len()) { if (fs.is_expr[k]) { out = out.append(fs.exprs[k]); } k = k + 1; }
-    },
+    ast.ExprMapLit(ml) => { out = lu_map_lit_children(ml, out); },
+    ast.ExprFString(fs) => { out = lu_fstring_children(fs, out); },
     ast.ExprIndex(x) => { out = out.append(x.array); out = out.append(x.index); },
     ast.ExprSlice(sl) => { out = out.append(sl.array); out = out.append(sl.start); out = out.append(sl.end); },
     ast.ExprStructLit(sl) => {
