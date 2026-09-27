@@ -355,7 +355,9 @@ function steal(own r: irlower.LowerResult, f: ssasem.Func, v: i32, unique: i32):
 // this frame borrows, which its caller either bracketed or is done reading,
 // and a record FIELD the plan admitted (ssaunits.field_grow_root), where the
 // bracket is on the field and the record's own count answers for any holder
-// no caller names. An array reached any other way the frame does not own —
+// no caller names. The frame itself must be done reading the parameter too
+// (`kept`): growing its box in place would change the value it reads next.
+// An array reached any other way the frame does not own —
 // an element of a borrowed array of arrays, say — has no bracket standing
 // behind it, and growing it in place would rewrite what the container still
 // holds. A with has no non-consuming helper to fall back on, so it defers
@@ -369,6 +371,7 @@ function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, 
     if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) { return false; }
     if (p.grows[ins.result] < 0 && (ins.kind_tag == ssasem.with() || ins.args[0] >= f.graph.nparams)) { return false; }
     if (ins.args[0] < p.owned.len() && p.owned[ins.args[0]]) { return false; }
+    if (p.grows[ins.result] < 0 && p.kept[ins.result]) { return false; }
     for supply in step.supplies {
         if (supply.slot == 0 && supply.mode == ssaunits.retain_unit()) { return true; }
     }
