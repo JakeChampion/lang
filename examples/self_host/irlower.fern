@@ -21616,24 +21616,27 @@ function discard_struct_lit(own se: LowerState, s: LowerState, dse: ast.ExprStru
     return se;
 }
 
+// discard_fresh_struct releases the discarded result of a strict-fresh struct
+// producer: the box and, when its type routes one, its rc fields.
+function discard_fresh_struct(own se: LowerState, crt: string): LowerState {
+    if (crt.len() > 0 && struct_fields_reusable(se.frame.structs, crt) && struct_has_reclaim_array_field(se.frame.structs, crt)) {
+        var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
+        se = se.add_local(fcd);
+        var fcslot: i32 = se.slot_of(fcd);
+        se = se.emit(ir.op_store_local(fcslot));                          // stash box
+        se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
+        se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
+        se = se.emit(ir.op_drop());                                       // discard clobbered return
+        se = se.emit(ir.op_load_local(fcslot));                           // box again
+    }
+    return se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
+}
+
 // discard_free_call releases what a discarded call to the free function
 // `dcid` leaves this frame owning, by the registry that names its result.
 function discard_free_call(own se: LowerState, s: LowerState, es: ast.StmtExpr, dce: ast.ExprCall, dcid: ast.ExprIdent): LowerState {
     if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dcid.name) >= 0) {
-        var crt: string = s.struct_ret_type(dcid.name);
-        if (crt.len() > 0 && struct_fields_reusable(s.frame.structs, crt) && struct_has_reclaim_array_field(s.frame.structs, crt)) {
-            var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
-            se = se.add_local(fcd);
-            var fcslot: i32 = se.slot_of(fcd);
-            se = se.emit(ir.op_store_local(fcslot));                          // stash box
-            se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
-            se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
-            se = se.emit(ir.op_drop());                                       // discard clobbered return
-            se = se.emit(ir.op_load_local(fcslot));                           // box again
-            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
-        } else {
-            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
-        }
+        se = discard_fresh_struct(se, s.struct_ret_type(dcid.name));
     } else if (util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dcid.name) >= 0) {
         // A discarded call to a COUNTED-return free function
         // outside the strict-fresh registry (a bare param handed
@@ -21789,13 +21792,17 @@ function discard_method_call(own se: LowerState, s: LowerState, dcfa: ast.ExprFi
         ast.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
         _ => {}
     }
+    if (drty == "" || decl_field_type(s.frame.structs, drty, dcfa.field) != "") { return se; }
+    var dkey: string = drty + "." + dcfa.field;
+    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dkey) >= 0) {
+        return discard_fresh_struct(se, s.struct_ret_type(dkey));
+    }
     // A COUNTED-return METHOD (`b.id_or_make(0);`, cnt_struct_ret_fns)
     // takes the same shallow dec: its result is this frame's
     // count whichever path produced it.
-    if (drty != "" && decl_field_type(s.frame.structs, drty, dcfa.field) == ""
-        && (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
-            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0
-            || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, drty + "." + dcfa.field) >= 0)) {
+    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dkey) >= 0
+            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dkey) >= 0
+            || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dkey) >= 0) {
         se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
     }
     return se;
