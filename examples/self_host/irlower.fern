@@ -70521,11 +70521,22 @@ function rc_ml_rc_type_name(t: string, structs: StructTab): boolean {
 function rc_ml_owned_rc_local(name: string, fn: parser.FuncDecl, types_n: string[], types_t: string[], structs: StructTab): boolean {
     var pi: i32 = 0;
     while (pi < fn.params.len()) { if (fn.params[pi].name == name) { return false; } pi = pi + 1; }
+    // A local bound from a field read the freshness analysis taints holds no
+    // reference of its own: its bind takes none and the exit sweep releases
+    // none, so a move would skip a retain nothing gives back (#10475).
+    for v in strarr_var_decls(fn.body, []) {
+        if (v.name == name && rc_ml_borrowed_field_read(v.init, types_n, types_t, structs)) { return false; }
+    }
     var i: i32 = 0;
     while (i < types_n.len()) {
         if (types_n[i] == name) { return rc_ml_rc_type_name(types_t[i], structs); }
         i = i + 1;
     }
+    return false;
+}
+
+function rc_ml_borrowed_field_read(e: ast.Expr, types_n: string[], types_t: string[], structs: StructTab): boolean {
+    if let ast.ExprFieldAccess(_) = e { return rc_fe_rhs_tainted(e, [], types_n, types_t, structs, sig_reg_empty(), [], ""); }
     return false;
 }
 
