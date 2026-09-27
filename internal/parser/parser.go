@@ -3429,9 +3429,19 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 	// bound once (so `for i in 0..f()` calls f() a single time), and
 	// the loop variable IS the user binding, so `continue` — which
 	// runs the For step — still increments. parseExpr stops at `..`
-	// (not a binary operator), so `expr` is LOW. The inclusive form
-	// `LOW..=HIGH` is identical bar the loop condition: `i <= hi`
-	// covers the closed interval [LOW, HIGH].
+	// (not a binary operator), so `expr` is LOW.
+	//
+	// The inclusive form `LOW..=HIGH` cannot test `i <= hi` after the
+	// increment: when HIGH is the type's maximum the increment wraps and
+	// the test holds forever (#10359). It carries a flag instead, cleared
+	// by the step on the round where i reached HIGH:
+	//
+	//	var __range_hi_N = HIGH;
+	//	var i = LOW;
+	//	var __range_go_N = i <= __range_hi_N;
+	//	for (; __range_go_N; { __range_go_N = i != __range_hi_N; i = i + 1; }) body
+	//
+	// The last increment may wrap; nothing reads i after it.
 	if p.match(lexer.Punct, "..") || p.match(lexer.Punct, "..=") {
 		rangeTok := p.advance() // `..` or `..=`
 		inclusive := rangeTok.Text == "..="
@@ -3450,22 +3460,26 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		hiName := fmt.Sprintf("__range_hi_%d", rid)
 		mkI := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
 		declHi := &ast.Var{P: kw.Pos, Name: hiName, Init: high}
-		cmpOp := "<"
+		declI := &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr}
+		step := ast.Stmt(&ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
+			Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}})
+		loop := &ast.For{P: kw.Pos, Init: declI, Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
+			Step: step, Body: body, Label: label}
+		stmts := []ast.Stmt{declHi, loop}
 		if inclusive {
-			cmpOp = "<="
-		}
-		loop := &ast.For{
-			P:    kw.Pos,
-			Init: &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr},
-			Cond: &ast.Binary{P: kw.Pos, Op: cmpOp, Left: mkI(nameTok.Text), Right: mkI(hiName)},
-			Step: &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
-				Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}},
-			Body:  body,
-			Label: label,
+			goName := fmt.Sprintf("__range_go_%d", rid)
+			declGo := &ast.Var{P: kw.Pos, Name: goName,
+				Init: &ast.Binary{P: kw.Pos, Op: "<=", Left: mkI(nameTok.Text), Right: mkI(hiName)}}
+			clearGo := &ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(goName),
+				Value: &ast.Binary{P: kw.Pos, Op: "!=", Left: mkI(nameTok.Text), Right: mkI(hiName)}}}
+			loop.Init = nil
+			loop.Cond = mkI(goName)
+			loop.Step = &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{clearGo, step}}
+			stmts = []ast.Stmt{declHi, declI, declGo, loop}
 		}
 		sugar := &ast.ForEach{P: kw.Pos, ID: rid, Var: nameTok.Text, VarPos: nameTok.Pos,
 			Iter: expr, RangeHigh: high, RangeIncl: inclusive, Body: body, Label: label}
-		return &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{declHi, loop}, Sugar: sugar}, nil
+		return &ast.Block{P: kw.Pos, Stmts: stmts, Sugar: sugar}, nil
 	}
 	body, err := p.parseStmt()
 	if err != nil {

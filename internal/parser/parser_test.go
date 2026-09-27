@@ -480,9 +480,11 @@ func TestForInRangeDesugars(t *testing.T) {
 	}
 }
 
-// `for i in LOW..=HIGH { body }` is the inclusive (closed-interval)
-// range: same desugar as the half-open form bar the loop condition,
-// which becomes `i <= hi` so HIGH is itself visited.
+// `for i in LOW..=HIGH { body }` is the inclusive (closed-interval) range. It
+// cannot test `i <= hi` after the step — at the type's maximum the step wraps
+// and the loop never ends (#10359) — so it runs on a flag the step clears when
+// i reaches HIGH: `{ var hi = HIGH; var i = LOW; var go = i <= hi;
+// for (; go; { go = i != hi; i = i + 1; }) { body } }`.
 func TestForInInclusiveRangeDesugars(t *testing.T) {
 	prog, err := Parse(`function f(): i32 {
 		var sum: i32 = 0;
@@ -498,15 +500,39 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 	if !ok {
 		t.Fatalf("inclusive range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if len(blk.Stmts) != 2 {
-		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	if len(blk.Stmts) != 4 {
+		t.Fatalf("expected 4 inner stmts (hi / i / go / for), got %d", len(blk.Stmts))
 	}
-	loop, ok := blk.Stmts[1].(*ast.For)
+	hi, ok1 := blk.Stmts[0].(*ast.Var)
+	iv, ok2 := blk.Stmts[1].(*ast.Var)
+	gv, ok3 := blk.Stmts[2].(*ast.Var)
+	if !ok1 || !ok2 || !ok3 || iv.Name != "i" {
+		t.Fatalf("expected `var hi; var i; var go`, got %T %T %T", blk.Stmts[0], blk.Stmts[1], blk.Stmts[2])
+	}
+	if b, ok := gv.Init.(*ast.Binary); !ok || b.Op != "<=" {
+		t.Errorf("go flag should start as `i <= hi` (empty when LOW > HIGH), got %T", gv.Init)
+	}
+	loop, ok := blk.Stmts[3].(*ast.For)
 	if !ok {
-		t.Fatalf("second stmt should be a For, got %T", blk.Stmts[1])
+		t.Fatalf("fourth stmt should be a For (so continue runs the step), got %T", blk.Stmts[3])
 	}
-	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<=" {
-		t.Errorf("inclusive range loop cond should be `i <= hi`, got %T %v", loop.Cond, loop.Cond)
+	if loop.Init != nil {
+		t.Errorf("the loop var is declared before the go flag, not in Init; got %T", loop.Init)
+	}
+	if id, ok := loop.Cond.(*ast.Ident); !ok || id.Name != gv.Name {
+		t.Errorf("inclusive range loop cond should be the go flag %q, got %T", gv.Name, loop.Cond)
+	}
+	step, ok := loop.Step.(*ast.Block)
+	if !ok || len(step.Stmts) != 2 {
+		t.Fatalf("step should be `{ go = i != hi; i = i + 1; }`, got %T", loop.Step)
+	}
+	clear := step.Stmts[0].(*ast.ExprStmt).Expr.(*ast.Assign)
+	cmp, ok := clear.Value.(*ast.Binary)
+	if tgt, _ := clear.Target.(*ast.Ident); tgt == nil || tgt.Name != gv.Name || !ok || cmp.Op != "!=" {
+		t.Errorf("step must clear the flag with `go = i != hi` before the increment")
+	}
+	if r, ok := cmp.Right.(*ast.Ident); !ok || r.Name != hi.Name {
+		t.Errorf("the flag compares against the HIGH binding %q", hi.Name)
 	}
 }
 

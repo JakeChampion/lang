@@ -838,13 +838,17 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		{"uuid-v4", uuidV4Program, 0},
 		// Range-for through the arm64 self-host IR path (#2699). The legacy
 		// AST arm64 emitter has no range desugar, so these run in the IR-only
-		// gate. Half-open `..` and inclusive `..=` (closed interval, exits on
-		// `i <= hi` so it also visits HIGH).
+		// gate. Half-open `..` and inclusive `..=` (closed interval: it visits
+		// HIGH, and ends even when HIGH is i32's maximum, #10359).
 		{"range-sum", `function main(): i32 { var s = 0; for i in 0..5 { s = s + i; } return s; }`, 10},
 		{"rangei-sum", `function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }`, 15},
 		{"rangei-single", `function main(): i32 { var c = 0; for i in 5..=5 { c = c + 1; } return c; }`, 1},
 		{"rangei-reversed", `function main(): i32 { var c = 9; for i in 9..=3 { c = c + 1; } return c; }`, 9},
 		{"rangei-continue", `function main(): i32 { var s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }`, 52},
+		{"rangei-i32-max", `function main(): i32 { var c = 0; for i in 2147483646..=2147483647 { c = c + 1; } return c; }`, 2},
+		{"rangei-i32-max-break", `function main(): i32 { var c = 0; for i in 2147483645..=2147483647 { c = c + 1; if (i == 2147483646) { break; } } return c; }`, 2},
+		{"rangei-i32-min", `function main(): i32 { var lo: i32 = -2147483647 - 1; var c = 0; for i in lo..=lo { c = c + 1; } return c; }`, 1},
+		{"range-i32-min", `function main(): i32 { var lo: i32 = -2147483647 - 1; var c = 0; for i in lo..(lo + 1) { c = c + 1; } return c; }`, 1},
 		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
 		// field (struct_get at successive indices), not just the first. The
 		// legacy AST emitter binds only field 0, so these run in the IR-only

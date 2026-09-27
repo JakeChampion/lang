@@ -9211,7 +9211,7 @@ pub function for_iter_is_range(iter: ast.Expr): boolean {
 
 // for_iter_is_range_incl reports whether the for-loop iter is the
 // inclusive `__range_incl(LOW, HIGH)` form (closed interval [LOW, HIGH]),
-// so lower_range_for emits a `<=` rather than `<` loop condition.
+// which lower_range_for hands to lower_range_incl_for.
 pub function for_iter_is_range_incl(iter: ast.Expr): boolean {
     match (iter) {
         ast.ExprCall(c) => {
@@ -9281,15 +9281,16 @@ pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
 }
 
 // lower_range_for lowers `for i in LOW..HIGH { body }` (iter = the synthetic
-// `__range(LOW, HIGH)` call) to a counted loop over the half-open interval —
-// or the closed interval `[LOW, HIGH]` for the inclusive `__range_incl` form
-// (`for i in LOW..=HIGH`), which only changes the loop condition to `i <= hi`.
-// HIGH is bound once into a hidden local (so `for i in 0..f()` calls f()
-// once), i = LOW, then `while (i < hi) { body; i = i + 1 }`. The caller has
-// already bailed bodies containing break/continue (a `continue` would skip
-// the increment), so the counted shape is safe. LOW / HIGH are i32 exprs.
-// Split out of lower_stmt's StmtFor arm so that arm stays small (oversized
-// functions miscompile on the native backend — cf. #2720).
+// `__range(LOW, HIGH)` call) to a counted loop over the half-open interval, or
+// the closed interval `[LOW, HIGH]` for the inclusive `__range_incl` form
+// (`for i in LOW..=HIGH`). HIGH is bound once into a hidden local (so
+// `for i in 0..f()` calls f() once). LOW / HIGH are i32 exprs, and each add /
+// sub on the counter is narrowed to 32 bits as lower_binary narrows an i32
+// `+` / `-`, so a bound at i32's minimum or maximum wraps. The inclusive
+// form runs on a flag rather than `i <= hi`, which never fails at the type's
+// maximum (#10359) — lower_range_incl_for. Split out of lower_stmt's StmtFor
+// arm so that arm stays small (oversized functions miscompile on the native
+// backend — cf. #2720).
 pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var r_lo: ast.Expr = iter;
     var r_hi: ast.Expr = iter;
@@ -9300,10 +9301,7 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
         },
         _ => {}
     }
-    // Closed interval `[LOW, HIGH]` (`for i in LOW..=HIGH`) exits on `i <= hi`;
-    // the half-open `[LOW, HIGH)` default exits on `i < hi`.
-    var cond_kind: string = "lt_s";
-    if (for_iter_is_range_incl(iter)) { cond_kind = "le_s"; }
+    if (for_iter_is_range_incl(iter)) { return lower_range_incl_for(var_name, r_lo, r_hi, body, s); }
     // hidden HIGH bound (evaluated once)
     var hin: string = "$forhi" + util.i32_to_string(s.locals.len());
     var rs: LowerState = s.add_local(hin);
@@ -9322,6 +9320,7 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
     if (!rs.ok) { return rs; }
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("sub", 0, false));   // i = LOW - 1
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
     rs = rs.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
     rs = rs.emit(ir.op_loop(0));                // depth 0 = continue/header
@@ -9329,16 +9328,68 @@ pub function lower_range_for(var_name: string, iter: ast.Expr, body: ast.Stmt[],
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_const_i32(1));
     rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
     rs = rs.emit(ir.op_store_local(islot));
-    // cond: i < hi (or i <= hi for the inclusive form) ; exit when NOT.
+    // cond: i < hi ; exit when NOT.
     rs = rs.emit(ir.op_load_local(islot));
     rs = rs.emit(ir.op_load_local(hislot));
-    rs = rs.emit(ir.op_bin(cond_kind, 0, false));
+    rs = rs.emit(ir.op_bin("lt_s", 0, false));
     rs = rs.emit(ir.op_bin("not", 0, false));
     rs = rs.emit(ir.op_brif(1));
     rs = lower_block(body, rs);
     if (!rs.ok) { return rs; }
     rs = rs.emit(ir.op_br(0));   // back-edge to header (re-advances)
+    rs = rs.emit(ir.op_end());
+    return rs.emit(ir.op_end()).exit_loop();
+}
+
+// lower_range_incl_for is lower_range_for's closed interval, the same shape as
+// parser.desugar_ranges_one's:
+//   i = LOW; hi = HIGH; go = i <= hi; i = i - 1;
+//   while (go) { i = i + 1; go = i != hi; body }
+// The increment stays at the top so a `continue` (a branch to the header)
+// still advances.
+function lower_range_incl_for(var_name: string, r_lo: ast.Expr, r_hi: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
+    var rs: LowerState = s.add_local(var_name);
+    var islot: i32 = rs.slot_of(var_name);
+    rs = lower_expr(r_lo, rs);
+    if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_store_local(islot));
+    var hin: string = "$forhi" + util.i32_to_string(rs.locals.len());
+    rs = rs.add_local(hin);
+    var hislot: i32 = rs.slot_of(hin);
+    rs = lower_expr(r_hi, rs);
+    if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_store_local(hislot));
+    var gon: string = "$forgo" + util.i32_to_string(rs.locals.len());
+    rs = rs.add_local(gon);
+    var goslot: i32 = rs.slot_of(gon);
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_load_local(hislot));
+    rs = rs.emit(ir.op_bin("le_s", 0, false));
+    rs = rs.emit(ir.op_store_local(goslot));
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_const_i32(1));
+    rs = rs.emit(ir.op_bin("sub", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
+    rs = rs.emit(ir.op_store_local(islot));
+    rs = rs.emit(ir.op_block(0)).enter_loop();  // depth 1 = break/exit target
+    rs = rs.emit(ir.op_loop(0));                // depth 0 = continue/header
+    rs = rs.emit(ir.op_load_local(goslot));
+    rs = rs.emit(ir.op_bin("not", 0, false));
+    rs = rs.emit(ir.op_brif(1));
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_const_i32(1));
+    rs = rs.emit(ir.op_bin("add", 0, false));
+    rs = rs.emit(ir.op_int_cast("i32"));
+    rs = rs.emit(ir.op_store_local(islot));
+    rs = rs.emit(ir.op_load_local(islot));
+    rs = rs.emit(ir.op_load_local(hislot));
+    rs = rs.emit(ir.op_bin("ne", 0, false));
+    rs = rs.emit(ir.op_store_local(goslot));
+    rs = lower_block(body, rs);
+    if (!rs.ok) { return rs; }
+    rs = rs.emit(ir.op_br(0));
     rs = rs.emit(ir.op_end());
     return rs.emit(ir.op_end()).exit_loop();
 }
