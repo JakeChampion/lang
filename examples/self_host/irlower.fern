@@ -20544,796 +20544,11 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             if (call_owns_arg(a.value, a.target, s)) { return lower_own_rebind(a, s); }
             return settle_var_counted(a, lower_stmt_assign(a, s));
         },
-        ast.StmtReturn(r) => {
-            if (s.frame.cur_ret == "u32") { r = ast.StmtReturn { ...r, value: settle_u32_literal(r.value) }; }
-            // A bare `return;` in a VOID function — parse_expr yields an
-            // ExprUnknown for the missing value, which lower_expr can't lower (so
-            // the whole module bailed to AST; every void helper with an early
-            // `return;` was affected). op_return pops a result into the result reg,
-            // so emit a dummy 0 (harmless — a void caller ignores it) after the exit
-            // dec-sweep, mirroring `return 0`. Only reachable in a void function
-            // (the checker rejects a value-less return where a value is required).
-            var ret_is_bare: boolean = false;
-            match (r.value) {
-                ast.ExprUnknown(_) => { ret_is_bare = true; },
-                _ => {}
-            }
-            if (ret_is_bare) {
-                var bs: LowerState = s.emit(ir.op_const_i32(0));
-                bs = emit_consumed_param_exit(bs, r.value, false);
-                bs = emit_dec_sweep_except(bs, 0 - 1);
-                return bs.emit(ir.op_return());
-            }
-            // `return T { ...p, f: v }` over an `own` struct param admitted for
-            // in-place update (own_update_params_of): reuse p's box through the
-            // same emitter as the self-assign form, binding the result to a
-            // hidden local the sweep keeps, then hand it back.
-            match (r.value) {
-                ast.ExprStructLit(rsl) => {
-                    if (rsl.has_base) {
-                        var rbn: string = ident_name_or_empty(rsl.base);
-                        if (rbn.len() > 0 && s.is_own_param(rbn) && s.is_self_assign_reuse_name(rbn)
-                            && sa_is_self_update(r.value, rbn, rsl.type_name)) {
-                            var rname: string = "$ownret" + util.i32_to_string(s.locals.len());
-                            var ro: LowerState = emit_self_overwrite_reuse(rname, "", r.value, rbn, false, s, true);
-                            if (!ro.ok) { return ro; }
-                            var rslot: i32 = ro.slot_of(rname);
-                            ro = ro.emit(ir.op_load_local(rslot));
-                            ro = emit_dec_sweep_except(ro, rslot);
-                            return ro.emit(ir.op_return());
-                        }
-                    }
-                },
-                _ => {}
-            }
-            // i64-returning function: lower the value as an i64, run the exit
-            // dec-sweep over array locals (no moved array — i64 isn't one), then
-            // return. The wasm sig declares (result i64); x86/arm64 are unchanged.
-            if (s.frame.ret_is_i64) {
-                var ri: LowerState = lower_i64(r.value, s);
-                if (!ri.ok) { return ri; }
-                ri = emit_dec_sweep_except(ri, 0 - 1);
-                return ri.emit(ir.op_return());
-            }
-            // i64[]-returning function returning a bare array LITERAL: the
-            // elements aren't self-evidently i64, so lower each via lower_i64 and
-            // build the array with arr_make_i64 (8-byte i64 stride). The fresh
-            // array is returned (moved to the caller); it isn't a local, so the
-            // exit dec-sweep over array locals doesn't touch it. `return a` (an
-            // i64-array local) falls through to the generic move-on-return path.
-            if (s.ret_i64arr()) {
-                var rlit: boolean = false;
-                match (r.value) {
-                    ast.ExprArray(_) => { rlit = true; },
-                    _ => {}
-                }
-                if (rlit) {
-                    match (r.value) {
-                        ast.ExprArray(rarr) => {
-                            var ra: LowerState = s;
-                            var rae: i32 = 0;
-                            while (rae < rarr.elements.len()) {
-                                ra = lower_i64(rarr.elements[rae], ra);
-                                if (!ra.ok) { return ra; }
-                                rae = rae + 1;
-                            }
-                            ra = ra.emit(ir.op_arr_make_i64(rarr.elements.len()));
-                            ra = emit_dec_sweep_except(ra, 0 - 1);
-                            return ra.emit(ir.op_return());
-                        },
-                        _ => {}
-                    }
-                }
-            }
-            // `return <expr>` from a SCALAR `dyn Trait`-returning function: the
-            // value coerces to `dyn Trait` via lower_dyn_arg — a primitive/string
-            // is heap-boxed via op_dyn_box (so it carries a shape pointer the
-            // caller's dispatch can read), a struct/enum flows unboxed
-            // (docs/DYN-TRAITS.md §4.3). The returned value is not a local array,
-            // so the exit dec-sweep over array locals leaves it alone.
-            if (dyn_array_literal(s.frame.cur_ret, r.value)) {
-                if let ast.ExprArray(rda) = r.value {
-                    var rdl: LowerState = lower_dyn_array_lit(rda, s);
-                    if (!rdl.ok) { return rdl; }
-                    rdl = emit_dec_sweep_except(rdl, 0 - 1);
-                    return rdl.emit(ir.op_return());
-                }
-            }
-            if (s.ret_dyn()) {
-                var rds: LowerState = lower_dyn_arg(r.value, s);
-                if (!rds.ok) { return rds; }
-                rds = emit_dec_sweep_except(rds, 0 - 1);
-                return rds.emit(ir.op_return());
-            }
-            // #5464: a bare-typevar-RETURN pass-through fn returns i64 on wasm —
-            // the uniform 8-byte slot the register backends give every value (the
-            // wasm sig declares (result i64), see emit_function_ir). The returned
-            // value is an erased (i64-typed) local or another erased call's result,
-            // so lower it full-width and return it; the caller narrows the i64
-            // result to the concrete type. Without this the i64-width guard below
-            // would bail the erased return (its ret_type isn't literally "i64").
-            // Register backends never set for_wasm — their 8-byte return slot needs
-            // no widening, so they take the generic path below unchanged.
-            if (s.for_wasm() && s.erased_passthrough() && is_erased_typevar(s.frame.cur_ret, s.frame.structs)) {
-                var rerw: LowerState = lower_i64(r.value, s);
-                if (!rerw.ok) { return rerw; }
-                rerw = emit_dec_sweep_except(rerw, 0 - 1);
-                return rerw.emit(ir.op_return());
-            }
-            // An i64 value returned from a non-i64 function is a width mismatch
-            // the checker rejects; guard anyway so a stray i64 never lands in an
-            // i32 return slot. A u64[] ARRAY ident reports width 64 via the
-            // overloaded is_u64 flag (scalar u64 and u64[] share it), but an array
-            // return is a pointer MOVE, not a scalar — exclude array values so
-            // `return <u64[]>` (e.g. a u64[]-returning sort) reaches the move-on-return path
-            // instead of bailing. (i64[] uses the separate is_i64arr flag, so it
-            // already reports width 32 here.)
-            var ret_val_is_arr: boolean = false;
-            match (r.value) {
-                ast.ExprIdent(rvid) => { ret_val_is_arr = s.is_arr_slot(s.slot_of(rvid.name)); },
-                _ => {}
-            }
-            if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
-            // `return Ok(x)/Some(x)/Err(x)` with an i64/u64 DECLARED payload: build
-            // the 8-byte box the consumers read, even when the argument only infers
-            // i32 (a bare literal `Ok(40)` or i32 var). The expected payload type
-            // comes from THIS function's Option/Result return type (cur_fn), so it
-            // is sound here (unlike a bare construction in an unknown context). Other
-            // payloads fall through to the generic lower_expr below unchanged.
-            match (r.value) {
-                ast.ExprCall(rc) => {
-                    match (rc.callee) {
-                        ast.ExprIdent(rcid) => {
-                            if (rc.args.len() == 1 && (rcid.name == "Ok" || rcid.name == "Some" || rcid.name == "Err")) {
-                                var rrt: string = s.opt_ret_type(s.frame.cur_fn);
-                                if (rrt.len() >= 8 && (slice_unchecked(rrt, 0, 7) == "Result[" || slice_unchecked(rrt, 0, 7) == "Option[")) {
-                                    var rvar: string = "Ok";
-                                    var rtag: i32 = 0;
-                                    if (rcid.name == "Err") { rvar = "Err"; rtag = 1; }
-                                    var rexp: string = opt_payload_type(rrt, rvar);
-                                    if (rexp == "i64" || rexp == "u64") {
-                                        var rcs: LowerState = lower_opt_make_payload_exp(rtag, rc.args[0], rexp, s);
-                                        if (!rcs.ok) { return rcs; }
-                                        rcs = emit_dec_sweep_except(rcs, 0 - 1);
-                                        return rcs.emit(ir.op_return());
-                                    }
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            // Returning a SCALAR-element array struct field (`return h.items`)
-            // aliases it out to the caller, who will own it. Lower it via the IR
-            // with a Perceus dup (RC-frontier slice 2): lower_expr emits struct_get
-            // (the array pointer on the operand stack); __fern_rc_inc retains it so
-            // the ESCAPING return is a counted reference (the helper pops + re-pushes
-            // the same pointer, so it stays on top for op_return). We do NOT move-out
-            // the field (`moved` stays -1): the struct still owns its field. Balance
-            // — if `h` is a BORROWED param, its box/field are never swept, the inc
-            // simply hands the caller its own counted ref (field rc N →inc N+1
-            // →caller decs N); if `h` is a fresh RECLAIMABLE local, the exit sweep's
-            // struct field-drop decs the field (array rc 1 →inc 2 →field-drop 1
-            // →caller decs 0). Sound either way (never under-frees).
-            var rfft: string = scalar_arr_field_type(r.value, s);
-            if (rfft != "") {
-                var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
-                if (!rfs.ok) { return rfs; }
-                rfs = rfs.retain_tos("ret-field");
-                rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
-                return rfs.emit(ir.op_return());
-            }
-            // Returning an ARRAY-OF-STRUCT field (`return h.params`), an ARRAY-OF-
-            // ENUM field (`return h.args`, args: Expr[]) or a STRING-ARRAY field
-            // (`return h.xs`, xs: string[]) aliases it out to the caller exactly like
-            // the scalar case above — the Perceus dup is on the buffer POINTER
-            // (element-type-agnostic), and NO deep-drop recursion is involved: the
-            // struct keeps owning the elements, the caller receives a counted
-            // reference to the buffer. Same balance as the scalar field return
-            // (borrowed param: caller decs; reclaimable local: field-drop + caller
-            // dec).
-            var rsaft: string = struct_arr_field_read_type(r.value, s);
-            if (rsaft == "") { rsaft = enum_arr_field_read_type(r.value, s); }
-            if (rsaft == "") { rsaft = strarr_field_read_type(r.value, s); }
-            if (rsaft != "") {
-                var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
-                if (!rss.ok) { return rss; }
-                rss = rss.retain_tos("ret-field");
-                rss = emit_dec_sweep_except(rss, 0 - 1);   // field NOT moved out; struct keeps its ref
-                return rss.emit(ir.op_return());
-            }
-            // An enum-array field still bails: aliasing it out needs deep-drop
-            // recursion (a later slice).
-            if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
-            // Returning an ELEMENT of an array-of-arrays (`return seeds[i]`)
-            // aliases the element out to the caller while the container keeps
-            // its reference — the same escape as the struct-field returns
-            // above, so it takes the same Perceus dup (native:
-            // needsRcIncOnAlias's Index arm). Without the retain the caller's
-            // exit sweep decs a count the container still owns, freeing the
-            // element under the live container.
-            if (index_read_is_arr(r.value, s)) {
-                var ris: LowerState = lower_expr(r.value, s);   // element ptr on stack
-                if (!ris.ok) { return ris; }
-                ris = ris.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
-                ris = emit_dec_sweep_except(ris, 0 - 1);   // element NOT moved out of the container
-                return ris.emit(ir.op_return());
-            }
-            // Returning a TUPLE ELEMENT (`return src.1`) — native's
-            // dup-at-extract (needsRcIncOnAlias's FieldAccess arm): the
-            // element leaves the box to a NEW owner, so retain it before the
-            // sweep. A borrowed tuple param's caller now holds the deep claim
-            // TUPB admits (element rc: construction 1 -> retain 2 -> caller's
-            // deep free 1 -> final owner's sweep 0); a TUPRCS local of THIS
-            // frame settles its own claim in the sweep below the retain.
-            // Retain-only or grant-only is measurably wrong in opposite
-            // directions (rc-log 2026-08-28 elemret scoping pin) — this arm
-            // and the scans' tuple_elem_ret_dup admission are one predicate
-            // and MUST move together.
-            if (ret_is_tuple_elem_dup(r.value, s)) {
-                var rts: LowerState = lower_expr(r.value, s);   // element ptr on stack
-                if (!rts.ok) { return rts; }
-                rts = rts.retain_tos("ret-tuple-elem");
-                rts = emit_dec_sweep_except(rts, 0 - 1);   // element NOT moved out of the container
-                return rts.emit(ir.op_return());
-            }
-            // Returning a bare PARAM array (`return a`, a a borrowed param) —
-            // the native return-transfer inc, ported (#4357 probe). The CALLER
-            // binds the result as an owned move (its slot is exit-swept), but
-            // the param's buffer belongs to the caller's caller: without a
-            // retain the callee hands out an UNCOUNTED alias, and the two
-            // sweeps over-release it (rc 1 -> 0 while the owner still holds
-            // it — a use-after-free surfaced by the underflow detector on the
-            // identity-return probe). Mirror the struct-field Perceus dup
-            // above: retain the buffer so the escaping return is a counted
-            // reference (owner's later dec frees it exactly once). Params are
-            // never exit-swept, so no move-out bookkeeping is needed; a bare
-            // LOCAL return stays on the move-on-return path below (its slot
-            // is kept from the sweep instead).
-            var rpid: string = "";
-            match (r.value) {
-                ast.ExprIdent(rid2) => { rpid = rid2.name; },
-                _ => {}
-            }
-            if (rpid.len() > 0) {
-                var rps: i32 = s.slot_of(rpid);
-                var rpa: RetArm = lower_return_param(r.value, rpid, rps, s);
-                if (rpa.handled) { return rpa.state; }
-                // A match-arm binding of an ARRAY payload borrows the enum
-                // box's buffer (mark_borrowed_arr): the box keeps its
-                // reference and the binding is never swept, so the escaping
-                // return takes the same transfer retain as a borrowed param.
-                //
-                // EXCEPT when the binding already IS that reference (moved_claim,
-                // #8070): the box is one this frame built, so there is no claim
-                // left to count against — the consuming match's moved-payload
-                // skip hands this field over and the pending deep drop
-                // emit_dec_sweep_except runs omits its dec. The skip and this
-                // retain are one pairing, alternatives and never both; retaining
-                // on top strands the buffer, since the caller's dec then lands on
-                // the extra claim instead of on zero. Such a return falls through
-                // to the move-on-return path below.
-                if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
-                    && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
-                    var rbl: LowerState = lower_expr(r.value, s);
-                    if (!rbl.ok) { return rbl; }
-                    if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
-                        var rbf: i32 = rbl.ownflag_slot_of(rps);
-                        if (rbf >= 0) {
-                            rbl = rbl.emit(ir.op_load_local(rbf));
-                            rbl = rbl.emit(ir.op_const_i32(0));
-                            rbl = rbl.emit(ir.op_bin("eq", 0, false));
-                            rbl = rbl.emit(ir.op_if(0));
-                            rbl = rbl.retain(rps, "ret-borrowed-binding");
-                            rbl = rbl.emit(ir.op_end());
-                        } else {
-                            rbl = rbl.retain_tos("ret-borrowed-binding");
-                        }
-                    }
-                    rbl = emit_dec_sweep_except(rbl, rps);
-                    return rbl.emit(ir.op_return());
-                }
-            }
-            var se: LowerState = s;
-            match (r.value) {
-                ast.ExprTuple(rtup) => { se = lower_expr_tuple(rtup, s, true); },
-                _ => { se = lower_expr(r.value, s); }
-            }
-            if (!se.ok) { return se; }
-            se = tail_release_snapshot_locals(r.value, se);
-            // Perceus move-on-return: any array local the returned value MOVES out
-            // (a bare array local, an `.append` receiver, or an array under a
-            // returned enum / struct-enum-field — see returned_moved_arr_slots) is
-            // excluded from the exit dec-sweep so it isn't freed (the return-inc the
-            // caller would owe and this dec cancel; here there is no return-inc, so
-            // eliding the dec is the whole move). #3720: a `return Many(a)` over a
-            // local array `a` previously freed `a` here while the returned box still
-            // referenced it. Everything else is released as usual.
-            var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
-            moved_slots = returned_own_struct_param_slot(r.value, se, moved_slots);
-            se = emit_consumed_param_exit(se, r.value, true);
-            se = emit_dec_sweep_except_list(se, moved_slots);
-            return se.emit(ir.op_return());
-        },
-        ast.StmtIf(iff) => {
-            // Structured control flow, wasm-style: <cond> if <then> [else
-            // <else>] end. The operand stack is empty at block boundaries
-            // (statements balance it; `if` consumes the cond), so branches
-            // never carry operand-stack values — the backend lowering stays
-            // clean. NOTE: locals declared inside a branch keep their slots
-            // (no block-scoped reuse yet); a later slice can pop them.
-            // An i64 condition (truthiness on an i64) isn't lowered — bail. A
-            // comparison of i64 operands infers i32, so `if (a < b)` is fine.
-            if (infer_expr_width(iff.cond, s) == 64) { return s.fail(); }
-            var sc: LowerState = lower_expr(iff.cond, s);
-            if (!sc.ok) { return sc; }
-            var s1: LowerState = sc.emit(ir.op_if(0));
-            // `if (__dfa<i>)` is lower_defers_func's replay of one defer action.
-            // Name it while the then-body lowers, so a reference to a local whose
-            // block has since been retired resolves through the recorded alias
-            // (#6821). The cond itself lowered above, under the outer guard.
-            var dfg: string = defer_replay_flag(iff.cond);
-            var dfg_prev: string = s1.frame.defer_guard;
-            if (dfg.len() > 0) { s1 = s1.with_defer_guard(dfg); }
-            var s2: LowerState = lower_block(iff.then_body, s1);
-            if (!s2.ok) { return s2; }
-            // Restore only when it was set — an ordinary `if` must not pay a
-            // LowerState rebuild for a field it never touched.
-            if (dfg.len() > 0) { s2 = s2.with_defer_guard(dfg_prev); }
-            if (iff.else_body.len() > 0) {
-                var s3: LowerState = s2.emit(ir.op_else());
-                var s4: LowerState = lower_block(iff.else_body, s3);
-                if (!s4.ok) { return s4; }
-                return s4.emit(ir.op_end());
-            }
-            return s2.emit(ir.op_end());
-        },
-        ast.StmtWhile(wh) => {
-            // Canonical wasm loop shape:
-            //   block              ; depth 1 = exit target
-            //     loop             ; depth 0 = continue (header)
-            //       <cond> not     ; !cond
-            //       br_if 1        ; exit the block when !cond
-            //       <body>
-            //       br 0           ; back to the loop header
-            //     end
-            //   end
-            if (infer_expr_width(wh.cond, s) == 64) { return s.fail(); }
-            var w1: LowerState = s.emit(ir.op_block(0)).enter_loop();
-            var w2: LowerState = w1.emit(ir.op_loop(0));
-            var w3: LowerState = lower_expr(wh.cond, w2);
-            if (!w3.ok) { return w3; }
-            var w4: LowerState = w3.emit(ir.op_bin("not", 0, false));
-            var w5: LowerState = w4.emit(ir.op_brif(1));
-            var w6: LowerState = lower_block(wh.body, w5);
-            if (!w6.ok) { return w6; }
-            var w7: LowerState = w6.emit(ir.op_br(0));
-            var w8: LowerState = w7.emit(ir.op_end());
-            return w8.emit(ir.op_end()).exit_loop();
-        },
+        ast.StmtReturn(r) => { return lower_stmt_return(r, s); },
+        ast.StmtIf(iff) => { return lower_stmt_if(iff, s); },
+        ast.StmtWhile(wh) => { return lower_stmt_while(wh, s); },
         ast.StmtFor(fr) =>{ return lower_stmt_for(fr, s); },
-        ast.StmtExpr(es) => {
-            // Index-assignment `arr[i] = v` desugars to
-            // __set_index(arr, idx, val) → lower base, index, value, then the
-            // high-level `arr_set` op (the backend stores at its layout's
-            // element address), leaving nothing on the stack.
-            match (es.value) {
-                ast.ExprCall(c) => {
-                    match (c.callee) {
-                        ast.ExprIdent(cid) => {
-                            if (cid.name == "__set_index") {
-                                if (c.args.len() != 3) { return s.fail(); }
-                                // `a[i] = v` on an i64[]: base + index are i32, but
-                                // the value is an 8-byte i64 — lower it via lower_i64
-                                // and store with arr_set_i64 (i64.store on wasm).
-                                if (arr_index_is_i64(c.args[0], s)) {
-                                    var is64: LowerState = lower_expr(c.args[0], s);
-                                    if (!is64.ok) { return is64; }
-                                    is64 = lower_expr(c.args[1], is64);
-                                    if (!is64.ok) { return is64; }
-                                    is64 = lower_i64(c.args[2], is64);
-                                    if (!is64.ok) { return is64; }
-                                    return is64.emit(ir.op_arr_set_i64());
-                                }
-                                var ss: LowerState = lower_expr(c.args[0], s);
-                                if (!ss.ok) { return ss; }
-                                ss = lower_expr(c.args[1], ss);
-                                if (!ss.ok) { return ss; }
-                                ss = lower_expr(c.args[2], ss);
-                                if (!ss.ok) { return ss; }
-                                // Element width from the array slot: `a[i] = v`
-                                // on an f64[] stores an 8-byte f64 (arr_set width
-                                // 64 → f64.store on wasm); i32[] the 4-byte path.
-                                var sw: i32 = 32;
-                                if (arr_index_is_f64(c.args[0], s)) { sw = 64; }
-                                return ss.emit(ir.op_arr_set(sw));
-                            }
-                            // Field mutation `p.x = v` desugars to
-                            // __set_field(obj, "x", v). Resolve x's index in obj's
-                            // tracked scalar-struct type, lower obj + val, struct_set.
-                            if (cid.name == "__set_field") {
-                                if (c.args.len() != 3) { return s.fail(); }
-                                var fname: string = "";
-                                match (c.args[1]) {
-                                    ast.ExprString(fs) => { fname = fs.value; },
-                                    _ => { return s.fail(); }
-                                }
-                                var fsty: string = expr_struct_type(c.args[0], s);
-                                if (fsty == "") { return s.fail(); }
-                                if (!decl_is_leaksafe(s.frame.structs, fsty)) { return s.fail(); }
-                                // An ARRAY field (scalar-element or struct-element) is
-                                // mutable here, with the ownership rules the struct
-                                // LITERAL path already uses for the same store:
-                                //
-                                //   - the new value is RETAINED when it aliases an
-                                //     rc-tracked array local (`s.code = other`), so the
-                                //     field's reference is counted and the exit
-                                //     dec-sweep on `other` cannot free a buffer the
-                                //     struct still points at. Without the retain that
-                                //     is a use-after-free, which is what the AST
-                                //     emitter does today — it stores bare, no inc;
-                                //   - the REPLACED buffer is not released: the store
-                                //     orphans it. That is the safe-leak floor this
-                                //     codebase already stands on for a struct carrying
-                                //     an unreclaimable field, and it is what the AST
-                                //     emitter does too, so nothing regresses by
-                                //     lowering here. Reclaiming it needs the
-                                //     whole-program read-safety analysis #4355 built
-                                //     for REPLACED STRING fields
-                                //     (strfld_reclaim_ok_types_of) generalised to
-                                //     arrays — a separate step, tracked in
-                                //     docs/SELFHOST-AST-RETIREMENT.md.
-                                //
-                                // This is what used to bail, and is
-                                // the first mode-0 wasm decliner: `a.code = enc(…)` in
-                                // x86_native.fern.
-                                var fmft: string = decl_field_type(s.frame.structs, fsty, fname);
-                                var fm_is_arr: boolean = is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.frame.structs, fmft);
-                                var fidx: i32 = s.field_index_in(fsty, fname);
-                                if (fidx < 0) { return s.fail(); }
-                                var sf: LowerState = lower_expr(c.args[0], s);
-                                if (!sf.ok) { return sf; }
-                                // An i64 field stores an 8-byte i64: lower the
-                                // value via lower_i64 and store with struct_set_i64
-                                // (i64.store on wasm). f64 / i32 fields keep the
-                                // existing struct_set(width) path.
-                                if (struct_field_is_i64(s.frame.structs, fsty, fidx)) {
-                                    sf = lower_i64(c.args[2], sf);
-                                    if (!sf.ok) { return sf; }
-                                    return sf.emit(ir.op_struct_set_i64(fidx));
-                                }
-                                sf = lower_expr(c.args[2], sf);
-                                if (!sf.ok) { return sf; }
-                                // Array-field alias retain, mirroring the struct-lit
-                                // construction inc (see the fav_alias_inc arm): a bare
-                                // ident naming an rc-tracked array slot is a SECOND
-                                // owner once stored. rc_inc returns its argument, so
-                                // the stack shape struct_set expects is unchanged.
-                                if (fm_is_arr) {
-                                    match (c.args[2]) {
-                                        ast.ExprIdent(svid) => {
-                                            if (sf.is_arr_slot(sf.slot_of(svid.name))) {
-                                                sf = sf.retain_tos("struct-set-value");
-                                            }
-                                        },
-                                        _ => {}
-                                    }
-                                }
-                                return sf.emit(ir.op_struct_set(fidx, struct_field_width(s.frame.structs, fsty, fidx)));
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            // General expression statement: lower the value, drop the result.
-            // Statement-temporary reclamation, stage (a): a discarded bare
-            // `[e0, e1, …];` whose value is a FRESH scalar-element array literal
-            // is a rc=1 sole owner that leaks every iteration if merely dropped
-            // (unbounded in a hot loop). Release its buffer with the rc-guarded
-            // __fern_rc_dec before the drop — the self-host sibling of native's
-            // emitOwnedTempStackDrop (docs/RC-PERCEUS-PLAN.md). Ident / field /
-            // index reads are borrowed views (an upstream owner / the exit sweep
-            // accounts for them) and never match discardable_scalar_arr_lit, so
-            // they keep leaking-safe on the plain drop.
-            var se: LowerState = lower_expr(es.value, s);
-            if (!se.ok) { return se; }
-            match (es.value) {
-                ast.ExprArray(dae) => {
-                    if (discardable_scalar_arr_lit(dae, s)) {
-                        se = se.release_tos("__fern_rc_dec", "discard-arr-lit");
-                    } else if (discardable_scalar_arrarr_lit(dae, s)) {
-                        // A discarded fresh scalar-inner array-of-arrays literal
-                        // (`[[i, i+1], [i]];`, #4365): __fern_arrarr_free frees
-                        // each inner buffer (one rc-guarded arr_dec — scalar
-                        // inners fully reclaim) then the outer buffer, the same
-                        // whole release the exit sweep gives a reclaimable ARRARR:
-                        // LOCAL. Every inner is a fresh sole-owned literal, so the
-                        // deep free is complete and double-free-free.
-                        se = se.release_tos("__fern_arrarr_free", "discard-arrarr-lit");
-                    } else if (discardable_fresh_strarr_lit(dae, s)) {
-                        // A discarded fresh string[] literal deep-frees its element
-                        // boxes and buffer via __fern_str_arr_free — the same release
-                        // the exit sweep gives a reclaimable string[] LOCAL (#4355).
-                        // Every element is proven fresh (expr_is_fresh_str), so the box
-                        // sole-owns each element at rc=1: the rc==1-gated element walk
-                        // frees exactly the fresh boxes, then returns the buffer to its
-                        // freelist — a COMPLETE, no-double-free reclaim.
-                        se = se.release_tos("__fern_str_arr_free", "discard-strarr-lit");
-                    }
-                },
-                // A discarded fresh scalar TUPLE / STRUCT literal box is likewise a
-                // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
-                ast.ExprTuple(dte) => {
-                    if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
-                    else if (tuple_lit_rc_reclaimable(es.value, "", s.frame.structs, s.frame.sigs.str_fresh_ret_fns)) {
-                        // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
-                        // the nested `((w, [w, w+1]), w);` — #4365): every element
-                        // scalar-shaped, a DIRECT array literal, or a nested tuple
-                        // LITERAL — the box sole-owns each fresh array buffer and
-                        // nested box, so deep-drop exactly like the loop-rebind
-                        // sibling (emit_tuple_child_drops: free array buffers +
-                        // nested boxes depth-first, then the box). A bare-ident
-                        // pointer element gives back the retain the construction
-                        // took (tuple_union_arg_freefn), same admission as the
-                        // TUPRC: class. The scratch is never mark_arr'd, so the
-                        // exit sweep skips it.
-                        var dtt: string = "$tldrop" + util.i32_to_string(se.locals.len());
-                        se = se.add_local(dtt);
-                        var dtslot: i32 = se.slot_of(dtt);
-                        se = se.emit(ir.op_store_local(dtslot));                     // stash box
-                        var dt_path: i32[] = [];
-                        se = emit_tuple_child_drops(se, dtslot, dt_path, dte);       // free array/nested children
-                        se = se.emit(ir.op_load_local(dtslot));                      // box again
-                        se = se.release_tos("__fern_rc_dec", "discard-tuple-box");         // free the box
-                    }
-                },
-                ast.ExprStructLit(dse) => {
-                    if (!dse.has_base && struct_lit_all_scalar(s.frame.structs, dse.type_name)) {
-                        se = se.release_tos("__fern_rc_dec", "discard-struct-lit");
-                    } else if (!dse.has_base && struct_fields_reusable(s.frame.structs, dse.type_name)) {
-                        // A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`)
-                        // is reclaimed the same way the exit sweep drops a struct LOCAL
-                        // (emit_struct_field_drops): when the type carries rc-array /
-                        // nested-struct fields, __struct_drop_<T> releases those field
-                        // buffers one level (auto-materialized by the asm_ir op scan on
-                        // seeing the call_direct), THEN __fern_rc_dec frees the box. The
-                        // construction alias-inc in this same lowering (the ExprStructLit
-                        // field arms) balances every NON-fresh field source — a borrowed
-                        // array/local was inc'd on construction so this dec just returns
-                        // it to its owner, a fresh sole-owned literal field decs to 0 and
-                        // frees — so the deep-drop is exactly paired, never a UAF. String
-                        // / enum / map / tuple / option fields keep struct_fields_reusable
-                        // false, so a struct carrying one still leaks whole (safe-leak
-                        // floor).
-                        //
-                        // __struct_drop_<T> returns the box in its return register (the
-                        // x86/arm64 bodies reload it from the stack arg before ret — the
-                        // inner field-release calls clobber the register copies; #4355
-                        // slice 5 fixed the reload). This site predates that fix and
-                        // threads the box through a scratch local instead of the return —
-                        // still correct, kept as-is: stash the box in a fresh scratch
-                        // local and re-load it for each step — the scratch is never
-                        // mark_arr'd, so the exit dec-sweep (is_arr_slot-gated) skips it
-                        // (no double-free).
-                        if (struct_has_reclaim_array_field(s.frame.structs, dse.type_name)) {
-                            var sdtmp: string = "$sdrop" + util.i32_to_string(se.locals.len());
-                            se = se.add_local(sdtmp);
-                            var sdslot: i32 = se.slot_of(sdtmp);
-                            se = se.emit(ir.op_store_local(sdslot));                              // stash box
-                            se = se.emit(ir.op_load_local(sdslot));                               // box (arg0)
-                            se = se.release_tos("__struct_drop_" + dse.type_name, "discard-struct-deep"); // deep-drop rc fields
-                            se = se.emit(ir.op_drop());                                           // discard clobbered return
-                            se = se.emit(ir.op_load_local(sdslot));                               // box again
-                        }
-                        se = se.release_tos("__fern_rc_dec", "discard-struct-box");                      // free the box
-                    }
-                },
-                // A discarded fresh STRING CONCAT (`a + b;`) allocates a new owned
-                // buffer that leaks if merely dropped — release it with the rc-aware
-                // __fern_str_free (box + heap data at rc==1; .rodata-guarded; a shared
-                // box just decs). The operands stay owned by their locals (concat
-                // reads them, produces a fresh buffer), so this frees only the temp.
-                ast.ExprBinary(dbe) => {
-                    if (dbe.op == "+" && expr_is_str(es.value, s)) { se = se.emit(ir.op_call_direct("__fern_str_free", 1)); }
-                },
-                // A discarded call to a STRICT fresh-struct-returning free function
-                // (`mk(i);`, callee in return_fresh_struct_ret_fns) hands back a rc=1
-                // sole-owner box (every such return is a no-base literal — #4356
-                // slice 2 / is_fresh_ret_binding), which leaks if merely dropped.
-                // Release the box with the shallow rc-guarded __fern_rc_dec (the
-                // native ownedCallResultType reclaim). A scalar-only result is fully
-                // reclaimed; a result whose return struct carries rc-array / nested-
-                // struct fields is DEEP-dropped — because the STRICT-fresh registry
-                // guarantees the returned box SOLE-owns every field buffer (no aliased
-                // inner buffers, unlike the looser fresh_struct_ret_fns), so
-                // __struct_drop_<RetT> reclaims those buffers with no double-free, then
-                // __fern_rc_dec frees the box (same composition as the ExprStructLit
-                // arm; box stashed in a scratch local because __struct_drop_<T>'s inner
-                // arr_dec clobbers the box return register). Method / builtin / variant-
-                // constructor callees are excluded — not in the strict-fresh registry.
-                ast.ExprCall(dce) => {
-                    match (dce.callee) {
-                        ast.ExprIdent(dcid) => {
-                            if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dcid.name) >= 0) {
-                                var crt: string = s.struct_ret_type(dcid.name);
-                                if (crt.len() > 0 && struct_fields_reusable(s.frame.structs, crt) && struct_has_reclaim_array_field(s.frame.structs, crt)) {
-                                    var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
-                                    se = se.add_local(fcd);
-                                    var fcslot: i32 = se.slot_of(fcd);
-                                    se = se.emit(ir.op_store_local(fcslot));                          // stash box
-                                    se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
-                                    se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
-                                    se = se.emit(ir.op_drop());                                       // discard clobbered return
-                                    se = se.emit(ir.op_load_local(fcslot));                           // box again
-                                    se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
-                                } else {
-                                    se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
-                                }
-                            } else if (util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dcid.name) >= 0) {
-                                // A discarded call to a COUNTED-return free function
-                                // outside the strict-fresh registry (a bare param handed
-                                // back, or a forwarding frame): the result holds a count
-                                // this frame owns — the callee's transfer retain on the
-                                // handback path, a fresh box on the other — and the
-                                // shallow rc-aware dec gives it back either way. What a
-                                // fresh box owns leaks with it, as the read-through release
-                                // below accepts.
-                                se = se.release_tos("__fern_rc_dec", "discard-cntret-box");
-                            } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
-                                    || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
-                                // A discarded call to an ARRAY-returning free function
-                                // that leaves this frame owning one reference: an "ARR:"
-                                // producer (every return a direct scalar-element array
-                                // literal — #4365) hands back an rc=1 buffer, an
-                                // "ARROWN:" one (#7259) a reference it retained or moved
-                                // out. Both leak if merely dropped. Release with the
-                                // shallow rc-guarded __fern_rc_dec — element-blind,
-                                // which the "ARR:" scalar-element contract makes sound
-                                // one way and the surviving owner the other.
-                                se = se.release_tos("__fern_rc_dec", "discard-arr-ret");
-                            } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "STRARR:" + dcid.name) >= 0) {
-                                // A discarded call to a "STRARR:" producer: every
-                                // element is a string box this frame allocated, so the
-                                // shallow dec above would return the buffer and strand
-                                // all of them. __fern_str_arr_free is the deep sibling
-                                // the read reclaim already uses (#6491, #7259).
-                                se = se.release_tos("__fern_str_arr_free", "discard-strarr-ret");
-                            } else if ((util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "STRUCTARRF:" + dcid.name) >= 0
-                                    || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARRSTRUCTF:" + dcid.name) >= 0)
-                                    && decl_is_struct(s.frame.structs, se.struct_ret_type(dcid.name))) {
-                                // A discarded call to a STRUCT-element array producer
-                                // (#7445's registries): same split the exit sweep gives
-                                // a credited slot of the class — a field-routing or
-                                // rc-array-field element walks __struct_drop_<T> per
-                                // element, a scalar-field one frees box-per-element via
-                                // __fern_arrarr_free. Nothing released either before:
-                                // frees=0 outright, ~200 B/round and unbounded.
-                                var dsty: string = se.struct_ret_type(dcid.name);
-                                if (struct_has_reclaim_array_field(se.frame.structs, dsty) || se.struct_routes_field_reclaim(dsty)) {
-                                    var dscr: string = "$dsar" + util.i32_to_string(se.locals.len());
-                                    se = se.add_local(dscr);
-                                    var dslot: i32 = se.slot_of(dscr);
-                                    se = se.emit(ir.op_store_local(dslot));
-                                    se = emit_arrstruct_deep_free(se, dslot, dsty);
-                                    se = se.emit(ir.op_load_local(dslot));   // the shared tail drop consumes this
-                                } else {
-                                    se = se.release_tos("__fern_arrarr_free", "discard-structarr-ret");
-                                }
-                            } else if (reclaim_has(s.frame.reclaimable_names, "MAPRET:", dcid.name)) {
-                                // A discarded call to a MAPF-registered map builder
-                                // (`mk(i);`, #4357): the result is a fresh sole-owner
-                                // scalar-column map that leaks whole if merely dropped.
-                                // __fern_map_free frees both column buffers and returns
-                                // the mapbox to the freelist (the same helper the slot
-                                // reclaim uses — deep on wasm via $__fern_map_release);
-                                // the shared tail drop discards the helper's return.
-                                se = se.release_tos("__fern_map_free", "discard-map-ret");
-                            } else if (util.index_of_str(s.frame.sigs.str_fresh_ret_fns, dcid.name) >= 0) {
-                                // A discarded call to a STRING-fresh-ret free function
-                                // (`mk(a);`): the result is a freshly-allocated string
-                                // nothing else will ever hold, so the shared tail drop
-                                // leaks it once per evaluation. Measured on a 200-round
-                                // churn: allocs=601 frees=200 live_bytes=9624, growing
-                                // x2 per doubling, where native is 200/200/0. Release it
-                                // with the rc-aware __fern_str_free (box + heap data at
-                                // rc==1; .rodata-guarded), the same helper the discarded
-                                // concat arm above uses; the shared tail drop discards
-                                // the helper's return.
-                                //
-                                // str_fresh_ret_fns, not the looser str_ret_fns, for the
-                                // reason it is the gate everywhere else: it means EVERY
-                                // return of this callee is freshly allocated, never an
-                                // alias of a borrowed arg / field / literal — freeing
-                                // one of those drops a box a live local still holds.
-                                // Unlike the concat-OPERAND position (#6171), a discard
-                                // has no reader to outlive: the statement is the value's
-                                // whole lifetime.
-                                se = se.release_tos("__fern_str_free", "discard-str-ret");
-                            } else if (handback_fresh_arg_at(dcid.name, dce.args, s.frame.sigs.str_handback_ret)) {
-                                // #8409: a discarded call that hands a FRESH string
-                                // arg back through an identity method. The result is
-                                // that arg's own box on the identity path — the
-                                // guarded arg-temp release left it unfreed precisely
-                                // so its consumer owns it, and here the consumer is
-                                // this discard — or a fresh box on the allocating
-                                // path. Owned either way, with no reader to outlive:
-                                // free it now with the rc-aware __fern_str_free.
-                                se = se.release_tos("__fern_str_free", "discard-str-handback-ret");
-                            } else {
-                                // A discarded call to a TUPLE-fresh-ret free function
-                                // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
-                                // tuple temps): every return is a direct tuple literal,
-                                // so the result is a fresh sole-owner box. Release
-                                // the flagged positions (a counted buffer in EVERY
-                                // return — tuple_ret_arrfree_flags; '2' a string[])
-                                // then free the box; '0' positions (scalars,
-                                // aliased idents, pointer elements) are left to their
-                                // owners / the safe-leak floor.
-                                var dtrf: string = discarded_tuple_ret_flags(s, dcid.name);
-                                if (dtrf.len() > 0) {
-                                    var tcd: string = "$tcdrop" + util.i32_to_string(se.locals.len());
-                                    se = se.add_local(tcd);
-                                    var tcslot: i32 = se.slot_of(tcd);
-                                    se = se.emit(ir.op_store_local(tcslot));                     // stash box
-                                    var tck: i32 = 0;
-                                    while (tck < dtrf.len()) {
-                                        if (dtrf[tck] == b'1' || dtrf[tck] == b'2') {
-                                            var dth: string = "__fern_rc_dec";
-                                            if (dtrf[tck] == b'2') { dth = "__fern_str_arr_free"; }
-                                            se = se.emit(ir.op_load_local(tcslot));              // box
-                                            se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
-                                            se = se.release_tos(dth, "discard-tupret-elem");     // release the counted buffer
-                                            se = se.emit(ir.op_drop());
-                                        }
-                                        tck = tck + 1;
-                                    }
-                                    se = se.emit(ir.op_load_local(tcslot));                      // box again
-                                    se = se.release_tos("__fern_rc_dec", "discard-tupret-box");         // free the box
-                                }
-                            }
-                        },
-                        // A discarded call to an ARRAY-returning METHOD (`h.mk();` /
-                        // `h.get();`). The free-function arm above reads
-                        // "ARR:<name>" / "ARROWN:<name>"; a method keys
-                        // "<Base>.<method>", which is what owned_fresh_call_callee
-                        // already resolves for the READ reclaim one expression
-                        // position over (#6491). Same shallow rc-guarded
-                        // __fern_rc_dec, same element-blind argument as the free
-                        // function.
-                        //
-                        // The receiver must be a bare LOCAL naming a struct, for
-                        // owned_fresh_call_callee's reason: expr_struct_type reports a
-                        // struct-ARRAY-returning call's ELEMENT type, so a call
-                        // receiver could name a method of a type the value is only an
-                        // array OF. A struct FIELD of the method's name is a fn-typed
-                        // field call and names no method at all.
-                        ast.ExprFieldAccess(dcfa) => {
-                            var drty: string = "";
-                            match (dcfa.obj) {
-                                ast.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
-                                _ => {}
-                            }
-                            // A COUNTED-return METHOD (`b.id_or_make(0);`, cnt_struct_ret_fns)
-                            // takes the same shallow dec: its result is this frame's
-                            // count whichever path produced it.
-                            if (drty != "" && decl_field_type(s.frame.structs, drty, dcfa.field) == ""
-                                && (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
-                                    || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0
-                                    || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, drty + "." + dcfa.field) >= 0)) {
-                                se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            return se.emit(ir.op_drop());
-        },
+        ast.StmtExpr(es) => { return lower_stmt_expr(es, s); },
         ast.StmtMatch(m) =>{ return lower_stmt_match(m, s); },
         ast.StmtBreak(b) => {
             // br out to the target loop's exit block. b.tag is the relative loop
@@ -21356,6 +20571,801 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     }
     return s.fail();
 }
+
+function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
+    var r: ast.StmtReturn = r0;
+    if (s.frame.cur_ret == "u32") { r = ast.StmtReturn { ...r, value: settle_u32_literal(r.value) }; }
+    // A bare `return;` in a VOID function — parse_expr yields an
+    // ExprUnknown for the missing value, which lower_expr can't lower (so
+    // the whole module bailed to AST; every void helper with an early
+    // `return;` was affected). op_return pops a result into the result reg,
+    // so emit a dummy 0 (harmless — a void caller ignores it) after the exit
+    // dec-sweep, mirroring `return 0`. Only reachable in a void function
+    // (the checker rejects a value-less return where a value is required).
+    var ret_is_bare: boolean = false;
+    match (r.value) {
+        ast.ExprUnknown(_) => { ret_is_bare = true; },
+        _ => {}
+    }
+    if (ret_is_bare) {
+        var bs: LowerState = s.emit(ir.op_const_i32(0));
+        bs = emit_consumed_param_exit(bs, r.value, false);
+        bs = emit_dec_sweep_except(bs, 0 - 1);
+        return bs.emit(ir.op_return());
+    }
+    // `return T { ...p, f: v }` over an `own` struct param admitted for
+    // in-place update (own_update_params_of): reuse p's box through the
+    // same emitter as the self-assign form, binding the result to a
+    // hidden local the sweep keeps, then hand it back.
+    match (r.value) {
+        ast.ExprStructLit(rsl) => {
+            if (rsl.has_base) {
+                var rbn: string = ident_name_or_empty(rsl.base);
+                if (rbn.len() > 0 && s.is_own_param(rbn) && s.is_self_assign_reuse_name(rbn)
+                    && sa_is_self_update(r.value, rbn, rsl.type_name)) {
+                    var rname: string = "$ownret" + util.i32_to_string(s.locals.len());
+                    var ro: LowerState = emit_self_overwrite_reuse(rname, "", r.value, rbn, false, s, true);
+                    if (!ro.ok) { return ro; }
+                    var rslot: i32 = ro.slot_of(rname);
+                    ro = ro.emit(ir.op_load_local(rslot));
+                    ro = emit_dec_sweep_except(ro, rslot);
+                    return ro.emit(ir.op_return());
+                }
+            }
+        },
+        _ => {}
+    }
+    // i64-returning function: lower the value as an i64, run the exit
+    // dec-sweep over array locals (no moved array — i64 isn't one), then
+    // return. The wasm sig declares (result i64); x86/arm64 are unchanged.
+    if (s.frame.ret_is_i64) {
+        var ri: LowerState = lower_i64(r.value, s);
+        if (!ri.ok) { return ri; }
+        ri = emit_dec_sweep_except(ri, 0 - 1);
+        return ri.emit(ir.op_return());
+    }
+    // i64[]-returning function returning a bare array LITERAL: the
+    // elements aren't self-evidently i64, so lower each via lower_i64 and
+    // build the array with arr_make_i64 (8-byte i64 stride). The fresh
+    // array is returned (moved to the caller); it isn't a local, so the
+    // exit dec-sweep over array locals doesn't touch it. `return a` (an
+    // i64-array local) falls through to the generic move-on-return path.
+    if (s.ret_i64arr()) {
+        var rlit: boolean = false;
+        match (r.value) {
+            ast.ExprArray(_) => { rlit = true; },
+            _ => {}
+        }
+        if (rlit) {
+            match (r.value) {
+                ast.ExprArray(rarr) => {
+                    var ra: LowerState = s;
+                    var rae: i32 = 0;
+                    while (rae < rarr.elements.len()) {
+                        ra = lower_i64(rarr.elements[rae], ra);
+                        if (!ra.ok) { return ra; }
+                        rae = rae + 1;
+                    }
+                    ra = ra.emit(ir.op_arr_make_i64(rarr.elements.len()));
+                    ra = emit_dec_sweep_except(ra, 0 - 1);
+                    return ra.emit(ir.op_return());
+                },
+                _ => {}
+            }
+        }
+    }
+    // `return <expr>` from a SCALAR `dyn Trait`-returning function: the
+    // value coerces to `dyn Trait` via lower_dyn_arg — a primitive/string
+    // is heap-boxed via op_dyn_box (so it carries a shape pointer the
+    // caller's dispatch can read), a struct/enum flows unboxed
+    // (docs/DYN-TRAITS.md §4.3). The returned value is not a local array,
+    // so the exit dec-sweep over array locals leaves it alone.
+    if (dyn_array_literal(s.frame.cur_ret, r.value)) {
+        if let ast.ExprArray(rda) = r.value {
+            var rdl: LowerState = lower_dyn_array_lit(rda, s);
+            if (!rdl.ok) { return rdl; }
+            rdl = emit_dec_sweep_except(rdl, 0 - 1);
+            return rdl.emit(ir.op_return());
+        }
+    }
+    if (s.ret_dyn()) {
+        var rds: LowerState = lower_dyn_arg(r.value, s);
+        if (!rds.ok) { return rds; }
+        rds = emit_dec_sweep_except(rds, 0 - 1);
+        return rds.emit(ir.op_return());
+    }
+    // #5464: a bare-typevar-RETURN pass-through fn returns i64 on wasm —
+    // the uniform 8-byte slot the register backends give every value (the
+    // wasm sig declares (result i64), see emit_function_ir). The returned
+    // value is an erased (i64-typed) local or another erased call's result,
+    // so lower it full-width and return it; the caller narrows the i64
+    // result to the concrete type. Without this the i64-width guard below
+    // would bail the erased return (its ret_type isn't literally "i64").
+    // Register backends never set for_wasm — their 8-byte return slot needs
+    // no widening, so they take the generic path below unchanged.
+    if (s.for_wasm() && s.erased_passthrough() && is_erased_typevar(s.frame.cur_ret, s.frame.structs)) {
+        var rerw: LowerState = lower_i64(r.value, s);
+        if (!rerw.ok) { return rerw; }
+        rerw = emit_dec_sweep_except(rerw, 0 - 1);
+        return rerw.emit(ir.op_return());
+    }
+    // An i64 value returned from a non-i64 function is a width mismatch
+    // the checker rejects; guard anyway so a stray i64 never lands in an
+    // i32 return slot. A u64[] ARRAY ident reports width 64 via the
+    // overloaded is_u64 flag (scalar u64 and u64[] share it), but an array
+    // return is a pointer MOVE, not a scalar — exclude array values so
+    // `return <u64[]>` (e.g. a u64[]-returning sort) reaches the move-on-return path
+    // instead of bailing. (i64[] uses the separate is_i64arr flag, so it
+    // already reports width 32 here.)
+    var ret_val_is_arr: boolean = false;
+    match (r.value) {
+        ast.ExprIdent(rvid) => { ret_val_is_arr = s.is_arr_slot(s.slot_of(rvid.name)); },
+        _ => {}
+    }
+    if (!ret_val_is_arr && infer_expr_width(r.value, s) == 64) { return s.fail(); }
+    // `return Ok(x)/Some(x)/Err(x)` with an i64/u64 DECLARED payload: build
+    // the 8-byte box the consumers read, even when the argument only infers
+    // i32 (a bare literal `Ok(40)` or i32 var). The expected payload type
+    // comes from THIS function's Option/Result return type (cur_fn), so it
+    // is sound here (unlike a bare construction in an unknown context). Other
+    // payloads fall through to the generic lower_expr below unchanged.
+    match (r.value) {
+        ast.ExprCall(rc) => {
+            match (rc.callee) {
+                ast.ExprIdent(rcid) => {
+                    if (rc.args.len() == 1 && (rcid.name == "Ok" || rcid.name == "Some" || rcid.name == "Err")) {
+                        var rrt: string = s.opt_ret_type(s.frame.cur_fn);
+                        if (rrt.len() >= 8 && (slice_unchecked(rrt, 0, 7) == "Result[" || slice_unchecked(rrt, 0, 7) == "Option[")) {
+                            var rvar: string = "Ok";
+                            var rtag: i32 = 0;
+                            if (rcid.name == "Err") { rvar = "Err"; rtag = 1; }
+                            var rexp: string = opt_payload_type(rrt, rvar);
+                            if (rexp == "i64" || rexp == "u64") {
+                                var rcs: LowerState = lower_opt_make_payload_exp(rtag, rc.args[0], rexp, s);
+                                if (!rcs.ok) { return rcs; }
+                                rcs = emit_dec_sweep_except(rcs, 0 - 1);
+                                return rcs.emit(ir.op_return());
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    // Returning a SCALAR-element array struct field (`return h.items`)
+    // aliases it out to the caller, who will own it. Lower it via the IR
+    // with a Perceus dup (RC-frontier slice 2): lower_expr emits struct_get
+    // (the array pointer on the operand stack); __fern_rc_inc retains it so
+    // the ESCAPING return is a counted reference (the helper pops + re-pushes
+    // the same pointer, so it stays on top for op_return). We do NOT move-out
+    // the field (`moved` stays -1): the struct still owns its field. Balance
+    // — if `h` is a BORROWED param, its box/field are never swept, the inc
+    // simply hands the caller its own counted ref (field rc N →inc N+1
+    // →caller decs N); if `h` is a fresh RECLAIMABLE local, the exit sweep's
+    // struct field-drop decs the field (array rc 1 →inc 2 →field-drop 1
+    // →caller decs 0). Sound either way (never under-frees).
+    var rfft: string = scalar_arr_field_type(r.value, s);
+    if (rfft != "") {
+        var rfs: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
+        if (!rfs.ok) { return rfs; }
+        rfs = rfs.retain_tos("ret-field");
+        rfs = emit_dec_sweep_except(rfs, 0 - 1);   // field NOT moved out; struct keeps its ref
+        return rfs.emit(ir.op_return());
+    }
+    // Returning an ARRAY-OF-STRUCT field (`return h.params`), an ARRAY-OF-
+    // ENUM field (`return h.args`, args: Expr[]) or a STRING-ARRAY field
+    // (`return h.xs`, xs: string[]) aliases it out to the caller exactly like
+    // the scalar case above — the Perceus dup is on the buffer POINTER
+    // (element-type-agnostic), and NO deep-drop recursion is involved: the
+    // struct keeps owning the elements, the caller receives a counted
+    // reference to the buffer. Same balance as the scalar field return
+    // (borrowed param: caller decs; reclaimable local: field-drop + caller
+    // dec).
+    var rsaft: string = struct_arr_field_read_type(r.value, s);
+    if (rsaft == "") { rsaft = enum_arr_field_read_type(r.value, s); }
+    if (rsaft == "") { rsaft = strarr_field_read_type(r.value, s); }
+    if (rsaft != "") {
+        var rss: LowerState = lower_expr(r.value, s);   // struct_get -> array ptr on stack
+        if (!rss.ok) { return rss; }
+        rss = rss.retain_tos("ret-field");
+        rss = emit_dec_sweep_except(rss, 0 - 1);   // field NOT moved out; struct keeps its ref
+        return rss.emit(ir.op_return());
+    }
+    // An enum-array field still bails: aliasing it out needs deep-drop
+    // recursion (a later slice).
+    if (is_scalar_arr_field_access(r.value, s)) { return s.fail(); }
+    // Returning an ELEMENT of an array-of-arrays (`return seeds[i]`)
+    // aliases the element out to the caller while the container keeps
+    // its reference — the same escape as the struct-field returns
+    // above, so it takes the same Perceus dup (native:
+    // needsRcIncOnAlias's Index arm). Without the retain the caller's
+    // exit sweep decs a count the container still owns, freeing the
+    // element under the live container.
+    if (index_read_is_arr(r.value, s)) {
+        var ris: LowerState = lower_expr(r.value, s);   // element ptr on stack
+        if (!ris.ok) { return ris; }
+        ris = ris.emit(ir.op_call_direct("__fern_rc_inc", 1));   // return-transfer retain
+        ris = emit_dec_sweep_except(ris, 0 - 1);   // element NOT moved out of the container
+        return ris.emit(ir.op_return());
+    }
+    // Returning a TUPLE ELEMENT (`return src.1`) — native's
+    // dup-at-extract (needsRcIncOnAlias's FieldAccess arm): the
+    // element leaves the box to a NEW owner, so retain it before the
+    // sweep. A borrowed tuple param's caller now holds the deep claim
+    // TUPB admits (element rc: construction 1 -> retain 2 -> caller's
+    // deep free 1 -> final owner's sweep 0); a TUPRCS local of THIS
+    // frame settles its own claim in the sweep below the retain.
+    // Retain-only or grant-only is measurably wrong in opposite
+    // directions (rc-log 2026-08-28 elemret scoping pin) — this arm
+    // and the scans' tuple_elem_ret_dup admission are one predicate
+    // and MUST move together.
+    if (ret_is_tuple_elem_dup(r.value, s)) {
+        var rts: LowerState = lower_expr(r.value, s);   // element ptr on stack
+        if (!rts.ok) { return rts; }
+        rts = rts.retain_tos("ret-tuple-elem");
+        rts = emit_dec_sweep_except(rts, 0 - 1);   // element NOT moved out of the container
+        return rts.emit(ir.op_return());
+    }
+    // Returning a bare PARAM array (`return a`, a a borrowed param) —
+    // the native return-transfer inc, ported (#4357 probe). The CALLER
+    // binds the result as an owned move (its slot is exit-swept), but
+    // the param's buffer belongs to the caller's caller: without a
+    // retain the callee hands out an UNCOUNTED alias, and the two
+    // sweeps over-release it (rc 1 -> 0 while the owner still holds
+    // it — a use-after-free surfaced by the underflow detector on the
+    // identity-return probe). Mirror the struct-field Perceus dup
+    // above: retain the buffer so the escaping return is a counted
+    // reference (owner's later dec frees it exactly once). Params are
+    // never exit-swept, so no move-out bookkeeping is needed; a bare
+    // LOCAL return stays on the move-on-return path below (its slot
+    // is kept from the sweep instead).
+    var rpid: string = "";
+    match (r.value) {
+        ast.ExprIdent(rid2) => { rpid = rid2.name; },
+        _ => {}
+    }
+    if (rpid.len() > 0) {
+        var rps: i32 = s.slot_of(rpid);
+        var rpa: RetArm = lower_return_param(r.value, rpid, rps, s);
+        if (rpa.handled) { return rpa.state; }
+        // A match-arm binding of an ARRAY payload borrows the enum
+        // box's buffer (mark_borrowed_arr): the box keeps its
+        // reference and the binding is never swept, so the escaping
+        // return takes the same transfer retain as a borrowed param.
+        //
+        // EXCEPT when the binding already IS that reference (moved_claim,
+        // #8070): the box is one this frame built, so there is no claim
+        // left to count against — the consuming match's moved-payload
+        // skip hands this field over and the pending deep drop
+        // emit_dec_sweep_except runs omits its dec. The skip and this
+        // retain are one pairing, alternatives and never both; retaining
+        // on top strands the buffer, since the caller's dec then lands on
+        // the extra claim instead of on zero. Such a return falls through
+        // to the move-on-return path below.
+        if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
+            && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
+            var rbl: LowerState = lower_expr(r.value, s);
+            if (!rbl.ok) { return rbl; }
+            if (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) {
+                var rbf: i32 = rbl.ownflag_slot_of(rps);
+                if (rbf >= 0) {
+                    rbl = rbl.emit(ir.op_load_local(rbf));
+                    rbl = rbl.emit(ir.op_const_i32(0));
+                    rbl = rbl.emit(ir.op_bin("eq", 0, false));
+                    rbl = rbl.emit(ir.op_if(0));
+                    rbl = rbl.retain(rps, "ret-borrowed-binding");
+                    rbl = rbl.emit(ir.op_end());
+                } else {
+                    rbl = rbl.retain_tos("ret-borrowed-binding");
+                }
+            }
+            rbl = emit_dec_sweep_except(rbl, rps);
+            return rbl.emit(ir.op_return());
+        }
+    }
+    var se: LowerState = s;
+    match (r.value) {
+        ast.ExprTuple(rtup) => { se = lower_expr_tuple(rtup, s, true); },
+        _ => { se = lower_expr(r.value, s); }
+    }
+    if (!se.ok) { return se; }
+    se = tail_release_snapshot_locals(r.value, se);
+    // Perceus move-on-return: any array local the returned value MOVES out
+    // (a bare array local, an `.append` receiver, or an array under a
+    // returned enum / struct-enum-field — see returned_moved_arr_slots) is
+    // excluded from the exit dec-sweep so it isn't freed (the return-inc the
+    // caller would owe and this dec cancel; here there is no return-inc, so
+    // eliding the dec is the whole move). #3720: a `return Many(a)` over a
+    // local array `a` previously freed `a` here while the returned box still
+    // referenced it. Everything else is released as usual.
+    var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
+    moved_slots = returned_own_struct_param_slot(r.value, se, moved_slots);
+    se = emit_consumed_param_exit(se, r.value, true);
+    se = emit_dec_sweep_except_list(se, moved_slots);
+    return se.emit(ir.op_return());
+}
+
+function lower_stmt_if(iff: ast.StmtIf, s: LowerState): LowerState {
+    // Structured control flow, wasm-style: <cond> if <then> [else
+    // <else>] end. The operand stack is empty at block boundaries
+    // (statements balance it; `if` consumes the cond), so branches
+    // never carry operand-stack values — the backend lowering stays
+    // clean. NOTE: locals declared inside a branch keep their slots
+    // (no block-scoped reuse yet); a later slice can pop them.
+    // An i64 condition (truthiness on an i64) isn't lowered — bail. A
+    // comparison of i64 operands infers i32, so `if (a < b)` is fine.
+    if (infer_expr_width(iff.cond, s) == 64) { return s.fail(); }
+    var sc: LowerState = lower_expr(iff.cond, s);
+    if (!sc.ok) { return sc; }
+    var s1: LowerState = sc.emit(ir.op_if(0));
+    // `if (__dfa<i>)` is lower_defers_func's replay of one defer action.
+    // Name it while the then-body lowers, so a reference to a local whose
+    // block has since been retired resolves through the recorded alias
+    // (#6821). The cond itself lowered above, under the outer guard.
+    var dfg: string = defer_replay_flag(iff.cond);
+    var dfg_prev: string = s1.frame.defer_guard;
+    if (dfg.len() > 0) { s1 = s1.with_defer_guard(dfg); }
+    var s2: LowerState = lower_block(iff.then_body, s1);
+    if (!s2.ok) { return s2; }
+    // Restore only when it was set — an ordinary `if` must not pay a
+    // LowerState rebuild for a field it never touched.
+    if (dfg.len() > 0) { s2 = s2.with_defer_guard(dfg_prev); }
+    if (iff.else_body.len() > 0) {
+        var s3: LowerState = s2.emit(ir.op_else());
+        var s4: LowerState = lower_block(iff.else_body, s3);
+        if (!s4.ok) { return s4; }
+        return s4.emit(ir.op_end());
+    }
+    return s2.emit(ir.op_end());
+}
+
+function lower_stmt_while(wh: ast.StmtWhile, s: LowerState): LowerState {
+    // Canonical wasm loop shape:
+    //   block              ; depth 1 = exit target
+    //     loop             ; depth 0 = continue (header)
+    //       <cond> not     ; !cond
+    //       br_if 1        ; exit the block when !cond
+    //       <body>
+    //       br 0           ; back to the loop header
+    //     end
+    //   end
+    if (infer_expr_width(wh.cond, s) == 64) { return s.fail(); }
+    var w1: LowerState = s.emit(ir.op_block(0)).enter_loop();
+    var w2: LowerState = w1.emit(ir.op_loop(0));
+    var w3: LowerState = lower_expr(wh.cond, w2);
+    if (!w3.ok) { return w3; }
+    var w4: LowerState = w3.emit(ir.op_bin("not", 0, false));
+    var w5: LowerState = w4.emit(ir.op_brif(1));
+    var w6: LowerState = lower_block(wh.body, w5);
+    if (!w6.ok) { return w6; }
+    var w7: LowerState = w6.emit(ir.op_br(0));
+    var w8: LowerState = w7.emit(ir.op_end());
+    return w8.emit(ir.op_end()).exit_loop();
+}
+
+function lower_stmt_expr(es: ast.StmtExpr, s: LowerState): LowerState {
+    // Index-assignment `arr[i] = v` desugars to
+    // __set_index(arr, idx, val) → lower base, index, value, then the
+    // high-level `arr_set` op (the backend stores at its layout's
+    // element address), leaving nothing on the stack.
+    match (es.value) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (cid.name == "__set_index") {
+                        if (c.args.len() != 3) { return s.fail(); }
+                        // `a[i] = v` on an i64[]: base + index are i32, but
+                        // the value is an 8-byte i64 — lower it via lower_i64
+                        // and store with arr_set_i64 (i64.store on wasm).
+                        if (arr_index_is_i64(c.args[0], s)) {
+                            var is64: LowerState = lower_expr(c.args[0], s);
+                            if (!is64.ok) { return is64; }
+                            is64 = lower_expr(c.args[1], is64);
+                            if (!is64.ok) { return is64; }
+                            is64 = lower_i64(c.args[2], is64);
+                            if (!is64.ok) { return is64; }
+                            return is64.emit(ir.op_arr_set_i64());
+                        }
+                        var ss: LowerState = lower_expr(c.args[0], s);
+                        if (!ss.ok) { return ss; }
+                        ss = lower_expr(c.args[1], ss);
+                        if (!ss.ok) { return ss; }
+                        ss = lower_expr(c.args[2], ss);
+                        if (!ss.ok) { return ss; }
+                        // Element width from the array slot: `a[i] = v`
+                        // on an f64[] stores an 8-byte f64 (arr_set width
+                        // 64 → f64.store on wasm); i32[] the 4-byte path.
+                        var sw: i32 = 32;
+                        if (arr_index_is_f64(c.args[0], s)) { sw = 64; }
+                        return ss.emit(ir.op_arr_set(sw));
+                    }
+                    // Field mutation `p.x = v` desugars to
+                    // __set_field(obj, "x", v). Resolve x's index in obj's
+                    // tracked scalar-struct type, lower obj + val, struct_set.
+                    if (cid.name == "__set_field") {
+                        if (c.args.len() != 3) { return s.fail(); }
+                        var fname: string = "";
+                        match (c.args[1]) {
+                            ast.ExprString(fs) => { fname = fs.value; },
+                            _ => { return s.fail(); }
+                        }
+                        var fsty: string = expr_struct_type(c.args[0], s);
+                        if (fsty == "") { return s.fail(); }
+                        if (!decl_is_leaksafe(s.frame.structs, fsty)) { return s.fail(); }
+                        // An ARRAY field (scalar-element or struct-element) is
+                        // mutable here, with the ownership rules the struct
+                        // LITERAL path already uses for the same store:
+                        //
+                        //   - the new value is RETAINED when it aliases an
+                        //     rc-tracked array local (`s.code = other`), so the
+                        //     field's reference is counted and the exit
+                        //     dec-sweep on `other` cannot free a buffer the
+                        //     struct still points at. Without the retain that
+                        //     is a use-after-free, which is what the AST
+                        //     emitter does today — it stores bare, no inc;
+                        //   - the REPLACED buffer is not released: the store
+                        //     orphans it. That is the safe-leak floor this
+                        //     codebase already stands on for a struct carrying
+                        //     an unreclaimable field, and it is what the AST
+                        //     emitter does too, so nothing regresses by
+                        //     lowering here. Reclaiming it needs the
+                        //     whole-program read-safety analysis #4355 built
+                        //     for REPLACED STRING fields
+                        //     (strfld_reclaim_ok_types_of) generalised to
+                        //     arrays — a separate step, tracked in
+                        //     docs/SELFHOST-AST-RETIREMENT.md.
+                        //
+                        // This is what used to bail, and is
+                        // the first mode-0 wasm decliner: `a.code = enc(…)` in
+                        // x86_native.fern.
+                        var fmft: string = decl_field_type(s.frame.structs, fsty, fname);
+                        var fm_is_arr: boolean = is_leaksafe_array_field(fmft) || is_struct_array_field_type(s.frame.structs, fmft);
+                        var fidx: i32 = s.field_index_in(fsty, fname);
+                        if (fidx < 0) { return s.fail(); }
+                        var sf: LowerState = lower_expr(c.args[0], s);
+                        if (!sf.ok) { return sf; }
+                        // An i64 field stores an 8-byte i64: lower the
+                        // value via lower_i64 and store with struct_set_i64
+                        // (i64.store on wasm). f64 / i32 fields keep the
+                        // existing struct_set(width) path.
+                        if (struct_field_is_i64(s.frame.structs, fsty, fidx)) {
+                            sf = lower_i64(c.args[2], sf);
+                            if (!sf.ok) { return sf; }
+                            return sf.emit(ir.op_struct_set_i64(fidx));
+                        }
+                        sf = lower_expr(c.args[2], sf);
+                        if (!sf.ok) { return sf; }
+                        // Array-field alias retain, mirroring the struct-lit
+                        // construction inc (see the fav_alias_inc arm): a bare
+                        // ident naming an rc-tracked array slot is a SECOND
+                        // owner once stored. rc_inc returns its argument, so
+                        // the stack shape struct_set expects is unchanged.
+                        if (fm_is_arr) {
+                            match (c.args[2]) {
+                                ast.ExprIdent(svid) => {
+                                    if (sf.is_arr_slot(sf.slot_of(svid.name))) {
+                                        sf = sf.retain_tos("struct-set-value");
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
+                        return sf.emit(ir.op_struct_set(fidx, struct_field_width(s.frame.structs, fsty, fidx)));
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    // General expression statement: lower the value, drop the result.
+    // Statement-temporary reclamation, stage (a): a discarded bare
+    // `[e0, e1, …];` whose value is a FRESH scalar-element array literal
+    // is a rc=1 sole owner that leaks every iteration if merely dropped
+    // (unbounded in a hot loop). Release its buffer with the rc-guarded
+    // __fern_rc_dec before the drop — the self-host sibling of native's
+    // emitOwnedTempStackDrop (docs/RC-PERCEUS-PLAN.md). Ident / field /
+    // index reads are borrowed views (an upstream owner / the exit sweep
+    // accounts for them) and never match discardable_scalar_arr_lit, so
+    // they keep leaking-safe on the plain drop.
+    var se: LowerState = lower_expr(es.value, s);
+    if (!se.ok) { return se; }
+    match (es.value) {
+        ast.ExprArray(dae) => {
+            if (discardable_scalar_arr_lit(dae, s)) {
+                se = se.release_tos("__fern_rc_dec", "discard-arr-lit");
+            } else if (discardable_scalar_arrarr_lit(dae, s)) {
+                // A discarded fresh scalar-inner array-of-arrays literal
+                // (`[[i, i+1], [i]];`, #4365): __fern_arrarr_free frees
+                // each inner buffer (one rc-guarded arr_dec — scalar
+                // inners fully reclaim) then the outer buffer, the same
+                // whole release the exit sweep gives a reclaimable ARRARR:
+                // LOCAL. Every inner is a fresh sole-owned literal, so the
+                // deep free is complete and double-free-free.
+                se = se.release_tos("__fern_arrarr_free", "discard-arrarr-lit");
+            } else if (discardable_fresh_strarr_lit(dae, s)) {
+                // A discarded fresh string[] literal deep-frees its element
+                // boxes and buffer via __fern_str_arr_free — the same release
+                // the exit sweep gives a reclaimable string[] LOCAL (#4355).
+                // Every element is proven fresh (expr_is_fresh_str), so the box
+                // sole-owns each element at rc=1: the rc==1-gated element walk
+                // frees exactly the fresh boxes, then returns the buffer to its
+                // freelist — a COMPLETE, no-double-free reclaim.
+                se = se.release_tos("__fern_str_arr_free", "discard-strarr-lit");
+            }
+        },
+        // A discarded fresh scalar TUPLE / STRUCT literal box is likewise a
+        // rc=1 sole owner — reclaim it with the shallow rc-guarded dec.
+        ast.ExprTuple(dte) => {
+            if (discardable_scalar_tuple_lit(dte, s)) { se = se.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+            else if (tuple_lit_rc_reclaimable(es.value, "", s.frame.structs, s.frame.sigs.str_fresh_ret_fns)) {
+                // A discarded rc-FIELD tuple literal (`(w, [w, w+1]);` or
+                // the nested `((w, [w, w+1]), w);` — #4365): every element
+                // scalar-shaped, a DIRECT array literal, or a nested tuple
+                // LITERAL — the box sole-owns each fresh array buffer and
+                // nested box, so deep-drop exactly like the loop-rebind
+                // sibling (emit_tuple_child_drops: free array buffers +
+                // nested boxes depth-first, then the box). A bare-ident
+                // pointer element gives back the retain the construction
+                // took (tuple_union_arg_freefn), same admission as the
+                // TUPRC: class. The scratch is never mark_arr'd, so the
+                // exit sweep skips it.
+                var dtt: string = "$tldrop" + util.i32_to_string(se.locals.len());
+                se = se.add_local(dtt);
+                var dtslot: i32 = se.slot_of(dtt);
+                se = se.emit(ir.op_store_local(dtslot));                     // stash box
+                var dt_path: i32[] = [];
+                se = emit_tuple_child_drops(se, dtslot, dt_path, dte);       // free array/nested children
+                se = se.emit(ir.op_load_local(dtslot));                      // box again
+                se = se.release_tos("__fern_rc_dec", "discard-tuple-box");         // free the box
+            }
+        },
+        ast.ExprStructLit(dse) => {
+            if (!dse.has_base && struct_lit_all_scalar(s.frame.structs, dse.type_name)) {
+                se = se.release_tos("__fern_rc_dec", "discard-struct-lit");
+            } else if (!dse.has_base && struct_fields_reusable(s.frame.structs, dse.type_name)) {
+                // A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`)
+                // is reclaimed the same way the exit sweep drops a struct LOCAL
+                // (emit_struct_field_drops): when the type carries rc-array /
+                // nested-struct fields, __struct_drop_<T> releases those field
+                // buffers one level (auto-materialized by the asm_ir op scan on
+                // seeing the call_direct), THEN __fern_rc_dec frees the box. The
+                // construction alias-inc in this same lowering (the ExprStructLit
+                // field arms) balances every NON-fresh field source — a borrowed
+                // array/local was inc'd on construction so this dec just returns
+                // it to its owner, a fresh sole-owned literal field decs to 0 and
+                // frees — so the deep-drop is exactly paired, never a UAF. String
+                // / enum / map / tuple / option fields keep struct_fields_reusable
+                // false, so a struct carrying one still leaks whole (safe-leak
+                // floor).
+                //
+                // __struct_drop_<T> returns the box in its return register (the
+                // x86/arm64 bodies reload it from the stack arg before ret — the
+                // inner field-release calls clobber the register copies; #4355
+                // slice 5 fixed the reload). This site predates that fix and
+                // threads the box through a scratch local instead of the return —
+                // still correct, kept as-is: stash the box in a fresh scratch
+                // local and re-load it for each step — the scratch is never
+                // mark_arr'd, so the exit dec-sweep (is_arr_slot-gated) skips it
+                // (no double-free).
+                if (struct_has_reclaim_array_field(s.frame.structs, dse.type_name)) {
+                    var sdtmp: string = "$sdrop" + util.i32_to_string(se.locals.len());
+                    se = se.add_local(sdtmp);
+                    var sdslot: i32 = se.slot_of(sdtmp);
+                    se = se.emit(ir.op_store_local(sdslot));                              // stash box
+                    se = se.emit(ir.op_load_local(sdslot));                               // box (arg0)
+                    se = se.release_tos("__struct_drop_" + dse.type_name, "discard-struct-deep"); // deep-drop rc fields
+                    se = se.emit(ir.op_drop());                                           // discard clobbered return
+                    se = se.emit(ir.op_load_local(sdslot));                               // box again
+                }
+                se = se.release_tos("__fern_rc_dec", "discard-struct-box");                      // free the box
+            }
+        },
+        // A discarded fresh STRING CONCAT (`a + b;`) allocates a new owned
+        // buffer that leaks if merely dropped — release it with the rc-aware
+        // __fern_str_free (box + heap data at rc==1; .rodata-guarded; a shared
+        // box just decs). The operands stay owned by their locals (concat
+        // reads them, produces a fresh buffer), so this frees only the temp.
+        ast.ExprBinary(dbe) => {
+            if (dbe.op == "+" && expr_is_str(es.value, s)) { se = se.emit(ir.op_call_direct("__fern_str_free", 1)); }
+        },
+        // A discarded call to a STRICT fresh-struct-returning free function
+        // (`mk(i);`, callee in return_fresh_struct_ret_fns) hands back a rc=1
+        // sole-owner box (every such return is a no-base literal — #4356
+        // slice 2 / is_fresh_ret_binding), which leaks if merely dropped.
+        // Release the box with the shallow rc-guarded __fern_rc_dec (the
+        // native ownedCallResultType reclaim). A scalar-only result is fully
+        // reclaimed; a result whose return struct carries rc-array / nested-
+        // struct fields is DEEP-dropped — because the STRICT-fresh registry
+        // guarantees the returned box SOLE-owns every field buffer (no aliased
+        // inner buffers, unlike the looser fresh_struct_ret_fns), so
+        // __struct_drop_<RetT> reclaims those buffers with no double-free, then
+        // __fern_rc_dec frees the box (same composition as the ExprStructLit
+        // arm; box stashed in a scratch local because __struct_drop_<T>'s inner
+        // arr_dec clobbers the box return register). Method / builtin / variant-
+        // constructor callees are excluded — not in the strict-fresh registry.
+        ast.ExprCall(dce) => {
+            match (dce.callee) {
+                ast.ExprIdent(dcid) => {
+                    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dcid.name) >= 0) {
+                        var crt: string = s.struct_ret_type(dcid.name);
+                        if (crt.len() > 0 && struct_fields_reusable(s.frame.structs, crt) && struct_has_reclaim_array_field(s.frame.structs, crt)) {
+                            var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
+                            se = se.add_local(fcd);
+                            var fcslot: i32 = se.slot_of(fcd);
+                            se = se.emit(ir.op_store_local(fcslot));                          // stash box
+                            se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
+                            se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
+                            se = se.emit(ir.op_drop());                                       // discard clobbered return
+                            se = se.emit(ir.op_load_local(fcslot));                           // box again
+                            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
+                        } else {
+                            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
+                        }
+                    } else if (util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dcid.name) >= 0) {
+                        // A discarded call to a COUNTED-return free function
+                        // outside the strict-fresh registry (a bare param handed
+                        // back, or a forwarding frame): the result holds a count
+                        // this frame owns — the callee's transfer retain on the
+                        // handback path, a fresh box on the other — and the
+                        // shallow rc-aware dec gives it back either way. What a
+                        // fresh box owns leaks with it, as the read-through release
+                        // below accepts.
+                        se = se.release_tos("__fern_rc_dec", "discard-cntret-box");
+                    } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dcid.name) >= 0
+                            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dcid.name) >= 0) {
+                        // A discarded call to an ARRAY-returning free function
+                        // that leaves this frame owning one reference: an "ARR:"
+                        // producer (every return a direct scalar-element array
+                        // literal — #4365) hands back an rc=1 buffer, an
+                        // "ARROWN:" one (#7259) a reference it retained or moved
+                        // out. Both leak if merely dropped. Release with the
+                        // shallow rc-guarded __fern_rc_dec — element-blind,
+                        // which the "ARR:" scalar-element contract makes sound
+                        // one way and the surviving owner the other.
+                        se = se.release_tos("__fern_rc_dec", "discard-arr-ret");
+                    } else if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "STRARR:" + dcid.name) >= 0) {
+                        // A discarded call to a "STRARR:" producer: every
+                        // element is a string box this frame allocated, so the
+                        // shallow dec above would return the buffer and strand
+                        // all of them. __fern_str_arr_free is the deep sibling
+                        // the read reclaim already uses (#6491, #7259).
+                        se = se.release_tos("__fern_str_arr_free", "discard-strarr-ret");
+                    } else if ((util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "STRUCTARRF:" + dcid.name) >= 0
+                            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARRSTRUCTF:" + dcid.name) >= 0)
+                            && decl_is_struct(s.frame.structs, se.struct_ret_type(dcid.name))) {
+                        // A discarded call to a STRUCT-element array producer
+                        // (#7445's registries): same split the exit sweep gives
+                        // a credited slot of the class — a field-routing or
+                        // rc-array-field element walks __struct_drop_<T> per
+                        // element, a scalar-field one frees box-per-element via
+                        // __fern_arrarr_free. Nothing released either before:
+                        // frees=0 outright, ~200 B/round and unbounded.
+                        var dsty: string = se.struct_ret_type(dcid.name);
+                        if (struct_has_reclaim_array_field(se.frame.structs, dsty) || se.struct_routes_field_reclaim(dsty)) {
+                            var dscr: string = "$dsar" + util.i32_to_string(se.locals.len());
+                            se = se.add_local(dscr);
+                            var dslot: i32 = se.slot_of(dscr);
+                            se = se.emit(ir.op_store_local(dslot));
+                            se = emit_arrstruct_deep_free(se, dslot, dsty);
+                            se = se.emit(ir.op_load_local(dslot));   // the shared tail drop consumes this
+                        } else {
+                            se = se.release_tos("__fern_arrarr_free", "discard-structarr-ret");
+                        }
+                    } else if (reclaim_has(s.frame.reclaimable_names, "MAPRET:", dcid.name)) {
+                        // A discarded call to a MAPF-registered map builder
+                        // (`mk(i);`, #4357): the result is a fresh sole-owner
+                        // scalar-column map that leaks whole if merely dropped.
+                        // __fern_map_free frees both column buffers and returns
+                        // the mapbox to the freelist (the same helper the slot
+                        // reclaim uses — deep on wasm via $__fern_map_release);
+                        // the shared tail drop discards the helper's return.
+                        se = se.release_tos("__fern_map_free", "discard-map-ret");
+                    } else if (util.index_of_str(s.frame.sigs.str_fresh_ret_fns, dcid.name) >= 0) {
+                        // A discarded call to a STRING-fresh-ret free function
+                        // (`mk(a);`): the result is a freshly-allocated string
+                        // nothing else will ever hold, so the shared tail drop
+                        // leaks it once per evaluation. Measured on a 200-round
+                        // churn: allocs=601 frees=200 live_bytes=9624, growing
+                        // x2 per doubling, where native is 200/200/0. Release it
+                        // with the rc-aware __fern_str_free (box + heap data at
+                        // rc==1; .rodata-guarded), the same helper the discarded
+                        // concat arm above uses; the shared tail drop discards
+                        // the helper's return.
+                        //
+                        // str_fresh_ret_fns, not the looser str_ret_fns, for the
+                        // reason it is the gate everywhere else: it means EVERY
+                        // return of this callee is freshly allocated, never an
+                        // alias of a borrowed arg / field / literal — freeing
+                        // one of those drops a box a live local still holds.
+                        // Unlike the concat-OPERAND position (#6171), a discard
+                        // has no reader to outlive: the statement is the value's
+                        // whole lifetime.
+                        se = se.release_tos("__fern_str_free", "discard-str-ret");
+                    } else if (handback_fresh_arg_at(dcid.name, dce.args, s.frame.sigs.str_handback_ret)) {
+                        // #8409: a discarded call that hands a FRESH string
+                        // arg back through an identity method. The result is
+                        // that arg's own box on the identity path — the
+                        // guarded arg-temp release left it unfreed precisely
+                        // so its consumer owns it, and here the consumer is
+                        // this discard — or a fresh box on the allocating
+                        // path. Owned either way, with no reader to outlive:
+                        // free it now with the rc-aware __fern_str_free.
+                        se = se.release_tos("__fern_str_free", "discard-str-handback-ret");
+                    } else {
+                        // A discarded call to a TUPLE-fresh-ret free function
+                        // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
+                        // tuple temps): every return is a direct tuple literal,
+                        // so the result is a fresh sole-owner box. Release
+                        // the flagged positions (a counted buffer in EVERY
+                        // return — tuple_ret_arrfree_flags; '2' a string[])
+                        // then free the box; '0' positions (scalars,
+                        // aliased idents, pointer elements) are left to their
+                        // owners / the safe-leak floor.
+                        var dtrf: string = discarded_tuple_ret_flags(s, dcid.name);
+                        if (dtrf.len() > 0) {
+                            var tcd: string = "$tcdrop" + util.i32_to_string(se.locals.len());
+                            se = se.add_local(tcd);
+                            var tcslot: i32 = se.slot_of(tcd);
+                            se = se.emit(ir.op_store_local(tcslot));                     // stash box
+                            var tck: i32 = 0;
+                            while (tck < dtrf.len()) {
+                                if (dtrf[tck] == b'1' || dtrf[tck] == b'2') {
+                                    var dth: string = "__fern_rc_dec";
+                                    if (dtrf[tck] == b'2') { dth = "__fern_str_arr_free"; }
+                                    se = se.emit(ir.op_load_local(tcslot));              // box
+                                    se = se.emit(ir.op_tuple_get(tck));                  // element (array ptr)
+                                    se = se.release_tos(dth, "discard-tupret-elem");     // release the counted buffer
+                                    se = se.emit(ir.op_drop());
+                                }
+                                tck = tck + 1;
+                            }
+                            se = se.emit(ir.op_load_local(tcslot));                      // box again
+                            se = se.release_tos("__fern_rc_dec", "discard-tupret-box");         // free the box
+                        }
+                    }
+                },
+                // A discarded call to an ARRAY-returning METHOD (`h.mk();` /
+                // `h.get();`). The free-function arm above reads
+                // "ARR:<name>" / "ARROWN:<name>"; a method keys
+                // "<Base>.<method>", which is what owned_fresh_call_callee
+                // already resolves for the READ reclaim one expression
+                // position over (#6491). Same shallow rc-guarded
+                // __fern_rc_dec, same element-blind argument as the free
+                // function.
+                //
+                // The receiver must be a bare LOCAL naming a struct, for
+                // owned_fresh_call_callee's reason: expr_struct_type reports a
+                // struct-ARRAY-returning call's ELEMENT type, so a call
+                // receiver could name a method of a type the value is only an
+                // array OF. A struct FIELD of the method's name is a fn-typed
+                // field call and names no method at all.
+                ast.ExprFieldAccess(dcfa) => {
+                    var drty: string = "";
+                    match (dcfa.obj) {
+                        ast.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
+                        _ => {}
+                    }
+                    // A COUNTED-return METHOD (`b.id_or_make(0);`, cnt_struct_ret_fns)
+                    // takes the same shallow dec: its result is this frame's
+                    // count whichever path produced it.
+                    if (drty != "" && decl_field_type(s.frame.structs, drty, dcfa.field) == ""
+                        && (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
+                            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0
+                            || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, drty + "." + dcfa.field) >= 0)) {
+                        se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return se.emit(ir.op_drop());
+}
+
 
 // lower_struct_destructure expands `let Point { x, y } = E;` (encoded by
 // parse_struct_destructure as a StmtVar with type_name "@sd:<Struct>:<fields>"
