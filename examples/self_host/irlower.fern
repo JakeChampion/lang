@@ -3953,7 +3953,7 @@ pub function (s: LowerState) slot_map_type(name: string): string {
 // string keys, -1 if `e` is not a map. Unlike map_type_of (which only types a
 // map LOCAL slot), this recognises the chained map-construction expressions a
 // `Map { k: v, … }` literal desugars to: `map_new[_i32](n).insert(k0,v0)
-// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `map_new_i32` (i32),
+// .insert(k1,v1)…`. `map_new` fixes the key kind (string), `__map_new_i32` (i32),
 // and an `.insert` / `.set` / `.delete` mutator returns the same map — so the
 // kind propagates up the chain. Lets `.insert` on a map-typed call result lower
 // through the IR (#2884 follow-up: Map literals), not just on a bare local.
@@ -3968,7 +3968,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (cid.name == "map_new" && c.args.len() == 1) { return 0; }
-                    if (cid.name == "map_new_i32" && c.args.len() == 1) { return 1; }
+                    if (cid.name == "__map_new_i32" && c.args.len() == 1) { return 1; }
                     return 0 - 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -4012,7 +4012,7 @@ pub function expr_map_kind(e: ast.Expr, s: LowerState): i32 {
 }
 
 // map_lit_ctor_root reports whether `e` is a `Map { … }` literal's desugared
-// constructor chain: a bare `map_new` / `map_new_i32` call, or an `.insert` /
+// constructor chain: a bare `map_new` / `__map_new_i32` call, or an `.insert` /
 // `.set` / `.delete` on one. A map LOCAL's chain roots at an IDENT instead, and
 // its declared `Map[K, V]` is authoritative, so that answers false.
 function map_lit_ctor_root(e: ast.Expr): boolean {
@@ -4020,7 +4020,7 @@ function map_lit_ctor_root(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
-                    return (cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1;
+                    return (cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1;
                 },
                 ast.ExprFieldAccess(cfa) => {
                     if (cfa.field == "insert" || cfa.field == "set" || cfa.field == "delete") {
@@ -4243,7 +4243,7 @@ pub function expr_map_type_tag(e: ast.Expr, s: LowerState): string {
 // $__fern_map_set retains a pointer value and $__fern_map_release deep-releases
 // it. Mirrors the wasm AST path's `is_string_expr || struct || array` check. Used
 // at the insert-lowering sites IN ADDITION to the receiver-derived map value
-// type, because the FIRST insert of a chain (`map_new_i32().insert(k, v)`) has a
+// type, because the FIRST insert of a chain (`__map_new_i32().insert(k, v)`) has a
 // receiver whose value type isn't inferred yet (bare map_new → defaults to i32),
 // so a string value there would otherwise emit vis=0 and leak — its box is then
 // never freed by $__fern_map_release (the #4353 wasm-IR value-release gap).
@@ -9274,7 +9274,7 @@ pub function ascription_target(init: ast.Expr): string {
 pub function ascription_rebind(v: ast.StmtVar): ast.Stmt {
     match (v.init) {
         ast.ExprUnary(au) => {
-            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            return ast.StmtVar { name: v.name, type_name: ascription_target(v.init), init: au.operand, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         _ => { return v; }
     }
@@ -9420,7 +9420,7 @@ function foreach_reads_snapshot(fr: ast.StmtFor, iter_ident: boolean, var_comma:
 // functions miscompile on the native backend — cf. #2720).
 pub function lower_foreach_snapshot(var_name: string, iter: ast.Expr, body: ast.Stmt[], s: LowerState): LowerState {
     var itn: string = "$forit" + util.i32_to_string(s.locals.len());
-    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var sv: ast.Stmt = ast.StmtVar { name: itn, type_name: stamped_expr_ty(iter), init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(sv, s.note_aliased_name(bare_ident_name(iter)));
     if (!s2.ok) { return s2; }
     var nf: ast.Stmt = ast.StmtFor { var_name: var_name, iter: ast.ExprIdent { name: itn, line: 0, col: 0, ty: "" }, body: body, label: "", line: 0 };
@@ -9492,9 +9492,9 @@ function to_json_loop_stmt(on: string, inm: string, sn: string, kn: string, aref
     // var $s = aref[$i].to_json();
     var elem: ast.Expr = ast.ExprIndex { array: aref, index: iref, unchecked: false, ty: "", line: 0, col: 0 };
     var elemj: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: elem, field: "to_json", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dvs: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: elemj, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     // var $k = 0;
-    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dk: ast.Stmt = ast.StmtVar { name: kn, type_name: "", init: zero, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var copyl: ast.Stmt = to_json_bytecopy_stmt(on, sn, kn);
     var inc: ast.Stmt = ast.StmtAssign { target: inm, value: ast.ExprBinary { op: "+", left: iref, right: one, line: 0, col: 0, ty: "" }, line: 0, col: 0, target_line: 0, target_col: 0 };
     var body: ast.Stmt[] = [ifc, dvs, dk, copyl, inc];
@@ -9518,20 +9518,20 @@ pub function lower_array_to_json(arr: ast.Expr, s: LowerState): LowerState {
     }
     if (!is_ident) {
         var an: string = "$tjarr" + util.i32_to_string(n);
-        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var snap: ast.Stmt = ast.StmtVar { name: an, type_name: "", init: arr, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         s2 = lower_stmt(snap, s);
         if (!s2.ok) { return s2; }
         aref = ast.ExprIdent { name: an, line: 0, col: 0, ty: "" };
     }
     // var $tjout: u8[] = [];  — the growable output buffer (#4379)
-    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var dout: ast.Stmt = ast.StmtVar { name: on, type_name: "u8[]", init: ast.ExprArray { elements: [], elem_ty: "u8", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(dout, s2);
     if (!s2.ok) { return s2; }
     // $tjout = $tjout.append(91 as u8);  — '['
     s2 = lower_stmt(to_json_append_stmt(on, ast.ExprNumber { text: "91", suffix: "", raw: "", is_float: false, line: 0, col: 0 }), s2);
     if (!s2.ok) { return s2; }
     // var $tji = 0;
-    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var di: ast.Stmt = ast.StmtVar { name: inm, type_name: "", init: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     s2 = lower_stmt(di, s2);
     if (!s2.ok) { return s2; }
     // the serialising loop (built in helpers to keep this function small)
@@ -9557,7 +9557,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var n: i32 = s.locals.len();
     var sn: string = "$fostr" + util.i32_to_string(n);
     var idx: string = "$fosi" + util.i32_to_string(n);
-    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var snv: ast.Stmt = ast.StmtVar { name: sn, type_name: "", init: iter, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var s2: LowerState = lower_stmt(snv, s);
     if (!s2.ok) { return s2; }
     var sref: ast.Expr = ast.ExprIdent { name: sn, line: 0, col: 0, ty: "" };
@@ -9568,7 +9568,7 @@ function lower_string_foreach(var_name: string, iter: ast.Expr, body: ast.Stmt[]
     var range_iter: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__range", line: 0, col: 0, ty: "" }, args: rargs, line: 0, col: 0, type_args: [], ty: "" };
     // Both locals are hidden, so the index runs over [0, len) of a string
     // nothing rebinds: the byte read needs no bounds check.
-    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    var bind: ast.Stmt = ast.StmtVar { name: var_name, type_name: "", init: ast.ExprIndex { array: sref, index: iref, unchecked: true, ty: "", line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
     var nbody: ast.Stmt[] = [bind];
     var bi: i32 = 0;
     while (bi < body.len()) { nbody = nbody.append(body[bi]); bi = bi + 1; }
@@ -12290,11 +12290,11 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!vctor.ok) { return vctor; }
         return vctor.emit(ir.op_struct_make(cid.name, c.args.len(), cdecl));
     }
-    if ((cid.name == "map_new" || cid.name == "map_new_i32") && c.args.len() == 1) {
+    if ((cid.name == "map_new" || cid.name == "__map_new_i32") && c.args.len() == 1) {
         var mn: LowerState = lower_expr(c.args[0], s);
         if (!mn.ok) { return mn; }
         var mkk: i32 = 0;
-        if (cid.name == "map_new_i32") { mkk = 1; }
+        if (cid.name == "__map_new_i32") { mkk = 1; }
         return mn.emit(ir.op_map_new(mkk, ""));
     }
     // Built-in Option / Result construction: Some(x)/Ok(x) wrap a
@@ -14393,7 +14393,7 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
     // differing only past that field collapsed. meqfn was already right here;
     // only the kind was wrong.
     // The KEY EXPRESSION overrides a scalar/string key tag. `map_new` and
-    // `map_new_i32` are the only two constructor spellings, so a COMPOSITE
+    // `__map_new_i32` are the only two constructor spellings, so a COMPOSITE
     // (struct / enum) key has none and a `Map { … }` literal's desugared
     // chain bases itself on `map_new` — the STRING one — which is what the
     // tag is recovered from here. A struct / enum literal names its own
@@ -15082,7 +15082,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // lowers (recursively, so the inner inserts lower the same way)
     // to a map on the stack; op_map_set consumes [map, key, value]
     // and returns the map. The key kind comes from expr_map_kind
-    // (map_new vs map_new_i32 at the chain's base). Read methods on
+    // (map_new vs __map_new_i32 at the chain's base). Read methods on
     // a map-literal expression aren't needed — the literal binds to
     // a typed local, and reads go through the map-local path above.
     if ((fa.field == "insert" || fa.field == "set") && c.args.len() == 2) {
@@ -21398,7 +21398,7 @@ function lower_struct_destructure(v: ast.StmtVar, s: LowerState): LowerState {
     var i: i32 = 0;
     while (i < bindings.len()) {
         var fa: ast.Expr = ast.ExprFieldAccess { obj: ast.ExprIdent { name: tmp, line: 0, col: 0, ty: "" }, field: fields[i], line: 0, col: 0, ty: "" };
-        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+        var sv: ast.Stmt = ast.StmtVar { name: bindings[i], type_name: "", init: fa, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         dt = lower_stmt(sv, dt);
         if (!dt.ok) { return dt; }
         i = i + 1;
@@ -22583,7 +22583,7 @@ match (v.init) {
     ast.ExprCall(mc) => {
         match (mc.callee) {
             ast.ExprIdent(mcid) => {
-                if ((mcid.name == "map_new" || mcid.name == "map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                if ((mcid.name == "map_new" || mcid.name == "__map_new_i32") && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                     // The legacy shorthand tag, asked for the same way the rest
                     // of the lowering asks: an integer key is the integer
                     // column whatever it is spelled. The annotated-constructor
@@ -23149,7 +23149,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         ast.ExprCall(mnc) => {
             match (mnc.callee) {
                 ast.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
+                    if ((mnid.name == "map_new" || mnid.name == "__map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
                         var kkind: i32 = 0 - 1;
                         var kt2: string = map_key_of(v.type_name);
                         // The same question map_key_kind_of answers everywhere
@@ -23491,13 +23491,13 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             match (sfa.obj) {
                 ast.ExprIdent(sfid) => {
                     var sfsl: i32 = se.slot_of(sfid.name);
-                    if (sfsl >= 0 && (slot_is_reclaimable_struct(se, sfsl) || slot_is_snapshot_param(se, sfsl))) {
-                        var sfst: string = se.struct_type_of_slot(sfsl);
-                        if (sfst != "" && decl_field_type(se.frame.structs, sfst, sfa.field) == "string"
-                            && se.struct_routes_field_reclaim(sfst)) {
-                            alias_inc = true;
-                        }
+                    if (sfsl >= 0 && (slot_is_reclaimable_struct(se, sfsl) || slot_is_snapshot_param(se, sfsl))
+                        && str_field_read_routed(v.init, se)) {
+                        alias_inc = true;
                     }
+                    // A credited binding releases what it holds, so it must hold a
+                    // count (reclaimable_str_field_reassign).
+                    if (reclaim_has(se.frame.reclaimable_names, "STR:", reclaim_site_key_of(v.name, v.line, v.col))) { alias_inc = true; }
                 },
                 _ => {}
             }
@@ -24321,7 +24321,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // level lowers as an ordinary destructure of that temp — the same
         // recursion the source spelling describes.
         if (dnest.len() > 0) {
-            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, dt);
+            dt = lower_stmt_var(ast.StmtVar { name: dnest, type_name: "", init: ast.ExprIdent { name: dbind, line: v.line, col: v.col, ty: "" }, line: v.line, col: v.col, is_view: false, fn_ret: "", fn_param_types: "" }, dt);
             if (!dt.ok) { return dt; }
         }
         dk = dk + 1;
@@ -24369,7 +24369,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
 // a struct name on `m = m.insert(k, P { … })` / `.set(…)`. The unannotated binding
-// `var m = map_new_i32(n)` has no insert to read a value type from, so it records
+// `var m = __map_new_i32(n)` has no insert to read a value type from, so it records
 // `Map[K, i32]`; when the first insert arrives as a separate assignment the slot
 // would keep that tag forever and a later `var p = m.get_or(…)` could not recover
 // P — the read bailed the function. Fact-only: both tags are
@@ -24487,6 +24487,60 @@ function wide_push_op(sole_owner: boolean, is_f64: boolean): ir.Op {
     }
     if (sole_owner) { return ir.op_arr_push_owned_i64(); }
     return ir.op_arr_push_i64();
+}
+
+// str_field_read_routed: `e` is a direct `x.f` read of a STRING field of a struct
+// type that routes field reclaim — the read whose box that type's field drop
+// releases, so a holder that outlives the read must take a count of its own.
+function str_field_read_routed(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(oid) => {
+                    var ost: string = s.struct_type_of_slot(s.slot_of(oid.name));
+                    return ost != "" && decl_field_type(s.frame.structs, ost, fa.field) == "string"
+                        && s.struct_routes_field_reclaim(ost);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// str_field_reassign_retains: the assignment retains its value — already
+// (`retained`, an alias reassign), or because it is a `t = x.f` string read.
+// That read retains whenever x's type routes field reclaim, which is what lets
+// strfld_collect_unsafe_stmts admit the reassign as it admits `var t = x.f`; and
+// whenever `t` is a credited string slot, whose release on the next rebind and at
+// exit is what gives the count back (reclaimable_str_field_reassign).
+function str_field_reassign_retains(retained: boolean, value: ast.Expr, slot: i32, s: LowerState): boolean {
+    if (retained || str_field_read_routed(value, s)) { return true; }
+    if (!slot_is_reclaimable_str(s, slot)) { return false; }
+    return is_direct_ident_field_read(value);
+}
+
+// str_reassign_identity_dec: a retained value stored into a credited string slot
+// that already holds it gives the count back, since the cow-guarded store keeps
+// the identical box without a release.
+function str_reassign_identity_dec(se: LowerState, slot: i32, retained: boolean, s: LowerState): LowerState {
+    if (!retained || !slot_is_reclaimable_str(s, slot)) { return se; }
+    return emit_handback_identity_dec_tos(se, slot, 0 - 1, str_free_helper(s, slot));
+}
+
+// is_direct_ident_field_read: `e` is exactly `x.f` for a bare ident `x`.
+function is_direct_ident_field_read(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(_) => { return true; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
 }
 
 function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
@@ -24983,13 +25037,15 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
             _ => {}
         }
     }
+    alias_reassign_inc = str_field_reassign_retains(alias_reassign_inc, a.value, slot, s);
     if (alias_reassign_inc) { se = se.emit(ir.op_call_direct("__fern_rc_inc", 1)); }
     // The retained box may be the one the target already holds (`prev = s` with
-    // prev == s), and the struct rebinds below keep an identical box without a
-    // release, so the extra count goes back here.
+    // prev == s), and the struct rebinds and the cow-guarded string store below
+    // keep an identical box without a release, so the extra count goes back here.
     if (alias_reassign_inc && !target_is_arr && decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot))) {
-        se = emit_handback_identity_dec_tos(se, slot, 0 - 1);
+        se = emit_handback_identity_dec_tos(se, slot, 0 - 1, "__fern_rc_dec");
     }
+    se = str_reassign_identity_dec(se, slot, alias_reassign_inc, s);
     // A reclaimable REASSIGNED array-payload ENUM local (`b = V([..])`, credited
     // "ENUMRE:<E>"): DEEP-DROP the superseded box (payload arrays + box) before
     // storing the fresh one — closes the register-backend per-reassign payload leak
@@ -25226,7 +25282,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         var fdelem: string = "$fordes" + util.i32_to_string(s.locals.len());
         var fdbind: ast.Stmt = ast.StmtVar { name: fr.var_name, type_name: "",
             init: ast.ExprIdent { name: fdelem, line: fr.line, col: 0, ty: "" },
-            line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+            line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
         var fdbody: ast.Stmt[] = [fdbind];
         var fdi: i32 = 0;
         while (fdi < fr.body.len()) { fdbody = fdbody.append(fr.body[fdi]); fdi = fdi + 1; }
@@ -25607,7 +25663,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         if (vdes.len() > 0) {
             fm = lower_stmt_var(ast.StmtVar { name: vdes, type_name: "",
                 init: ast.ExprIdent { name: vname, line: fr.line, col: 0, ty: "" },
-                line: fr.line, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, fm);
+                line: fr.line, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, fm);
             if (!fm.ok) { return fm; }
         }
         fm = lower_block(fr.body, fm);
@@ -25847,7 +25903,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
             ast.PatVariant(pv_at) => {
                 if (pv_at.at_binding.len() > 0) {
                     var at_init: ast.Expr = ast.ExprIdent { name: scrut, line: 0, col: 0, ty: "" };
-                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }];
+                    var at_body: ast.Stmt[] = [ast.StmtVar { name: pv_at.at_binding, type_name: "", init: at_init, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }];
                     var at_bi: i32 = 0;
                     while (at_bi < arm.body.len()) { at_body = at_body.append(arm.body[at_bi]); at_bi = at_bi + 1; }
                     var at_guard: ast.Expr = arm.guard;
@@ -27099,14 +27155,14 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     }
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
     var keyscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mck, type_name: "", init: keyscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     var valscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "values", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" }, st);
+    st = lower_stmt(ast.StmtVar { name: mcv, type_name: "", init: valscall, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // for $mci in 0 .. $mck.len() { $mc = $mc.insert($mck[$mci], $mcv[$mci]); }
     var mckref: ast.Expr = ast.ExprIdent { name: mck, line: 0, col: 0, ty: "" };
@@ -30747,11 +30803,45 @@ function struct_lit_rc_field_retained(sl: ast.ExprStructLit, src: string, struct
     return ok && hits == 1 && !other;
 }
 
-// rc_counted_field_sites: the binding SITES of every `var p: T = T { .., f: src, .. }`
-// where the field store is a COUNTED share of `src`'s box, for a field of declared
-// type `fty`. Handed to the escape walker so the source's bare-ident use there is
-// read as the share it is rather than as a store into a container — under "SFLD:"
-// in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`.
+// struct_lit_counts_field: `e` is a `T { .. }` literal whose T routes field
+// reclaim and whose store of `src` retains (struct_lit_rc_field_retained) — the
+// holder-independent half of rc_counted_field_sites' three conditions.
+function struct_lit_counts_field(e: ast.Expr, src: string, structs: StructTab, sfok: string[], msites: string[], fty: string): boolean {
+    match (e) {
+        ast.ExprStructLit(sl) => {
+            return struct_routes_field_reclaim_at(structs, sfok, sl.type_name)
+                && struct_lit_rc_field_retained(sl, src, structs, msites, fty);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// credited_site_named: `credited` holds a bare struct credit whose binding-site key
+// names the variable `name`. An assignment carries no binding site of its own.
+function credited_site_named(credited: string[], name: string): boolean {
+    for c in credited {
+        if (reclaim_site_name(c) == name) { return true; }
+    }
+    return false;
+}
+
+// sfld_assign_site: the key an assign-form counted field share is recorded under —
+// the assignment's own position, so the escape walker matches this statement and
+// no other assignment to the same holder.
+function sfld_assign_site(asg: ast.StmtAssign): string {
+    return reclaim_site_key_of(asg.target, asg.line, asg.col);
+}
+
+// rc_counted_field_sites: the SITES of every `var p: T = T { .., f: src, .. }` and
+// `p = T { .., f: src, .. }` where the field store is a COUNTED share of `src`'s
+// box, for a field of declared type `fty` — the binding site for the var form, and
+// the assignment's own position (sfld_assign_site) for the assign form, whose
+// superseded box's field drop gives the retain back just as the scope-exit sweep
+// does for the var form. Handed to the escape walker so the source's bare-ident use
+// there is read as the share it is rather than as a store into a container — under
+// "SFLD:" in tup_ok for the `string` family, and as the `sfld_ok` list for `string[]`,
+// whose walker matches the var form only.
 //
 // The two differ in WHAT the source keeps, not in when it may. A string's release
 // is its box, so the share costs nothing extra; a `string[]`'s release is an
@@ -30768,19 +30858,6 @@ function rc_counted_field_sites(stmts: ast.Stmt[], src: string, structs: StructT
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => {
-                match (v.init) {
-                    ast.ExprStructLit(sl) => {
-                        var vs: string = reclaim_site_key_of(v.name, v.line, v.col);
-                        if (util.index_of_str(credited, vs) >= 0
-                            && struct_routes_field_reclaim_at(structs, sfok, sl.type_name)
-                            && struct_lit_rc_field_retained(sl, src, structs, msites, fty)) {
-                            a = push_str_unique(a, vs);
-                        }
-                    },
-                    _ => {}
-                }
-            },
             ast.StmtIf(f) => {
                 a = rc_counted_field_sites(f.then_body, src, structs, sfok, msites, credited, fty, a);
                 a = rc_counted_field_sites(f.else_body, src, structs, sfok, msites, credited, fty, a);
@@ -30790,10 +30867,32 @@ function rc_counted_field_sites(stmts: ast.Stmt[], src: string, structs: StructT
             ast.StmtMatch(m) => {
                 for arm in m.arms { a = rc_counted_field_sites(arm.body, src, structs, sfok, msites, credited, fty, a); }
             },
-            _ => {}
+            _ => {
+                var hs: string = counted_field_share_site(stmt, src, structs, sfok, msites, credited, fty);
+                if (hs.len() > 0) { a = push_str_unique(a, hs); }
+            }
         }
     }
     return a;
+}
+
+// counted_field_share_site: the site `st` records a counted field share of `src`
+// under — a `var p = T { .. }` or `p = T { .. }` whose `p` earned its own struct
+// credit — else "".
+function counted_field_share_site(st: ast.Stmt, src: string, structs: StructTab, sfok: string[], msites: string[], credited: string[], fty: string): string {
+    match (st) {
+        ast.StmtVar(v) => {
+            var vs: string = reclaim_site_key_of(v.name, v.line, v.col);
+            if (util.index_of_str(credited, vs) >= 0
+                && struct_lit_counts_field(v.init, src, structs, sfok, msites, fty)) { return vs; }
+        },
+        ast.StmtAssign(asg) => {
+            if (credited_site_named(credited, asg.target)
+                && struct_lit_counts_field(asg.value, src, structs, sfok, msites, fty)) { return sfld_assign_site(asg); }
+        },
+        _ => {}
+    }
+    return "";
 }
 
 // stmt_unsafe_for / body_unsafe_for lift expr_unsafe_for over statements,
@@ -30893,11 +30992,7 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
             // A wrong match can only leave the element's reference outstanding —
             // the construction retain is unconditional for a string element, so
             // the local's own free decs a count the tuple's release owed anyway.
-            ast.StmtAssign(asg) => {
-                if (tup_ok_site_named(tup_ok, "TUPE:", asg.target)
-                    && tup_ok_site_named(tup_ok, "TUPSW:", asg.target)
-                    && tuple_bare_ident_sole_use(asg.value, name)) { skip = true; }
-            },
+            ast.StmtAssign(asg) => { skip = assign_share_forgiven(asg, name, tup_ok); },
             ast.StmtIf(iff) => {
                 if (!expr_unsafe_for(iff.cond, name, borrowable, recv_borrow)
                     && !body_unsafe_for_tup_alias(iff.then_body, name, borrowable, tup_ok, recv_borrow, alias_ok)
@@ -30912,6 +31007,16 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
         if (!skip && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
     }
     return false;
+}
+
+// assign_share_forgiven: `asg` stores `name` as a counted share the rebind gives
+// back — a credited tuple's bare-ident element (above), or a struct-literal field
+// whose superseded holder's field drop releases it (rc_counted_field_sites).
+function assign_share_forgiven(asg: ast.StmtAssign, name: string, tup_ok: string[]): boolean {
+    if (util.index_of_str(tup_ok, "SFLD:" + sfld_assign_site(asg)) >= 0) { return true; }
+    return tup_ok_site_named(tup_ok, "TUPE:", asg.target)
+        && tup_ok_site_named(tup_ok, "TUPSW:", asg.target)
+        && tuple_bare_ident_sole_use(asg.value, name);
 }
 
 // tup_ok_site_named: `tup_ok` holds an entry `<pfx><site>` whose site key names
@@ -30979,7 +31084,7 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
                 match (asg.value) {
                     ast.ExprIdent(rid) => {
                         if (rid.name == src && asg.target != src
-                                && str_all_reassigns_bare_ident(body, asg.target)) {
+                                && str_all_reassigns_bare_ident(body, asg.target, false)) {
                             var tsite: string = str_cand_site_of(cands, asg.target);
                             if (tsite.len() > 0) { a = push_str_unique(a, tsite); }
                         }
@@ -31003,32 +31108,36 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
     return a;
 }
 
-// str_all_reassigns_bare_ident: every assignment to `name` has a bare-ident RHS.
-function str_all_reassigns_bare_ident(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts { if (!str_reassign_bare_ok(stmt, name)) { return false; } }
+// str_all_reassigns_bare_ident: every assignment to `name` has a bare-ident RHS —
+// or, with `field_read`, a direct `x.f` field read (is_direct_ident_field_read).
+function str_all_reassigns_bare_ident(stmts: ast.Stmt[], name: string, field_read: boolean): boolean {
+    for stmt in stmts { if (!str_reassign_bare_ok(stmt, name, field_read)) { return false; } }
     return true;
 }
 
-function str_reassign_bare_ok(st: ast.Stmt, name: string): boolean {
+function str_reassign_bare_ok(st: ast.Stmt, name: string, field_read: boolean): boolean {
     match (st) {
-        ast.StmtAssign(a) => {
-            if (a.target != name) { return true; }
-            match (a.value) {
-                ast.ExprIdent(_) => { return true; },
-                _ => { return false; }
-            }
-        },
-        ast.StmtIf(f) => { return str_all_reassigns_bare_ident(f.then_body, name) && str_all_reassigns_bare_ident(f.else_body, name); },
-        ast.StmtWhile(w) => { return str_all_reassigns_bare_ident(w.body, name); },
-        ast.StmtFor(fo) => { return str_all_reassigns_bare_ident(fo.body, name); },
+        ast.StmtAssign(a) => { return a.target != name || str_reassign_value_ok(a.value, field_read); },
+        ast.StmtIf(f) => { return str_all_reassigns_bare_ident(f.then_body, name, field_read) && str_all_reassigns_bare_ident(f.else_body, name, field_read); },
+        ast.StmtWhile(w) => { return str_all_reassigns_bare_ident(w.body, name, field_read); },
+        ast.StmtFor(fo) => { return str_all_reassigns_bare_ident(fo.body, name, field_read); },
         ast.StmtMatch(m) => {
             var ai: i32 = 0;
-            while (ai < m.arms.len()) { if (!str_all_reassigns_bare_ident(m.arms[ai].body, name)) { return false; } ai = ai + 1; }
+            while (ai < m.arms.len()) { if (!str_all_reassigns_bare_ident(m.arms[ai].body, name, field_read)) { return false; } ai = ai + 1; }
             return true;
         },
-        ast.StmtDefer(d) => { return str_reassign_bare_ok(d.action, name); },
+        ast.StmtDefer(d) => { return str_reassign_bare_ok(d.action, name, field_read); },
         _ => { return true; }
     }
+}
+
+function str_reassign_value_ok(v: ast.Expr, field_read: boolean): boolean {
+    if (field_read) { return is_direct_ident_field_read(v); }
+    match (v) {
+        ast.ExprIdent(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // str_cand_site_of: the binding-site key in `cands` for the variable `name`, or "".
@@ -39198,7 +39307,7 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], param
 
 // reclaimable_names_of = fresh-bound struct names that never escape.
 // is_fresh_map_init: an init producing a FRESH map value — a `map_new()` /
-// `map_new_i32()` call, or a `Map { … }` literal (which desugars to
+// `__map_new_i32()` call, or a `Map { … }` literal (which desugars to
 // `map_new[_i32](n).insert(k0,v0).insert(…)`, a `.insert()` method chain whose root
 // is the map_new call). A bare-ident (`var m2 = m1`) or a map-returning call is NOT
 // fresh here (an alias / an un-owned move), so it is left to leak — conservative.
@@ -39206,7 +39315,7 @@ function is_fresh_map_init(e: ast.Expr): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") { return is_fresh_map_init(fa.obj); }
                     return false;
@@ -39447,7 +39556,7 @@ function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
@@ -42695,6 +42804,8 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // str_local_binding_is_fresh.
     var lits: string[] = collect_litstr_local_names(body, []);
     out = reclaimable_litstr_local(body, borrowable, tup_ok, lits, reassigned, recv_borrow, str_cands, strs, out);
+    // String locals holding field reads (`keep = r.name`, `var t: string = r.name`).
+    out = reclaimable_str_field_reassign(body, borrowable, recv_borrow, reassigned, str_cands, out);
     // `<scalar>.to_string()` string locals (#6599) — same gates as the producers
     // above. See the collect_tostr_scalar_names block for why the receiver-type test
     // cannot live in str_local_binding_is_fresh.
@@ -48112,6 +48223,25 @@ function fieldmove_counted_arr_return(e: ast.Expr, name: string, sty: string, st
     return false;
 }
 
+// fieldmove_assign_moves: an assignment's value moves a field of `name` out. A
+// `t = name.f` read of a STRING field does not: the drop releases f only when
+// its type routes field reclaim, and then the reassign retains
+// (str_field_reassign_retains), so the read is a counted share either way.
+function fieldmove_assign_moves(e: ast.Expr, name: string, sty: string, structs: StructTab, borrowable: string[]): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(oid) => {
+                    if (oid.name == name && decl_field_type(structs, sty, fa.field) == "string") { return false; }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return fieldmove_is_move_value(e, name, sty, structs, borrowable) || fieldmove_expr(e, name, sty, structs, borrowable);
+}
+
 function fieldmove_stmt(st: ast.Stmt, name: string, sty: string, structs: StructTab, borrowable: string[]): boolean {
     match (st) {
         // A direct `var t = x.f` init is a BORROW, not a move — the same split
@@ -48143,7 +48273,7 @@ function fieldmove_stmt(st: ast.Stmt, name: string, sty: string, structs: Struct
                     _ => {}
                 }
             }
-            return fieldmove_is_move_value(a.value, name, sty, structs, borrowable) || fieldmove_expr(a.value, name, sty, structs, borrowable);
+            return fieldmove_assign_moves(a.value, name, sty, structs, borrowable);
         },
         ast.StmtReturn(r) => {
             if (fieldmove_counted_arr_return(r.value, name, sty, structs)) { return false; }
@@ -62296,7 +62426,7 @@ function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs): ast.Stmt[] {
                 continue;
             }
             var tn: string = "$mscrut_" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
-            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_view: false, fn_ret: "", fn_param_types: "" });
             out = out.append(ast.StmtMatch { ...m, scrutinee: ast.ExprIdent { name: tn, line: m.line, col: m.col, ty: "" }, arms: arms });
             continue;
         }
@@ -62891,8 +63021,9 @@ function collect_try_str_binding_names(stmts: ast.Stmt[], opt_fresh_ret: SigReg,
 // EVERY read of its string-field NAMES, across the WHOLE program, is a
 // provable transient borrow: a binary operand (concat/compare), a byte-index
 // base, the receiver of a read-only / fresh-copy string method, a BORROWABLE
-// call-argument position (#6703), or a direct `var t = x.f` init (retained by
-// the #4768 read-side alias-inc). The walk is field-NAME-keyed and
+// call-argument position (#6703), a direct `var t = x.f` init (retained by
+// the #4768 read-side alias-inc), or a direct `t = x.f` reassign (retained by
+// str_field_reassign_retains). The walk is field-NAME-keyed and
 // obj-type-blind — a same-named field on another type over-excludes (sound).
 // Callers must pass the WHOLE-PROGRAM func list (all_funcs on the per-module
 // paths); a partial list would under-count the reads and re-open the UAF.
@@ -63049,16 +63180,22 @@ function strfld_collect_unsafe(e: ast.Expr, acc: string[]): string[] {
     return a;
 }
 
+function strfld_assign_value(v: ast.Expr, acc: string[]): string[] {
+    if (is_direct_ident_field_read(v)) { return strfld_safe_operand(v, acc); }
+    return strfld_collect_unsafe(v, acc);
+}
+
 // strfld_collect_unsafe_stmts: single-pass statement walk. A direct
-// `var t = x.f` init is SAFE (the #4768 read-side retain incs it); a
-// REASSIGN `t = x.f` is not retained and stays unsafe.
+// `var t = x.f` init is SAFE (the #4768 read-side retain incs it), and so is a
+// direct REASSIGN `t = x.f`, which retains whenever x's type routes field
+// reclaim (str_field_reassign_retains) — every type this scan admits does.
 function strfld_collect_unsafe_stmts(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => { a = strfld_safe_operand(v.init, a); },
             ast.StmtReturn(r) => { a = strfld_collect_unsafe(r.value, a); },
-            ast.StmtAssign(as2) => { a = strfld_collect_unsafe(as2.value, a); },
+            ast.StmtAssign(as2) => { a = strfld_assign_value(as2.value, a); },
             ast.StmtExpr(ex) => { a = strfld_collect_unsafe(ex.value, a); },
             ast.StmtIf(iff) => {
                 a = strfld_collect_unsafe(iff.cond, a);
@@ -68122,8 +68259,9 @@ function call_hands_back_counted(e: ast.Expr, name: string, s: LowerState): bool
 // it, so when the result in `new_slot` IS the old box the slot's own claim is
 // unchanged and the extra count goes here; a different box is the ordinary
 // release's business. `snap_slot` >= 0 names a box the slot holds UNCOUNTED
-// (a dying source's snapshot), which owes nothing back.
-function emit_handback_identity_dec(s: LowerState, slot: i32, new_slot: i32, snap_slot: i32): LowerState {
+// (a dying source's snapshot), which owes nothing back. `helper` releases the
+// box's layout: __fern_rc_dec, or str_free_helper's for a string slot.
+function emit_handback_identity_dec(s: LowerState, slot: i32, new_slot: i32, snap_slot: i32, helper: string): LowerState {
     var st: LowerState = s.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_load_local(new_slot));
     st = st.emit(ir.op_bin("eq", 0, false));
@@ -68134,17 +68272,17 @@ function emit_handback_identity_dec(s: LowerState, slot: i32, new_slot: i32, sna
         st = st.emit(ir.op_bin("and", 0, false));
     }
     st = st.emit(ir.op_if(0));
-    st = st.release(slot, "__fern_rc_dec", "handback-identity");
+    st = st.release(slot, helper, "handback-identity");
     return st.emit(ir.op_end());
 }
 // emit_handback_identity_dec_tos: the same with the new value on the operand
 // stack, left there.
-function emit_handback_identity_dec_tos(se: LowerState, slot: i32, snap_slot: i32): LowerState {
+function emit_handback_identity_dec_tos(se: LowerState, slot: i32, snap_slot: i32, helper: string): LowerState {
     var scratch: string = "$hbn" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
-    st = emit_handback_identity_dec(st, slot, tmp, 0 - 1);
+    st = emit_handback_identity_dec(st, slot, tmp, 0 - 1, helper);
     return st.emit(ir.op_load_local(tmp));
 }
 // handback_identity_dec_store: the struct REBIND entry — `a.target = <call>`
@@ -68152,7 +68290,7 @@ function emit_handback_identity_dec_tos(se: LowerState, slot: i32, snap_slot: i3
 function handback_identity_dec_store(se: LowerState, a: ast.StmtAssign, slot: i32, target_is_arr: boolean, s: LowerState): LowerState {
     if (target_is_arr || !decl_is_struct(s.frame.structs, s.struct_type_of_slot(slot))) { return se; }
     if (!call_hands_back_counted(a.value, a.target, s)) { return se; }
-    return emit_handback_identity_dec_tos(se, slot, 0 - 1);
+    return emit_handback_identity_dec_tos(se, slot, 0 - 1, "__fern_rc_dec");
 }
 
 // callee_carries_arg: `e` is a direct call that hands `name`'s box back inside
@@ -72373,7 +72511,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
         ast.ExprCall(c) => {
             if (c.args.len() != 1) { return false; }
             match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "map_new_i32"; },
+                ast.ExprIdent(cid) => { return cid.name == "map_new" || cid.name == "__map_new_i32"; },
                 _ => { return false; }
             }
         },
@@ -72386,7 +72524,7 @@ function expr_is_map_new_base(e: ast.Expr): boolean {
 // except for the chain base of a `Map { … }` literal, where it builds the box
 // from the `Map[K, V]` in hand instead of from the constructor's NAME.
 //
-// `map_new` / `map_new_i32` are the only two spellings, and the parser picks
+// `map_new` / `__map_new_i32` are the only two spellings, and the parser picks
 // between them without types: a struct / enum key has no spelling at all and a
 // key set it cannot classify falls back to `map_new` — the STRING one either
 // way. The generic constructor arm reads the kind off that callee name, so the
@@ -72630,7 +72768,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+                var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -72833,7 +72971,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
     if let ast.ExprLambda(lm) = value {
         if (lm.ret_type.len() == 0 && sig.fn_ret.len() > 0 && !parser.is_coarse_fn_tag(sig.fn_ret)) { init = ast.ExprLambda { ...lm, ret_type: sig.fn_ret }; }
     }
-    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
+    return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_view: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
 }
 // contract_spelling is how returned_lambda_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
@@ -72992,7 +73130,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
         },
         ast.StmtVar(v) => {
             var e: LiftExpr = lift_expr_walk(v.init, acc, gfns);
-            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+            var ns: ast.Stmt = ast.StmtVar { name: v.name, type_name: v.type_name, init: e.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
             return LiftStmts { stmts: [ns], acc: e.acc };
         },
         ast.StmtExpr(s) => {
@@ -73245,7 +73383,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     var notp: string[] = [];
     var lbody: ast.Stmt[] = lam.body;
     if (lam.origin == parser.ORIGIN_NESTED_FN) { lbody = desugar_lambda_returns(lbody, 0, ret_sig_of(lam.ret_type, lam.ret_fn_ret, lam.ret_fn_param_types)).body; }
-    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    var newfn: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lbody, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -73415,7 +73553,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
         ci = ci + 1;
     }
     // params = __env first, then the lambda's declared params.
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     // body = capture reads (var cap: <T> = __env[1+i]) then the lambda body. The
@@ -73426,13 +73564,13 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var cj: i32 = 0;
     while (cj < caps.len()) {
         var idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "" }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" });
+        bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" });
         cj = cj + 1;
     }
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
+    var clo: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: fd.module };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -73513,11 +73651,11 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 // (the lambda body inlined verbatim; __env is unused). Always succeeds — a
 // no-capture lambda needs no env reads.
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+    var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: lam.ret_str, ret_str_elem: lam.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
+    return parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types , is_package: false, module: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -73527,12 +73665,12 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
+    var none: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" , is_package: false, module: "" };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
             var tgt: parser.FuncDecl = mfuncs.decls[fi];
-            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_str: false, is_view: false, str_elem: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
+            var ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", is_view: false, own: false, has_default: false, default_value: parser.e_unknown(""), ret_arr: false, fn_ret: "", fn_param_dyn: "", fn_param_types: "" }];
             var args: ast.Expr[] = [];
             var pj: i32 = 0;
             while (pj < tgt.params.len()) {
@@ -73555,7 +73693,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             if (tgt.ret_type == "void") { body = ast.StmtExpr { value: call, line: 0 }; }
             var bd: ast.Stmt[] = [body];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: tgt.ret_str, ret_str_elem: tgt.ret_str_elem, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
+            return HoistResult { func: parser.FuncDecl { no_inline: false, name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types , is_package: false, module: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -74992,7 +75130,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         fnptys = armptys;
     }
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0, ret_sig_of("fn", fnret, fnptys));
-    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_str_elem: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: fnret, ret_fn_param_types: fnptys , is_package: false, module: fd.module };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }
@@ -75571,7 +75709,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                 _ => {}
             }
             var er: InlineCloRes = lift_inline_closures_expr(v.init, fd, fs, ct, gfns, structs, mfuncs);
-            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
+            return (ast.StmtVar { name: v.name, type_name: v.type_name, init: er.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, InlineCloAcc { funcs: er.funcs, counter: er.counter }, true);
         },
         ast.StmtReturn(r) => {
             // A callable result uses the same env-box ABI as callable
@@ -75885,14 +76023,14 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 // wcap_cell_decl builds `var $wc$c: T[] = [c];` — the snapshot cell.
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
     var src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "" };
-    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_cell_read builds `var c: T = $wc$c[0];` — the lambda-body re-bind.
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
     var cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "" };
     var idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 // wcap_expr walks one expression, rewriting every lambda in it (prepending the
@@ -76043,7 +76181,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: S
     match (st) {
         ast.StmtVar(v) => {
             var r: WCapExpr = wcap_expr(v.init, fd, gfns, structs, mfuncs, acc, atargets);
-            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_str: v.is_str, is_view: v.is_view, str_elem: v.str_elem, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
+            return WCapStmt { stmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: r.expr, line: v.line, col: v.col, is_view: v.is_view, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, caps: r.caps, changed: false };
         },
         ast.StmtAssign(a) => {
             var r: WCapExpr = wcap_expr(a.value, fd, gfns, structs, mfuncs, acc, atargets);
@@ -76349,7 +76487,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructT
     while (i < stmts.len()) {
         var lam_ok: boolean = false;
         var bname: string = "";
-        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", ret_str: false, ret_str_elem: false };
+        var lam: ast.ExprLambda = ast.ExprLambda { params: [], ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "" };
         var nested: ast.ExprLambda[] = [];
         match (stmts[i]) {
             ast.StmtVar(v) => {
@@ -76596,7 +76734,7 @@ function iife_call_to(c: ast.ExprCall, nm: string): ast.Expr {
 // iife_bind is the hoisted `var <nm> = <lambda>;`. Untyped: the checker infers
 // the lambda's own type, exactly as it does for a written `var f = () => …`.
 function iife_bind(nm: string, lam: ast.Expr, line: i32, col: i32): ast.Stmt {
-    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_str: false, is_view: false, str_elem: false, fn_ret: "", fn_param_types: "" };
+    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_view: false, fn_ret: "", fn_param_types: "" };
 }
 
 function name_source_iifes_stmts(stmts: ast.Stmt[], fdname: string, k0: i32): IifeNamed {
@@ -76766,7 +76904,23 @@ pub function prepare_lambda_parts(mods: parser.Module[]): parser.Module[] {
 //
 // An empty `view` means "use the module's own functions", so every caller that
 // does not thread a view is byte-identical to before.
+//
+// The lift is on every production route into the AST lowering, including the
+// per-module and stdin drivers that never reach module_with_builtins, so its
+// result has each `str` erased. A test-driver leg that lowers a parsed module
+// without it still sees `str`: irlower_run's default, -rc-plan, -str-own and
+// -verify* legs, and ir_const_numeric_run's x86-64 and arm64 legs.
 pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
+    return parser.erase_str_module(lift_lambdas_view_typed(raw_mod, view));
+}
+
+// lift_lambdas_typed is lift_lambdas for the typed lowering, which keeps each
+// `str` as a view.
+pub function lift_lambdas_typed(raw_mod: parser.Module): parser.Module {
+    return lift_lambdas_view_typed(raw_mod, []);
+}
+
+pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
     // Fill omitted trailing arguments from default parameter values before the
     // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
     // as `f(5, 128)`. No-op for default-free modules.
@@ -78838,7 +78992,7 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
 // result and not the slot's uncounted snapshot.
 function handback_identity_dec_dying(st: LowerState, init: ast.Expr, name: string, slot: i32, new_slot: i32, snap_slot: i32): LowerState {
     if (!call_hands_back_counted(init, name, st)) { return st; }
-    return emit_handback_identity_dec(st, slot, new_slot, snap_slot);
+    return emit_handback_identity_dec(st, slot, new_slot, snap_slot, "__fern_rc_dec");
 }
 
 // arg_moved_into_callee: `name` sits at a declared `own` position of e's callee
@@ -78946,7 +79100,7 @@ function tail_release_one(v: ast.Expr, name: string, s: LowerState): LowerState 
         st = st.add_local(scratch);
         var tmp: i32 = st.slot_of(scratch);
         st = st.emit(ir.op_store_local(tmp));
-        st = emit_handback_identity_dec(st, slot, tmp, snls);
+        st = emit_handback_identity_dec(st, slot, tmp, snls, "__fern_rc_dec");
         st = st.emit(ir.op_load_local(tmp));
     }
     if (!reclaim_has(s.frame.reclaimable_names, "NOFLD:", s.reclaim_site_key(slot)) && s.struct_routes_field_reclaim(sty)) {
@@ -79382,6 +79536,50 @@ while (si < strs.len()) {
 }
 
     return out;
+}
+
+// reclaimable_str_field_reassign credits the string locals whose every value past
+// the first is a direct field read, and those bound FROM one (`var t: string =
+// r.name`): each such read retains the box for a credited slot
+// (str_field_reassign_retains and lower_stmt_var's field-read arm), so the slot
+// always holds a count its own release gives back. A fresh or literal candidate
+// qualifies only once reassigned, because unreassigned it is another family's.
+function reclaimable_str_field_reassign(body: ast.Stmt[], borrowable: string[], recv_borrow: string[], reassigned: string[], str_cands: string[], out: string[]): string[] {
+    var cands: string[] = collect_field_read_str_names(body, []);
+    for c in str_cands {
+        if (util.index_of_str(reassigned, reclaim_site_name(c)) >= 0) { cands = push_str_unique(cands, c); }
+    }
+    for c in cands {
+        var nm: string = reclaim_site_name(c);
+        if (util.index_of_str(out, "STR:" + c) < 0
+            && str_all_reassigns_bare_ident(body, nm, true)
+            && !litstr_tostring_recv_body(body, nm)
+            && !body_unsafe_for_alias(body, nm, borrowable, recv_borrow, [])) {
+            out = out.append("STR:" + c);
+        }
+    }
+    return out;
+}
+
+// collect_field_read_str_names: the `var t: string = x.f` binding sites. The
+// annotation is what types the slot is_str, which the credit's release keys on.
+function collect_field_read_str_names(stmts: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (v.type_name == "string" && is_direct_ident_field_read(v.init)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            ast.StmtIf(f) => { a = collect_field_read_str_names(f.then_body, a); a = collect_field_read_str_names(f.else_body, a); },
+            ast.StmtWhile(w) => { a = collect_field_read_str_names(w.body, a); },
+            ast.StmtFor(fo) => { a = collect_field_read_str_names(fo.body, a); },
+            ast.StmtMatch(m) => { for arm in m.arms { a = collect_field_read_str_names(arm.body, a); } },
+            _ => {}
+        }
+    }
+    return a;
 }
 
 function reclaimable_litstr_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], lits: string[], reassigned: string[], recv_borrow: string[], str_cands: string[], strs: string[], out: string[]): string[] {

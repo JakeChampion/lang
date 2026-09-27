@@ -33,7 +33,7 @@ import (
 //
 // Every case asserts the `-decide` route AND the answer, because a regression here
 // is silent: the AST emitter computes all of these correctly, so only the route
-// shows it. The map cases have no interpreter oracle (`map_new_i32` is E001
+// shows it. The map cases have no interpreter oracle (`__map_new_i32` is E001
 // natively — self-host dialect), so their exit codes are stated, not derived.
 func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -69,11 +69,11 @@ func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 
 		// Map with struct values, in the three binding shapes. The i32-valued and
 		// string-valued maps are the controls that always lowered.
-		{"map-struct-val-separate-insert", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-struct-val-insert-chain", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = map_new_i32(8).insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-struct-val-annotated-control", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m: Map[i32, P] = map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p: P = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
-		{"map-i32-val-control", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, 42); return m.get_or(1, 0); }", 42},
-		{"map-string-val-control", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, \"hi\"); var s = m.get_or(1, \"\"); return s.len() + 40; }", 42},
+		{"map-struct-val-separate-insert", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = __map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
+		{"map-struct-val-insert-chain", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m = __map_new_i32(8).insert(1, P { x: 40, y: 2 }); var p = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
+		{"map-struct-val-annotated-control", "struct P { x: i32, y: i32 }\nfunction main(): i32 { var m: Map[i32, P] = __map_new_i32(8); m = m.insert(1, P { x: 40, y: 2 }); var p: P = m.get_or(1, P { x: 0, y: 0 }); return p.x + p.y; }", 42},
+		{"map-i32-val-control", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, 42); return m.get_or(1, 0); }", 42},
+		{"map-string-val-control", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, \"hi\"); var s = m.get_or(1, \"\"); return s.len() + 40; }", 42},
 	}
 
 	for _, tc := range cases {

@@ -588,7 +588,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-inferred-compare", "function main(): i32 { var z = 1.5; if (z > 1.0) { print_int(1); } else { print_int(0); } return 0; }", 0, "1"},
 
 		// i32-keyed / i32-valued maps. `Map { k: v }` desugars to
-		// map_new_i32(8).insert(...).insert(...); methods dispatch to the hash
+		// __map_new_i32(8).insert(...).insert(...); methods dispatch to the hash
 		// runtime. `.len()` reuses the generic length read (count @ box+0).
 		{"map-get-or", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(1, 0)); return 0; }", 0, "10"},
 		{"map-get-or-second", "function main(): i32 { var m = Map { 1: 10, 2: 20 }; print_int(m.get_or(2, 0)); return 0; }", 0, "20"},
@@ -600,12 +600,12 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-update-keeps-len", "function main(): i32 { var m = Map { 1: 10 }; m = m.insert(1, 99); print_int(m.len()); return 0; }", 0, "1"},
 		{"map-get-some", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(7)) { Some(v) => { print_int(v); }, None => { print_int(0); } } return 0; }", 0, "42"},
 		{"map-get-none", "function main(): i32 { var m = Map { 7: 42 }; match (m.get(8)) { Some(v) => { print_int(v); }, None => { print_int(0); print_int(1); } } return 0; }", 0, "01"},
-		{"map-empty-then-set", "function main(): i32 { var m = map_new_i32(8); m = m.insert(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
-		{"map-zero-key", "function main(): i32 { var m = map_new_i32(8); m = m.insert(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
+		{"map-empty-then-set", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(3, 30); print_int(m.get_or(3, 0)); return 0; }", 0, "30"},
+		{"map-zero-key", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(0, 123); print_int(m.get_or(0, -1)); return 0; }", 0, "123"},
 		{"map-negative-key", "function main(): i32 { var m = Map { 1: 5 }; m = m.insert(-7, 88); print_int(m.get_or(-7, 0)); return 0; }", 0, "88"},
-		{"map-grow-get", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
-		{"map-grow-len", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
-		{"map-overwrite-loop", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
+		{"map-grow-get", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.get_or(37, -1)); return 0; }", 0, "74"},
+		{"map-grow-len", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 50) { m = m.insert(i, i * 2); i = i + 1; } print_int(m.len()); return 0; }", 0, "50"},
+		{"map-overwrite-loop", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(1, i); i = i + 1; } print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "91"},
 
 		// String-keyed maps. A `Map { "k": v }` literal desugars to
 		// map_new(8).insert(...); keys hash + compare by content (FNV-1a +
@@ -633,7 +633,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"strval-get-none", "function main(): i32 { var m = Map { 1: \"one\" }; match (m.get(9)) { Some(v) => { write(v); }, None => { write(\"none\"); } } return 0; }", 0, "none"},
 		{"strval-concat", "function main(): i32 { var m = Map { 1: \"one\" }; write(m.get_or(1, \"?\") + \"!\"); return 0; }", 0, "one!"},
 		{"strval-update", "function main(): i32 { var m = Map { 1: \"a\" }; m = m.insert(1, \"b\"); write(m.get_or(1, \"?\")); return 0; }", 0, "b"},
-		{"strval-built-value", "function main(): i32 { var m = map_new_i32(8); m = m.insert(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
+		{"strval-built-value", "function main(): i32 { var m = __map_new_i32(8); m = m.insert(1, \"x\" + \"y\"); write(m.get_or(1, \"?\")); return 0; }", 0, "xy"},
 		{"strval-len", "function main(): i32 { var m = Map { 1: \"a\", 2: \"b\" }; print_int(m.len()); return 0; }", 0, "2"},
 
 		// Map .without — tombstone deletion (used slot → 2; the probe skips
@@ -648,8 +648,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-delete-missing-noop", "function main(): i32 { var m = Map { 1: 1 }; var (mw, we) = m.without(99); m = mw; print_int(m.len()); print_int(m.get_or(1, -1)); return 0; }", 0, "11"},
 		{"map-delete-get-none", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; match (m.get(1)) { Some(v) => { print_int(v); }, None => { print_int(7); } } return 0; }", 0, "7"},
 		{"map-delete-reinsert", "function main(): i32 { var m = Map { 1: 10 }; var (mw, we) = m.without(1); m = mw; m = m.insert(1, 99); print_int(m.get_or(1, -1)); print_int(m.len()); return 0; }", 0, "991"},
-		{"map-delete-mid-chain", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } var (mw, we) = m.without(5); m = mw; print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
-		{"map-delete-all-then-reuse", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { var (mw, we) = m.without(i); m = mw; i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
+		{"map-delete-mid-chain", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 10) { m = m.insert(i, i); i = i + 1; } var (mw, we) = m.without(5); m = mw; print_int(m.get_or(4, -1)); print_int(m.get_or(6, -1)); print_int(m.has(5)); print_int(m.len()); return 0; }", 0, "4609"},
+		{"map-delete-all-then-reuse", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 0; while (i < 30) { m = m.insert(i, i); i = i + 1; } i = 0; while (i < 30) { var (mw, we) = m.without(i); m = mw; i = i + 1; } print_int(m.len()); m = m.insert(100, 7); print_int(m.get_or(100, -1)); return 0; }", 0, "07"},
 		{"strmap-delete", "function main(): i32 { var m = Map { \"a\": 1, \"b\": 2 }; var (mw, we) = m.without(\"a\"); m = mw; print_int(m.has(\"a\")); print_int(m.get_or(\"b\", -1)); return 0; }", 0, "02"},
 
 		// Map .keys() / .values() — snapshot arrays (probe order, so tests
@@ -659,8 +659,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-values-sum", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "60"},
 		{"map-keys-sum", "function main(): i32 { var m = Map { 4: 1, 5: 1, 6: 1 }; var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "15"},
 		{"map-values-sum-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for v in m.values() { s = s + v; } print_int(s); return 0; }", 0, "40"},
-		{"map-empty-keys-len", "function main(): i32 { var m = map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
-		{"map-keys-sum-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
+		{"map-empty-keys-len", "function main(): i32 { var m = __map_new_i32(8); print_int(m.keys().len()); return 0; }", 0, "0"},
+		{"map-keys-sum-grow", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i); i = i + 1; } var s: i32 = 0; for k in m.keys() { s = s + k; } print_int(s); return 0; }", 0, "210"},
 		{"strmap-keys-charcount", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for k in m.keys() { n = n + k.len(); } print_int(n); return 0; }", 0, "5"},
 		{"strval-values-charcount", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for v in m.values() { n = n + v.len(); } print_int(n); return 0; }", 0, "5"},
 
@@ -670,8 +670,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"map-forkv-keys-only", "function main(): i32 { var m = Map { 4: 100, 5: 100, 6: 100 }; var s: i32 = 0; for (k, v) in m { s = s + k; } print_int(s); return 0; }", 0, "15"},
 		{"map-forkv-count", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3, 4: 4 }; var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "4"},
 		{"map-forkv-after-delete", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; var (mw, we) = m.without(2); m = mw; var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "40"},
-		{"map-forkv-empty", "function main(): i32 { var m = map_new_i32(8); var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "0"},
-		{"map-forkv-grow", "function main(): i32 { var m = map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
+		{"map-forkv-empty", "function main(): i32 { var m = __map_new_i32(8); var n: i32 = 0; for (k, v) in m { n = n + 1; } print_int(n); return 0; }", 0, "0"},
+		{"map-forkv-grow", "function main(): i32 { var m = __map_new_i32(8); var i: i32 = 1; while (i <= 20) { m = m.insert(i, i * 2); i = i + 1; } var s: i32 = 0; for (k, v) in m { s = s + v; } print_int(s); return 0; }", 0, "420"},
 		{"map-forkv-break", "function main(): i32 { var m = Map { 1: 1, 2: 2, 3: 3 }; var n: i32 = 0; for (k, v) in m { n = n + 1; if (n == 2) { break; } } print_int(n); return 0; }", 0, "2"},
 		{"strmap-forkv-keylen", "function main(): i32 { var m = Map { \"ab\": 1, \"cde\": 2 }; var n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } print_int(n); return 0; }", 0, "8"},
 		{"strval-forkv-vallen", "function main(): i32 { var m = Map { 1: \"ab\", 2: \"cde\" }; var n: i32 = 0; for (k, v) in m { n = n + k + v.len(); } print_int(n); return 0; }", 0, "8"},
