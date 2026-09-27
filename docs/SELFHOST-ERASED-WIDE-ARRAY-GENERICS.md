@@ -138,7 +138,7 @@ bare-typevar param. Two strategies close pieces of it.
 through a bare-typevar-RETURN PASS-THROUGH fn (`id[T](x: T): T`, #5586) or a
 bare-TUPLE-return fn (`pair[K, V](k, v): (K, V)`, #5593) lowers on the wasm IR
 path with erased params / returns / locals typed i64 — the uniform 8-byte slot —
-and the caller coerces its arg/result at the boundary. See `is_erased_typevar`,
+and the caller coerces its arg/result at the boundary. See `parser.looks_type_var`,
 `erased_widenable`, `erased_passthrough_safe` (the body-safety gate that keeps
 `fold`-style bodies which USE the typevar off the widened path), the `for_wasm`
 flag folded into `ret_arrdyn` bit 2, the `'6'` `fn_param_sigs` flag +

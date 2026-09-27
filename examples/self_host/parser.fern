@@ -9667,12 +9667,10 @@ function tv_word_char(c: i32): boolean {
     return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95;
 }
 
-// type_str_vars collects the single-uppercase-letter type variables (T /
-// K / V …) appearing in a coarse type spelling, appended to `acc`
-// (deduped). A maximal `[A-Za-z0-9_]` run that is exactly one uppercase
-// letter is a var — the per-token form of looks_type_var, so it finds
-// `T` in `T[]`, both `K` and `V` in `Map[K, V]`, etc., while multi-char
-// names (Map / JsonValue) and lowercase primitives never match.
+// type_str_vars collects the type variables appearing in a coarse type
+// spelling, appended to `acc` (deduped): each maximal `[A-Za-z0-9_]` run
+// looks_type_var accepts, so it finds `T` in `T[]` and both `K` and `V` in
+// `Map[K, V]`.
 function type_str_vars(ty: string, acc: string[]): string[] {
     var out: string[] = acc;
     var i: i32 = 0;
@@ -9682,11 +9680,7 @@ function type_str_vars(ty: string, acc: string[]): string[] {
             var start: i32 = i;
             while (i < n && tv_word_char((ty[i] as i32))) { i = i + 1; }
             var tok: string = slice_unchecked(ty, start, i) + "";
-            // A token applied to type arguments (`H[i32]`) is a type
-            // constructor, never a variable — Fern has no higher-kinded params.
-            // `T[]` is the array suffix, not an application.
-            var applied: boolean = i + 1 < n && ty[i] == b'[' && ty[i + 1] != b']';
-            if (tok.len() == 1 && tok[0] >= b'A' && tok[0] <= b'Z' && !applied && !util.has_str(out, tok)) {
+            if (looks_type_var(tok) && !util.has_str(out, tok)) {
                 out = out.append(tok);
             }
         } else {
@@ -10074,7 +10068,7 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): s
     if (rvt.len() == 0) { return ""; }
     var mrt: string = assoc_ret_of(funcs.decls, rvt, cfa.field);
     if (mrt.len() == 0) { mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field); }
-    if (mono_type_var(mrt, funcs)) { return ""; }
+    if (looks_type_var(mrt)) { return ""; }
     return mrt;
 }
 
@@ -10221,7 +10215,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
                     // bare type variable is never a usable concrete type, so
                     // report "unknown" (the other, concrete-literal arg still
                     // binds the call at `i32`).
-                    if (mono_type_var(crt, funcs) || crt.len() == 0) { return stamped_scalar(c.ty); }
+                    if (looks_type_var(crt) || crt.len() == 0) { return stamped_scalar(c.ty); }
                     return crt;
                 },
                 ast.ExprFieldAccess(cfa) => {
@@ -10323,14 +10317,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // a usable concrete type. Reporting it would key a clone named after the
         // variable (`assert_eq__T`), whose body then calls `T.eq`: an unknown
         // symbol, so the eligibility gate rejects the caller and the module
-        // fails to compile. Same reasoning as the `mono_type_var(crt)` guard on
+        // fails to compile. Same reasoning as the `looks_type_var(crt)` guard on
         // an inferred call return above.
         ast.ExprIndex(ix) => {
             var at: string = mono_infer(ix.array, env, funcs);
             var n: i32 = at.len();
             if (n > 2 && slice_unchecked(at, n - 2, n) == "[]") {
                 var el: string = slice_unchecked(at, 0, n - 2) + "";
-                if (mono_type_var(el, funcs)) { return ""; }
+                if (looks_type_var(el)) { return ""; }
                 return el;
             }
             return "";
@@ -10341,9 +10335,9 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // is unknown, for the same reason as the index arm's element guard.
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
-            if (ot.len() == 0 || mono_ty_mentions_var(ot, funcs)) { return ""; }
+            if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
             var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
-            if (mono_ty_mentions_var(ft, funcs)) { return ""; }
+            if (mono_ty_mentions_var(ft)) { return ""; }
             return ft;
         },
         _ => { return ""; }
@@ -10684,48 +10678,13 @@ function mapm_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, func
     return subst_ty(funcs.decls[gi].ret_type, funcs.decls[gi].type_params, split_inst_key(key));
 }
 
-// mono_ty_mentions_var reports whether a type spelling contains a bare
-// single-uppercase type-var leaf ("T", "Option[T]", "T[]", "(T, i32)") — the
-// composite sibling of mono_type_var. A payload carrying one is not a usable
-// concrete type: binding it would key a clone named after the variable
-// (`assert_eq__T`) whose trait calls can't resolve, bailing the module.
-function mono_ty_mentions_var(t: string, fns: MFns): boolean {
-    var i: i32 = 0;
-    var n: i32 = t.len();
-    while (i < n) {
-        var c: i32 = t[i] as i32;
-        if (c >= 65 && c <= 90) {
-            var prev_id: boolean = false;
-            if (i > 0) {
-                var p: i32 = t[i - 1] as i32;
-                prev_id = (p >= 65 && p <= 90) || (p >= 97 && p <= 122) || (p >= 48 && p <= 57) || p == 95;
-            }
-            // A following `[` makes the letter an applied type constructor
-            // (`H[i32]`), never a variable — Fern has no higher-kinded params.
-            // `T[]` is the array suffix, not an application.
-            var next_id: boolean = false;
-            if (i + 1 < n) {
-                var q: i32 = t[i + 1] as i32;
-                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95;
-                if (q == 91 && !(i + 2 < n && t[i + 2] == b']')) { next_id = true; }
-            }
-            if (!prev_id && !next_id && !names_declared_type(slice_unchecked(t, i, i + 1) + "", fns)) { return true; }
-        }
-        i = i + 1;
-    }
-    return false;
-}
-
-// mono_type_var reports whether `s` is a bare type variable: one uppercase
-// letter that no struct or enum of the module is named (`struct H` is a type).
-function mono_type_var(s: string, fns: MFns): boolean {
-    return looks_type_var(s) && !names_declared_type(s, fns);
-}
-
-function names_declared_type(name: string, fns: MFns): boolean {
-    for sd in fns.structs { if (sd.name == name) { return true; } }
-    for ed in fns.enums { if (ed.name == name) { return true; } }
-    return false;
+// mono_ty_mentions_var reports whether a type spelling contains a type
+// variable ("T", "Option[T]", "T[]", "(T, i32)"). A payload carrying one is not
+// a usable concrete type: binding it would key a clone named after the
+// variable (`assert_eq__T`) whose trait calls can't resolve, bailing the module.
+function mono_ty_mentions_var(t: string): boolean {
+    var none: string[] = [];
+    return type_str_vars(t, none).len() > 0;
 }
 
 // mono_variant_payload_ty: the type a match arm's payload binding carries when
@@ -10734,7 +10693,7 @@ function names_declared_type(name: string, fns: MFns): boolean {
 // a payload that still mentions a type variable. A qualified pattern
 // (`Result.Ok`) is stripped to its bare variant name first.
 function mono_variant_payload_ty(sty: string, vname: string, fns: MFns): string {
-    if (mono_ty_mentions_var(sty, fns)) { return ""; }
+    if (mono_ty_mentions_var(sty)) { return ""; }
     var bare: string = pat_variant_bare(vname);
     var n: i32 = sty.len();
     if (n >= 8 && slice_unchecked(sty, 0, 7) == "Option[" && sty[n - 1] == b']') {
@@ -10776,7 +10735,7 @@ function mono_arm_env(env: MEnv, pat: ast.Pattern, sty: string, funcs: MFns): ME
             }
             if (pv.at_binding.len() > 0) {
                 var aty: string = sty;
-                if (mono_ty_mentions_var(aty, funcs)) { aty = ""; }
+                if (mono_ty_mentions_var(aty)) { aty = ""; }
                 aenv = aenv.ebind(pv.at_binding, aty);
             }
         },
@@ -10820,7 +10779,7 @@ function type_args_of(ty: string): string[] {
 // enum that owns `vname`.
 function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[] {
     var none: string[] = [];
-    if (sty.len() == 0 || mono_ty_mentions_var(sty, fns)) { return none; }
+    if (sty.len() == 0 || mono_ty_mentions_var(sty)) { return none; }
     var base: string = strip_struct_base(sty);
     var ei: i32 = 0 - 1;
     var i: i32 = 0;
@@ -10952,7 +10911,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
             var ity: string = mono_infer(fr.iter, env, funcs);
             if (type_ends_arr(ity)) {
                 ety = slice_unchecked(ity, 0, ity.len() - 2) + "";
-                if (mono_ty_mentions_var(ety, funcs)) { ety = ""; }
+                if (mono_ty_mentions_var(ety)) { ety = ""; }
             }
             var benv: MEnv = env.ebind(fr.var_name, ety);
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
@@ -11470,15 +11429,17 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
 // element type — so generic array methods use the proven free-generic
 // monomorphiser instead of that i32 mis-dispatch.
 
-// looks_type_var reports whether `s` names a generic type variable: a
-// single uppercase letter (T / U / K / V …), the spelling the stdlib's
-// generic receivers use (`(xs: T[]) concat(…)`). Concrete element types
-// (`i32`, `string`, `JsonValue`) and the type-specific `__method_Array_*`
-// helpers' `i32[]` / `string[]` receivers never match.
-function looks_type_var(s: string): boolean {
-    if (s.len() != 1) { return false; }
-    var c: i32 = s[0] as i32;
-    return c >= 65 && c <= 90;
+// looks_type_var reports whether `s` is a type variable: the `0_<name>`
+// spelling rename_type_vars_module gives every one. Exact, since no type an
+// identifier can name starts with a digit.
+pub function looks_type_var(s: string): boolean {
+    if (s.len() < 3 || s[0] != b'0' || s[1] != b'_' || (s[2] >= b'0' && s[2] <= b'9')) { return false; }
+    var i: i32 = 2;
+    while (i < s.len()) {
+        if (!tv_word_char((s[i] as i32))) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // is_generic_array_method gates the array-method path: a method
@@ -12588,7 +12549,7 @@ function any_number_literal(es: ast.Expr[]): boolean {
 // ms_concrete_ty: `t` names a type with no type variable in it and no generic
 // struct left uninstantiated — a bare `P` is a type variable's spelling.
 function ms_concrete_ty(t: string, gstructs: StructDecl[], funcs: MFns): boolean {
-    if (t.len() == 0 || mono_ty_mentions_var(t, funcs)) { return false; }
+    if (t.len() == 0 || mono_ty_mentions_var(t)) { return false; }
     var i: i32 = 0;
     var n: i32 = t.len();
     while (i < n) {
@@ -13002,8 +12963,8 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
     // `len(args) != len(gen.TypeParams)` gate in internal/monomorph.
     var gei: i32 = genum_index(enums, base);
     if (gei >= 0 && parts.len() != enums[gei].type_params.len()) { return ""; }
-    // `Opt[T]` inside the enum's own method names no instantiation.
-    if (gei >= 0) { for p in parts { if (str_in(enums[gei].type_params, p)) { return ""; } } }
+    // `Opt[T]` inside a template names no instantiation.
+    for p in parts { if (mono_ty_mentions_var(p)) { return ""; } }
     if (parts.len() == 1) {
         return ge_targ_mangle(parts[0], enums);
     }
@@ -17853,6 +17814,209 @@ pub function module_with_builtins(mod: Module): Module {
     return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }
 
+// ---- type-variable respelling -------------------------------------------
+// Every later stage reads types as SPELLINGS, so a type variable must never be
+// spelled like a concrete type: `PMap[K, V]` taken at a user `struct K`
+// substitutes `K := K`, and the clone is then indistinguishable from its
+// template (#9577). rename_type_vars_module, the last step of the compile-path
+// parse, respells every declaration's type variables `0_<name>`. No identifier
+// starts with a digit, so looks_type_var is exact on the result;
+// util.show_type_vars turns the spelling back for a diagnostic.
+
+function tvar_spelling(name: string): string {
+    if (looks_type_var(name)) { return name; }
+    return "0_" + name;
+}
+
+function rename_type_vars_module(mod: Module): Module {
+    var funcs: FuncDecl[] = [];
+    for fd in mod.funcs { funcs = funcs.append(rename_fn_type_vars(fd, fn_type_vars(fd, mod))); }
+    var structs: StructDecl[] = [];
+    for sd in mod.structs {
+        var svars: string[] = sd.type_params;
+        if (sd.enum_owner.len() > 0) { svars = decl_type_params(sd.enum_owner, mod); }
+        structs = structs.append(rename_struct_type_vars(sd, svars));
+    }
+    var enums: EnumDecl[] = [];
+    for ed in mod.enums { enums = enums.append(EnumDecl { ...ed, type_params: tvar_spellings(ed.type_params) }); }
+    var impls: ImplInfo[] = [];
+    for im in mod.impls { impls = impls.append(rename_impl_type_vars(im)); }
+    return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
+}
+
+function tvar_spellings(vars: string[]): string[] {
+    var out: string[] = [];
+    for v in vars { out = out.append(tvar_spelling(v)); }
+    return out;
+}
+
+function add_tvars(acc: string[], vars: string[]): string[] {
+    var out: string[] = acc;
+    for v in vars { if (!str_in(out, v)) { out = out.append(v); } }
+    return out;
+}
+
+// decl_type_params is the declared parameter list of the struct or enum `name`.
+function decl_type_params(name: string, mod: Module): string[] {
+    for ed in mod.enums { if (ed.name == name) { return ed.type_params; } }
+    for sd in mod.structs { if (sd.name == name) { return sd.type_params; } }
+    var none: string[] = [];
+    return none;
+}
+
+// fn_type_vars is every type variable `fd` is written in: its declared
+// parameters, the implicit ones a generic receiver binds, and — for a derived
+// method, whose receiver is spelled bare — its type's own parameters.
+function fn_type_vars(fd: FuncDecl, mod: Module): string[] {
+    var none: string[] = [];
+    var vars: string[] = add_tvars(add_tvars(none, fd.all_type_params), fd.type_params);
+    if (fd.receiver_type.len() == 0) { return vars; }
+    if (first_bracket(fd.receiver_type) < 0) { vars = add_tvars(vars, decl_type_params(fd.receiver_type, mod)); }
+    return add_tvars(vars, receiver_type_vars(parse_type_ref(fd.receiver_type), mod));
+}
+
+// receiver_type_vars collects a receiver's implicit type variables: the
+// single-uppercase leaves that name no type of the declaring module, which is
+// the visibility question native's collectFreeTypeVars asks. Another module's
+// type is only ever written qualified.
+function receiver_type_vars(r: TypeRef, mod: Module): string[] {
+    var out: string[] = [];
+    if (r.args.len() == 0 && !r.is_tuple && !r.is_fn) {
+        var leaf: string = r.base;
+        var letter: boolean = leaf.len() == 1 && leaf[0] >= b'A' && leaf[0] <= b'Z';
+        if (letter && !names_module_type(leaf, mod)) { out = out.append(leaf); }
+        return out;
+    }
+    for a in r.args { out = add_tvars(out, receiver_type_vars(a, mod)); }
+    return out;
+}
+
+function names_module_type(name: string, mod: Module): boolean {
+    for sd in mod.structs { if (sd.name == name) { return true; } }
+    for ed in mod.enums { if (ed.name == name) { return true; } }
+    for al in mod.aliases { if (al.name == name) { return true; } }
+    return false;
+}
+
+function rename_ty_list(list: string[], vars: string[], cts: string[]): string[] {
+    var out: string[] = [];
+    for t in list { out = out.append(subst_ty(t, vars, cts)); }
+    return out;
+}
+
+// rename_bounds respells each `+`-joined entry of a bound list.
+function rename_bounds(bounds: string[], vars: string[], cts: string[]): string[] {
+    var out: string[] = [];
+    for b in bounds {
+        var joined: string = "";
+        for entry in split_plus_bounds(b) {
+            if (joined.len() > 0) { joined = joined + "+"; }
+            joined = joined + subst_ty(entry, vars, cts);
+        }
+        out = out.append(joined);
+    }
+    return out;
+}
+
+function rename_param_type_vars(pd: ast.ParamDecl, vars: string[], cts: string[]): ast.ParamDecl {
+    var dv: ast.Expr = pd.default_value;
+    if (pd.has_default) { dv = astwalk.map_expr(dv, (e: ast.Expr): ast.Expr => rename_tv_expr(e, vars, cts)); }
+    return ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, vars, cts), fn_ret: subst_ty(pd.fn_ret, vars, cts), fn_param_types: subst_ty_list(pd.fn_param_types, vars, cts), default_value: dv };
+}
+
+function rename_fn_type_vars(fd: FuncDecl, vars: string[]): FuncDecl {
+    if (vars.len() == 0) { return fd; }
+    var cts: string[] = tvar_spellings(vars);
+    var params: ast.ParamDecl[] = [];
+    for pd in fd.params { params = params.append(rename_param_type_vars(pd, vars, cts)); }
+    return FuncDecl { ...fd, receiver_type: subst_ty(fd.receiver_type, vars, cts), type_params: rename_ty_list(fd.type_params, vars, cts),
+        all_type_params: rename_ty_list(fd.all_type_params, vars, cts), bound_traits: rename_bounds(fd.bound_traits, vars, cts), params: params,
+        ret_type: subst_ty(fd.ret_type, vars, cts), ret_fn_ret: subst_ty(fd.ret_fn_ret, vars, cts), ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, vars, cts),
+        body: rename_tv_stmts(fd.body, vars, cts) };
+}
+
+function rename_struct_type_vars(sd: StructDecl, vars: string[]): StructDecl {
+    if (vars.len() == 0) { return sd; }
+    var cts: string[] = tvar_spellings(vars);
+    var fields: StructFieldDecl[] = [];
+    for f in sd.fields { fields = fields.append(StructFieldDecl { ...f, type_name: subst_ty(f.type_name, vars, cts), fn_ret: subst_ty(f.fn_ret, vars, cts), fn_param_types: subst_ty_list(f.fn_param_types, vars, cts) }); }
+    return StructDecl { ...sd, fields: fields, type_params: rename_ty_list(sd.type_params, vars, cts) };
+}
+
+function rename_impl_type_vars(im: ImplInfo): ImplInfo {
+    var none: string[] = [];
+    var vars: string[] = add_tvars(add_tvars(none, im.all_type_params), im.type_params);
+    if (vars.len() == 0) { return im; }
+    var cts: string[] = tvar_spellings(vars);
+    return ImplInfo { ...im, impl_type: subst_ty(im.impl_type, vars, cts), type_params: rename_ty_list(im.type_params, vars, cts),
+        all_type_params: rename_ty_list(im.all_type_params, vars, cts), bounds: rename_bounds(im.bounds, vars, cts),
+        trait_ref: subst_ty(im.trait_ref, vars, cts), assoc_values: rename_ty_list(im.assoc_values, vars, cts) };
+}
+
+// rename_tv_stmts respells a body: every expression through astwalk.map_expr,
+// then the statement-level annotations the expression walk does not reach.
+function rename_tv_stmts(stmts: ast.Stmt[], vars: string[], cts: string[]): ast.Stmt[] {
+    return rename_tv_annots(astwalk.map_stmts(stmts, (e: ast.Expr): ast.Expr => rename_tv_expr(e, vars, cts)), vars, cts);
+}
+
+// rename_tv_expr respells the type spellings one expression node carries;
+// map_expr supplies the recursion.
+function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
+    match (e) {
+        ast.ExprIdent(id) => {
+            var k: i32 = tp_index(id.name, vars);
+            var name: string = id.name;
+            if (k >= 0) { name = cts[k]; }
+            return ast.ExprIdent { ...id, name: name, ty: subst_ty(id.ty, vars, cts) };
+        },
+        ast.ExprCall(c) => { return ast.ExprCall { ...c, type_args: rename_ty_list(c.type_args, vars, cts), ty: subst_ty(c.ty, vars, cts) }; },
+        ast.ExprBinary(b) => { return ast.ExprBinary { ...b, ty: subst_ty(b.ty, vars, cts) }; },
+        ast.ExprUnary(u) => { return ast.ExprUnary { ...u, ty: subst_ty(u.ty, vars, cts) }; },
+        ast.ExprIndex(ix) => { return ast.ExprIndex { ...ix, ty: subst_ty(ix.ty, vars, cts) }; },
+        ast.ExprSlice(sl) => { return ast.ExprSlice { ...sl, ty: subst_ty(sl.ty, vars, cts) }; },
+        ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { ...fa, ty: subst_ty(fa.ty, vars, cts) }; },
+        ast.ExprArray(ar) => { return ast.ExprArray { ...ar, elem_ty: subst_ty(ar.elem_ty, vars, cts) }; },
+        ast.ExprZero(z) => { return ast.ExprZero { ...z, type_name: subst_ty(z.type_name, vars, cts) }; },
+        ast.ExprStructLit(sl) => { return ast.ExprStructLit { ...sl, type_name: subst_ty(sl.type_name, vars, cts) }; },
+        ast.ExprLambda(lm) => {
+            var lps: ast.ParamDecl[] = [];
+            for lpd in lm.params { lps = lps.append(rename_param_type_vars(lpd, vars, cts)); }
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, vars, cts), ret_fn_ret: subst_ty(lm.ret_fn_ret, vars, cts),
+                ret_fn_param_types: subst_ty_list(lm.ret_fn_param_types, vars, cts), body: rename_tv_annots(lm.body, vars, cts) };
+        },
+        _ => { return e; }
+    }
+    return e;
+}
+
+// rename_tv_annots respells the `var x: T` annotations of a block and of the
+// blocks it encloses. A destructure's marker channel is not a type.
+function rename_tv_annots(stmts: ast.Stmt[], vars: string[], cts: string[]): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    for st in stmts { out = out.append(rename_tv_annot(st, vars, cts)); }
+    return out;
+}
+
+function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt {
+    match (st) {
+        ast.StmtVar(v) => {
+            if (is_destr_marker(v.type_name)) { return st; }
+            return ast.StmtVar { ...v, type_name: subst_ty(v.type_name, vars, cts), fn_ret: subst_ty(v.fn_ret, vars, cts), fn_param_types: subst_ty_list(v.fn_param_types, vars, cts) };
+        },
+        ast.StmtIf(f) => { return ast.StmtIf { ...f, then_body: rename_tv_annots(f.then_body, vars, cts), else_body: rename_tv_annots(f.else_body, vars, cts) }; },
+        ast.StmtWhile(w) => { return ast.StmtWhile { ...w, body: rename_tv_annots(w.body, vars, cts) }; },
+        ast.StmtFor(fo) => { return ast.StmtFor { ...fo, body: rename_tv_annots(fo.body, vars, cts) }; },
+        ast.StmtMatch(mt) => {
+            var arms: ast.MatchArm[] = [];
+            for arm in mt.arms { arms = arms.append(ast.MatchArm { ...arm, body: rename_tv_annots(arm.body, vars, cts) }); }
+            return ast.StmtMatch { ...mt, arms: arms };
+        },
+        ast.StmtDefer(d) => { return ast.StmtDefer { ...d, action: rename_tv_annot(d.action, vars, cts) }; },
+        _ => { return st; }
+    }
+    return st;
+}
+
 // parse_impl_block yields the parser plus the desugared receiver-method
 // FuncDecls produced from an `impl Trait for Type { … }` block, along
 // with the metadata parse_module needs to synthesise inherited trait
@@ -20793,7 +20957,9 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         parsed = substitute_const_refs(parsed, inferred_const_table(funcs, inferred, ConstTable { names: nothing, values: [] }));
         parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), inferred_consts: inferred };
     }
-    return (settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed)))), traits, impl_decls, flines, inline_hints);
+    var settled: Module = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
+    if (!verbatim) { settled = rename_type_vars_module(settled); }
+    return (settled, traits, impl_decls, flines, inline_hints);
 }
 
 // merge_module flat-concatenates `into`'s decls with `from`'s:
