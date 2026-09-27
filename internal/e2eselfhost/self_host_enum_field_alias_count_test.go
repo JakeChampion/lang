@@ -116,7 +116,7 @@ function main(): i32 {
 const enumFieldAliasCountWant = 24
 
 // A returned alias (and a returned fresh enum local, the same family's sweep)
-// hands its count to the caller, which no caller credit releases yet, so these
+// hands its count to the caller, which no caller credit releases yet (#10365), so these
 // shapes are held to the answer and the underflow detector, not the census.
 // Before the fix the returning frame's own sweep freed the box it returned.
 const enumFieldAliasReturnSrc = `enum Sc { SA(i32), SB }

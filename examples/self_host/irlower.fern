@@ -33092,6 +33092,8 @@ function returned_own_struct_param_slot(e: ast.Expr, s: LowerState, acc: i32[]):
 //   - `return <arr-local>.append(e)`                      — receiver moved;
 //   - an enum-variant construction `return V(a, …)`       — each bare array-local
 //     payload arg is moved into the (leaking) enum box (#3720);
+//   - a bare returned enum local ("SCENUMS:" / "RCENUMS:") — its count goes to
+//     the caller;
 //   - a struct literal whose enum-typed field is built from such a construction
 //     (`return S { node: Many(items), … }`) — the array under the enum payload;
 //   - a returned pointer-shaped field of a reclaimable struct local

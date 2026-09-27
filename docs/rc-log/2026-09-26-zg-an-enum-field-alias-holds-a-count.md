@@ -47,7 +47,7 @@ Three releases the counted alias reached were wrong on their own:
 Still open: an enum call result is released by no caller credit unless its
 callee returns a direct constructor ("RCE:" and the scalar fresh-ret row), so a
 returned alias or local now leaks in the caller where it used to be freed
-before the caller read it. An alias the collector does not admit
+before the caller read it (#10365). An alias the collector does not admit
 takes no dup, so the dup and the release stay co-extensive, and it is still
 the uncounted borrow #10310 describes: a reassigned alias (`var g = h.e; … g = A(5);`
 answers 11 where 18 is right) and one assigned to an outer local (`last = g`
