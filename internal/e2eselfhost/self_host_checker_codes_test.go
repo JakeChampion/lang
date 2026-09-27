@@ -2537,6 +2537,13 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		// A method's parameter or result spelling the receiver's type
+		// parameter is bound by the receiver's instantiation, on an enum
+		// receiver as on a struct one (#10014).
+		{"method-enum-recv-bound-result-mismatch", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); var n: boolean = o.get_or(\"\"); return 0; }\n"},
+		{"method-enum-recv-bound-result-len", "enum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) get_or(d: T): T { match (b) { Full(x) => { return x; }, Empty => { return d; } } }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var o: Box[string] = Full(\"vw\"); return o.get_or(\"\").len(); }\n"},
+		{"method-struct-recv-bound-arg-mismatch", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[i32] = Hold { v: 3 }; return h.or_else(\"x\"); }\n"},
+		{"method-struct-recv-bound-result-len", "struct Hold[T] { v: T }\nfunction (h: Hold[T]) or_else(d: T): T { if (h.v == d) { return d; } return h.v; }\nfunction main(): i32 { return 0; }\nfunction f(): i32 { var h: Hold[string] = Hold { v: \"ab\" }; return h.or_else(\"x\").len(); }\n"},
 		{"loop-string-byte-binding", `function f(text: string): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},
 		{"loop-string-byte-mismatch", `function f(text: string): i32 { for ch in text { var wrong: string = ch; } return 0; }`},
 		{"loop-str-byte-binding", `function f(text: str): i32 { var out: u8[] = []; for ch in text { out = out.append(ch); } return out.len(); }`},

@@ -4326,39 +4326,25 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
     if (c.args.len() != msig.param_types.len()) {
       return t_unknown("arity mismatch calling method `" + name + "`");
     }
+    // A signature spelling one of the receiver's type parameters (`function
+    // (b: Box[T]) get(): T`, `function (o: Option[T]) unwrap_or(fallback: T):
+    // T`, or a nested `T[]`) resolves it to `unknown` at collect time. On a
+    // concrete instantiation (`Box[i32]`, `Option[string]`) those parameters
+    // are bound to the receiver's arguments throughout the parameter and
+    // return spellings (#4346 piece 2); what stays unresolved is not checked.
+    var rmb: MethodBinding = method_binding(c, msig, nominal_args(recv_ty), s);
     var mi: i32 = 0;
     while (mi < c.args.len()) {
+      var want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
       var mat: typeinfo.Type = check_expr(c.args[mi], s);
-      if (!settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
+      if (!is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
         return t_unknown("arg-type mismatch calling method `" + name + "`");
       }
       mi = mi + 1;
     }
     var wret: typeinfo.Type = written_method_ret(c, msig, nominal_args(recv_ty), s);
     if (!is_unknown(wret)) { return wret; }
-    // Generic-receiver method return substitution (#4346 piece 2): a method
-    // whose declared return type names one of the receiver struct's type
-    // parameters (`function (b: Box[T]) get(): T`, or a nested `T[]`)
-    // resolves that spelling to `unknown` at collect time. When the receiver
-    // is a concrete instantiation (`Box[i32]`, carrying args [i32]),
-    // substitute the struct's type parameters with those args throughout the
-    // return spelling — so `b.get()` is i32, not the erased unknown. Mirrors
-    // the field-access substitution; reuses type_from_ref_subst.
-    if (type_contains_unknown(msig.ret_type) && msig.ret_type_name.len() > 0) {
-      match (recv_ty) {
-        typeinfo.TypeStruct(rsn) => {
-          if (rsn.args.len() > 0) {
-            var rssig: StructSig = s.lookup_struct(rsn.name);
-            if (rssig.name.len() > 0 && rssig.type_params.len() > 0) {
-              var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
-              return type_from_ref_subst(rref, rssig.type_params, rsn.args, s.structs.names, s.unions.names);
-            }
-          }
-        },
-        _ => {}
-      }
-    }
-    return msig.ret_type;
+    return receiver_bound(msig.ret_type, msig.ret_type_name, rmb, s);
   }
   // If the ident is bound in scope to a TypeFunc,
   // dispatch as a closure call rather than a plain
@@ -5886,6 +5872,18 @@ function written_method_ret(c: ast.ExprCall, msig: MethodSig, recv_args: typeinf
   var rref: parser.TypeRef = parser.parse_type_ref(msig.ret_type_name);
   if (!type_ref_names_any(rref, mb.written)) { return t_unknown("result names no written type argument"); }
   return type_from_ref_subst(rref, mb.names, mb.types, s.structs.names, s.unions.names);
+}
+
+// receiver_bound is `t`, spelled `spelling`, with the receiver's type
+// parameters bound as `mb` binds them, when `t` holds an erased one.
+function receiver_bound(t: typeinfo.Type, spelling: string, mb: MethodBinding, s: Scope): typeinfo.Type {
+  if (!type_contains_unknown(t) || spelling.len() == 0 || mb.names.len() == 0) { return t; }
+  return type_from_ref_subst(parser.parse_type_ref(spelling), mb.names, mb.types, s.structs.names, s.unions.names);
+}
+
+function param_type_name_at(msig: MethodSig, i: i32): string {
+  if (i < msig.param_type_names.len()) { return msig.param_type_names[i]; }
+  return "";
 }
 
 // same_nominal reports whether two types are both the struct, or both the
@@ -11180,14 +11178,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               // assignability check is sound on real code
               // (verified across all self-host modules) —
               // no longer restricted to primitives.
+              var rmb: MethodBinding = method_binding(c, msig, sn.args, s);
               var mi: i32 = 0;
               while (mi < c.args.len()) {
                 var mat: typeinfo.Type = check_expr(c.args[mi], s);
-                out = util.append_diags(out, int_dest_range_diags(c.args[mi], msig.param_types[mi]));
+                var want: typeinfo.Type = receiver_bound(msig.param_types[mi], param_type_name_at(msig, mi), rmb, s);
+                out = util.append_diags(out, int_dest_range_diags(c.args[mi], want));
                 // Skip an opaque generic param type (see
                 // the free-function E038 note above).
-                if (!is_unknown(mat) && !is_unknown(msig.param_types[mi]) && !settles_to(c.args[mi], msig.param_types[mi], s) && !view_arg_borrow(mat, msig.param_types[mi]) && !coercible(mat, msig.param_types[mi], s)) {
-                  out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(msig.param_types[mi]) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
+                if (!is_unknown(mat) && !is_unknown(want) && !settles_to(c.args[mi], want, s) && !view_arg_borrow(mat, want) && !coercible(mat, want, s)) {
+                  out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + mfa.field + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
                 }
                 // E034: composite-array method argument
                 // elements vs the parameter element type.
@@ -19763,9 +19763,39 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
     ls = ls.bind(lm.params[i].name, pts[i]);
     i = i + 1;
   }
+  // A value block's result spelling is the parser's guess from the tail's
+  // syntax, so a checked tail that names a whole type replaces it.
   var typed: ast.ExprLambda = lm;
-  if (lm.ret_type.len() == 0) { typed = inferred_lambda_result(lm, ls); }
+  if (lm.ret_type.len() == 0 || parser.is_value_block_origin(lm.origin)) { typed = inferred_lambda_result(lm, ls, lm.ret_type.len() > 0); }
   return ast.ExprLambda { ...typed, body: annotate_block(lm.body, ls), captures: captures, captures_known: true };
+}
+
+// names_whole_type reports whether `t` is a complete type: nothing unknown in
+// it, and no generic union named with fewer arguments than it declares — a
+// bare `None` checks as the `Option` family, which no binding has.
+function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
+  if (type_contains_unknown(t)) { return false; }
+  match (t) {
+    typeinfo.TypeUnion(u) => { return u.args.len() >= union_arity(s, u.name) && all_names_whole(u.args, s); },
+    typeinfo.TypeArray(a) => { return names_whole_type(a.elem, s); },
+    typeinfo.TypeTuple(tt) => { return all_names_whole(tt.elements, s); },
+    typeinfo.TypeMap(m) => { return names_whole_type(m.key, s) && names_whole_type(m.value, s); },
+    typeinfo.TypeStruct(sd) => { return all_names_whole(sd.args, s); },
+    _ => { return true; }
+  }
+  return true;
+}
+
+function all_names_whole(ts: typeinfo.Type[], s: Scope): boolean {
+  for t in ts { if (!names_whole_type(t, s)) { return false; } }
+  return true;
+}
+
+// union_arity is how many type arguments the union `name` takes.
+function union_arity(s: Scope, name: string): i32 {
+  if (name == "Option") { return 1; }
+  if (name == "Result") { return 2; }
+  return s.lookup_union(name).type_params.len();
 }
 
 // A lambda spelling no result is hoisted as a declaration spelling none, and
@@ -19776,10 +19806,11 @@ function annotate_lambda_expr(lm: ast.ExprLambda, s: Scope, self_name: string): 
 // empty: a result nested inside another type that holds a function, which no
 // spelling carries, and a bare literal, which adapts to the width of whatever
 // receives the lambda.
-function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope): ast.ExprLambda {
+function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean): ast.ExprLambda {
   var (returned, at) = first_returned(lm.body, body_scope);
   if (bare_return(returned) || int_literal_tree(returned)) { return lm; }
   var t: typeinfo.Type = check_expr(returned, at);
+  if (need_whole && !names_whole_type(t, at)) { return lm; }
   if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return lm; } }
   if (is_unknown(t)) { return lm; }
   if let typeinfo.TypeFunc(_) = t {

@@ -4457,15 +4457,14 @@ function insert_value_is_ptr(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
-// map_read_aliases_arr_value: `<recv>.get(k)` / `<recv>.get_or(k, d)` where the
-// receiver is a map whose VALUE column is an array type — the read the comment at
-// the alias_inc site describes. `get_or`'s DEFAULT operand is irrelevant here: the
-// slot is retained either way, and a fresh default literal handed back instead
-// simply carries one extra count (a leak at worst, never a dangle).
+// map_read_aliases_arr_value: `<recv>.get_or(k, d)` where the receiver is a map
+// whose VALUE column is an array type — the read the comment at the alias_inc
+// site describes. The DEFAULT operand is irrelevant here: the slot is retained
+// either way, and a fresh default literal handed back instead simply carries one
+// extra count (a leak at worst, never a dangle). `get` is not such a read: it
+// hands back an Option box of its own, which the payload never escapes.
 function map_read_aliases_arr_value(fa: ast.ExprFieldAccess, nargs: i32, s: LowerState): boolean {
-    if (fa.field == "get" && nargs != 1) { return false; }
-    if (fa.field == "get_or" && nargs != 2) { return false; }
-    if (fa.field != "get" && fa.field != "get_or") { return false; }
+    if (fa.field != "get_or" || nargs != 2) { return false; }
     return map_value_type_is_arr(map_value_of(expr_map_type_tag(fa.obj, s)));
 }
 
@@ -8305,8 +8304,9 @@ pub function str_expr_ownership(e: ast.Expr, s: LowerState): i32 {
 //   - __raw_string(p, n)                       — the Tier-2 raw box constructor
 // EXCLUDED here (need the `: string` disambiguation, handled in the caller): a
 // bare `a + b` (could be int add) and the `.<m>()` methods (`.reverse()` /
-// `.repeat()` also exist on arrays). `.to_string()` stays excluded entirely — it
-// is the identity/alias case on a string receiver and may return a struct field.
+// `.repeat()` also exist on arrays). `.to_string()` is a method, not an ident
+// callee, so it never reaches this test; str_local_binding_is_fresh admits it on
+// a stamped scalar receiver and refuses it on a string one.
 function str_free_producer_ident(c: ast.ExprCall): boolean {
     match (c.callee) {
         ast.ExprIdent(cid) => {
@@ -8343,14 +8343,17 @@ function str_free_producer_ident(c: ast.ExprCall): boolean {
 // DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
 // and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
-// (aliases a live string), `.replace()` / `.to_string()` (receiver-identity
-// fast-paths), and a general call (may return a borrowed param).
+// (aliases a live string), `.replace()` and a string receiver's `.to_string()`
+// (receiver-identity fast-paths), and a general call (may return a borrowed
+// param). A stamped scalar's `.to_string()` is admitted: only the
+// stamped_scalar receiver test separates it from the string receiver's alias.
 function str_local_binding_is_fresh(init: ast.Expr): boolean {
     match (init) {
         ast.ExprCall(c) => {
             if (str_free_producer_ident(c)) { return true; }
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "to_string") { return c.args.len() == 0 && stamped_scalar(cfa.obj); }
                     if (!str_fresh_alloc_method(cfa.field)) { return false; }
                     if (cfa.field == "repeat") { return c.args.len() == 1; }
                     return c.args.len() == 0;
@@ -8454,6 +8457,16 @@ function is_fresh_str_temp(e: ast.Expr, s: LowerState): boolean {
 // credit comes from the receiver-TYPE-gated trim collector instead. `replace`
 // returns the receiver unchanged when the needle is absent, so it stays out —
 // and `lines` / `split` return arrays, not strings.
+// stamped_scalar reports whether the checker typed `e` a number, whose
+// `to_string` is the builtin decimal-text producer and always allocates. A
+// struct's may return an alias of a field, and an unstamped receiver proves
+// nothing.
+function stamped_scalar(e: ast.Expr): boolean {
+    if let ast.ExprNumber(_) = e { return true; }
+    var t: string = ast.expr_ty(e);
+    return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "f64" || t == "f32" || t == "u8" || t == "usize";
+}
+
 function str_fresh_alloc_method(field: string): boolean {
     return field == "to_ascii_upper" || field == "to_ascii_lower" || field == "repeat";
 }
@@ -23674,7 +23687,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // is_f64arr) flow from the same map_kv_elem_tag gate via the
                     // predicates below, so the slot's width stays consistent.
                     else if (map_kv_elem_tag(cfa.obj, cfa.field, cc.args.len(), se) != "") { is_arr = true; }
-                    // `var v: i32[] = m.get_or(k, d)` / `= m.get(k)` on an
+                    // `var v: i32[] = m.get_or(k, d)` on an
                     // ARRAY-valued map: the register map read hands back the
                     // column's raw pointer, an UNCOUNTED alias of a buffer the map
                     // still owns. Binding it to an array slot makes it a COUNTED
@@ -23888,6 +23901,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             },
             _ => {}
         }
+    }
+    if (struct_ty == "" && v.type_name.len() == 0) {
+        var (vbst, vbarr) = value_block_struct_type(v.init, se.frame.structs);
+        if (vbst != "") { struct_ty = vbst; is_arr = is_arr || vbarr; }
     }
     // Aliasing an array local (`var qs = ps`) — expr_struct_type returns
     // "" for an array (the value itself isn't a struct), so the ELEMENT
@@ -37653,8 +37670,7 @@ function litstr_tostring_recv_body(stmts: ast.Stmt[], name: string): boolean {
 // --- `<scalar>.to_string()` string locals (#6599) -----------------------------
 //
 // `var s: string = i.to_string()` leaked its box on every backend: the method form
-// is excluded from str_free_producer_ident / str_local_binding_is_fresh, whose
-// comments give the reason — `.to_string()` is a "receiver-identity fast-path". That
+// was refused as a "receiver-identity fast-path" whatever its receiver. That
 // is true on a STRING receiver, where the call returns the receiver itself, so
 // freeing the result would release a box the source still owns. On a SCALAR receiver
 // it is the decimal-text builtin returning a fresh sole-owned box, which is the same
@@ -65275,30 +65291,6 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         // path and dispatches on the real type; an annotated binding already
         // supplies the type.
         else if (enum_ret_recordable(rt, fn, structs)) { elig = true; }
-        // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
-        // ret_type from the desugar, not the struct it actually returns — so
-        // trust the BODY, not the declaration. Infer a leaf-safe struct return
-        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
-        // .. }).x` recover the struct type at the `__lam_N()` call site.
-        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
-            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
-            if (inf.len() > 0) { elig = true; elem_t = inf; }
-            else {
-                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
-                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
-                // literal, so record the ELEMENT struct type (the slot is is_arr
-                // via array_ret_fns, so struct_type_of_slot reads as the element
-                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
-                // fixes.
-                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
-                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
-                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
-                // is lifted the same way, and `cs[i].m()` needs the element type
-                // for the same reason. A variant box is leak-only, so — as in the
-                // scalar enum arm — there is no leak-safety test to apply.
-                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
-            }
-        }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
         // struct type so a call site `var a = f()` (already is_arr via
         // arr_ret_fns) recovers `a[i]`'s struct type for field access / foreach.
@@ -65343,6 +65335,31 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
                         api = fn.params.len();
                     } else { api = api + 1; }
                 }
+            }
+        }
+        // A lifted if-/match-EXPRESSION (`__lam_N`) the checker did not annotate
+        // carries the desugar's default `i32` ret_type, not the struct it
+        // actually returns — so trust the BODY. Last, so an annotated
+        // declaration answers first. Infer a leaf-safe struct return
+        // so `var p = if (c) { P{..} } else { .. }` / `(if (c) { P{..} } else {
+        // .. }).x` recover the struct type at the `__lam_N()` call site.
+        else if (fn.name.len() >= 6 && slice_unchecked(fn.name, 0, 6) == "__lam_") {
+            var inf: string = fn_inferred_struct_ret(fn, structs, funcs, 0);
+            if (inf.len() > 0) { elig = true; elem_t = inf; }
+            else {
+                // A struct-ARRAY-valued lifted if-/match-expression (`var ps =
+                // if (c) { [P{..}] } else { … }`): its leaf is a struct-array
+                // literal, so record the ELEMENT struct type (the slot is is_arr
+                // via array_ret_fns, so struct_type_of_slot reads as the element
+                // for `ps[i].field`). The P[] sibling of the string[]/f64[] #3224
+                // fixes.
+                var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
+                if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
+                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
+                // is lifted the same way, and `cs[i].m()` needs the element type
+                // for the same reason. A variant box is leak-only, so — as in the
+                // scalar enum arm — there is no leak-safety test to apply.
+                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
             }
         }
         // A SCALAR `dyn Trait` return: record the coarse "dyn <Trait>" type so a
@@ -75027,6 +75044,9 @@ function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
             ast.StmtReturn(r) => {
                 if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
             },
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && passthrough_arg_has_lambda(a.value, mfuncs)) { return true; }
+            },
             ast.StmtIf(iff) => {
                 if (iife_arms_have_lambda(iff.then_body, mfuncs)) { return true; }
                 if (iife_arms_have_lambda(iff.else_body, mfuncs)) { return true; }
@@ -75077,31 +75097,42 @@ function passthrough_arg_has_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
     return false;
 }
 
+// is_arm_value_store reports whether `a` is an arm yielding its value the way
+// the tuple / struct / nested-pattern match desugars do: by storing it into the
+// expression's value local (IfChain.value_local) rather than returning it.
+function is_arm_value_store(a: ast.StmtAssign): boolean {
+    return parser.is_value_local_name(lexical.source_name(a.target));
+}
+
+// iife_return_holds_fn_value: does an arm's returned value yield a fn? A
+// fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`) is a fn value
+// too, though lift_arg_is_fn_value declines it — that predicate answers "is
+// this worth env-boxing?", and an already-boxed local is not — so the
+// declared type answers it. A nested value-position if/match arm yields
+// whatever its own arms yield, so the question descends into it.
+function iife_return_holds_fn_value(v: ast.Expr, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    if (lift_arg_is_fn_value(v, mfuncs)) { return true; }
+    match (v) {
+        ast.ExprIdent(aid) => { return aid.ty == "fn"; },
+        ast.ExprCall(rc) => {
+            if let ast.ExprLambda(ril) = rc.callee {
+                return rc.args.len() == 0 && ril.params.len() == 0 && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs);
+            }
+            return false;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
+            ast.StmtAssign(a) => {
+                if (is_arm_value_store(a) && lift_arg_is_fn_value(a.value, mfuncs)) { return true; }
+            },
             ast.StmtReturn(r) => {
-                if (lift_arg_is_fn_value(r.value, mfuncs)) { return true; }
-                // A fn-typed LOCAL or PARAM arm (`(if (c) { v0 } else { … })`)
-                // is a fn value too, but lift_arg_is_fn_value declines it — that
-                // predicate answers "is this worth env-boxing?", and an already-
-                // boxed local is not. Here the question is "does this arm yield a
-                // fn?", so the declared type answers it.
-                match (r.value) {
-                    ast.ExprIdent(aid) => { if (aid.ty == "fn") { return true; } },
-                    // A nested value-position if/match arm yields whatever its own
-                    // arms yield, so the question descends into it.
-                    ast.ExprCall(rc) => {
-                        match (rc.callee) {
-                            ast.ExprLambda(ril) => {
-                                if (rc.args.len() == 0 && ril.params.len() == 0
-                                        && iife_arms_hold_fn_value(ril.body, fd, structs, mfuncs)) { return true; }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
+                if (iife_return_holds_fn_value(r.value, fd, structs, mfuncs)) { return true; }
             },
             ast.StmtIf(iff) => {
                 if (iife_arms_hold_fn_value(iff.then_body, fd, structs, mfuncs)) { return true; }
@@ -78663,6 +78694,21 @@ pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
 
 pub function (s: LowerState) with_fld_moves(keys: string[]): LowerState {
     return LowerState { ...s, fld_moves: keys };
+}
+
+// value_block_struct_type is the struct or enum a value block's checked result
+// names, with true when the result is an array of one, or "". It answers where
+// the block's leaf cannot: a tail naming a local the block itself declared.
+function value_block_struct_type(init: ast.Expr, structs: StructTab): (string, boolean) {
+    if let ast.ExprCall(c) = init {
+        if let ast.ExprLambda(lam) = c.callee {
+            var arr: boolean = is_array_type_name(lam.ret_type);
+            var et: string = lam.ret_type;
+            if (arr) { et = slice_unchecked(et, 0, et.len() - 2) + ""; }
+            if (parser.is_value_block_origin(lam.origin) && (decl_is_struct(structs, et) || is_enum_like_name(et, structs))) { return (et, arr); }
+        }
+    }
+    return ("", false);
 }
 
 function struct_ty_from_arr_alias(se: LowerState, v: ast.StmtVar, struct_ty: string): string {
