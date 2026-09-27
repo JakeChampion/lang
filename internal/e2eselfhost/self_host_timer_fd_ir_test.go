@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -27,11 +25,7 @@ import (
 // also exercises slice-1 poll over a REAL fd; (b) the portability shims, whose
 // native values (-1 / 0) compose to a known exit code without any syscall.
 func TestSelfHostTimerFdIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cli := buildSelfHostCLI(t)
 
 	cases := []struct {
 		name string
@@ -66,24 +60,8 @@ func TestSelfHostTimerFdIRX86_64(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "tfd_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			if stderr, code := cli.exitOf(t, string(src), "x86-64-linux"); code != tc.exit {
+				t.Errorf("%s exited %d, want %d\n%s", tc.name, code, tc.exit, stderr)
 			}
 		})
 	}

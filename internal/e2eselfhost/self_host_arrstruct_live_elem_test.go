@@ -74,7 +74,7 @@ func arrstructLiveElemCases() []arrstructLiveElemCase {
     return (ps.len() + p.xs.len() + p.n) % 101;
 }
 ` + alelMain,
-			want: 4, allocs: 400, frees: 400,
+			want: 4, allocs: 300, frees: 300,
 		},
 		{
 			// A struct PARAM element: the CALLER owns the box, so the retain is
@@ -93,7 +93,7 @@ function round(i: i32): i32 {
     return (t + p.xs.len() + p.n) % 101;
 }
 ` + alelMain,
-			want: 4, allocs: 400, frees: 400,
+			want: 4, allocs: 300, frees: 300,
 		},
 		{
 			// The SAME box pushed four times. The walk decs it once per element
@@ -110,7 +110,7 @@ function round(i: i32): i32 {
     return (ps.len() + p.xs[0] + p.xs[1] + p.n) % 101;
 }
 ` + alelMain,
-			want: 4, allocs: 400, frees: 400,
+			want: 4, allocs: 300, frees: 300,
 		},
 		{
 			// The MOVED element, which must NOT be stamped: a block-scoped local
@@ -133,7 +133,7 @@ function round(i: i32): i32 {
     return acc % 101;
 }
 ` + alelMain,
-			want: 36, allocs: 1000, frees: 1000,
+			want: 36, allocs: 900, frees: 900,
 		},
 		{
 			// The source is REBOUND after the push. The rebind's field reclaim
@@ -149,7 +149,7 @@ function round(i: i32): i32 {
     return (ps.len() + p.n) % 101;
 }
 ` + alelMain,
-			want: 5, allocs: 600, frees: 600,
+			want: 5, allocs: 500, frees: 500,
 		},
 		{
 			// THE USE-AFTER-FREE the rc gate closes, read as a VALUE rather than a
@@ -167,7 +167,7 @@ function round(i: i32): i32 {
     return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0];
 }
 ` + alelMain,
-			want: 45, allocs: 800, frees: 800,
+			want: 45, allocs: 700, frees: 700,
 		},
 	}
 }
