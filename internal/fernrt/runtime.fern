@@ -582,7 +582,7 @@ function __signal_watch(r: i64, sig: i32): i32 {
     if (target_os() == "darwin") {
         __sig_disposition(sig, 1);
         var ch: usize = __alloc(32);
-        __kevent_change(ch, sig, 0 - 3, 5);
+        __kevent_change(ch, sig, 0 - 6, 5);
         var e: i64 = __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
         __free(ch, 32);
         return e as i32;
@@ -609,7 +609,7 @@ function __signal_watch(r: i64, sig: i32): i32 {
 function __signal_unwatch(r: i64, sig: i32, sfd: i32): i32 {
     if (target_os() == "darwin") {
         var ch: usize = __alloc(32);
-        __kevent_change(ch, sig, 0 - 3, 2);
+        __kevent_change(ch, sig, 0 - 6, 2);
         __syscall6(__sys_kevent(), r, ch as i64, 1, 0, 0, 0);
         __free(ch, 32);
         return __sig_disposition(sig, 0);
@@ -689,8 +689,8 @@ function __kqueue_wait_into(kq: i64, events: usize, cap: i32, timeout_ms: i32): 
         var ready: i32 = 2;
         var fd: i32 = __load_i32(e);
         if (__load_u8(e + 8) == 255) { ready = 1; }
-        if (__load_u8(e + 8) == 253) {
-            // EVFILT_SIGNAL: the ident is the signal.
+        if (__load_u8(e + 8) == 250) {
+            // EVFILT_SIGNAL (-6): the ident is the signal.
             ready = 1;
             fd = 0 - fd;
         }
