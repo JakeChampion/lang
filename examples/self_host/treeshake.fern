@@ -116,9 +116,9 @@ function ts_recv_rooted(name: string): boolean {
 // soundness property the hand-written walk this replaces had.
 // ts_routed_map_roots are the core/map functions the typed lowering calls for
 // a map it routes onto core/map (ssarc.routed_map_site), which no source
-// spells. A program reaches a map only through core/map's import, so they are
-// rooted wherever core/map is loaded — a map can arrive as a parameter with no
-// construction anywhere.
+// spells. They are rooted wherever a map can reach the program
+// (ts_reaches_map), not wherever core/map is loaded: map_new_impl draws the
+// hash seed, which on wasm is an import a program without maps must not carry.
 function ts_routed_map_roots(): string[] {
     return ["map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
         "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
@@ -341,6 +341,74 @@ pub function reach_key(fd: parser.FuncDecl): string {
 // body-bearing async functions). Structs / enums / aliases / imports /
 // top_stmts / exports are preserved unchanged (only the function list — the
 // IR-budget axis — is pruned). Idempotent.
+struct TsGrown { rs: RefSet, pending: i32[] }
+
+// ts_grow grows `rs` to a fixpoint over the functions in `pending`: any
+// function whose name is reachable contributes the names ITS body references,
+// and leaves `pending`. The names a body references do not change between
+// rounds, so each function contributes once.
+function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
+    var rs: RefSet = rs0;
+    var pending: i32[] = pending0;
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var still: i32[] = [];
+        var pi: i32 = 0;
+        while (pi < pending.len()) {
+            var fi: i32 = pending[pi];
+            if (ts_kept_name(mod.funcs[fi], rs)) {
+                var body_names: string[] = ts_func_names(mod.funcs[fi], []);
+                var bi: i32 = 0;
+                while (bi < body_names.len()) {
+                    if (!refset_has(rs, body_names[bi])) {
+                        rs = refset_add(rs, body_names[bi]);
+                        changed = true;
+                    }
+                    bi = bi + 1;
+                }
+            } else {
+                still = still.append(fi);
+            }
+            pi = pi + 1;
+        }
+        pending = still;
+    }
+    return TsGrown { rs: rs, pending: pending };
+}
+
+// ts_reaches_map reports whether a map can reach the kept program: a map
+// constructor is reachable, a kept function or a lambda in one takes or
+// returns a map, or a struct or variant holds one.
+function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
+    if (refset_has(rs, "map_new") || refset_has(rs, "__map_new_i32")) { return true; }
+    for fd in mod.funcs {
+        if (!ts_kept_name(fd, rs)) { continue; }
+        if (ts_sig_mentions_map(fd.params, fd.ret_type)) { return true; }
+        var lambdas: string[] = [];
+        for st in fd.body { lambdas = astwalk.fold_stmt(st, lambdas, ts_map_lambda); }
+        if (lambdas.len() > 0) { return true; }
+    }
+    for st in mod.structs {
+        for fl in st.fields { if (util.contains(fl.type_name, "Map[")) { return true; } }
+    }
+    return false;
+}
+
+function ts_sig_mentions_map(params: ast.ParamDecl[], ret_type: string): boolean {
+    if (util.contains(ret_type, "Map[")) { return true; }
+    for p in params { if (util.contains(p.type_name, "Map[")) { return true; } }
+    return false;
+}
+
+// ts_map_lambda notes a lambda or nested function that takes or returns a map.
+function ts_map_lambda(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprLambda(l) = e {
+        if (ts_sig_mentions_map(l.params, l.ret_type)) { return acc.append("map"); }
+    }
+    return acc;
+}
+
 pub function treeshake(mod: parser.Module): parser.Module {
     // Seed the reachable-name set from the roots.
     var refs: string[] = ["main"];
@@ -401,12 +469,6 @@ pub function treeshake(mod: parser.Module): parser.Module {
         si = si + 1;
     }
 
-    var mi: i32 = 0;
-    while (mi < mod.funcs.len()) {
-        if (mod.funcs[mi].name == "map_new_impl") { refs = util.append_all(refs, ts_routed_map_roots()); break; }
-        mi = mi + 1;
-    }
-
     // An `async function` with a body is an entry point from outside: the
     // component-level export the wasm path lifts it as. A body-less
     // `@import(...) async` declaration is an import instead, and is excluded by
@@ -436,31 +498,13 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var pi0: i32 = 0;
     while (pi0 < mod.funcs.len()) { pending = pending.append(pi0); pi0 = pi0 + 1; }
 
-    var rs: RefSet = refset_of(refs);
-    var changed: boolean = true;
-    while (changed) {
-        changed = false;
-        var still: i32[] = [];
-        var pi: i32 = 0;
-        while (pi < pending.len()) {
-            var fi: i32 = pending[pi];
-            if (ts_kept_name(mod.funcs[fi], rs)) {
-                var body_names: string[] = ts_func_names(mod.funcs[fi], []);
-                var bi: i32 = 0;
-                while (bi < body_names.len()) {
-                    if (!refset_has(rs, body_names[bi])) {
-                        rs = refset_add(rs, body_names[bi]);
-                        changed = true;
-                    }
-                    bi = bi + 1;
-                }
-            } else {
-                still = still.append(fi);
-            }
-            pi = pi + 1;
-        }
-        pending = still;
+    var grown: TsGrown = ts_grow(mod, refset_of(refs), pending);
+    if (ts_reaches_map(mod, grown.rs)) {
+        var rs0: RefSet = grown.rs;
+        for root in ts_routed_map_roots() { if (!refset_has(rs0, root)) { rs0 = refset_add(rs0, root); } }
+        grown = ts_grow(mod, rs0, grown.pending);
     }
+    var rs: RefSet = grown.rs;
 
     // Keep only the reachable functions.
     var kept: parser.FuncDecl[] = [];
