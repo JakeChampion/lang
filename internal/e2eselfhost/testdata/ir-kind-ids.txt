@@ -314,3 +314,4 @@ udp_bind=334
 udp_connect=335
 udp_sendto=336
 udp_recvfrom=337
+tcp_connect_with=338

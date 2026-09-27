@@ -110,8 +110,9 @@ as data and pin its Linux, Darwin and WASI errno lists to
 `internal/strerror` row for row, and the `NetError` variant order to the
 errno-name list.
 
-`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run four probes over loopback,
-two on the socket controls and two on the datagram sockets:
+`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run six probes over loopback,
+two on the socket controls, two on the datagram sockets and two on the
+started connect:
 `e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
 `tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
 listener on Linux, no-delay and keep-alive, a non-blocking read that
@@ -128,8 +129,13 @@ second bind of a held port, the would-block of a non-blocking receive, and
 the close of both), and `e2eharness.NetUdpProbe` through std/net's
 `udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
 `local_port` and `close`, plus the `AddrInUse`, the refused IPv6 address
-and the `WouldBlock`. All four check the received bytes, not only their
-count. `TestSelfHostSocketCtl` compiles them with the production self-host
+and the `WouldBlock`; `e2eharness.ConnectProbe` on `tcp_connect_with` and
+control op 5 (a started connect settled by asking until it is no longer
+`-EINPROGRESS`, then accepted and used both ways, and the
+`-ECONNREFUSED` a connect to the closed port ends with, whether it fails
+as it starts or once it settles), and `e2eharness.NetConnectProbe` through
+`connect_start`, `connect_result` and `connect`. All six check the
+received bytes, not only their count. `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486);

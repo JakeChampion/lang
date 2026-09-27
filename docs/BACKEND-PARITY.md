@@ -147,8 +147,8 @@ has none of the raw floor.
 
 `tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
 arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
-`shutdown(2)` with `arg` its how) are the socket controls of #9853; std/net
-wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
+`shutdown(2)` with `arg` its how, 5 the result of a connect under way) are
+the socket controls of #9853; std/net wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
 numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
 blocking mode to turn off, and `reuse_port` is ignored: a port is one
 socket's there. Every other op and the backlog behave the same on every
@@ -180,6 +180,22 @@ a `udp_sendto` naming an address on a connected socket is refused with
 `EISCONN` where Linux sends it, so a connected socket sends with a zero
 address on every target; and the interpreter keeps a raw descriptor per
 datagram socket, so its errnos are the host's like the natives'.
+
+`tcp_connect_with(host_be, port, nonblocking)` is `tcp_connect`, or with
+`nonblocking` a non-blocking socket whose connect is only started: the
+descriptor comes back while the connect is under way (-errno only when it
+could not start), and control op 5 says how it ended: 0 once a peer is
+attached, `-EINPROGRESS` while none is and no error is pending, else the
+`-errno` it failed with, read once through `SO_ERROR`. On wasm the started
+connect is the record with kind 4 at offset 12 (start-connect done,
+finish-connect not yet), op 5 runs finish-connect (a `would-block` is
+`-EINPROGRESS`, 26 in the WASI numbering) and on success gives the record
+its streams; `tcp_close` on such a record drops the socket alone. The
+interpreter dials through the net package before answering, so its op 5
+is 0 at once and a refused dial is reported by `tcp_connect_with` itself.
+Waiting for a started connect is a loop over op 5 today: the readiness
+builtins watch readability only, and writability arrives with the reactor.
+std/net wraps the three as `connect`, `connect_start` and `connect_result`.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

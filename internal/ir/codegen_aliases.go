@@ -56,21 +56,22 @@ var CodegenAliases = map[string]string{
 	// The socket builtins whose runtime helper is written in Fern
 	// (internal/fernrt): the helper is named by its runtime symbol, and a
 	// backend that calls helpers by the builtin's name reaches it here.
-	"tcp_listen":      "__fern_tcp_listen",
-	"tcp_recv":        "__fern_tcp_recv",
-	"tcp_send":        "__fern_tcp_send",
-	"udp_send":        "__fern_udp_send",
-	"udp_bind":        "__fern_udp_bind",
-	"udp_connect":     "__fern_udp_connect",
-	"udp_sendto":      "__fern_udp_sendto",
-	"udp_recvfrom":    "__fern_udp_recvfrom",
-	"tcp_connect":     "__fern_tcp_connect",
-	"tcp_accept":      "__fern_tcp_accept",
-	"tcp_local_port":  "__fern_tcp_local_port",
-	"tcp_close":       "__fern_tcp_close",
-	"tcp_pollable":    "__fern_tcp_pollable",
-	"tcp_listen_with": "__fern_tcp_listen_with",
-	"tcp_socket_ctl":  "__fern_tcp_socket_ctl",
+	"tcp_listen":       "__fern_tcp_listen",
+	"tcp_recv":         "__fern_tcp_recv",
+	"tcp_send":         "__fern_tcp_send",
+	"udp_send":         "__fern_udp_send",
+	"tcp_connect_with": "__fern_tcp_connect_with",
+	"udp_bind":         "__fern_udp_bind",
+	"udp_connect":      "__fern_udp_connect",
+	"udp_sendto":       "__fern_udp_sendto",
+	"udp_recvfrom":     "__fern_udp_recvfrom",
+	"tcp_connect":      "__fern_tcp_connect",
+	"tcp_accept":       "__fern_tcp_accept",
+	"tcp_local_port":   "__fern_tcp_local_port",
+	"tcp_close":        "__fern_tcp_close",
+	"tcp_pollable":     "__fern_tcp_pollable",
+	"tcp_listen_with":  "__fern_tcp_listen_with",
+	"tcp_socket_ctl":   "__fern_tcp_socket_ctl",
 }
 
 // CodegenAlias resolves one call target through CodegenAliases, returning the

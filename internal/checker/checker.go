@@ -1962,10 +1962,20 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 	// tcp_socket_ctl(fd, op, arg): number — one control call on a socket.
 	// op 1 is TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK, each with arg
-	// 0 or 1; op 4 is shutdown with arg 0 (read), 1 (write) or 2 (both).
-	// 0, or -errno; an op the target has no control for is -EINVAL.
+	// 0 or 1; op 4 is shutdown with arg 0 (read), 1 (write) or 2 (both);
+	// op 5 is the result of a connect tcp_connect_with started: 0 once
+	// connected, -EINPROGRESS while under way, else the -errno it failed
+	// with. 0, or -errno; an op the target has no control for is -EINVAL.
 	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_connect_with(host_be, port, nonblocking): number — tcp_connect,
+	// or with `nonblocking` a non-blocking socket whose connect is only
+	// started: the descriptor while it is under way (-errno if it could
+	// not start), and tcp_socket_ctl op 5 to learn how it ended (#9853).
+	c.info.FuncSigs["tcp_connect_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
 		Result: ast.NumberType{},
 	}
 	// tcp_recv(fd, max): u8[] — one blocking read of at most max

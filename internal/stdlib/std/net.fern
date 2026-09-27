@@ -892,6 +892,39 @@ pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
     return __socket_count(udp_recvfrom(sock, buf, none));
 }
 
+// ---------------------------------------------------------------------------
+// Connecting
+//
+// Typed faces over `tcp_connect_with` and control op 5 of `tcp_socket_ctl`.
+
+// `connect(addr)` — a connection to `addr`, or the error the dial reported.
+pub function connect(addr: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(addr)) {
+        Ok(packed) => { return __socket_count(tcp_connect_with(packed, addr.port, false)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `connect_start(addr)` — a non-blocking socket whose connect to `addr` is
+// under way: the socket, or the error that stopped the connect from
+// starting. `connect_result` says how it ended; until then the socket is
+// not one to send on.
+pub function connect_start(addr: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(addr)) {
+        Ok(packed) => { return __socket_count(tcp_connect_with(packed, addr.port, true)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `connect_result(sock)` — how a started connect ended: `Ok(())` once the
+// socket is connected, `Err(InProgress)` while it is still under way, and
+// otherwise the error it failed with (once; the socket is then only good
+// for `close`). The interpreter connects before `connect_start` answers,
+// so there it is `Ok(())` at once.
+pub function connect_result(sock: i32): Result[(), NetError] {
+    return __socket_result(tcp_socket_ctl(sock, 5, 0));
+}
+
 // `local_port(sock)` — the port a socket is bound to, which is how a
 // socket bound to port 0 learns the one the host picked.
 pub function local_port(sock: i32): Result[i32, NetError] {

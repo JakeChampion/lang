@@ -257,6 +257,11 @@ function need_udp_send(needs: string[]): boolean {
     return need_any(needs, ["udp_send", "udp_sendto"]);
 }
 
+// The ops that dial: tcp_connect is tcp_connect_with without the flag.
+function need_tcp_connect(needs: string[]): boolean {
+    return need_any(needs, ["tcp_connect", "tcp_connect_with"]);
+}
+
 function need_any(needs: string[], names: string[]): boolean {
     var i: i32 = 0;
     while (i < names.len()) {
@@ -297,7 +302,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
         "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes",
         "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
         "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_socket_ctl", "temp_dir",
-        "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "wasm_block",
+        "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
         "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
         "writer_write", "write_some"
     ];
@@ -2652,9 +2657,9 @@ pub function network_handle_func(): string {
 // Every step's result<> puts its discriminant byte at retptr+0 and, on the Err
 // arm, the error-code at retptr+4 — hence the repeated "if disc then return
 // -errno" guard.
-pub function tcp_connect_func(): string {
+pub function tcp_connect_with_func(): string {
     var o: string = "";
-    o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
+    o = o + "  (func $__fern_tcp_connect_with (param $host i32) (param $port i32) (param $nb i32) (result i32)\n";
     o = o + "    (local $sock i32) (local $ret i32) (local $st i32) (local $e i32) (local $p i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_create_tcp_socket (i32.const 0) (local.get $ret))\n";
@@ -2676,6 +2681,12 @@ pub function tcp_connect_func(): string {
     o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=1 (local.get $ret)))))\n";
     o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
     o = o + "      (return (local.get $e))))\n";
+    // Non-blocking: the record goes back with the connect under way (kind
+    // 4); control op 5 finishes it.
+    o = o + "    (if (local.get $nb) (then\n";
+    o = o + "      (i32.store (local.get $ret) (local.get $sock))\n";
+    o = o + "      (i32.store offset=12 (local.get $ret) (i32.const 4))\n";
+    o = o + "      (return (local.get $ret))))\n";
     o = o + "    (local.set $p (call $__fern_wasi_tcp_subscribe (local.get $sock)))\n";
     o = o + "    (call $__fern_wasi_pollable_block (local.get $p))\n";
     o = o + "    (call $__fern_wasi_pollable_drop (local.get $p))\n";
@@ -2691,6 +2702,15 @@ pub function tcp_connect_func(): string {
     o = o + "    (i32.store offset=8 (local.get $st) (i32.load offset=8 (local.get $ret)))\n";
     o = o + "    (i32.store offset=12 (local.get $st) (i32.const 1))\n";
     o = o + "    (local.get $st))\n";
+    return o;
+}
+
+// $__fern_tcp_connect(host_be, port) is $__fern_tcp_connect_with without
+// the non-blocking flag.
+pub function tcp_connect_func(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
+    o = o + "    (call $__fern_tcp_connect_with (local.get $host) (local.get $port) (i32.const 0)))\n";
     return o;
 }
 
@@ -2797,9 +2817,29 @@ pub function tcp_socket_ctl_func(): string {
     o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
     o = o + "    (local $ret i32) (local $e i32)\n";
     o = o + "    (if (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (then (return (i32.const -58))))\n";
-    o = o + "    (if (i32.and (i32.ne (local.get $op) (i32.const 2)) (i32.ne (local.get $op) (i32.const 4))) (then (return (i32.const -28))))\n";
     // A datagram record has neither control either.
-    o = o + "    (if (i32.ge_u (i32.load offset=12 (local.get $c)) (i32.const 2)) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const -58))))\n";
+    // op 5: a connection is complete; a connecting record (kind 4) runs
+    // finish-connect, whose would-block (code 8) is -EINPROGRESS (26) and
+    // whose Ok hands over the streams.
+    o = o + "    (if (i32.eq (local.get $op) (i32.const 5)) (then\n";
+    o = o + "      (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then (return (i32.const 0))))\n";
+    o = o + "      (if (i32.ne (i32.load offset=12 (local.get $c)) (i32.const 4)) (then (return (i32.const -28))))\n";
+    o = o + "      (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "      (call $__fern_wasi_tcp_finish_connect (i32.load (local.get $c)) (local.get $ret))\n";
+    o = o + "      (if (i32.load8_u (local.get $ret))\n";
+    o = o + "        (then\n";
+    o = o + "          (if (i32.eq (i32.load8_u offset=4 (local.get $ret)) (i32.const 8))\n";
+    o = o + "            (then (local.set $e (i32.const -26)))\n";
+    o = o + "            (else (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret))))))))\n";
+    o = o + "        (else\n";
+    o = o + "          (i32.store offset=4 (local.get $c) (i32.load offset=4 (local.get $ret)))\n";
+    o = o + "          (i32.store offset=8 (local.get $c) (i32.load offset=8 (local.get $ret)))\n";
+    o = o + "          (i32.store offset=12 (local.get $c) (i32.const 1))\n";
+    o = o + "          (local.set $e (i32.const 0))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
+    o = o + "      (return (local.get $e))))\n";
+    o = o + "    (if (i32.and (i32.ne (local.get $op) (i32.const 2)) (i32.ne (local.get $op) (i32.const 4))) (then (return (i32.const -28))))\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 4)))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 2))\n";
     o = o + "      (then (call $__fern_wasi_tcp_set_keep_alive_enabled (i32.load (local.get $c)) (i32.ne (local.get $arg) (i32.const 0)) (local.get $ret)))\n";
@@ -2865,7 +2905,7 @@ pub function tcp_local_port_func(udp: boolean): string {
     o = o + "    (local $ret i32) (local $result i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
     if (udp) {
-        o = o + "    (if (i32.ge_u (i32.load offset=12 (local.get $c)) (i32.const 2))\n";
+        o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))\n";
         o = o + "      (then (call $__fern_wasi_udp_local_address (i32.load (local.get $c)) (local.get $ret)))\n";
         o = o + "      (else (call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))))\n";
     } else {
@@ -3300,8 +3340,8 @@ pub function tcp_recv_func(): string {
 pub function tcp_close_func(udp: boolean): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
-    if (udp) { o = o + "    (if (i32.ge_u (i32.load offset=12 (local.get $c)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n"; }
-    o = o + "    (if (i32.load offset=12 (local.get $c)) (then\n";
+    if (udp) { o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n"; }
+    o = o + "    (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then\n";
     o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
     o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
     o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
@@ -4376,9 +4416,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // udp_send(host, port, data) -> bytes accepted, or -errno / -1 on a
         // malformed host literal. All three args are on the stack (#4375).
         parts = parts.append("    call $__fern_udp_send\n");
-    } else if (o.kind_tag >= 334 && o.kind_tag <= 337) {  // udp_bind, udp_connect, udp_sendto, udp_recvfrom
-        // The datagram sockets: every arg is on the stack, the helper's
-        // i32 answer replaces them.
+    } else if (o.kind_tag >= 334 && o.kind_tag <= 338) {  // udp_bind, udp_connect, udp_sendto, udp_recvfrom, tcp_connect_with
+        // The datagram sockets and the started connect: every arg is on
+        // the stack, the helper's i32 answer replaces them.
         parts = parts.append("    call $__fern_" + ir.kind_name(o.kind_tag) + "\n");
     } else if (o.kind_tag == 110) {  // tcp_connect
         // tcp_connect(host_be, port) -> 16-byte connection struct pointer,
@@ -10261,8 +10301,8 @@ function preview1_imports(needs: string[]): string {
     // wasm_pollable_drop, since a duplicate import is an invalid module.
     // instance-network is shared by the tcp set and udp_send; one gate so it
     // is emitted exactly once (a duplicate import is an invalid module).
-    if (need_any(needs, ["tcp_connect", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"]) || need_udp_socket(needs)) { parts = parts.append(wasi_instance_network_import()); }
-    if (need_any(needs, ["tcp_connect", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"])) { parts = parts.append(wasi_sockets_imports()); }
+    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable"]) || need_udp_socket(needs)) { parts = parts.append(wasi_instance_network_import()); }
+    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl"])) { parts = parts.append(wasi_sockets_imports()); }
     // tcp_send / tcp_recv need the stream read/write imports (#4318 slice 2).
     if (need(needs, "tcp_send") || need(needs, "tcp_recv")) { parts = parts.append(wasi_stream_io_imports()); }
     // tcp_listen / tcp_accept add bind + listen + accept; tcp_pollable and
@@ -10282,10 +10322,10 @@ function preview1_imports(needs: string[]): string {
     if (need_udp_send(needs)) { parts = parts.append(wasi_udp_send_imports()); }
     if (need(needs, "udp_recvfrom")) { parts = parts.append(wasi_udp_recv_imports()); }
     var udp_waits: boolean = need_udp_send(needs) || need(needs, "udp_recvfrom");
-    if (udp_waits && !need(needs, "wasm_block") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_block_import()); }
-    if (udp_waits && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
-    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) { parts = parts.append(wasi_pollable_block_import()); }
-    if ((need(needs, "tcp_connect") || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) { parts = parts.append(wasi_pollable_drop_import()); }
+    if (udp_waits && !need(needs, "wasm_block") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_block_import()); }
+    if (udp_waits && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept") && !need(needs, "poll")) { parts = parts.append(wasi_pollable_drop_import()); }
+    if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_block")) { parts = parts.append(wasi_pollable_block_import()); }
+    if ((need_tcp_connect(needs) || need(needs, "tcp_accept")) && !need(needs, "wasm_pollable_drop")) { parts = parts.append(wasi_pollable_drop_import()); }
     // wasm_poll: the LIST-typed wasi:io/poll.poll multiplexer (#4316). Its
     // helper is heap-backed (it allocates the 8-byte canonical return area), so
     // the heap gate below folds it in.
@@ -10295,7 +10335,7 @@ function preview1_imports(needs: string[]): string {
     // drop — each only when the module has not already imported it for the
     // op that owns it, since a duplicate import is invalid.
     if (need(needs, "poll") && !need(needs, "wasm_timer_pollable")) { parts = parts.append(wasi_subscribe_duration_import()); }
-    if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need(needs, "tcp_connect") && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_drop_import()); }
+    if (need(needs, "poll") && !need(needs, "wasm_pollable_drop") && !need_tcp_connect(needs) && !need(needs, "tcp_accept")) { parts = parts.append(wasi_pollable_drop_import()); }
     return util.str_join_chunks(parts);
 }
 
@@ -10524,7 +10564,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
         "@allocates", "@uses_maps", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_chr", "@uses_strbuf", "@uses_buf",
         "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_all", "remove_dir_all", "temp_dir", "read_chunk", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-        "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll"])) {
+        "writer_write", "write_some", "wasm_poll", "tcp_connect", "tcp_connect_with", "tcp_send", "tcp_recv", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "poll"])) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count")));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -10700,8 +10740,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (module_has_extern_composite_result(mod) || export_needs_realloc(mod) || need(needs, "wasm_poll") || need(needs, "tcp_recv") || need(needs, "poll") || need(needs, "tcp_send") || need(needs, "udp_send") || need(needs, "udp_recvfrom") || (mode == 2 && (need(needs, "env") || need(needs, "args") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")))) { parts = parts.append(cabi_realloc_helper()); }
     // $__fern_network_handle is shared by every socket op; emitted with
     // whichever one pulls it in.
-    if (need_any(needs, ["tcp_connect", "tcp_listen", "tcp_listen_with", "udp_send", "udp_bind"])) { parts = parts.append(network_handle_func()); }
-    if (need_any(needs, ["tcp_connect", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom"])) { parts = parts.append(wasi_socket_errno_func()); }
+    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_send", "udp_bind"])) { parts = parts.append(network_handle_func()); }
+    if (need_any(needs, ["tcp_connect", "tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom"])) { parts = parts.append(wasi_socket_errno_func()); }
+    if (need_tcp_connect(needs)) { parts = parts.append(tcp_connect_with_func()); }
     if (need(needs, "tcp_connect")) { parts = parts.append(tcp_connect_func()); }
     if (need(needs, "tcp_close")) { parts = parts.append(tcp_close_func(need_udp_socket(needs))); }
     if (need(needs, "tcp_send")) { parts = parts.append(tcp_send_func()); }

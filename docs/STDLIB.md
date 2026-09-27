@@ -1104,6 +1104,13 @@ The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
 - `local_port(sock)` and `close(sock)` — the bound port, and the release,
   of a socket of either kind.
 
+Connecting: `connect(addr)` is a connection to a `SocketAddr` or the error
+the dial reported; `connect_start(addr)` is a non-blocking socket whose
+connect is under way, and `connect_result(sock)` says how it ended,
+`Ok(())` once connected, `Err(InProgress)` while still under way, else the
+failure (`ConnectionRefused` for a closed port). The interpreter connects
+before `connect_start` answers, so there the result is `Ok(())` at once.
+
 The stream verbs on a TCP connection (`recv` / `send` over owned buffers),
 Unix-domain sockets and IPv6 listeners arrive with the primitives that make
 them honest on every address family; until then `std/tcp` is the accept
