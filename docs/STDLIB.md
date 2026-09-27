@@ -1775,8 +1775,9 @@ protocol for the general case is tracked in #2686.
   `__map_get_or_impl`
 - Mutation: `__map_grow`, `__map_set_impl`,
   `__map_delete_impl`, `__map_clear_impl`
-- Columns: `__map_column`, `__map_keys_impl`,
-  `__map_values_impl`, `__map_string_column`
+- Columns: `__map_i32_column`, `__map_bool_column`, `__map_u8_column`,
+  `__map_keys_impl`, `__map_values_impl`, `__map_string_column`,
+  `__map_ptr_column`
 - Iteration: `__map_iter_impl`, `__mapiter_has_next_impl`,
   `__mapiter_entry_addr`, `__mapiter_key_impl`,
   `__mapiter_value_impl`, `__mapiter_advance_impl`

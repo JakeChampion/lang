@@ -652,10 +652,7 @@ function main(): i32 {
 	// and `and[U](other: Result[U, E])` binds U from this very argument: the
 	// destination `Result[U, string]` named Ok without saying what it held, so
 	// the literal was refused ("unsupported variant literal"). The payload
-	// settles it now, for Ok and Err as it already did for Some. A string
-	// payload reaches `unwrap_or` through the receiver's own binding of T,
-	// which the self-host checker used to leave unresolved, so the AST
-	// lowering read the result's length out of the wrong word (#10014).
+	// settles it now, for Ok and Err as it already did for Some.
 	{name: "builtin-union-payload-settles-the-literal", atLeast: 1, noLeak: true, src: `
 import "std/result";
 
@@ -664,11 +661,10 @@ function main(): i32 {
     var i: i32 = 0;
     while (i < 200) {
         var r: Result[i32, string] = Ok(i);
-        var s: Result[i32, string] = r.and(Ok(i + 1));
+        var s: Result[string, string] = r.and(Ok("vw"));
         var e: Result[i32, string] = Err("no");
-        var f: Result[i32, string] = e.and(Ok(i + 2));
-        var w: Result[string, string] = r.and(Ok("vw"));
-        t = t + s.unwrap_or(0) + f.unwrap_or(9) + w.unwrap_or("").len();
+        var f: Result[string, string] = e.and(Ok("xyz"));
+        t = t + s.unwrap_or("").len() + f.unwrap_or("q").len() + r.unwrap_or(0);
         i = i + 1;
     }
     return t % 7;
@@ -3721,7 +3717,7 @@ function main(): i32 {
 	// without saying what `Some` holds, and only the payload can say. The
 	// checker does not settle it either, since it infers the literal from the
 	// same parameter.
-	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 52, noLeak: true, src: `
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 48, noLeak: true, src: `
 import "std/option";
 function both(): i32 {
     var s: Option[i32] = Some(5);

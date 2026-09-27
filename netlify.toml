@@ -31,7 +31,7 @@
   # and a floor it cannot meet failed the deploy in 2.7 s before any build ran
   # (#8423).
   NODE_VERSION = "22"
-  GO_VERSION = "1.26.7"
+  GO_VERSION = "1.27.1"
   # FERN_SMOKE and the other smoke options apply only to an explicit invocation
   # of scripts/netlify-smoke-test. Setting them here or in the Netlify UI does
   # not activate that script; scripts/netlify-build does not call it.

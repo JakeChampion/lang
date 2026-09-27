@@ -183,7 +183,7 @@ TestSelfHostDeclarationRuntime 2
 TestSelfHostDeclarationSpellingContracts 3
 TestSelfHostDefaultMethodIR 2
 TestSelfHostDeferBlockLocalIR 2
-TestSelfHostDeferInLoopIRX86_64 2
+TestSelfHostDeferInLoopIR 2
 TestSelfHostDeferValueBlockBindingsIRArm64 2
 TestSelfHostDeferValueBlockIR_X86_64 2
 TestSelfHostDeriveDefaultEnumIR 2

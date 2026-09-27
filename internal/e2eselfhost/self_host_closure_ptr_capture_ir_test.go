@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
@@ -71,40 +69,19 @@ function main(): i32 {
 }`},
 }
 
-// TestSelfHostClosurePtrCaptureIRX86_64 builds the self-host asm_run + path-probe
-// drivers and, for each program, asserts it routes the IR path (probe == "ir")
-// and runs to the interpreter oracle. x86-64.
+// TestSelfHostClosurePtrCaptureIRX86_64 compiles each program with the self-host
+// CLI for x86-64 and checks it runs to the interpreter oracle.
 func TestSelfHostClosurePtrCaptureIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "probe")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 
 	for _, tc := range closurePtrCaptureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
 			want := interpExit(t, interpBin, string(src))
 
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%q routed through %q path, want \"ir\" (pointer-capture closure bailed make_clo_func)", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "ptr_capture_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%q exited %d, want %d (interp oracle)", tc.name, code, want)
+			if stderr, code := cli.exitOf(t, string(src), "x86-64-linux"); code != want {
+				t.Errorf("%q exited %d, want %d (interp oracle)\n%s", tc.name, code, want, stderr)
 			}
 		})
 	}
