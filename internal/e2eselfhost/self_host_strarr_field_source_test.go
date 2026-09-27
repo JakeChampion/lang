@@ -53,6 +53,8 @@ import (
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
 // twice its pin.
+// An empty `[]` is one allocation with room for its first push (#10408), so
+// each round's source array costs one block where it cost two.
 
 type strArrFieldSourceCase struct {
 	name   string
@@ -87,7 +89,7 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
     return (t + i) % 101;
 }
 ` + safsMain,
-			want: 63, allocs: 450, frees: 450,
+			want: 63, allocs: 350, frees: 350,
 		},
 		{
 			// The same, with the source READ after the conditional — which for
@@ -101,7 +103,7 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
     return (t + src.len() + src[0].len() + i) % 101;
 }
 ` + safsMain,
-			want: 30, allocs: 450, frees: 450,
+			want: 30, allocs: 350, frees: 350,
 		},
 		{
 			// THE ROW THAT CARRIES THE SOUNDNESS. The danger here is not a leak
@@ -120,7 +122,7 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
     return (t + src.len() + src[0].len() + src[1].len() + c1[0].len() - c1[0].len() + c2[1].len() - c2[1].len() + i) % 101;
 }
 ` + safsMain,
-			want: 96, allocs: 1250, frees: 1250,
+			want: 96, allocs: 950, frees: 950,
 		},
 		{
 			// CONTROL, and the row that says the move axis is NOT the
@@ -134,7 +136,7 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }
 ` + safsMain,
-			want: 71, allocs: 500, frees: 500,
+			want: 71, allocs: 400, frees: 400,
 		},
 		{
 			// CONTROL: an `if` whose condition happens to always hold. Same
@@ -148,7 +150,7 @@ func strArrFieldSourceCases() []strArrFieldSourceCase {
     return (t + src.len() + i) % 101;
 }
 ` + safsMain,
-			want: 70, allocs: 500, frees: 500,
+			want: 70, allocs: 400, frees: 400,
 		},
 		{
 			// The holder ESCAPES by return, so it earns no struct credit and the
@@ -167,7 +169,7 @@ function round(i: i32): i32 {
     return (p.f.len() + p.f[0].len() + p.n) % 101;
 }
 ` + safsMain,
-			want: 71, allocs: 500, frees: 500,
+			want: 71, allocs: 400, frees: 400,
 		},
 	}
 }
