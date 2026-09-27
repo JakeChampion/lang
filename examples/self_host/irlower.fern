@@ -23147,17 +23147,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     if (enum_field_read_type(v.init, s) != "") { s = s.mark_enum_field_alias(v.name); }
     var vfft: string = scalar_arr_field_type(v.init, s);
     if (vfft != "") {
-        var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
-        if (!vfs.ok) { return vfs; }
-        vfs = vfs.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
-        var vfb: LowerState = vfs.add_local(v.name);
-        vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var vfslot: i32 = vfb.slot_of(v.name);
-        // This branch RETURNS before the VarTypes classification, so the
-        // element representation is stamped here, from the field's declared
-        // type — the same stamp a borrowed projection gets.
-        vfb = mark_scalar_array_elems(vfb.mark_arr(vfslot, true), vfslot, vfft);
-        return vfb.emit(ir.op_store_local(vfslot));
+        return lower_stmt_var_scalar_arr_field(v, vfft, s);
     }
     // Binding an ARRAY-OF-STRUCT field (`var ps: P[] = obj.params`,
     // params: P[]) OR an ARRAY-OF-ENUM field (`var es: E[] = obj.es`, E an
@@ -23173,24 +23163,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     var vsaft: string = struct_arr_field_read_type(v.init, s);
     if (vsaft == "") { vsaft = enum_arr_field_read_type(v.init, s); }
     if (vsaft != "") {
-        var sas: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
-        if (!sas.ok) { return sas; }
-        sas = sas.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
-        var sab: LowerState = sas.add_local(v.name);
-        sab = sab.mark_reclaim_site(sab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var saslot: i32 = sab.slot_of(v.name);
-        sab = sab.mark_arr(saslot, true);
-        // A closure/fn ARRAY field (`hs: (() => T)[]`, spelled "fn[]") aliased
-        // whole (`var fns = r.hs`): its elements are closure boxes, so mark the
-        // slot is_closurearr for env-first `fns[i]()` / `for f in fns` dispatch
-        // (#5160 defect #2). "fn" reads as enum-like (is_enum_like_name), so the
-        // enum-array-field arm above — not the closurearr classification further
-        // down — claims this bind; do the closure mark HERE. Also fixes
-        // `for f in r.hs { f() }`, which lowers via lower_foreach_snapshot's
-        // hidden `var $forit = r.hs`.
-        if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
-        else { sab = sab.mark_struct_type(saslot, slice_unchecked(vsaft, 0, vsaft.len() - 2)); }   // element struct/enum name (strip "[]")
-        return sab.emit(ir.op_store_local(saslot));
+        return lower_stmt_var_arr_field_alias(v, vsaft, s);
     }
     if (is_scalar_arr_field_access(v.init, s)) { return s.fail(); }
     // `var xs: dyn Trait[] = [ ... ]` — a `dyn Trait` ARRAY literal. Each
@@ -23202,30 +23175,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // is_arr with NO element struct type so `for x in xs` reads the loop
     // var as "unknown" → runtime shape dispatch (the §4.3 array tag fix).
     if (v.type_name.len() > 6 && slice_unchecked(v.type_name, 0, 4) == "dyn " && is_array_type_name(v.type_name)) {
-        var dab_ok: boolean = false;
-        match (v.init) { ast.ExprArray(_) => { dab_ok = true; }, _ => {} }
-        if (dab_ok) {
-            match (v.init) {
-                ast.ExprArray(darr) => {
-                    var das: LowerState = lower_dyn_array_lit(darr, s);
-                    if (!das.ok) { return das; }
-                    var dab: LowerState = das.add_local(v.name);
-                    dab = dab.mark_reclaim_site(dab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                    var daslot: i32 = dab.slot_of(v.name);
-                    dab = dab.mark_arr(daslot, true);
-                    // Record the coarse element type `"dyn <Trait>"` (strip
-                    // the `[]`) on the slot — exactly as a `dyn Trait[]`
-                    // PARAM does — so `xs[i]`, `var e = xs[i]`, and
-                    // `for x in xs` over this LOCAL recover the receiver as
-                    // `dyn Trait` and dispatch through op_dyn_dispatch.
-                    // Without it the local lost its trait and every element
-                    // method call bailed.
-                    dab = dab.mark_struct_type(daslot, slice_unchecked(v.type_name, 0, v.type_name.len() - 2));
-                    return dab.emit(ir.op_store_local(daslot));
-                },
-                _ => {}
-            }
-        }
+        if let ast.ExprArray(darr) = v.init { return lower_stmt_var_dyn_array(v, darr, s); }
     }
     // `var d: dyn Trait = <expr>` — a SCALAR `dyn Trait` binding (NOT a
     // `dyn Trait[]` array, handled above). The init coerces to `dyn Trait`
@@ -23238,25 +23188,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // (runtime shape dispatch) — matching the interpreter — rather than
     // static-dispatching to the concrete impl.
     if (v.type_name.len() > 4 && slice_unchecked(v.type_name, 0, 4) == "dyn " && !is_array_type_name(v.type_name)) {
-        var dvprim: string = expr_recv_prim_type(v.init, s);
-        var dvs: LowerState = lower_dyn_arg(v.init, s);
-        if (!dvs.ok) { return dvs; }
-        var dvb: LowerState = dvs.add_local(v.name);
-        dvb = dvb.mark_reclaim_site(dvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var dvslot: i32 = dvb.slot_of(v.name);
-        dvb = dvb.mark_struct_type(dvslot, v.type_name);
-        // op_dyn_box COPIES a non-string primitive into a fresh rc-headered
-        // cell, so the local owns that cell however the value was produced —
-        // `k * 2` and a `var n: i32` alias alike. The escape verdict is the
-        // whole admission, and reclaimable_names_of left it under "DYNCAND:"
-        // because typing the init is this site's knowledge, not the AST scan's.
-        // A "string" payload is excluded: its cell holds a POINTER whose box may
-        // be borrowed, and the sweep's string tag frees that box too. A string
-        // LITERAL init keeps the analysis-time credit that proves it fresh.
-        if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.frame.reclaimable_names, "DYNCAND:", reclaim_site_key_of(v.name, v.line, v.col))) {
-            dvb = LowerState { ...dvb, frame: LowerFrame { ...dvb.frame, reclaimable_names: dvb.frame.reclaimable_names.append("DYN:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + dvprim) } };
-        }
-        return dvb.emit(ir.op_store_local(dvslot));
+        return lower_stmt_var_dyn_scalar(v, s);
     }
     // `var f = r.hs[0]` where hs is a struct closure-array FIELD (#5160): f
     // aliases the element's closure box, which is OWNED by the struct (its
@@ -23443,17 +23375,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // 2^32). u32 is the only ≤32-bit type that can carry a (2^31, 2^32)
     // literal — i32 / u8 reject one at E047.
     if (comma < 0 && (v.type_name == "i64" || v.type_name == "u64" || (infer_expr_width(v.init, s) == 64 && !is_u32_type_name(v.type_name)))) {
-        var iv: LowerState = lower_i64(v.init, s);
-        if (!iv.ok) { return iv; }
-        var ivb: LowerState = iv.add_local(v.name);
-        ivb = ivb.mark_reclaim_site(ivb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var islot: i32 = ivb.slot_of(v.name);
-        ivb = ivb.mark_i64(islot, true);
-        // A `u64` binding (annotated, or an init that is itself u64) marks
-        // the slot u64 so its compares / `>>` / `/` / `%` select the
-        // UNSIGNED i64 ops (#2904).
-        if (v.type_name == "u64" || expr_is_u64(v.init, s)) { ivb = ivb.mark_u64(islot, true); }
-        return ivb.emit(ir.op_store_local(islot));
+        return lower_stmt_var_i64(v, s);
     }
     // f64 binding: `var x: f64 = E`, or an init that infers to f64
     // (`var c = a + b` with a/b:f64). lower_expr already routes float
@@ -23462,26 +23384,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // ops. Scalar locals only — f64 params / returns / arrays / fields
     // still bail (lower_func bails an f64 signature).
     if (comma < 0 && (is_f64_scalar_type_name(v.type_name) || expr_is_f64(v.init, s))) {
-        var fv: LowerState = lower_expr(v.init, s);
-        if (!fv.ok) { return fv; }
-        var fvb: LowerState = fv.add_local(v.name);
-        fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-        var fslot: i32 = fvb.slot_of(v.name);
-        fvb = fvb.mark_f64(fslot, true);
-        // An f32 local is ALSO f32-tagged (overlay on f64) so its method
-        // calls dispatch "f32.<m>" — by annotation (`var x: f32`) or an
-        // f32-valued init (`var x = y as f32` / another f32 value).
-        // `float` is NOT one of them: it is the f64 alias (parser builds
-        // FloatType{Width:64} for it, #5363), and expr_is_f32 below already
-        // states the rule — "Only `as f32` yields f32; `as f64` / `as float`
-        // are f64". Tagging it f32 made `var x: float` compute at f32
-        // precision, since f32 arithmetic rounds through a demote/promote
-        // pair, and the tag propagated into any f64 local assigned from it
-        // (#5882).
-        if (v.type_name == "f32" || expr_is_f32(v.init, s)) {
-            fvb = fvb.mark_f32(fslot, true);
-        }
-        return fvb.emit(ir.op_store_local(fslot));
+        return lower_stmt_var_f64(v, s);
     }
     // i64 array LITERAL: `var a: i64[] = [e0, e1, …]`. Elements aren't
     // self-evidently i64 (a bare integer literal could be i32), so the
@@ -23504,37 +23407,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         }
     }
     if (comma < 0 && (v.type_name == "i64[]" || i64arr_unannot || v.type_name == "u64[]")) {
-        var i64lit: boolean = false;
-        match (v.init) {
-            ast.ExprArray(_) => { i64lit = true; },
-            _ => {}
-        }
-        if (i64lit) {
-            match (v.init) {
-                ast.ExprArray(iarr) => {
-                    var ia: LowerState = s;
-                    var iae: i32 = 0;
-                    while (iae < iarr.elements.len()) {
-                        ia = lower_i64(iarr.elements[iae], ia);
-                        if (!ia.ok) { return ia; }
-                        iae = iae + 1;
-                    }
-                    ia = ia.emit(ir.op_arr_make_i64(iarr.elements.len()));
-                    var iab: LowerState = ia.add_local(v.name);
-                    iab = iab.mark_reclaim_site(iab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                    var iaslot: i32 = iab.slot_of(v.name);
-                    iab = iab.mark_arr(iaslot, true);
-                    iab = iab.mark_i64arr(iaslot, true);
-                    // u64[] uses the i64[] 8-byte storage/read path; the
-                    // extra u64 mark drives UNSIGNED arithmetic on a read
-                    // element (is_arr && is_u64) — is_i64_slot excludes the
-                    // (pointer) array slot, so the local stays i32-wide.
-                    if (v.type_name == "u64[]") { iab = iab.mark_u64(iaslot, true); }
-                    return iab.emit(ir.op_store_local(iaslot));
-                },
-                _ => {}
-            }
-        }
+        if let ast.ExprArray(iarr) = v.init { return lower_stmt_var_i64_arr_lit(v, iarr, s); }
     }
     if (comma >= 0) {
         return lower_stmt_var_destructure(v, s);
@@ -23543,65 +23416,26 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // `map_new` is generic, so the KEY KIND comes from the annotation, not
     // the callee name. Emit op_map_new with the annotated key kind here so
     // the wasm backend selects the right constructor (i32 vs string keys).
-    match (v.init) {
-        ast.ExprCall(mnc) => {
-            match (mnc.callee) {
-                ast.ExprIdent(mnid) => {
-                    if ((mnid.name == "map_new" || mnid.name == "__map_new_i32") && mnc.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[") {
-                        var kkind: i32 = 0 - 1;
-                        var kt2: string = map_key_of(v.type_name);
-                        // The same question map_key_kind_of answers everywhere
-                        // else, rather than a third hand-rolled reading of the
-                        // spelling: an INTEGER key takes the integer column. A
-                        // `u8` / `u32` key matched neither of the two literal
-                        // prefixes this used to test, so it fell through with
-                        // kkind -1 and the map was CONSTRUCTED string-keyed
-                        // while its inserts used the integer column — which on
-                        // wasm, where the constructor picks the box layout, is
-                        // a map that answers nothing it was given (#9973).
-                        // A key with no column refuses HERE too. Falling
-                        // through left the generic arm below to build a
-                        // string-keyed box for it, which is the silent half of
-                        // what the method gate refuses loudly.
-                        if (map_key_has_no_column(kt2)) { return note_no_column(s, kt2); }
-                        if (map_key_kind_of(v.type_name) == 1) { kkind = 1; }
-                        else if (kt2 == "string") { kkind = 0; }
-                        else if (map_key_eqfn(v.type_name) != "") {
-                            // Struct/enum key: kind 2, dispatched by the key's
-                            // derived hash/eq (the wasm hash map threads their
-                            // funcref indices in; x86 ignores them). #2671.
-                            kkind = 2;
-                        }
-                        if (kkind >= 0) {
-                            var mns: LowerState = lower_expr(mnc.args[0], s);
-                            if (!mns.ok) { return mns; }
-                            var mnfns: string = "";
-                            if (kkind == 2) { mnfns = kt2 + ".hash|" + kt2 + ".eq"; }
-                            mns = mns.emit(ir.op_map_new(kkind, mnfns));
-                            var mnsb: LowerState = mns.add_local(v.name);
-                            mnsb = mnsb.mark_reclaim_site(mnsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                            var mnslot: i32 = mnsb.slot_of(v.name);
-                            mnsb = mnsb.mark_map_type(mnslot, v.type_name);
-                            // Loop-reinit reclaim (#4357): a re-declared reclaimable
-                            // map local reuses its slot, so free the PRIOR
-                            // iteration's keys/values buffers + mapbox before the
-                            // store — else one box leaks per iteration (the precise
-                            // drop is top-level-only and the exit sweep only sees
-                            // the final box). emit_map_buffers_free is stack-neutral
-                            // (the fresh op_map_new box underneath is untouched),
-                            // null-guards the zero-initialized first binding, and
-                            // zeroes the slot the store below overwrites.
-                            if (slot_is_reclaimable_map(mnsb, mnslot)) {
-                                mnsb = emit_map_buffers_free(mnsb, mnslot);
-                            }
-                            return mnsb.emit(ir.op_store_local(mnslot));
-                        }
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
+    if let ast.ExprCall(mnc) = v.init {
+        if (is_map_new_var(v, mnc)) {
+            var kt2: string = map_key_of(v.type_name);
+        // The same question map_key_kind_of answers everywhere
+        // else, rather than a third hand-rolled reading of the
+        // spelling: an INTEGER key takes the integer column. A
+        // `u8` / `u32` key matched neither of the two literal
+        // prefixes this used to test, so it fell through with
+        // kkind -1 and the map was CONSTRUCTED string-keyed
+        // while its inserts used the integer column — which on
+        // wasm, where the constructor picks the box layout, is
+        // a map that answers nothing it was given (#9973).
+        // A key with no column refuses HERE too. Falling
+        // through left the generic arm below to build a
+        // string-keyed box for it, which is the silent half of
+        // what the method gate refuses loudly.
+            if (map_key_has_no_column(kt2)) { return note_no_column(s, kt2); }
+            var kkind: i32 = map_new_key_kind(v.type_name, kt2);
+            if (kkind >= 0) { return lower_stmt_var_map_new(v, mnc.args[0], kkind, kt2, s); }
+        }
     }
     // `var x: Option[T]/Result[T,E] = Ok/Some/Err(arg)` with an i64/u64
     // DECLARED payload: build the 8-byte box (payload at offset 8) every
@@ -23613,30 +23447,9 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // StmtReturn i64-construction path (#3566). Early-return (like map_new):
     // an Option/Result box is a leak-only pointer needing no array/string/
     // struct slot marking beyond mark_opt_type.
-    match (v.init) {
-        ast.ExprCall(vc) => {
-            match (vc.callee) {
-                ast.ExprIdent(vcid) => {
-                    if (vc.args.len() == 1 && (vcid.name == "Ok" || vcid.name == "Some" || vcid.name == "Err") && v.type_name.len() >= 8 && (slice_unchecked(v.type_name, 0, 7) == "Result[" || slice_unchecked(v.type_name, 0, 7) == "Option[")) {
-                        var vvar: string = "Ok";
-                        var vtag: i32 = 0;
-                        if (vcid.name == "Err") { vvar = "Err"; vtag = 1; }
-                        var vexp: string = opt_payload_type(v.type_name, vvar);
-                        if (vexp == "i64" || vexp == "u64") {
-                            var vcs: LowerState = lower_opt_make_payload_exp(vtag, vc.args[0], vexp, s);
-                            if (!vcs.ok) { return vcs; }
-                            var vsb: LowerState = vcs.add_local(v.name);
-                            vsb = vsb.mark_reclaim_site(vsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
-                            var vslot: i32 = vsb.slot_of(v.name);
-                            vsb = vsb.mark_opt_type(vslot, v.type_name);
-                            return vsb.emit(ir.op_store_local(vslot));
-                        }
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
+    if let ast.ExprCall(vc) = v.init {
+        var vexp: string = opt_i64_ctor_payload(v, vc);
+        if (vexp != "") { return lower_stmt_var_opt_i64(v, vc.args[0], opt_ctor_variant(vc) == "Err", vexp, s); }
     }
     var se: LowerState = s;
     // #6713: `var t = slice_unchecked(s, a, b)` where every use of `t` borrows
@@ -24535,6 +24348,231 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     var bound: LowerState = bind_var_slot(v, s, se, vt);
     if (own_alias_src < 0 || !bound.ok) { return bound; }
     return bind_own_handback(bound, bound.slot_of(v.name), own_alias_src);
+}
+
+// is_map_new_var: `var m: Map[K, V] = map_new(n)` (or `__map_new_i32(n)`).
+function is_map_new_var(v: ast.StmtVar, c: ast.ExprCall): boolean {
+    if let ast.ExprIdent(id) = c.callee {
+        if (id.name != "map_new" && id.name != "__map_new_i32") { return false; }
+        return c.args.len() == 1 && v.type_name.len() >= 5 && slice_unchecked(v.type_name, 0, 4) == "Map[";
+    }
+    return false;
+}
+
+// map_new_key_kind: the map constructor's key column for the annotation —
+// 1 integer, 0 string, 2 struct/enum (derived hash/eq, #2671), -1 none.
+function map_new_key_kind(type_name: string, kt: string): i32 {
+    if (map_key_kind_of(type_name) == 1) { return 1; }
+    if (kt == "string") { return 0; }
+    if (map_key_eqfn(type_name) != "") { return 2; }
+    return 0 - 1;
+}
+
+// lower_stmt_var_map_new: builds the annotated map and binds it.
+function lower_stmt_var_map_new(v: ast.StmtVar, arg: ast.Expr, kkind: i32, kt2: string, s: LowerState): LowerState {
+    var mns: LowerState = lower_expr(arg, s);
+    if (!mns.ok) { return mns; }
+    var mnfns: string = "";
+    if (kkind == 2) { mnfns = kt2 + ".hash|" + kt2 + ".eq"; }
+    mns = mns.emit(ir.op_map_new(kkind, mnfns));
+    var mnsb: LowerState = mns.add_local(v.name);
+    mnsb = mnsb.mark_reclaim_site(mnsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var mnslot: i32 = mnsb.slot_of(v.name);
+    mnsb = mnsb.mark_map_type(mnslot, v.type_name);
+    // Loop-reinit reclaim (#4357): a re-declared reclaimable
+    // map local reuses its slot, so free the PRIOR
+    // iteration's keys/values buffers + mapbox before the
+    // store — else one box leaks per iteration (the precise
+    // drop is top-level-only and the exit sweep only sees
+    // the final box). emit_map_buffers_free is stack-neutral
+    // (the fresh op_map_new box underneath is untouched),
+    // null-guards the zero-initialized first binding, and
+    // zeroes the slot the store below overwrites.
+    if (slot_is_reclaimable_map(mnsb, mnslot)) {
+        mnsb = emit_map_buffers_free(mnsb, mnslot);
+    }
+    return mnsb.emit(ir.op_store_local(mnslot));
+}
+
+// opt_i64_ctor_payload: the i64/u64 payload type a `var x: Option[..]` /
+// `Result[..]` initialised by `Ok/Some/Err(arg)` declares, else "".
+function opt_i64_ctor_payload(v: ast.StmtVar, c: ast.ExprCall): string {
+    if (c.args.len() != 1 || v.type_name.len() < 8) { return ""; }
+    if (slice_unchecked(v.type_name, 0, 7) != "Result[" && slice_unchecked(v.type_name, 0, 7) != "Option[") { return ""; }
+    var variant: string = opt_ctor_variant(c);
+    if (variant == "") { return ""; }
+    var vexp: string = opt_payload_type(v.type_name, variant);
+    if (vexp == "i64" || vexp == "u64") { return vexp; }
+    return "";
+}
+
+// opt_ctor_variant: "Err" for `Err(..)`, "Ok" for `Ok(..)` / `Some(..)`, else "".
+function opt_ctor_variant(c: ast.ExprCall): string {
+    if let ast.ExprIdent(id) = c.callee {
+        if (id.name == "Err") { return "Err"; }
+        if (id.name == "Ok" || id.name == "Some") { return "Ok"; }
+    }
+    return "";
+}
+
+
+// lower_stmt_var_opt_i64: builds the 8-byte-payload Option/Result box the
+// annotation declares (#3566) and binds it with the annotation as opt_type.
+function lower_stmt_var_opt_i64(v: ast.StmtVar, arg: ast.Expr, is_err: boolean, vexp: string, s: LowerState): LowerState {
+    var vtag: i32 = 0;
+    if (is_err) { vtag = 1; }
+    var vcs: LowerState = lower_opt_make_payload_exp(vtag, arg, vexp, s);
+    if (!vcs.ok) { return vcs; }
+    var vsb: LowerState = vcs.add_local(v.name);
+    vsb = vsb.mark_reclaim_site(vsb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var vslot: i32 = vsb.slot_of(v.name);
+    vsb = vsb.mark_opt_type(vslot, v.type_name);
+    return vsb.emit(ir.op_store_local(vslot));
+}
+
+// lower_stmt_var_i64_arr_lit: `var a: i64[] = [..]` (or u64[]), each element
+// lowered as an i64 into an 8-byte-stride array.
+function lower_stmt_var_i64_arr_lit(v: ast.StmtVar, iarr: ast.ExprArray, s: LowerState): LowerState {
+    var ia: LowerState = s;
+    var iae: i32 = 0;
+    while (iae < iarr.elements.len()) {
+        ia = lower_i64(iarr.elements[iae], ia);
+        if (!ia.ok) { return ia; }
+        iae = iae + 1;
+    }
+    ia = ia.emit(ir.op_arr_make_i64(iarr.elements.len()));
+    var iab: LowerState = ia.add_local(v.name);
+    iab = iab.mark_reclaim_site(iab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var iaslot: i32 = iab.slot_of(v.name);
+    iab = iab.mark_arr(iaslot, true);
+    iab = iab.mark_i64arr(iaslot, true);
+    // u64[] uses the i64[] 8-byte storage/read path; the
+    // extra u64 mark drives UNSIGNED arithmetic on a read
+    // element (is_arr && is_u64) — is_i64_slot excludes the
+    // (pointer) array slot, so the local stays i32-wide.
+    if (v.type_name == "u64[]") { iab = iab.mark_u64(iaslot, true); }
+    return iab.emit(ir.op_store_local(iaslot));
+}
+
+// lower_stmt_var_f64: a scalar f64 / f32 binding.
+function lower_stmt_var_f64(v: ast.StmtVar, s: LowerState): LowerState {
+    var fv: LowerState = lower_expr(v.init, s);
+    if (!fv.ok) { return fv; }
+    var fvb: LowerState = fv.add_local(v.name);
+    fvb = fvb.mark_reclaim_site(fvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var fslot: i32 = fvb.slot_of(v.name);
+    fvb = fvb.mark_f64(fslot, true);
+    // An f32 local is ALSO f32-tagged (overlay on f64) so its method
+    // calls dispatch "f32.<m>" — by annotation (`var x: f32`) or an
+    // f32-valued init (`var x = y as f32` / another f32 value).
+    // `float` is NOT one of them: it is the f64 alias (parser builds
+    // FloatType{Width:64} for it, #5363), and expr_is_f32 below already
+    // states the rule — "Only `as f32` yields f32; `as f64` / `as float`
+    // are f64". Tagging it f32 made `var x: float` compute at f32
+    // precision, since f32 arithmetic rounds through a demote/promote
+    // pair, and the tag propagated into any f64 local assigned from it
+    // (#5882).
+    if (v.type_name == "f32" || expr_is_f32(v.init, s)) {
+        fvb = fvb.mark_f32(fslot, true);
+    }
+    return fvb.emit(ir.op_store_local(fslot));
+}
+
+// lower_stmt_var_i64: a scalar i64 / u64 binding.
+function lower_stmt_var_i64(v: ast.StmtVar, s: LowerState): LowerState {
+    var iv: LowerState = lower_i64(v.init, s);
+    if (!iv.ok) { return iv; }
+    var ivb: LowerState = iv.add_local(v.name);
+    ivb = ivb.mark_reclaim_site(ivb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var islot: i32 = ivb.slot_of(v.name);
+    ivb = ivb.mark_i64(islot, true);
+    // A `u64` binding (annotated, or an init that is itself u64) marks
+    // the slot u64 so its compares / `>>` / `/` / `%` select the
+    // UNSIGNED i64 ops (#2904).
+    if (v.type_name == "u64" || expr_is_u64(v.init, s)) { ivb = ivb.mark_u64(islot, true); }
+    return ivb.emit(ir.op_store_local(islot));
+}
+
+// lower_stmt_var_arr_field_alias: `var ps = obj.params` over a struct-, enum-
+// or closure-array field; `ps` is a counted second owner of the buffer.
+function lower_stmt_var_arr_field_alias(v: ast.StmtVar, vsaft: string, s: LowerState): LowerState {
+    var sas: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
+    if (!sas.ok) { return sas; }
+    sas = sas.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
+    var sab: LowerState = sas.add_local(v.name);
+    sab = sab.mark_reclaim_site(sab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var saslot: i32 = sab.slot_of(v.name);
+    sab = sab.mark_arr(saslot, true);
+    // A closure/fn ARRAY field (`hs: (() => T)[]`, spelled "fn[]") aliased
+    // whole (`var fns = r.hs`): its elements are closure boxes, so mark the
+    // slot is_closurearr for env-first `fns[i]()` / `for f in fns` dispatch
+    // (#5160 defect #2). "fn" reads as enum-like (is_enum_like_name), so the
+    // enum-array-field arm above — not the closurearr classification further
+    // down — claims this bind; do the closure mark HERE. Also fixes
+    // `for f in r.hs { f() }`, which lowers via lower_foreach_snapshot's
+    // hidden `var $forit = r.hs`.
+    if (vsaft == "fn[]") { sab = sab.mark_closurearr(saslot, true); }
+    else { sab = sab.mark_struct_type(saslot, slice_unchecked(vsaft, 0, vsaft.len() - 2)); }   // element struct/enum name (strip "[]")
+    return sab.emit(ir.op_store_local(saslot));
+}
+
+// lower_stmt_var_scalar_arr_field: `var y = h.items` over a scalar-element
+// array field; `y` is a counted second owner of the buffer.
+function lower_stmt_var_scalar_arr_field(v: ast.StmtVar, vfft: string, s: LowerState): LowerState {
+    var vfs: LowerState = lower_expr(v.init, s);   // struct_get -> array ptr on stack
+    if (!vfs.ok) { return vfs; }
+    vfs = vfs.retain_tos(reclaim_site_key_of(v.name, v.line, v.col));   // Perceus dup (bare inc)
+    var vfb: LowerState = vfs.add_local(v.name);
+    vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var vfslot: i32 = vfb.slot_of(v.name);
+    // This branch RETURNS before the VarTypes classification, so the
+    // element representation is stamped here, from the field's declared
+    // type — the same stamp a borrowed projection gets.
+    vfb = mark_scalar_array_elems(vfb.mark_arr(vfslot, true), vfslot, vfft);
+    return vfb.emit(ir.op_store_local(vfslot));
+}
+
+// lower_stmt_var_dyn_array: `var xs: dyn Trait[] = [..]`, each element coerced
+// by lower_dyn_array_lit and the slot typed `dyn Trait` for dispatch.
+function lower_stmt_var_dyn_array(v: ast.StmtVar, darr: ast.ExprArray, s: LowerState): LowerState {
+    var das: LowerState = lower_dyn_array_lit(darr, s);
+    if (!das.ok) { return das; }
+    var dab: LowerState = das.add_local(v.name);
+    dab = dab.mark_reclaim_site(dab.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var daslot: i32 = dab.slot_of(v.name);
+    dab = dab.mark_arr(daslot, true);
+    // Record the coarse element type `"dyn <Trait>"` (strip
+    // the `[]`) on the slot — exactly as a `dyn Trait[]`
+    // PARAM does — so `xs[i]`, `var e = xs[i]`, and
+    // `for x in xs` over this LOCAL recover the receiver as
+    // `dyn Trait` and dispatch through op_dyn_dispatch.
+    // Without it the local lost its trait and every element
+    // method call bailed.
+    dab = dab.mark_struct_type(daslot, slice_unchecked(v.type_name, 0, v.type_name.len() - 2));
+    return dab.emit(ir.op_store_local(daslot));
+}
+
+// lower_stmt_var_dyn_scalar: `var d: dyn Trait = <expr>`, coerced by lower_dyn_arg.
+function lower_stmt_var_dyn_scalar(v: ast.StmtVar, s: LowerState): LowerState {
+    var dvprim: string = expr_recv_prim_type(v.init, s);
+    var dvs: LowerState = lower_dyn_arg(v.init, s);
+    if (!dvs.ok) { return dvs; }
+    var dvb: LowerState = dvs.add_local(v.name);
+    dvb = dvb.mark_reclaim_site(dvb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
+    var dvslot: i32 = dvb.slot_of(v.name);
+    dvb = dvb.mark_struct_type(dvslot, v.type_name);
+    // op_dyn_box COPIES a non-string primitive into a fresh rc-headered
+    // cell, so the local owns that cell however the value was produced —
+    // `k * 2` and a `var n: i32` alias alike. The escape verdict is the
+    // whole admission, and reclaimable_names_of left it under "DYNCAND:"
+    // because typing the init is this site's knowledge, not the AST scan's.
+    // A "string" payload is excluded: its cell holds a POINTER whose box may
+    // be borrowed, and the sweep's string tag frees that box too. A string
+    // LITERAL init keeps the analysis-time credit that proves it fresh.
+    if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.frame.reclaimable_names, "DYNCAND:", reclaim_site_key_of(v.name, v.line, v.col))) {
+        dvb = LowerState { ...dvb, frame: LowerFrame { ...dvb.frame, reclaimable_names: dvb.frame.reclaimable_names.append("DYN:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + dvprim) } };
+    }
+    return dvb.emit(ir.op_store_local(dvslot));
 }
 
 // The tuple/struct destructuring bind: `var (a, b) = …`, reached when the
