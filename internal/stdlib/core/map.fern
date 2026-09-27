@@ -116,7 +116,7 @@ function __map_hdr(buf: usize): i32 {
 // __map_buf_bytes is the kv buffer's total allocation size: header,
 // bucket column, entry column, and the ctrl bytes (cap + 8, the +8 being
 // the wraparound mirror). Every alloc/free/copy of a kv buffer must use
-// this; the Go backends' __fern_map_drop hard-codes the same formula.
+// this, __map_drop_impl included.
 function __map_buf_bytes(cap: i32, hdr: i32): i32 {
     return hdr + cap * (4 + 2 * __ptr_width()) + cap + 8;
 }
@@ -1007,11 +1007,11 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
 
 // __map_drop_values frees the array-typed and boxed-cell value columns when
 // a Map is dropped at its LAST reference. The IR emits a call to this
-// just before the (1-arg) __fern_map_drop, so it guards on the
+// just before __map_drop_impl, so it guards on the
 // handle rc itself (at [m-8]): only the last reference (rc==1)
 // frees the values — a shared map (rc>1) or a static-sentinel
 // handle (negative rc) leaves them untouched, matching
-// __fern_map_drop's own rc==1 free of the buf+handle. The value
+// __map_drop_impl's own rc==1 free of the buf+handle. The value
 // element stride / cell size is read from the buf's packed valKind tag
 // (__map_dec_value). An unboxed valKind 0/1 (i32-sized scalar /
 // non-array pointer) leaves the column alone — those values still leak.
@@ -1055,6 +1055,26 @@ pub function __map_drop_values(m: usize): usize {
         __map_dec_value(buf, __load_ptr(entriesBase + i * entryStride + ptrW));
         i = i + 1;
     }
+    return m;
+}
+
+// __map_drop_impl releases one reference to the handle `m` and returns it.
+// The last reference frees the kv buffer and then the 16-byte handle cell;
+// anything else is an ordinary rc decrement. It runs after the value / key
+// column walks (__map_drop_values and its siblings), which read the same
+// rc==1 test before this frees what they walk.
+pub function __map_drop_impl(m: usize): usize {
+    // A null test only, no address floor, for __map_drop_values' reason.
+    if (m == 0) { return m; }
+    if (__load_i32(m - 8) != 1) {
+        __fern_rc_dec(m);
+        return m;
+    }
+    var buf: usize = __load_ptr(m);
+    if (buf != 0) {
+        __free(buf, __map_buf_bytes(__load_i32(buf), __map_hdr(buf)));
+    }
+    __fern_box_free(m, 8);
     return m;
 }
 

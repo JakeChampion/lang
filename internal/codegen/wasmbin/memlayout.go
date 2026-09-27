@@ -338,7 +338,7 @@ const (
 //
 // The floor is stringStart for EVERY rc helper — inc and the
 // dec/free/reclamation side alike (__fern_rc_dec / __fern_arr_dec /
-// __fern_drop_arr_ptr / __fern_map_drop / __fern_box_free /
+// __fern_drop_arr_ptr / __fern_box_free /
 // __fern_rc_is_unique / __fern_str_dec / __fern_closure_drop). It is the
 // correct skip threshold on every layout: it skips null + every static
 // region while catching every real heap object. The WASI/adapter layout

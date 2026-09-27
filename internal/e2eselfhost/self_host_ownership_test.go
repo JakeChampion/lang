@@ -284,7 +284,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if err != nil {
 		t.Fatalf("read asm: %v", err)
 	}
-	const drop = "__sem_drop_Node"
+	const drop = "__sem_release_Node"
 	back, ok := asmWholeFunc(string(asm), "hands_back")
 	if !ok {
 		t.Fatal("no __fn_hands_back in the emitted code")
@@ -299,7 +299,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if strings.Contains(reader, drop) {
 		t.Errorf("reads_only calls %s: a parameter the body only reads was inferred COUNTED, which costs a retain and a release per call and reclaims nothing", drop)
 	}
-	const recDrop = "__sem_drop_Rec"
+	const recDrop = "__sem_release_Rec"
 	keep, ok := asmWholeFunc(string(asm), "keep_or_new")
 	if !ok {
 		t.Fatal("no __fn_keep_or_new in the emitted code")
