@@ -124,7 +124,6 @@ var providedSigs = map[string]providedSig{
 	"__fern_irem_s64":                 {2, rWord},
 	"__fern_irem_u32":                 {2, rWord},
 	"__fern_irem_u64":                 {2, rWord},
-	"__fern_map_drop":                 {1, rWord},
 	"__fern_map_hash_seed":            {0, rWord},
 	"__fern_memchr":                   {4, rWord},
 	"__fern_monotonic_ns":             {0, rWord},
