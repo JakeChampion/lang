@@ -5060,6 +5060,10 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       if (u.op == "try_") {
         return try_success_type(s, ot);
       }
+      // `x as? T` is `Option[T]`; E059 / E060 police the operand and target.
+      if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+        return typeinfo.TypeUnion { name: "Option", args: [s.resolve_type(slice_unchecked(u.op, 4, u.op.len()) + "")] };
+      }
       return t_unknown("unknown unary op:" + u.op);
     },
     ast.ExprCall(c) => {
@@ -9998,6 +10002,10 @@ function int_dest_range_diags(e: ast.Expr, want: typeinfo.Type): util.Diag[] {
 // no settling, which is what lets `var t: (f64, i32) = (1, 2);` through while
 // still rejecting a genuinely wrong element.
 function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  // A value-position `if` / `match` settles where every arm's value does.
+  if let ast.ExprCall(vc) = e {
+    if (parser.is_value_block(vc)) { return vb_settles(parser.vb_body(vc), want, s); }
+  }
   match (want) {
     typeinfo.TypeMap(wm) => {
       return mlit_is_desugared(e) && mlit_entries_settle(e, wm, s);
@@ -10051,7 +10059,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       }
     },
     typeinfo.TypeUnion(_) => {
-      return ctor_boxes_into(e, want, s);
+      return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s);
     },
     typeinfo.TypeStruct(ws) => {
       return struct_lit_settles(e, ws, s);
@@ -10088,6 +10096,53 @@ function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
     return boxed;
   }
   return false;
+}
+
+// vb_settles: the arms of a value block, each judged as its own value against
+// the destination, walked the way vb_ret_diags walks them.
+function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
+  if (body.len() == 0) { return false; }
+  var cur: Scope = s;
+  var i: i32 = 0;
+  while (i + 1 < body.len()) {
+    cur = bind_stmt(body[i], cur);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(r) => { return settles_or_assignable(r.value, want, cur); },
+    ast.StmtIf(f) => { return vb_settles(f.then_body, want, cur) && vb_settles(f.else_body, want, cur); },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if (!vb_settles(arm.body, want, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)))) { return false; }
+      }
+      return m.arms.len() > 0;
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
+// ctor_payload_settles: `Some(5)` is an Option[i64] where one is wanted, its
+// literal payload read at the destination's payload type as a bare literal is.
+function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if (c.args.len() != 1) { return false; }
+    var wa: typeinfo.Type[] = nominal_args(want);
+    var at: i32 = builtin_payload_index(ctor_variant_name(c), want);
+    if (at < 0 || at >= wa.len()) { return false; }
+    return settles_to(c.args[0], wa[at], s);
+  }
+  return false;
+}
+
+// Which of an Option's or Result's arguments a builtin variant's payload is.
+function builtin_payload_index(variant: string, want: typeinfo.Type): i32 {
+  if let typeinfo.TypeUnion(u) = want {
+    if (u.name == "Option" && variant == "Some") { return 0; }
+    if (u.name == "Result" && variant == "Ok") { return 0; }
+    if (u.name == "Result" && variant == "Err") { return 1; }
+  }
+  return 0 - 1;
 }
 
 // struct_lit_settles: a generic struct literal is read at its destination's

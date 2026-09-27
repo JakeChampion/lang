@@ -94,14 +94,21 @@ var interpProgs = []struct {
 	// The CLOSED form `LOW..=HIGH`, whose iter is spelled __range_incl. The
 	// desugar matched only __range, so the interpreter answered
 	// "undefined function: __range_incl" — a shape the six rows above never
-	// reached, which is why the half-supported desugar went unnoticed. The
-	// break test is `>` rather than `>=`, so HIGH is included and `5..=5` runs
-	// ONCE where `5..5` runs not at all.
+	// reached, which is why the half-supported desugar went unnoticed. HIGH is
+	// included, so `5..=5` runs ONCE where `5..5` runs not at all.
 	{"range-incl-sum", "function main(): i32 { var s = 0; for i in 0..=5 { s = s + i; } return s; }", 15},
 	{"range-incl-continue", "function main(): i32 { var s = 0; for i in 0..=10 { if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
 	{"range-incl-break", "function main(): i32 { var s = 0; for i in 0..=100 { if (i == 5) { break; } s = s + i; } return s; }", 10},
 	{"range-incl-single", "function main(): i32 { var c = 7; for i in 5..=5 { c = c + 1; } return c; }", 8},
 	{"range-incl-reversed", "function main(): i32 { var c = 7; for i in 9..=3 { c = c + 1; } return c; }", 7},
+	// HIGH at the type's maximum: a test of `i > hi` after the increment never
+	// holds, because the increment wraps to the minimum (#10359). LOW at the
+	// minimum wraps the other way through the desugar's `i - 1`.
+	{"range-incl-i32-max", "function main(): i32 { var c = 0; for i in 2147483646..=2147483647 { c = c + 1; } return c; }", 2},
+	{"range-incl-i32-max-last", "function main(): i32 { var t: i32 = 2147483647; var last = 0; for i in 2147483640..=t { last = i; } if (last == t) { return 7; } return 0; }", 7},
+	{"range-incl-i32-min-single", "function main(): i32 { var lo: i32 = -2147483647 - 1; var c = 0; for i in lo..=lo { c = c + 1; } return c; }", 1},
+	{"range-incl-i32-max-continue", "function main(): i32 { var c = 0; for i in 2147483640..=2147483647 { if (i < 2147483646) { continue; } c = c + 1; } return c; }", 2},
+	{"range-incl-i32-max-break", "function main(): i32 { var c = 0; for i in 2147483645..=2147483647 { c = c + 1; if (i == 2147483646) { break; } } return c; }", 2},
 	// A `defer` whose action names a binding declared in a nested block. The
 	// action is replayed at the scope's exits, where that binding had no slot,
 	// so the interpreter read whatever the name last meant instead of the
