@@ -1126,11 +1126,15 @@ loop and `std/fetch` the client.
 
 ### `std/tcp`
 
-- `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
+- `tcp_serve(port, handler)` — HTTP/1.1 serve loop. Calls
   `handler(req: HttpRequest, plat: Platform): HttpResponse` once
   per accepted connection, constructing the `Platform` bag it
-  passes. Each connection's request read is bounded by a 10 s
-  deadline (the slow-loris guard).
+  passes. The loop is a reactor: one readiness set from the Driver
+  seam watches the listener and every open connection, so slow
+  clients are read side by side, and each connection's request read
+  is bounded by a 10 s deadline (the slow-loris guard). A response the
+  kernel does not take whole stays with its connection, watched for
+  writability until it drains within the same span.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline }`
   (`serve_options()` is 128, one listener per port, and the 10 s
@@ -1273,6 +1277,20 @@ old `concurrent { … }` / `await` keyword surface.
 - `with_deadline(deadline, fs)` — await all within a `Duration`, yielding
   `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
   one abandoned at the deadline.
+- `Driver` (trait) and `real_driver()` — the waiting seam every
+  combinator's `*_on(drv, …)` sibling takes (`docs/DST-PLATFORM-BRIEF.md`):
+  `poll_ready`, `now_ns`, `timer` and `drop_token` are the one-shot waits,
+  and `watch(fd, interest)`, `unwatch(fd)`, `wait(max, timeout_ms)` and
+  `close()` are the reactor, a readiness set that outlives one wait
+  (interest and readiness bits 1 readable, 2 writable, readiness 4 an
+  error or hang-up; `wait` is the (fd, readiness) pairs of up to `max`
+  ready descriptors, empty on the timeout). The real driver's reactor is
+  the `reactor_*` floor, made on the first watch; `std/sim`'s answers from
+  the readiness a test scripts with `ready_at(fd, at_ms, bits)`, its
+  virtual clock advancing to the earliest one an interest selects. A host
+  may report readiness spuriously, so a reader reads until -EAGAIN, and a
+  descriptor is unwatched before it is closed. `std/tcp`'s serve loops run
+  on it.
 
 ### `std/platform`
 

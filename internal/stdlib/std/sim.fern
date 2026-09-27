@@ -15,13 +15,19 @@
 //
 // Time advances ONLY inside `poll_ready` — a busy loop that never
 // waits is a hang in simulation exactly as in production.
+import "core/int";
 import "std/async";
 import "std/rand";
 import "std/time";
 
 // Sim — the simulation driver: virtual clock (ns, starts at 0) +
-// explicit PRNG state. Construct with `sim.new(seed)`.
-pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64] }
+// explicit PRNG state, and the reactor leg: the descriptors watched with
+// their interest bits, and the readiness a test scripts for them with
+// `ready_at`. A cell holds a scalar or a string, so both tables are
+// strings of `;`-ended rows: `fd:interest` and `fd:at_ms:bits`, a
+// readiness time in milliseconds like a sim token. Construct with
+// `sim.new(seed)`.
+pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], readiness: Cell[string] }
 
 // new(seed) — a fresh simulation at virtual time 0. Equal seeds give
 // bit-identical runs.
@@ -32,7 +38,52 @@ pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64] }
 // seed (a saved DST replay, a regression a test names by seed) has to be
 // re-recorded. Nothing else about the contract moved.
 pub function new(seed: i64): Sim {
-    return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)) };
+    return Sim { clock_ns: cell_new(0 as i64), rng: cell_new(rand.rng_seed(seed)), watched: cell_new(""), readiness: cell_new("") };
+}
+
+// ready_at(fd, at_ms, bits) — script one readiness: `fd` reports `bits`
+// (1 readable, 2 writable, 4 error or hang-up) at virtual time `at_ms`, to
+// the first `wait` that reaches that time while `fd` is watched for one of
+// those bits, and once. A readiness no wait consumes stays scripted;
+// `unwatch` drops the descriptor's.
+pub function (s: Sim) ready_at(fd: i32, at_ms: i32, bits: i32): i32 {
+    s.readiness.set(s.readiness.get() + int.int_to_string(fd) + ":" + int.int_to_string(at_ms) + ":" + int.int_to_string(bits) + ";");
+    return 0;
+}
+
+// The rows of a table: every `;`-ended entry, each split on `:` into its
+// fields.
+function __sim_rows(table: string): string[][] {
+    var rows: string[][] = [];
+    for entry in table.split(";") {
+        if (entry.len() > 0) { rows = rows.append(entry.split(":")); }
+    }
+    return rows;
+}
+
+function __sim_field(row: string[], i: i32): i32 {
+    match (int.parse_int_radix(row[i], 10)) {
+        Some(v) => { return v; },
+        None => { return 0; },
+    }
+}
+
+// __sim_interest is the interest bits fd is watched for, 0 when it is not.
+function __sim_interest(s: Sim, fd: i32): i32 {
+    for row in __sim_rows(s.watched.get()) {
+        if (__sim_field(row, 0) == fd) { return __sim_field(row, 1); }
+    }
+    return 0;
+}
+
+// The watched table with fd's row replaced by `row` (dropped when empty).
+function __sim_rewatch(s: Sim, fd: i32, row: string): i32 {
+    var out: string = "";
+    for r in __sim_rows(s.watched.get()) {
+        if (__sim_field(r, 0) != fd) { out = out + r[0] + ":" + r[1] + ";"; }
+    }
+    s.watched.set(out + row);
+    return 0;
 }
 
 // __roll(drv, n) — deterministic pick in [0, n).
@@ -124,6 +175,60 @@ impl async.Driver for Sim {
         return ((self.clock_ns.get() + ns) / 1000000) as i32;
     }
     function drop_token(self: Self, tok: i32): i32 {
+        return 0;
+    }
+    function watch(self: Self, fd: i32, interest: i32): i32 {
+        return __sim_rewatch(self, fd, int.int_to_string(fd) + ":" + int.int_to_string(interest & 3) + ";");
+    }
+    function unwatch(self: Self, fd: i32): i32 {
+        __sim_rewatch(self, fd, "");
+        var kept: string = "";
+        for r in __sim_rows(self.readiness.get()) {
+            if (__sim_field(r, 0) != fd) { kept = kept + r[0] + ":" + r[1] + ":" + r[2] + ";"; }
+        }
+        self.readiness.set(kept);
+        return 0;
+    }
+    // wait — the virtual wait over the scripted readiness: the clock
+    // advances to the earliest readiness a watched descriptor's interest
+    // selects (one already due is due now), or to the timeout when that
+    // comes first (no pairs). Every readiness at that time is reported,
+    // in scripted order, and consumed.
+    function wait(self: Self, max: i32, timeout_ms: i32): i32[] {
+        var out: i32[] = [];
+        if (max <= 0) { return out; }
+        var now_ms: i32 = (self.clock_ns.get() / 1000000) as i32;
+        var best: i32 = -1;
+        for r in __sim_rows(self.readiness.get()) {
+            if ((__sim_field(r, 2) & __sim_interest(self, __sim_field(r, 0))) != 0) {
+                var at: i32 = __sim_field(r, 1);
+                if (at < now_ms) { at = now_ms; }
+                if (best < 0 || at < best) { best = at; }
+            }
+        }
+        if (timeout_ms >= 0 && (best < 0 || now_ms + timeout_ms < best)) {
+            self.clock_ns.set(self.clock_ns.get() + (timeout_ms as i64) * 1000000);
+            return out;
+        }
+        if (best < 0) { return out; }
+        self.clock_ns.set((best as i64) * 1000000);
+        var kept: string = "";
+        for r in __sim_rows(self.readiness.get()) {
+            var fd: i32 = __sim_field(r, 0);
+            var at: i32 = __sim_field(r, 1);
+            var bits: i32 = __sim_field(r, 2);
+            if (at < now_ms) { at = now_ms; }
+            if (at == best && (bits & __sim_interest(self, fd)) != 0 && out.len() < max * 2) {
+                out = out.append(fd);
+                out = out.append(bits);
+            } else {
+                kept = kept + r[0] + ":" + r[1] + ":" + r[2] + ";";
+            }
+        }
+        self.readiness.set(kept);
+        return out;
+    }
+    function close(self: Self): i32 {
         return 0;
     }
 }

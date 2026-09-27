@@ -194,7 +194,7 @@ its streams; `tcp_close` on such a record drops the socket alone. The
 interpreter dials through the net package before answering, so its op 5
 is 0 at once and a refused dial is reported by `tcp_connect_with` itself.
 Waiting for a started connect is a loop over op 5 today: the readiness
-builtins watch readability only, and writability arrives with the reactor.
+builtins watch readability only; the reactor floor below watches writability too.
 std/net wraps the three as `connect`, `connect_start` and `connect_result`.
 
 `unix_listen(path, backlog)` and `unix_connect(path)` are the Unix-domain
@@ -207,6 +207,29 @@ Fern bodies on both compilers (Darwin leads the address with sun_len) and
 the net package in the interpreter. Native only: the `unix` capability is
 in no wasi profile, so E066 refuses them on both wasm worlds at check time,
 and std/net's `listen_unix`, `connect_unix` and `accept` wrap them.
+
+The **reactor floor** is a readiness set that outlives one wait:
+`reactor_new()` (epoll on Linux, kqueue on Darwin, a table of wasi:io
+pollables on wasm, an epoll or kqueue set over the handles' descriptors in
+the interpreter), `reactor_ctl(r, op, fd, arg)` (op 1 watches `fd` for the
+interest in `arg`, 1 readable and 2 writable, op 2 stops watching it, op 3
+closes the set) and `reactor_wait(r, events, timeout_ms)`, which fills
+`events` with (fd, readiness) pairs, readiness 1 readable, 2 writable and 4
+an error or hang-up, and answers the pair count, 0 on the timeout (-1 waits
+without one), or -errno. Fern bodies on both compilers natively; on wasm a
+watch subscribes the pollables a record's kind names (a listener or a
+connect under way through tcp-socket.subscribe, a connection through its
+input and output streams, a datagram socket through its datagram streams)
+and a wait polls them with a timer for a finite timeout. Two rules hold on
+every target: a host may report readiness spuriously (wasmtime does after a
+read that did not drain the socket), so a reader reads until -EAGAIN; and a
+socket is unwatched before it is closed, since on wasm the pollables a watch
+holds are children of its streams. Behind it, `tcp_recv_into(fd, buf)` is
+the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
+-EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
+which on wasm is every socket, else -errno. The Driver seam wraps the four
+as `watch`, `unwatch`, `wait` and `close` (std/async), std/sim scripts
+readiness for its leg with `ready_at`, and the serve loops run on it.
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through
@@ -222,7 +245,8 @@ The Go bootstrap Darwin helper uses the same reverse registration and
 `EV_RECEIPT` approach, preserving the lowest caller index for duplicate fds
 and allowing valid readiness alongside failed registrations. Bootstrap flat
 and SSA helpers also reclaim their temporary poll storage on every path.
-Persistent worker-owned reactors remain separate P0 work.
+The persistent reactor is the `reactor_*` floor above; `poll` remains the
+one-shot wait the async combinators use.
 
 Both WebAssembly compilers implement compatibility `poll` timeouts by adding
 an owned monotonic-clock timer to the borrowed pollable list. A timer-only
