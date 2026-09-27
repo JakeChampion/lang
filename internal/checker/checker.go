@@ -18513,6 +18513,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			expected ast.Type
 		}
 		var deferred []deferredEmpty
+		// A field that contradicts the instantiation the others bound leaves
+		// the literal without one, as an unbound parameter does (E040).
+		clashed := false
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -18597,6 +18600,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
+					clashed = true
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -18655,7 +18659,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					complete = false
 				}
 			}
-			if complete {
+			if complete && !clashed {
 				for _, d := range deferred {
 					c.settleNumeric(d.value, substituteType(d.expected, sub))
 				}

@@ -238,6 +238,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"array-argument-field-settles-at-the-parameter", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; return take([Same { a: 1, b: y }]); }\n", nil},
 		{"array-argument-literal-field-mismatch", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { return take([Same { a: 1, b: \"x\" }]); }\n", []string{"E043"}},
 		{"generic-literal-fields-clash-without-destination", "struct Same[T] { a: T, b: T }\nfunction take(xs: Same[i64][]): i32 { return xs.len(); }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var r: i64 = q.a; return 0; }\n", []string{"E043"}},
+		// A literal whose fields clash has no instantiation, so its local
+		// reads as untyped and no use reports the clash again (#10453). Native
+		// took the first field's instantiation and added E038 / E003 per use.
+		{"generic-literal-fields-clash-then-passed", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; return take1(q); }\n", []string{"E043"}},
+		{"generic-literal-fields-clash-then-assigned", "struct Same[T] { a: T, b: T }\nfunction main(): i32 { var y: i64 = 5; var q = Same { a: 1, b: y }; var z: string = q; return 0; }\n", []string{"E043"}},
+		{"generic-literal-fields-clash-in-an-array", "struct Same[T] { a: T, b: T }\nfunction take1(x: Same[i64]): i32 { return 1; }\nfunction main(): i32 { var y: i64 = 5; var xs = [Same { a: 1, b: y }]; return take1(xs[0]); }\n", []string{"E043"}},
 		{"generic-literal-t-out-of-range", "struct Box[T] { v: T }\nfunction box[T](v: T): Box[T] { return Box { v: v }; }\nfunction both[T](a: T, b: T): (T, T) { return (a, b); }\nfunction pick[T](a: T, b: T): Option[T] { return Some(b); }\nfunction id[T](a: T): T { return a; }\nfunction take(v: u64): i32 { return 0; }\nfunction main(): i32 { var x: u8 = id(300); return 0; }\n", []string{"E047"}},
 		// The `.with` receiver root walk (#9699). The self-host matched a bare
 		// identifier only, so a field receiver — the structure-of-arrays shape
