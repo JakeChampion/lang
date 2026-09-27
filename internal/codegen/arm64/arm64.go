@@ -20500,7 +20500,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "udp_send":
 			target = "__fern_" + target
 			g.usesUdp = true
-		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect":
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect", "tcp_listen_with", "tcp_socket_ctl":
 			target = "__fern_" + target
 		case "tcp_recv", "tcp_send":
 			target = "__fern_" + target

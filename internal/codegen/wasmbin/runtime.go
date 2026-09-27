@@ -873,6 +873,20 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_listen")
+				case "__fern_tcp_listen_with":
+					// (port, backlog, reuse_port) → the same listener
+					// struct; the backlog reaches set-listen-backlog-size
+					// and reuse_port has no wasi:sockets control.
+					needs.add("__free")
+					needs.add("__fern_alloc")
+					needs.add("__network_handle")
+					needs.add("__fern_tcp_listen_with")
+				case "__fern_tcp_socket_ctl":
+					// (conn, op, arg) → 0 or -errno through the two
+					// controls wasi:sockets has, keep-alive and shutdown.
+					needs.add("__free")
+					needs.add("__fern_alloc")
+					needs.add("__fern_tcp_socket_ctl")
 				case "__fern_tcp_accept":
 					needs.add("__free")
 					// (listener) → i32 — heap pointer to a
@@ -1208,13 +1222,15 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 // unbreakable rather than merely written down. Every edge here is
 // read off the callee lookup at the top of the caller's build*Body.
 var unconditionalHelperCalls = map[string][]string{
-	"__fern_tcp_listen":     {"__fern_wasi_socket_errno"},
-	"__fern_tcp_accept":     {"__fern_wasi_socket_errno"},
-	"__fern_tcp_connect":    {"__fern_wasi_socket_errno"},
-	"__fern_tcp_local_port": {"__fern_wasi_socket_errno"},
-	"__fern_udp_send":       {"__fern_wasi_socket_errno"},
-	"__fern_read_file":      {"__fern_utf8_valid"},
-	"__fern_str_copy":       {"__fern_alloc_rc1"},
+	"__fern_tcp_listen":      {"__fern_wasi_socket_errno"},
+	"__fern_tcp_accept":      {"__fern_wasi_socket_errno"},
+	"__fern_tcp_connect":     {"__fern_wasi_socket_errno"},
+	"__fern_tcp_local_port":  {"__fern_wasi_socket_errno"},
+	"__fern_tcp_listen_with": {"__fern_wasi_socket_errno"},
+	"__fern_tcp_socket_ctl":  {"__fern_wasi_socket_errno"},
+	"__fern_udp_send":        {"__fern_wasi_socket_errno"},
+	"__fern_read_file":       {"__fern_utf8_valid"},
+	"__fern_str_copy":        {"__fern_alloc_rc1"},
 	// The IoError box keeps the static-sentinel header; its Other
 	// variant's message string is an rc1 block.
 	"__build_io_error": {"__fern_alloc_rc1", "__fern_alloc_box"},
@@ -2786,6 +2802,23 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI32},
 		body:    buildNetworkHandleBody,
+	},
+	"__fern_tcp_listen_with": {
+		// (port, backlog, reuse_port: i32) → i32 — the listener
+		// struct __fern_tcp_listen yields, with the accept queue
+		// set through set-listen-backlog-size; -errno on failure.
+		// See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpListenWithBody,
+	},
+	"__fern_tcp_socket_ctl": {
+		// (conn, op, arg: i32) → i32 — keep-alive (op 2) and
+		// shutdown (op 4) through wasi:sockets; 0 or -errno. See
+		// wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSocketCtlBody,
 	},
 	"__fern_tcp_listen": {
 		// (port: i32) → i32 — heap pointer to a 16-byte

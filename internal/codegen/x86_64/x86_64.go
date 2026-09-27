@@ -4019,6 +4019,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_tcp_accept"
 		case "tcp_local_port":
 			target = "__fern_tcp_local_port"
+		case "tcp_listen_with":
+			target = "__fern_tcp_listen_with"
+		case "tcp_socket_ctl":
+			target = "__fern_tcp_socket_ctl"
 		case "tcp_recv":
 			target = "__fern_tcp_recv"
 		case "poll":

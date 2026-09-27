@@ -566,6 +566,7 @@ var rcResultNonPointer = map[string]bool{
 
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,
+	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true,
 	"__fern_tcp_local_port": true,
 
 	// Opaque host handles. Pointer-SHAPED and not memory: a wasi

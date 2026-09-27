@@ -73,7 +73,7 @@ var stdModuleReach = map[string]string{
 	"std/log":           "log",
 	"std/math":          "random",
 	"std/mock_platform": "env,log,now,random",
-	"std/net":           "",
+	"std/net":           "tcp",
 	"std/ndarray":       "",
 	"std/num":           "",
 	"std/option":        "",
