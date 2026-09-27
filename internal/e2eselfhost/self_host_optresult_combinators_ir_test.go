@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // Self-host IR coverage for the std/option + std/result combinators added
 // alongside this test (map_or / is_some_and / or / and on Option; map_or /
@@ -15,10 +8,9 @@ import (
 // (#2692) — a small `match` — so they lower through the self-hosted IR path
 // the same way the existing map / filter / and_then combinators do.
 //
-// The self-host stdin drivers don't resolve stdlib imports, so each case
-// INLINES the combinator definition(s) under test (std/option imports core/cmp
-// only vestigially — the combinators reference nothing from it). Every case is
-// i32-only with scalar / non-callback combinators, routing-pinned to "ir", and
+// Each case INLINES the combinator definition(s) under test (std/option
+// imports core/cmp only vestigially — the combinators reference nothing from
+// it). Every case is i32-only with scalar / non-callback combinators and
 // oracle-checked against the interpreter (result kept <= 120, cf. #2908).
 type optResultIRCase struct {
 	name string
@@ -155,78 +147,20 @@ function main(): i32 {
 }`},
 }
 
-func TestSelfHostOptResultCombinatorsIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+// TestSelfHostOptResultCombinatorsIR compiles each case with the self-host CLI for
+// x86-64 and wasm and checks the exit code against the interpreter.
+func TestSelfHostOptResultCombinatorsIR(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "orc_driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "orc_probe")
-
 	for _, tc := range optResultIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			want := interpExit(t, interpBin, tc.src)
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
-				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
-	}
-}
-
-func TestSelfHostOptResultCombinatorsIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host opt/result wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "orc_wasm_driver")
-
-	for _, tc := range optResultIRCases {
-		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			want := interpExit(t, interpBin, tc.src)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader(src)
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "orc_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != want {
-				t.Errorf("opt/result wasm IR %q = %d, want %d (interp oracle)", tc.name, code, want)
-			}
-		})
+		src := tc.src
+		want := interpExit(t, interpBin, src)
+		for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+			t.Run(target+"/"+tc.name, func(t *testing.T) {
+				if stderr, code := cli.exitOf(t, src, target); code != want {
+					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
+				}
+			})
+		}
 	}
 }

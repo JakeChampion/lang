@@ -21,15 +21,11 @@ import "testing"
 // entry per copy and the leak is immediate, but the release is emitted the same
 // way on both, and the e2e legs that cover the single-word side need cross
 // tooling this layer does not.
-//
-// The array-value half is NOT observable here: `__map_drop_values` lives in
-// core/map.fern, this harness lowers a bare source with no module loading, and
-// the dead-map-reclamation cull (~ir.go:3126) strips calls to it when it is
-// absent. The generated key walk is what this layer can see.
 func TestMapOverwriteDropReleasesClaimedColumns(t *testing.T) {
 	// `a = b`, where b is a COW copy of a: the loop's `var b` reinit drop, the
 	// overwrite, and the exit sweep each owe the key column.
-	chain := `function chain(n: i32): i32 {
+	chain := `import "core/map";
+function chain(n: i32): i32 {
     var a: Map[string, i32] = map_new(16);
     a = a.insert("k" + "ey", 1);
     var i: i32 = 0;
@@ -44,9 +40,9 @@ func TestMapOverwriteDropReleasesClaimedColumns(t *testing.T) {
 function main(): i32 { return chain(3); }`
 
 	for _, ptrW := range []int{4, 8} {
-		p := lowerSourceWith(t, chain, ptrW)
+		p := lowerImportsWith(t, chain, ptrW)
 		keys := countDirectCalls(p, "chain", "__drop_map_str_keys")
-		bufs := countDirectCalls(p, "chain", "__fern_map_drop")
+		bufs := countDirectCalls(p, "chain", "__map_drop_impl")
 		if keys != bufs {
 			t.Errorf("ptrW=%d: chain emits %d key-column walks against %d buf-and-handle frees — every release of a string-keyed map owes both, and the overwrite used to take the buf alone:\n%s", ptrW, keys, bufs, p)
 		}
@@ -56,7 +52,7 @@ function main(): i32 { return chain(3); }`
 		blocks := mapPtrCompareGuardCallees(p, "chain")
 		found := false
 		for _, callees := range blocks {
-			if hasCallee(callees, "__drop_map_str_keys") && hasCallee(callees, "__fern_map_drop") {
+			if hasCallee(callees, "__drop_map_str_keys") && hasCallee(callees, "__map_drop_impl") {
 				found = true
 			}
 		}

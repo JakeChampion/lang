@@ -20,7 +20,10 @@ pub struct Func {
     anchors: Anchor[],
     // (dyn type, concrete) for every record and enum implementing the type's
     // whole trait set; a dyn release dispatches on its box's shape over these.
-    dyns: EnvRow[]
+    dyns: EnvRow[],
+    // The builtin names the module declares as free functions: a call to one
+    // is an ordinary call, never the builtin's op.
+    shadows: string[]
 }
 
 // The parameter whose storage a callee's result reads, so a caller keeps that
@@ -155,6 +158,11 @@ pub function dyn_up(): i32 { return 0 - 44; }
 // a fresh cell laid out as a one-field record, whose shape is the primitive's
 // name (`str`) and whose field holds the value, owning a unit of a string.
 pub function dyn_box(): i32 { return 0 - 45; }
+// `x as? T` reads a dyn value's shape: `dyn_is` answers whether the box is a
+// `T`, and `dyn_as` is that same box typed as `T`, valid only where a
+// `dyn_is` has settled it, as a variant narrowing is.
+pub function dyn_is(): i32 { return 0 - 46; }
+pub function dyn_as(): i32 { return 0 - 47; }
 pub function is_map_iter_op(kind: i32): boolean {
     return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
         || kind == mapiter_value() || kind == mapiter_advance();
@@ -765,6 +773,23 @@ function dyn_widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
     return "dyn widening operand";
 }
 
+function dyn_test_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "dyn test arity"; }
+    if (!is_bool(result)) { return "dyn test type"; }
+    if (!is_dyn(f.values[ins.args[0]])) { return "dyn test operand"; }
+    return "";
+}
+
+// The concrete a downcast names is a record or an enum: the shape the box
+// carries at offset 0.
+function dyn_narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.args.len() != 1) { return "dyn narrowing arity"; }
+    if (!is_dyn(f.values[ins.args[0]])) { return "dyn narrowing operand"; }
+    if let typeinfo.TypeStruct(r) = result { if (r.args.len() == 0 && r.name == ins.str) { return ""; } }
+    if let typeinfo.TypeUnion(u) = result { if (u.name == ins.str) { return ""; } }
+    return "dyn narrowing type";
+}
+
 function dyn_box_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.args.len() != 1) { return "dyn box arity"; }
     if (!is_dyn(result)) { return "dyn box type"; }
@@ -863,6 +888,8 @@ function variant_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
     if (ins.kind_tag == variant_up()) { return widening_error(ins, f, result); }
     if (ins.kind_tag == dyn_up()) { return dyn_widening_error(ins, f, result); }
     if (ins.kind_tag == dyn_box()) { return dyn_box_error(ins, f, result); }
+    if (ins.kind_tag == dyn_is()) { return dyn_test_error(ins, f, result); }
+    if (ins.kind_tag == dyn_as()) { return dyn_narrowing_error(ins, f, result); }
     if (ins.kind_tag == str_as()) { return retag_error(ins, f, result); }
     if (ins.kind_tag == variant_as()) { return narrowing_error(ins, f, result); }
     return variant_projection_error(ins, f, result);
@@ -1147,12 +1174,13 @@ function map_operand_error(m: typeinfo.Type, key: typeinfo.Type, value: typeinfo
 
 function is_variant_op(kind: i32): boolean {
     return kind == variant_new() || kind == variant_is() || kind == variant_get()
-        || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up() || kind == dyn_box();
+        || kind == variant_up() || kind == variant_as() || kind == str_as() || kind == dyn_up() || kind == dyn_box()
+        || kind == dyn_is() || kind == dyn_as();
 }
 
 // A variant's field, and a narrowing to a variant, exist only while the value
 // is that variant.
-function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as(); }
+function needs_guard(kind: i32): boolean { return kind == variant_get() || kind == variant_as() || kind == dyn_as(); }
 
 // A contract carrying a type VARIABLE (`typeinfo.TypeErased`) is a TEMPLATE,
 // and the call site is what instantiates it. Binding runs left to right over
@@ -1890,7 +1918,7 @@ function settled(f: Func, value: i32, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst
         var b: ssa.SBlock = f.graph.blocks[pi];
         if (b.term.kind_tag == 3 && b.term.t != b.term.f && b.term.cond >= 0 && b.term.cond < defs.len()) {
             var test: ssa.SInst = defs[b.term.cond];
-            if (test.kind_tag == variant_is() && test.args[0] == value) {
+            if ((test.kind_tag == variant_is() || test.kind_tag == dyn_is()) && test.args[0] == value) {
                 var ti: i32 = sole_successor(f, b.term.t, b.id);
                 if (ti >= 0 && ssadeps.dom_holds(dom, bi, ti)) { held = held.append(test.str); }
                 var fi: i32 = sole_successor(f, b.term.f, b.id);
@@ -1950,7 +1978,7 @@ function guard_error(f: Func): string {
 function projects(kind: i32): boolean {
     return kind == 7 || kind == array_get() || kind == tuple_get() || kind == record_get()
         || kind == variant_get() || kind == variant_up() || kind == variant_as()
-        || kind == slice() || kind == str_as() || kind == dyn_up()
+        || kind == slice() || kind == str_as() || kind == dyn_up() || kind == dyn_as()
         || kind == map_iter() || kind == mapiter_key() || kind == mapiter_value();
 }
 

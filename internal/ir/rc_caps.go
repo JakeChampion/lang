@@ -131,7 +131,7 @@ func enumPayloadsResolved(info *checker.Info, ty ast.EnumType) ([]ast.Type, bool
 
 // isMapType reports whether t is the runtime Map handle type. A
 // Map-typed field / payload / capture reclaims its structure (value
-// column + buf + handle) via __map_drop_values then __fern_map_drop,
+// column + buf + handle) via __map_drop_values then __map_drop_impl,
 // both of which self-guard on the map's own rc==1 and return the map
 // ptr (so a stack value chains through).
 func isMapType(t ast.Type) bool {
