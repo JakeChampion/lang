@@ -60,7 +60,6 @@ func (w *reactorEmit) and()          { w.body = numeric.InstI32And(w.body) }
 func (w *reactorEmit) eq()           { w.body = numeric.InstI32Eq(w.body) }
 func (w *reactorEmit) ne()           { w.body = numeric.InstI32Ne(w.body) }
 func (w *reactorEmit) ifStart()      { w.body = inst.InstIfStart(w.body, inst.BlocktypeEmpty) }
-func (w *reactorEmit) elseStart()    { w.body = inst.InstElse(w.body) }
 func (w *reactorEmit) end()          { w.body = inst.InstEnd(w.body) }
 func (w *reactorEmit) ret()          { w.body = inst.InstReturn(w.body) }
 
