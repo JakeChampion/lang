@@ -14,6 +14,7 @@ import "./ssasem";
 import "./ssaunits";
 import "./ownership";
 import "./util";
+import "./seminline";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -5203,7 +5204,7 @@ pub function build_module(mod: parser.Module): Built {
         names = names.append(r.name);
         at = at + 1;
     }
-    var all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), names), names);
+    var all: Produced[] = inline_leaves(anchor_module(close_module(util.append_all(decls, instances), names), names), names, mod.funcs);
     decls = [];
     instances = [];
     i = 0;
@@ -5217,6 +5218,40 @@ pub function build_module(mod: parser.Module): Built {
         i = i + 1;
     }
     return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, mod.impls, util.append_all(decls, instances)) };
+}
+
+// Tiny scalar leaves spliced into their callers (seminline). A declaration
+// marked @noinline stays a call, and so does every instance. `FERN_SEM_INLINE=`
+// (set but empty) turns the pass off, for comparing a build against itself.
+function inline_leaves(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
+    if (!inline_on()) { return all; }
+    var funcs: ssasem.Func[] = [];
+    var inlinable: boolean[] = [];
+    var rewrite: boolean[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var p: Produced = all[i];
+        var usable: boolean = p.ok && !p.template && !p.bodyless;
+        funcs = funcs.append(p.func);
+        rewrite = rewrite.append(usable);
+        inlinable = inlinable.append(usable && i < decls.len() && !decls[i].no_inline);
+        i = i + 1;
+    }
+    var out: ssasem.Func[] = seminline.inline_leaves(funcs, names, inlinable, rewrite);
+    var result: Produced[] = [];
+    i = 0;
+    while (i < all.len()) {
+        result = result.append(Produced { ...all[i], func: out[i] });
+        i = i + 1;
+    }
+    return result;
+}
+
+function inline_on(): boolean {
+    match (env("FERN_SEM_INLINE")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return true; }
+    }
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the
