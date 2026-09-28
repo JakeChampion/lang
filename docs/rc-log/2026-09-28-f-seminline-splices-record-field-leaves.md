@@ -35,10 +35,12 @@ callgrind.
 | self-built compiler binary | 12,340,800 B | 12,345,312 B (+4,512) |
 | `tsort` binary | | byte-identical |
 
-The first draft of `leaf` kept a per-value `params: boolean[]`. On
-`selfhost-alloc-bench` (native-built compiler, `checker.fern`), that added
-7,595 allocations (81,150,605 → 81,158,200). The count comparison above
-replaced it.
+On `selfhost-alloc-bench` (a native-built compiler compiling `checker.fern`),
+allocations go from 81,150,605 to 81,156,780 (+6,175, +0.008%). That compiler
+runs seminline on `checker.fern`, so the increase is the pass copying the
+newly admitted leaves into their callers. A first draft of `leaf` also kept a
+per-value `params: boolean[]`, which cost another 1,420 allocations. Comparing
+counts instead of building the array removed them.
 
 Why the gain is this small was not measured: the binaries carry no symbols, so
 callgrind cannot say which call sites were spliced. A likely reason, unchecked,
