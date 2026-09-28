@@ -27,6 +27,13 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		{"print", `print(p); return 0;`},
 		{"writer-write", `var w: Writer = stdout(); var e: Option[IoError] = w.write(p); return 0;`},
 		{"Writer.write", `match (stdout().write(p)) { Some(_) => { return 1; }, None => { return 0; } } return 0;`},
+		// A socket send reads the bytes and answers a count. The serve
+		// loop's serialised response is a local passed to a helper that
+		// sends it, and stayed stranded once per request without this.
+		{"tcp_send", `return tcp_send(3, p);`},
+		{"udp_send host", `return udp_send(p, 1, "x");`},
+		{"udp_send data", `return udp_send("127.0.0.1", 1, p);`},
+		{"udp_sendto data", `return udp_sendto(3, [127 as u8, 0 as u8, 0 as u8, 1 as u8], 1, p);`},
 	}
 	for _, c := range cases {
 		src := "function eat(p: string): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
@@ -47,6 +54,24 @@ func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
 		got := paramCountedFor(t, src, "eat")
 		if len(got) != 1 || !got[0] {
 			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the table is read, never retained", builtin, got)
+		}
+	}
+}
+
+// A socket address is read into a sockaddr by a bind, connect or sendto
+// and never retained, so an address parameter is credited too.
+func TestCopyingSocketAddressArgIsCounted(t *testing.T) {
+	for _, c := range []struct{ name, body string }{
+		{"udp_bind", `return udp_bind(p, 0);`},
+		{"udp_connect", `return udp_connect(3, p, 1);`},
+		{"udp_sendto", `return udp_sendto(3, p, 1, "x");`},
+		{"tcp_listen_with", `return tcp_listen_with(p, 0, 16, false);`},
+		{"tcp_connect_with", `return tcp_connect_with(p, 1, false);`},
+	} {
+		src := "function eat(p: u8[]): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
+		got := paramCountedFor(t, src, "eat")
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the address is read, never retained", c.name, got)
 		}
 	}
 }

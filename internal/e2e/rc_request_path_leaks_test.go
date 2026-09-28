@@ -64,6 +64,54 @@ function main(): i32 {
     }
     return t;
 }`},
+		// A pair-form callee's pointer payload arrives counted by the return
+		// ABI, so the caller owns it whether the callee built it or retained
+		// an alias of a parameter's element (`Some(h.values[i])`, the shape
+		// every HeaderMap lookup takes). Each consumer of that count: the
+		// statement match, the expression match, a local, a `?` binding, and
+		// a return from inside the arm.
+		{"pair-form-alias-payload-consumed-five-ways", 40, `struct H { names: string[], values: string[] }
+function heap(i: i32): string { var s: string = "keep-alive-"; return s + ("!" + "!") + (if (i % 2 == 0) { "x" } else { "yy" }); }
+function get(h: H, name: string): Option[string] {
+    var i: i32 = 0;
+    while (i < h.names.len()) { if (h.names[i] == name) { return Some(h.values[i]); } i = i + 1; }
+    return None;
+}
+function via_match(h: H): i32 { match (get(h, "connection")) { Some(v) => { return v.len(); }, None => {} } return 0; }
+function via_expr(h: H): i32 { return match (get(h, "connection")) { Some(v) => v.len(), None => 0 }; }
+function via_local(h: H): i32 { var o: Option[string] = get(h, "connection"); match (o) { Some(v) => { return v.len(); }, None => {} } return 0; }
+function via_try(h: H): Option[i32] { var v: string = get(h, "connection")?; return Some(v.len()); }
+function via_return(h: H): Option[string] { match (get(h, "connection")) { Some(v) => { return Some(v); }, None => { return None; } } return None; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var h: H = H { names: ["connection"], values: [heap(i)] };
+        t = t + via_match(h) + via_expr(h) + via_local(h);
+        match (via_try(h)) { Some(n) => { t = t + n; }, None => { return 1; } }
+        match (via_return(h)) { Some(v) => { t = t + v.len(); }, None => { return 2; } }
+        i = i + 1;
+    }
+    return t - 540;
+}`},
+		// A fresh array handed to a callee that reassigns and returns its
+		// parameter comes back one count heavy when the callee hands it
+		// straight back (no rebind, or a push that kept the pointer): the
+		// bare return carries the transfer inc. The serve loop's
+		// `__with_backlog(conns, drv.wait(...))` is this shape on every wait.
+		{"fresh-array-returned-unchanged-by-a-threading-callee", 40, `function grow(a: i32[], more: boolean): i32[] { if (more) { a = a.append(7); } return a; }
+function mk(n: i32): i32[] { var v: i32[] = []; var i: i32 = 0; while (i < n) { v = v.append(i); i = i + 1; } return v; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var a: i32[] = grow([1, 2, 3], i % 2 == 0);
+        var b: i32[] = grow(mk(2), i % 3 == 0);
+        t = t + a.len() + b.len();
+        i = i + 1;
+    }
+    return t - 19;
+}`},
 	}
 	for _, c := range cases {
 		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) {
