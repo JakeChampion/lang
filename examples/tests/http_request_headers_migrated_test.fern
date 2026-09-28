@@ -137,6 +137,13 @@ function test_http_header_value_missing_is_none(): test.TestOutcome {
         http.http_header_value("Host: e\r\n", "X-Absent"));
 }
 
+// A block the request parser would refuse names no header, even one on
+// a well-formed line.
+function test_http_header_value_refuses_a_malformed_block(): test.TestOutcome {
+    return test.assert_is_none_string(
+        http.http_header_value("Host: e\r\nno colon\r\n", "host"));
+}
+
 // A request with NO header block at all: the request line's own
 // CRLF is the first two bytes of the `\r\n\r\n` separator, so the
 // header slice [first_crlf + 2, headers_end) runs backwards unless
@@ -181,6 +188,8 @@ function main(): i32 {
              test_http_header_value_via_headermap);
     r = r.it("http_header_value missing returns None",
              test_http_header_value_missing_is_none);
+    r = r.it("http_header_value refuses a malformed block",
+             test_http_header_value_refuses_a_malformed_block);
     r = r.it("a request with no headers parses",
              test_no_headers_at_all_parses);
     r = r.it("a request with no headers has none",

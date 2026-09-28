@@ -77,16 +77,41 @@ function repeat(s: string, n: i32): string {
     return out;
 }
 
+// A request whose line is `line_len` bytes before its CRLF.
+function line_of(line_len: i32): string {
+    return "GET /" + repeat("a", line_len - 14) + " HTTP/1.1\r\n\r\n";
+}
+
+// A request whose header block, request line included, is `block_len`
+// bytes before the CRLF CRLF that ends it.
+function block_of(block_len: i32): string {
+    var line: string = "GET / HTTP/1.1\r\n";
+    return line + "X: " + repeat("v", block_len - line.len() - 3) + "\r\n\r\n";
+}
+
+function accepted(wire: string): boolean {
+    match (http.http_parse_request_bytes(wire.bytes())) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+    return false;
+}
+
+// Each cap admits a request at it and refuses the one a byte or a field
+// past it.
 function test_caps_admit_what_fits(): test.TestOutcome {
     match (http.http_parse_request_bytes(("GET / HTTP/1.1\r\n" + fields(100) + "\r\n").bytes())) {
         Some(req) => { if (req.headers.len() != 100) { return test.fail("100 fields kept as " + req.headers.len().to_string()); } },
         None => { return test.fail("100 header fields refused"); }
     }
-    match (http.http_parse_request_bytes(("GET /" + repeat("a", 8192 - 14) + " HTTP/1.1\r\n\r\n").bytes())) {
-        Some(req) => { return test.assert_eq(req.path.len(), 8192 - 13); },
-        None => { return test.fail("an 8 KiB request line refused"); }
-    }
-    return test.fail("unreachable");
+    if (!accepted(line_of(8192))) { return test.fail("a request line of 8192 bytes refused"); }
+    if (accepted(line_of(8193))) { return test.fail("a request line of 8193 bytes accepted"); }
+    if (!accepted(block_of(32768))) { return test.fail("a header block of 32768 bytes refused"); }
+    if (accepted(block_of(32769))) { return test.fail("a header block of 32769 bytes accepted"); }
+    if (!accepted("POST / HTTP/1.1\r\nContent-Length: 1048576\r\n\r\n" + repeat("b", 1048576))) { return test.fail("a body of 1 MiB refused"); }
+    if (accepted("POST / HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n" + repeat("b", 1048577))) { return test.fail("a body a byte over 1 MiB accepted"); }
+    if (http.http_request_bytes_cap() != 32768 + 4 + 1048576) { return test.fail("request cap: " + http.http_request_bytes_cap().to_string()); }
+    return test.pass();
 }
 
 // Every refusal the parser makes, on both entries.
@@ -117,6 +142,13 @@ function test_refusals_agree(): test.TestOutcome {
     if (!refused("GET / HTTP/1.1\r\n: h\r\n\r\n")) { return test.fail("an empty header name accepted"); }
     if (!refused("GET / HTTP/1.1\r\nX: a\r\n b\r\n\r\n")) { return test.fail("obs-fold accepted"); }
     if (!refused("GET / HTTP/1.1\r\n\tX: a\r\n\r\n")) { return test.fail("a header line starting with HTAB accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX Y: a\r\n\r\n")) { return test.fail("a space inside a header name accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX\"Y: a\r\n\r\n")) { return test.fail("a quote inside a header name accepted"); }
+    if (!refused(" / HTTP/1.1\r\n\r\n")) { return test.fail("an empty method accepted"); }
+    if (!refused("   \r\n\r\n")) { return test.fail("a request line of spaces accepted"); }
+    if (!refused("GET  / HTTP/1.1\r\n\r\n")) { return test.fail("an empty request target accepted"); }
+    if (!refused("GET / \r\n\r\n")) { return test.fail("an empty version accepted"); }
+    if (!refused("G(ET / HTTP/1.1\r\n\r\n")) { return test.fail("a method that is not a token accepted"); }
     if (!refused("GET / HTTP/1.1\nHost: h\r\n\r\n")) { return test.fail("a bare LF ending the request line accepted"); }
     if (!refused("GET / HTTP/1.1\r\nHost: h\nX: y\r\n\r\n")) { return test.fail("a bare LF in the header block accepted"); }
     if (!refused("GET / HTTP/1.1\r\nX: a\rb\r\n\r\n")) { return test.fail("a bare CR in a value accepted"); }

@@ -92,11 +92,13 @@ const KeepAliveCycle = 274
 // order across several waits and closed by the cap; HTTP/1.0 and
 // `Connection: close` requests that end theirs; a pipeline of 33 requests
 // whose peer half-closes behind them, one more than the loop's burst so
-// the last is answered from the backlog after the end of stream has been
-// read, and must say close; a complete request followed by the start of
-// another, whose connection the read deadline closes; a pipeline of 33
-// requests whose handlers together outlast that deadline, all of which
-// must be answered; a pipelined request answered to a peer that has
+// the last is answered from the backlog on a later wait, all of which
+// must be answered before the connection closes; a complete request
+// followed by the start of another, whose connection the read deadline
+// closes; a pipeline of 33 requests whose handlers together outlast that
+// deadline, all of which must be answered, and whose peer half-closes
+// behind them, so the last, answered after the end of stream has been
+// read, must say close; a pipelined request answered to a peer that has
 // reset the connection, whose failed write must close it before the
 // request behind it is answered; a request with a malformed one pipelined
 // behind it, answered with close and then closed with no response to the
@@ -124,6 +126,8 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
 	// keep-alive case from the header it leaves in place.
+	// read checks the next response; wantConnection is what its
+	// `Connection` header must say, or "" where either answer is right.
 	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
@@ -141,7 +145,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		if resp.Close {
 			got = "close"
 		}
-		if got != wantConnection {
+		if wantConnection != "" && got != wantConnection {
 			conn.Close()
 			t.Fatalf("%s: Connection=%q, want %q", label, got, wantConnection)
 		}
@@ -197,11 +201,11 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
 		// A pipeline of 33 requests whose peer half-closes behind them. The
-		// server may or may not read the end of stream with the first 32
-		// (that is a race on the wire), but the 33rd is answered from the
-		// backlog on a later wait, once the end of stream has certainly
-		// arrived, so its response must say close, since the close follows
-		// it; the 32 before it persist either way.
+		// 33rd is answered from the backlog on the next wait, and whether
+		// the end of stream has arrived by then is a race on the wire: the
+		// last response says close when it has and keep-alive when it has
+		// not, and the connection closes once it has either way. The slow
+		// pipeline below pins the close, with the race settled.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -213,7 +217,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
 		}
-		read(conn, r, "half-closed pipeline, last", "close")
+		read(conn, r, "half-closed pipeline, last", "")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
 		// then closed by the 300 ms read deadline the partial request waits
@@ -235,6 +239,10 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		// deadline. The 33 answers are a second of the server's CPU on the
 		// slowest backend, and a two-CPU runner shares that CPU with a
 		// second worker, so this connection waits longer than the others.
+		// The peer half-closes behind the pipeline: the 32 slow answers
+		// leave the end of stream long arrived by the time the 33rd is
+		// read from the backlog, so its response must say close, and the
+		// close must follow it.
 		conn = dial()
 		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 			conn.Close()
@@ -246,10 +254,12 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			fmt.Fprintf(&pipeline, "GET /slow%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
 		write(conn, pipeline.String())
-		for i := 0; i < 33; i++ {
+		halfClose(conn)
+		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "keep-alive")
 		}
-		conn.Close()
+		read(conn, r, "slow pipeline, last", "close")
+		eof(conn, r, "after the slow pipeline")
 		// A request, a slow one and a third behind it in one write; the
 		// peer resets the connection once the first is answered, so the
 		// second response is written to a peer that is gone. That write

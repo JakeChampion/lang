@@ -3893,8 +3893,9 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 		"ok 8 - Transfer-Encoding rejected",
 		"ok 9 - http_header_value via HeaderMap",
 		"ok 10 - http_header_value missing returns None",
-		"ok 11 - a request with no headers parses",
-		"# pass 12",
+		"ok 11 - http_header_value refuses a malformed block",
+		"ok 12 - a request with no headers parses",
+		"# pass 13",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

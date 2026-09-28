@@ -1067,14 +1067,19 @@ serializer.
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
   offset instead of copying the buffer forward, with `len` counted from
-  `from`. There is no lenient mode: a header line without a colon or
-  with an empty name, whitespace before the colon (RFC 9112 §5.1),
-  obs-fold (§5.2), a bare CR or LF (§2.2), `Transfer-Encoding`, a
-  duplicate, non-numeric or overflowing `Content-Length` (§6.3), a request
-  line over 8 KiB, a header block over 32 KiB or 100 fields, or a body
-  over 1 MiB is malformed, and a request past a cap is malformed as soon
-  as the cap is passed, before its end has arrived; `http_header_bytes_cap()`
-  and `http_body_cap()` name the caps for the serve loop's buffer.
+  `from`. There is no lenient mode: a request line whose method is not a
+  token or whose target or version is empty (§3), a header line without
+  a colon or whose name is not a token (so whitespace before the colon,
+  §5.1, and obs-fold, §5.2, both refuse), a bare CR or LF (§2.2),
+  `Transfer-Encoding`, a duplicate, non-numeric or overflowing
+  `Content-Length` (§6.3), a request line over 8 KiB, a header block over
+  32 KiB or 100 fields, or a body over 1 MiB is malformed, and a request
+  past a cap is malformed as soon as the cap is passed, before its end has
+  arrived; `http_header_bytes_cap()`, `http_body_cap()` and
+  `http_request_bytes_cap()` (the two plus the blank line between them)
+  name the caps for the serve loop's buffer. `http_header_value(block,
+  key)` reads a raw header block by the same rules, so a block the parser
+  would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
   `close` as the serve loop decided.
