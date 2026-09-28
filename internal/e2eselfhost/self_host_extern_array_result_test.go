@@ -116,7 +116,8 @@ func TestSelfHostExternArrayResultCustomProvider(t *testing.T) {
 function iota(n: u32): i32[];
 function main(): i32 {
     var xs: i32[] = iota(4u32);
-    if (xs.len() == 4 && xs[3] == 3) { write("` + want + `"); } else { write("iota-bad"); }
+    xs = xs.append(40);
+    if (xs.len() == 5 && xs[3] == 3 && xs[4] == 40) { write("` + want + `"); } else { write("iota-bad"); }
     return 0;
 }`
 	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))

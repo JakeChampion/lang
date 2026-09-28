@@ -110,17 +110,17 @@
 # cost against some of these numbers and as exactly zero against others. Three
 # consequences, before you quote a figure or add a driver:
 #
-#   * FOURTEEN MODULES ARE VISIBLE ONLY THROUGH fern.fern: both native back
+#   * SEVENTEEN MODULES ARE VISIBLE ONLY THROUGH fern.fern: both native back
 #     ends (x86_native, arm64_native), elf, watbin, ssa_wasm, interp, printer,
-#     constfold, literate, ferndoc, mvs, caps, platforms, visibility. A change
+#     constfold, literate, ferndoc, mvs, caps, platforms, visibility,
+#     wit_decode, wit_compose, wit_proxy_world. A change
 #     confined to one of them moves a single number in this file, and moves it
 #     against the largest denominator here, where 300 KB is 0.8% and vanishes
 #     under the tolerance. The claim above that the smaller drivers "localise a
 #     regression to a backend" holds for the IR, asm and wasm-IR backends and
 #     NOT for the native emitters, which have no localising driver at all.
-#   * THREE LIBRARY MODULES ARE LINKED BY NO BASELINED DRIVER: wit_decode
-#     (1,127 lines, imported nowhere in the tree), wit_compose, and
-#     wasm_objfile — the last reachable only from wasm_modload_run, which
+#   * ONE LIBRARY MODULE IS LINKED BY NO BASELINED DRIVER:
+#     wasm_objfile — reachable only from wasm_modload_run, which
 #     wasm-wholecompiler-link builds as a WASM module rather than an x86-64
 #     ELF, a size that does not belong in this file's one architecture.
 #     Covering it means paying for an x86-64 link of a driver nothing else
@@ -342,7 +342,13 @@
 # type-variable respelling pass and its printer inverse (#9577). The other
 # rows keep their numbers. Measured with FERN_WARM_DRIVER=fern.fern
 # FERN_DRIVER_SIZE_REPORT on the merged tree.
-fern.fern 13753865
+# 2026-09-28 — fern.fern alone, 13753865 -> 14118057 (+2.65%, inside the
+# band). The CLI links the WIT decoder and composer and the embedded proxy
+# world for `-target wasm32-wasi-http` (wit_decode, wit_compose,
+# wit_proxy_world: ~1,450 lines that no driver linked before), and the wasm
+# extern bridge gained its heap-payload result wrappers. Measured with
+# FERN_WARM_DRIVER=fern.fern FERN_DRIVER_SIZE_REPORT on the branch.
+fern.fern 14118057
 asm_load_run.fern 9924729
 asm_modload_run.fern 9400865
 asm_ir_run.fern 9111545
