@@ -394,11 +394,12 @@ function main(): i32 {
     if (!passPlan.ok) { eprint(passPlan.why); return 108; }
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [2], passPlan, false).return_fresh_struct_ret_fns, "mk") >= 0) { return 109; }
     // A record the body builds is the caller's only reference, whatever the
-    // counts on its fields (#10415). A method keeps the floor: its AST callers
-    // key it by receiver type, so a bare-name row would describe another
-    // function.
+    // counts on its fields (#10415). A method's row goes under the
+    // Base.name key its AST callers look it up by, and nowhere else.
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", recordFunc, [2], recordPlan, false).return_fresh_struct_ret_fns, "mk") < 0) { return 201; }
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", recordFunc, [2], recordPlan, true).return_fresh_struct_ret_fns, "mk") >= 0) { return 202; }
+    var methodSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "Rec.mk", recordFunc, [2], recordPlan, true);
+    if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "Rec.mk") < 0) { return 202; }
+    if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "mk") >= 0) { return 203; }
     // The parameter rows come from the contract, not the syntax: a borrowed
     // reference parameter is the retained-keep row, and without a plan to show
     // it keeps nothing never the bare one; a counted or scalar parameter has
@@ -412,6 +413,15 @@ function main(): i32 {
     rowAll = "";
     for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
     if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
+    // A method's receiver is parameter 0 of the Func but has no position in
+    // the AST's per-parameter rows, which start at the first declared
+    // parameter (#10515). The rows its syntax gave are replaced.
+    var methodRows = ssarc.caller_sigs(irlower.FnSigs { ...irlower.fn_sigs_empty(), borrowable_params: irlower.borrow_reg_set([], "W.mk", "11"),
+        param_counted: ["PCNT:W.mk|11"] }, "W.mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 2], ssaunits.refused("no plan"), true);
+    rowAll = "";
+    for bucket in methodRows.borrowable_params { rowAll = rowAll + bucket; }
+    if (!has_sub(rowAll, "CNT:W.mk|01\n") || has_sub("\n" + rowAll, "\nW.mk|")) { eprint(rowAll); return 204; }
+    if (util.index_of_str(methodRows.param_counted, "PCNT:W.mk|01") < 0 || methodRows.param_counted.len() != 1) { return 205; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -425,6 +435,11 @@ function main(): i32 {
     var lenRows: string = "";
     for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "len", arrLen, [2], arrLenPlan, false).borrowable_params { lenRows = lenRows + bucket; }
     if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
+    // The same body as a method keeps nothing of its receiver, which the AST
+    // rows have no position for, so it writes no parameter row at all.
+    lenRows = "";
+    for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "Arr.len", arrLen, [2], arrLenPlan, true).borrowable_params { lenRows = lenRows + bucket; }
+    if (has_sub(lenRows, "len|")) { eprint(lenRows); return 206; }
     var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty(), []);
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     var sawArrLen: boolean = false;
@@ -1069,10 +1084,10 @@ function main(): i32 {
     var sawIntStrFree: boolean = false;
     for o in dropIntStrLowered.ops { if (o.str == "__map_drop_strcols_impl") { sawIntStrFree = true; } }
     if (!sawIntStrFree) { return 173; }
-    // The free of a column of boxes takes the value's release as a second
-    // argument, a function value the lowering also emits as a helper; an
-    // insert into it names the same release (value kind 3, width bits 4 and
-    // 5) for the entry it supersedes.
+    // A column of boxes on core/map is dropped through __map_drop_boxes_impl,
+    // handed the value's release as a closure over an environment-first
+    // wrapper the lowering emits beside the release itself; an insert reads
+    // out the box it may supersede and releases it through the same release.
     var dropArrMap = ssasem.Func { ...dropIntMap, values: [arrMapTy, i32ty], params: [arrMapTy] };
     var dropArrLowered = ssarc.lower(dropArrMap, [3], ssaunits.plan(dropArrMap, [3]), irlower.struct_tab_empty(), []);
     if (!dropArrLowered.ok) { eprint(dropArrLowered.why); return 187; }
@@ -1080,13 +1095,17 @@ function main(): i32 {
     var sawArrFree: boolean = false;
     var sawArrRelease: boolean = false;
     for o in dropArrLowered.ops {
-        if (o.kind_tag == 149 && o.str == "__fern_map_free_ksvf" && o.i32_imm == 2) { sawArrFree = true; }
-        if (o.kind_tag == 6 && o.str == releaseName) { sawArrRelease = true; }
+        if (ir.render_op(o) == "call_direct __map_drop_boxes_impl/2") { sawArrFree = true; }
+        if (ir.render_op(o) == "const_closure " + releaseName + "$env") { sawArrRelease = true; }
     }
     if (!sawArrFree || !sawArrRelease) { return 188; }
     var sawHelper: boolean = false;
-    for h in ssarc.drop_helpers(dropArrMap) { if (h.name == releaseName && h.n_params == 1) { sawHelper = true; } }
-    if (!sawHelper) { return 189; }
+    var sawEnvHelper: boolean = false;
+    for h in ssarc.drop_helpers(dropArrMap) {
+        if (h.name == releaseName && h.n_params == 1) { sawHelper = true; }
+        if (h.name == releaseName + "$env" && h.n_params == 2) { sawEnvHelper = true; }
+    }
+    if (!sawHelper || !sawEnvHelper) { return 189; }
     var arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
@@ -1096,10 +1115,14 @@ function main(): i32 {
     var arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irlower.struct_tab_empty(), []);
     if (!arrInsertLowered.ok) { eprint(arrInsertLowered.why); return 191; }
     var sawArrSet: boolean = false;
+    var sawOldRead: boolean = false;
+    var sawOldRelease: boolean = false;
     for o in arrInsertLowered.ops {
-        if (o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1 && o.str == releaseName) { sawArrSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_set_impl") { sawArrSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_lookup_val") { sawOldRead = true; }
+        if (o.kind_tag == 149 && o.str == releaseName) { sawOldRelease = true; }
     }
-    if (!sawArrSet) { return 192; }
+    if (!sawArrSet || !sawOldRead || !sawOldRelease) { return 192; }
     var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };

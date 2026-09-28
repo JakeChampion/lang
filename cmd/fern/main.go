@@ -1196,6 +1196,9 @@ func runInterp(srcPath string, argv []string) (int, error) {
 			return 1, formatErr(err)
 		}
 	}
+	if errs := enforceAmbient(srcPath, prog); errs != nil {
+		return 1, formatErr(errs)
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return 1, formatErr(err)
 	}
@@ -1373,6 +1376,9 @@ func runCheck(srcPath, target string) error {
 			return formatErr(err)
 		}
 	}
+	if errs := enforceAmbient(srcPath, prog); errs != nil {
+		return formatErr(errs)
+	}
 	if err := monomorph.Run(prog, info); err != nil {
 		return formatErr(err)
 	}
@@ -1479,6 +1485,9 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// sibling of the target-boundary E066 pass below).
 	if err := enforceCapabilities(srcPath, prog, os.Stderr); err != nil {
 		return 1, e.format(err)
+	}
+	if errs := enforceAmbient(srcPath, prog); errs != nil {
+		return 1, e.format(errs)
 	}
 	// -O: drop assert() checks AFTER type-checking (an ill-typed assert
 	// still fails a release build) and before monomorph/codegen.

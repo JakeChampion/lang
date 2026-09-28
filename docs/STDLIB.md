@@ -1049,8 +1049,12 @@ serializer.
 - **Path / header / UA:** `http_path_segments`,
   `http_url_path_only`, `http_user_agent_is_bot`,
   `http_header_value`
-- **Wire format:** `http_parse_request(buf): Option[HttpRequest]`,
-  `http_serialize_response(resp): string`
+- **Wire format:** `http_parse_request_bytes(buf: u8[]): Option[HttpRequest]`
+  reads a request as it came off the wire and keeps owned copies of what a
+  handler reads (the method, the path, each header, the body), so the wire
+  buffer is the connection's to reuse; `http_parse_request(buf: string)` is
+  the same parse over text, one copy dearer. `http_serialize_response(resp):
+  string`.
 
 ### `std/net`
 
@@ -1303,8 +1307,9 @@ its second parameter (`handle(req: HttpRequest, plat: Platform)` —
 effects reached as methods on the value the handler was handed, so a
 handler can only reach what it was given. The free functions
 (`eprint`, `now_unix_ms`, …) stay for programs that are not handlers;
-`fern -lint`'s `ambient-capability` rule reports a handler body that
-reaches around the bag.
+a function handed a bag that reaches one, directly or through a helper,
+is refused at check time (E080, `internal/ambient`, mirrored by
+`examples/self_host/ambient.fern`).
 
 Each method needs its target capability (`internal/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
@@ -1326,6 +1331,11 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 - `platform_new()` — the bag as the host serves it, for tests and
   hand-driven handlers (the serving paths build their own).
+- `plat.handle` — the worker-owned runtime handle: the reactor of the
+  serving worker that built the bag, 0 for one built by `platform_new` or
+  the wasi-http wrapper. Per-worker mutable state a capability needs lives
+  behind it, since a bag's fields are frozen and a cell holds only a scalar
+  or a string. `plat.version` is 2 since it was added.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).

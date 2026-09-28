@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/ambient"
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/caps"
 	"github.com/jakechampion/lang/internal/checker"
@@ -170,4 +171,32 @@ func packageInfoResolver(entryPath string) func(module string) (name, dir string
 		cache[mdir] = id
 		return id.name, id.dir, id.root
 	}
+}
+
+// enforceAmbient runs the ambient-effect rule (E080): a function handed a
+// `Platform` bag must reach every host effect through it. Target-independent,
+// so it runs on every check and every build, and on the program before the
+// tree-shake: a handler is judged on what its body reaches, whether or not
+// this program serves it.
+func enforceAmbient(srcPath string, prog *ast.Program) diag.Errors {
+	vs := ambient.Enforce(prog)
+	if len(vs) == 0 {
+		return nil
+	}
+	entry := srcPath
+	if entry == "-" {
+		entry = "<stdin>"
+	}
+	var errs diag.Errors
+	for _, v := range vs {
+		ce := &checker.Error{Pos: v.Pos, Msg: v.Message(entry), ErrCode: "E080"}
+		// Only the entry module's positions index the file the renderer
+		// displays; a handler declared in an imported module degrades to a
+		// position-less entry that names the module instead.
+		if v.FuncModule != "" && v.FuncModule != entry {
+			ce.Pos = ast.Position{}
+		}
+		errs = append(errs, ce)
+	}
+	return errs
 }

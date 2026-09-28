@@ -597,6 +597,13 @@ func builtinStructDecls() []*ast.StructDecl {
 		// string — which is why the effect log is a string the
 		// mock parses back, rather than an array.
 		//
+		// `handle` is the worker-owned runtime handle (#9851 §3.1): the
+		// reactor the serving worker runs on, 0 for a bag built outside
+		// one. Struct fields are frozen after construction and a cell
+		// holds only a scalar or a string, so the mutable per-worker
+		// state a capability needs (idle connections, timers, the sim's
+		// driver) lives behind this handle rather than in the bag.
+		//
 		// Every construction goes through the synthesised
 		// `__fern_platform_new`, std/tcp's `__host_platform`, or
 		// std/platform; nothing builds this struct out of raw
@@ -607,6 +614,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "version", Type: ast.NumberType{}},
 				{Name: "mode", Type: ast.NumberType{}},
 				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
+				{Name: "handle", Type: ast.NumberType{}},
 			},
 		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
@@ -17570,6 +17578,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.callOwnFlags[n] = calleeOwnFlags
 		}
+		// An empty array literal at a parameter still spelled with a type
+		// variable binds nothing: it is checked once the other arguments and
+		// the destination have bound the variable, as a generic struct
+		// literal's empty field is (#10499).
+		type deferredEmptyArg struct {
+			i        int
+			expected ast.Type
+			own      bool
+		}
+		var deferredArgs []deferredEmptyArg
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
@@ -17688,6 +17706,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				own := i < len(calleeOwnFlags) && calleeOwnFlags[i] ||
 					!calleeIsValue && storesArgument(calleeName, i)
+				if arr, isArr := at.(ast.ArrayType); isArr && arr.Elem == nil && sub != nil && containsParamType(expected) {
+					deferredArgs = append(deferredArgs, deferredEmptyArg{i, expected, own})
+					continue
+				}
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
@@ -17758,6 +17780,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							}
 						}
 					}
+				}
+			}
+			for _, d := range deferredArgs {
+				want := substituteType(d.expected, sub)
+				if containsParamType(want) {
+					continue
+				}
+				c.settleNumeric(n.Args[d.i], want)
+				if !c.argOK(&n.Args[d.i], want, c.postSettleType(n.Args[d.i], ast.ArrayType{}), d.own) {
+					c.errArgMismatch(n, d.i, recvIsArg0, want, ast.ArrayType{})
 				}
 			}
 			// Substitute the inferred sub through the result so
@@ -20833,7 +20865,7 @@ const platformCtorName = "__fern_platform_new"
 // synthesisePlatformCtor builds:
 //
 //	function __fern_platform_new(): Platform {
-//	    return Platform { version: 1, mode: 0, sink: cell_new("") };
+//	    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: 0 };
 //	}
 //
 // The capability bag built in Fern, where the struct's layout is the
@@ -20845,20 +20877,22 @@ const platformCtorName = "__fern_platform_new"
 // Fern source the checker re-checks, so it cannot drift silently.
 //
 // The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
-// bag, so mode 0 and a sink nothing writes.
+// bag, so mode 0 and a sink nothing writes. The wasi-http wrapper serves
+// one request per instance with no reactor, so the handle is 0.
 func synthesisePlatformCtor() *ast.FuncDecl {
 	pos := ast.Position{}
 	lit := &ast.StructLit{
 		P:        pos,
 		TypeName: "Platform",
 		Fields: []ast.FieldInit{
-			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 1}},
+			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 2}},
 			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
 			{Name: "sink", Value: &ast.Call{
 				P:      pos,
 				Callee: &ast.Ident{P: pos, Name: "cell_new"},
 				Args:   []ast.Expr{&ast.StringLit{P: pos, Value: ""}},
 			}},
+			{Name: "handle", Value: &ast.NumberLit{P: pos, Value: 0}},
 		},
 	}
 	return &ast.FuncDecl{

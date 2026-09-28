@@ -242,39 +242,54 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 // headers callers need a richer parser.
 pub function http_header_value(block: string, key: string): Option[string] {
     // Route through the same HeaderMap the request parser builds
-    // (`__parse_headers` → case-folded, line-anchored, first-match)
+    // (`__parse_header_bytes` → case-folded, line-anchored, first-match)
     // instead of a parallel raw re-scan. One header model, one set
     // of edge-case rules — no drift between "look a header up on a
     // request" and "look one up on a raw block".
-    return __parse_headers(block).get(key);
+    var bs: u8[] = block.bytes();
+    return __parse_header_bytes(bs, 0, bs.len()).get(key);
 }
 
-// `(method, path)` from a request line. Returns None on malformed
-// input (no spaces, missing version).
-//
-// The pair, not an HttpRequest with the other two fields stubbed:
-// its one caller reads exactly these two and builds the real
-// request itself, so the stubbed shape cost a whole discarded
-// request per parse — a HeaderMap and its two arrays, and a body
-// Stream and its buffer.
-function __http_parse_request_line(line: string): Option[(string, string)] {
-    var sp1: i32 = line.index_of(" ");
-    if (sp1 < 0) {
-        return None;
+// __find_crlf is the index of the first CRLF at or after `from` and before
+// `end`, or -1; __find_byte the same for one byte.
+function __find_crlf(buf: u8[], from: i32, end: i32): i32 {
+    var i: i32 = from;
+    while (i + 1 < end) {
+        if (buf[i] == (13 as u8) && buf[i + 1] == (10 as u8)) { return i; }
+        i = i + 1;
     }
-    var sp2: i32 = slice_unchecked(line, sp1 + 1, line.len()).index_of(" ");
-    if (sp2 < 0) {
-        return None;
-    }
-    var method: string = slice_unchecked(line, 0, sp1).to_owned();
-    var path: string = slice_unchecked(line, sp1 + 1, sp1 + 1 + sp2).to_owned();
-    return Some((method, path));
+    return -1;
 }
 
-// `__parse_headers(block)` — turn the CRLF-terminated header
-// block into a HeaderMap. `block` is the bytes between the
-// request line and the empty separator line (everything from
-// `index_of("\r\n") + 2` up to `index_of("\r\n\r\n")`).
+function __find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
+    var i: i32 = from;
+    while (i < end) {
+        if (buf[i] == b) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// __bytes_range copies buf[from, end) into a fresh array; __bytes_string
+// is that copy as text. The parser's outputs are owned copies of what the
+// handler keeps, so the wire buffer can be reused once the parse is done.
+function __bytes_range(buf: u8[], from: i32, end: i32): u8[] {
+    var out: u8[] = __alloc_u8(end - from);
+    var i: i32 = 0;
+    while (from + i < end) {
+        out = out.with(i, buf[from + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+function __bytes_string(buf: u8[], from: i32, end: i32): string {
+    return string_from_bytes_unchecked(__bytes_range(buf, from, end));
+}
+
+// `__parse_header_bytes(buf, from, end)` — the CRLF-separated header
+// lines in buf[from, end) as a HeaderMap: everything from the request
+// line's CRLF up to the empty separator line.
 //
 // Lines without a colon are skipped (HTTP/1.1 §3.2 allows
 // recipients to reject malformed headers; we silently drop
@@ -287,21 +302,19 @@ function __http_parse_request_line(line: string): Option[(string, string)] {
 // Doesn't handle line folding (obs-fold per §3.2.4) — folding
 // was deprecated by RFC 7230 and is treated as malformed
 // (continuation lines get skipped via the colon check).
-function __parse_headers(block: string): HeaderMap {
+function __parse_header_bytes(buf: u8[], from: i32, end: i32): HeaderMap {
     var h: HeaderMap = headers.header_map_new();
-    var lines: string[] = block.split("\r\n");
-    var i: i32 = 0;
-    while (i < lines.len()) {
-        var line: string = lines[i];
-        if (line.len() > 0) {
-            var col: i32 = line.index_of(":");
-            if (col > 0) {
-                var name: string = slice_unchecked(line, 0, col).to_owned();
-                var value: string = slice_unchecked(line, col + 1, line.len()).trim().to_owned();
-                h = h.append(name, value);
-            }
+    var at: i32 = from;
+    while (at < end) {
+        var e: i32 = __find_crlf(buf, at, end);
+        if (e < 0) { e = end; }
+        var col: i32 = __find_byte(buf, at, e, 58 as u8);
+        if (col > at) {
+            var name: string = __bytes_string(buf, at, col);
+            var value: string = __bytes_string(buf, col + 1, e).trim().to_owned();
+            h = h.append(name, value);
         }
-        i = i + 1;
+        at = e + 2;
     }
     return h;
 }
@@ -317,7 +330,7 @@ function __parse_headers(block: string): HeaderMap {
 // `content-length:` anywhere in the raw block, so `X-Foo-Content-
 // Length:` or a header *value* containing the literal string won,
 // and duplicate `Content-Length` / any `Transfer-Encoding` went
-// undetected. Reading the HeaderMap that `__parse_headers` already
+// undetected. Reading the HeaderMap that `__parse_header_bytes` already
 // built closes all three (RFC 9112 §6):
 //   - any Transfer-Encoding → reject (no chunked support here, and
 //     TE alongside CL is the canonical desync),
@@ -361,24 +374,37 @@ function __http_content_length(h: HeaderMap): Option[i32] {
     return Some(acc);
 }
 
-// `http_parse_request(buf)` parses a full HTTP/1.1 request
-// out of a buffer the caller has already read from the wire.
-// Caller is responsible for accumulating bytes via
-// `tcp_recv` until the buffer holds at least the header block
-// (terminated by `\r\n\r\n`) plus Content-Length bytes of
-// body — the parser returns None on a partial buffer rather
-// than blocking, so callers driving the read loop can keep
-// recv'ing until parse succeeds (or a hard cap fires).
+// `http_parse_request_bytes(buf)` parses a full HTTP/1.1 request
+// out of the bytes the caller has read from the wire, as they
+// came: no text bridge. The caller accumulates bytes via
+// `tcp_recv_into` until the buffer holds at least the header
+// block (terminated by `\r\n\r\n`) plus Content-Length bytes
+// of body — the parser returns None on a partial buffer rather
+// than blocking, so callers driving the read loop keep reading
+// until the parse succeeds (or a hard cap fires).
 //
 // Caps: headers must fit in the first 8 KiB, body capped at
 // 1 MiB. Both surface as None so the caller can close the
 // socket without a response (HTTP/1.1 §10 allows server-
 // side reset on malformed input).
-pub function http_parse_request(buf: string): Option[HttpRequest] {
-    if (buf.len() > 8192 + 1048576) {
+//
+// What the request keeps are owned copies — the method, the
+// path, each header's name and value, the body — so the wire
+// buffer is the connection's to reuse once this returns.
+pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
+    var n: i32 = buf.len();
+    if (n > 8192 + 1048576) {
         return None;
     }
-    var headers_end: i32 = buf.index_of("\r\n\r\n");
+    var headers_end: i32 = -1;
+    var i: i32 = 0;
+    while (i + 3 < n) {
+        if (buf[i] == (13 as u8) && buf[i + 1] == (10 as u8) && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8)) {
+            headers_end = i;
+            i = n;
+        }
+        i = i + 1;
+    }
     if (headers_end < 0) {
         return None;
     }
@@ -386,25 +412,21 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
         return None;
     }
     var headers_len: i32 = headers_end + 4;
-    var first_crlf: i32 = buf.index_of("\r\n");
-    if (first_crlf < 0) {
-        return None;
-    }
+    var first_crlf: i32 = __find_crlf(buf, 0, n);
     // Parse the header block into a HeaderMap *first*, then derive
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
-    // `\r\n\r\n` separator, so the slice excludes the empty line.
+    // `\r\n\r\n` separator, so the block excludes the empty line.
     //
     // The two coincide exactly when the request carried no headers at
     // all (`GET / HTTP/1.1\r\n\r\n`): the request line's own CRLF is
     // the first two bytes of the separator. Clamping is what keeps the
-    // slice from running backwards there.
+    // block from running backwards there.
     var hdr_start: i32 = first_crlf + 2;
     if (hdr_start > headers_end) {
         hdr_start = headers_end;
     }
-    var hdr_block: str = slice_unchecked(buf, hdr_start, headers_end);
-    var req_headers: HeaderMap = __parse_headers(hdr_block);
+    var req_headers: HeaderMap = __parse_header_bytes(buf, hdr_start, headers_end);
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
         Some(cl) => { content_length = cl; },
@@ -417,27 +439,33 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
     if (content_length > 1048576) {
         return None;
     }
-    if (headers_len + content_length > buf.len()) {
+    if (headers_len + content_length > n) {
         // Caller hasn't read the full body yet.
         return None;
     }
-    match (__http_parse_request_line(slice_unchecked(buf, 0, first_crlf))) {
-        Some(line) => {
-            var body: string = "";
-            if (content_length > 0) {
-                body = slice_unchecked(buf, headers_len, headers_len + content_length).to_owned();
-            }
-            return Some(HttpRequest {
-                method: line.0,
-                path: line.1,
-                body: stream.stream_from_string(body),
-                headers: req_headers,
-            });
-        },
-        None => {
-            return None;
-        }
+    // The request line: the method, a space, the path, a space, the rest.
+    var sp1: i32 = __find_byte(buf, 0, first_crlf, 32 as u8);
+    if (sp1 < 0) {
+        return None;
     }
+    var sp2: i32 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
+    if (sp2 < 0) {
+        return None;
+    }
+    return Some(HttpRequest {
+        method: __bytes_string(buf, 0, sp1),
+        path: __bytes_string(buf, sp1 + 1, sp2),
+        body: stream.stream_from_bytes(__bytes_range(buf, headers_len, headers_len + content_length)),
+        headers: req_headers,
+    });
+}
+
+// `http_parse_request(buf)` — the same parse over a request held as
+// text: a test's literal, a block already in a string. It costs one
+// copy of the bytes; a serve loop holds its buffer as `u8[]` and calls
+// `http_parse_request_bytes`.
+pub function http_parse_request(buf: string): Option[HttpRequest] {
+    return http_parse_request_bytes(buf.bytes());
 }
 
 // Reason phrase for the status line. Delegates to the public
