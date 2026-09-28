@@ -84,6 +84,12 @@ function ts_qualified_root(tag: string, method: string): string {
     return tag + "|" + method;
 }
 
+// ts_free_root is the root a bare identifier contributes: the qualified
+// spelling with no receiver, which only a receiver-less function answers to.
+function ts_free_root(name: string): string {
+    return ts_qualified_root("", name);
+}
+
 // ts_named_tag reports a tag that is one bare name — a struct, enum or scalar
 // — as opposed to "" or a composite spelling.
 function ts_named_tag(tag: string): boolean {
@@ -130,7 +136,12 @@ function ts_routed_map_roots(): string[] {
 
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
     match (e) {
-        ast.ExprIdent(id) => { return acc.append(id.name); },
+        // A bare identifier names a free function (or a local): it keeps the
+        // free functions of that name, not a method that happens to share
+        // it. `handle` is every wasi:http handler's entry, and std/async's
+        // driver has a `.handle()` method that reaches the reactor — kept by
+        // name, it failed E066 on the one target without a reactor.
+        ast.ExprIdent(id) => { return acc.append(ts_free_root(id.name)); },
         ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
             if (m.len() == 0) { return acc; }
@@ -344,6 +355,7 @@ function refset_add(rs: RefSet, name: string): RefSet {
 // not — or, for a receiver-rooted method only, by its receiver type.
 function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
     if (refset_has(refs, fd.name)) { return true; }
+    if (fd.receiver_type.len() == 0 && refset_has(refs, ts_free_root(fd.name))) { return true; }
     var m: string = ts_array_method_name(fd.name);
     if (m.len() > 0 && refset_has(refs, m)) { return true; }
     var im: string = ts_interposed_method_name(fd.name);
@@ -407,7 +419,8 @@ function ts_grow(mod: parser.Module, rs0: RefSet, pending0: i32[]): TsGrown {
 // constructor is reachable, a kept function or a lambda in one takes or
 // returns a map, or a struct or variant holds one.
 function ts_reaches_map(mod: parser.Module, rs: RefSet): boolean {
-    if (refset_has(rs, "map_new") || refset_has(rs, "__map_new_i32")) { return true; }
+    if (refset_has(rs, "map_new") || refset_has(rs, ts_free_root("map_new"))
+        || refset_has(rs, "__map_new_i32") || refset_has(rs, ts_free_root("__map_new_i32"))) { return true; }
     for fd in mod.funcs {
         if (!ts_kept_name(fd, rs)) { continue; }
         if (ts_sig_mentions_map(fd.params, fd.ret_type)) { return true; }

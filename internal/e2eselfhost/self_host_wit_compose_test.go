@@ -27,7 +27,6 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	// Compile a stdout program and extract its core module.
@@ -53,31 +52,9 @@ func TestSelfHostComposeFromWorld(t *testing.T) {
 		t.Fatalf("write core.bin: %v", err)
 	}
 
-	// Build the self-host wasm emitter, then compile a driver that turns the
-	// core into a component via the world-driven path.
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	var src strings.Builder
-	for _, name := range []string{"watbin.fern", "wit_decode.fern", "wit_compose.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		src.Write(b)
-		src.WriteByte('\n')
-	}
-	src.WriteString(witPayloadFunc(t, "FERN_BIN", "fern"))
-	src.WriteString(withPrintInt(selfHostComposeWorldDriver))
-
-	driverWat := runCapture(t, gcc, runner, driverBin, []byte(src.String()))
-	if len(driverWat) == 0 {
-		t.Fatal("driver produced 0 bytes")
-	}
-	driverWatPath := filepath.Join(dir, "driver.wat")
-	if err := os.WriteFile(driverWatPath, driverWat, 0o644); err != nil {
-		t.Fatalf("write driver wat: %v", err)
-	}
+	// Compile a driver that turns the core into a component via the
+	// world-driven path, through the self-host CLI against the modules.
+	driverWatPath := witCompileToWat(t, dir, "driver", witPayloadFunc(t, "FERN_BIN", "fern")+withPrintInt(selfHostComposeWorldDriver))
 	out, err := exec.Command(wasmtime, "run", "--dir", dir, driverWatPath).Output()
 	if err != nil {
 		t.Fatalf("run driver: %v", err)
@@ -143,7 +120,6 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	// Author + embed a minimal stdout-only world; pull out its payload.
@@ -189,28 +165,9 @@ func TestSelfHostComposeFromUserWorld(t *testing.T) {
 		t.Fatalf("write core.bin: %v", err)
 	}
 
-	// Build the self-host emitter and a driver that composes from the user world.
-	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
-
-	var src strings.Builder
-	for _, name := range []string{"watbin.fern", "wit_decode.fern", "wit_compose.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		src.Write(b)
-		src.WriteByte('\n')
-	}
-	src.WriteString(witBytesFunc("USER_BIN", payload))
-	src.WriteString(withPrintInt(selfHostComposeUserDriver))
-
-	driverWat := runCapture(t, gcc, runner, driverBin, []byte(src.String()))
-	if len(driverWat) == 0 {
-		t.Fatal("driver produced 0 bytes")
-	}
-	driverWatPath := filepath.Join(dir, "driver.wat")
-	_ = os.WriteFile(driverWatPath, driverWat, 0o644)
+	// Compile a driver that composes from the user world, through the
+	// self-host CLI against the modules.
+	driverWatPath := witCompileToWat(t, dir, "driver", witBytesFunc("USER_BIN", payload)+withPrintInt(selfHostComposeUserDriver))
 	out, err := exec.Command(wasmtime, "run", "--dir", dir, driverWatPath).Output()
 	if err != nil {
 		t.Fatalf("run driver: %v", err)
