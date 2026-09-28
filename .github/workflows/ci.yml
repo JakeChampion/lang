@@ -112,6 +112,7 @@ jobs:
               ] },
               "docs-build": { "paths": [
                 "cmd/fern-wasm/**",
+                "examples/self_host/**",
                 "cmd/ferndoc/**",
                 "web/**",
                 "site/**",
@@ -127,6 +128,7 @@ jobs:
               ] },
               "playground-e2e": { "paths": [
                 "cmd/fern-wasm/**",
+                "examples/self_host/**",
                 "web/**",
                 "internal/**",
                 "mise.toml",

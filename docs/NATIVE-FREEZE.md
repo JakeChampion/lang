@@ -91,9 +91,11 @@ above is the first run of it.
    `internal/interp` is the oracle the differentials anchor on, and §3 keeps
    it. Gates that compare self-host codegen against native codegen go with
    the backends or are re-anchored on the interpreter, in the deletion PRs.
-4. **The non-compiler consumers** — open. The browser playground
-   (`internal/wasm/playground`, `cmd/fern-wasm`) is built on native codegen; a
-   self-host driver that compiles, checks and interprets exists and runs
-   hosted in wasm (`PLAYGROUND-SELFHOST-WASM.md`), but the playground bundle
-   does not use it yet. `cmd/fern-lsp` is built on the Go front end, which the
-   freeze keeps, so it does not block deletion of the backends.
+4. **The non-compiler consumers** — the playground runs on the self-host
+   compiler since 2026-09-28 (`PLAYGROUND-SELFHOST-WASM.md`, top). Two panes
+   still come from the Go toolchain: the language server (#6641), which is
+   the Go front end the freeze keeps and does not touch the backends, and
+   the wasi:http world (#6636), which needs `wasm32-wasi-http` in the
+   self-host compiler (an incoming-handler core and its component framing)
+   before `internal/codegen/wasmbin` can go. `cmd/fern-lsp` is the same
+   front end.

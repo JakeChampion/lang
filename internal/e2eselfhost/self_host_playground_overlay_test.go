@@ -111,6 +111,31 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
 	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
 	t.Run("interp-maps-the-exit-code", func(t *testing.T) { playgroundInterpExit(t, bin) })
+	t.Run("interp-dispatches-byte-methods", func(t *testing.T) { playgroundInterpByteMethods(t, bin) })
+}
+
+// A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a VInt,
+// so std/i32's `(b: u8)` methods have to be reachable from it. They were not
+// — the evaluator dispatched on the value's name, "i32", and never matched a
+// u8 receiver — so the page's own `result` and `interp` examples, both built
+// on `is_ascii_digit`, ran to a VErr under the self-host evaluator where
+// native prints their answer. 7 is what native `fern -interp` returns.
+func playgroundInterpByteMethods(t *testing.T, bin string) {
+	const src = `import "std/i32";
+function main(): i32 {
+    var s: string = "a1";
+    var n: i32 = 0;
+    if (s[1].is_ascii_digit()) { n = n + 1; }
+    if (s[0].is_ascii_alpha()) { n = n + 2; }
+    var b: i32 = 32;
+    if ((b as u8).is_ascii_white_space()) { n = n + 4; }
+    return n;
+}
+`
+	_, stderr, code := runPlayground(t, bin, t.TempDir(), src, "-interp")
+	if code != 7 {
+		t.Fatalf("-interp exited %d, want 7 (native's answer)\n%s", code, stderr)
+	}
 }
 
 // `-interp` evaluates instead of emitting: the playground's output pane wants a

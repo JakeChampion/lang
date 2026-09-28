@@ -2209,16 +2209,16 @@ What is left, in order:
 
 ### What deleting the AST lowering touches, 2026-09-26
 
-**The drivers.** The CLI is the one driver that builds a substitution from
-the typed path: `cli_substitution` calls `semlower.substitution`. The other
-drivers fall into four groups:
+**The drivers.** The CLI and the playground driver build a substitution from
+the typed path: `emitforms.substitution` calls `semlower.substitution`. The
+other drivers fall into four groups:
 
 - Emitting drivers, which call the backends' plain entry points
   (`asm_ir.emit_module_or_error`, `wasm_ir.emit_module_mode_or_error` and the
   rest). Those entry points pass `ircore.no_sub()`, so these compiles take the
   AST lowering whatever the environment says. The drivers are `asm_ir_run`,
   `asm_run`, `asm_load_run`, `asm_modload_run`, `wasm_ir_run`, `wasm_run`,
-  `wasm_runio_run`, `wasm_modload_run` and `playground_run`. The per-module and
+  `wasm_runio_run` and `wasm_modload_run`. The per-module and
   modload whole-compiler fixpoints build the compiler through the load and
   modload drivers, and `asm_modload_run` also calls `irlower.lower_module`
   directly for its provided-symbol check. The plan below says which of
@@ -2236,7 +2236,8 @@ drivers fall into four groups:
 
 **The plan for the drivers.** Most of them do not take the substitution:
 linking the typed path into them would grow each by 6.7–10.2% (the reason
-`cli_substitution` lives in `fern.fern`). Instead:
+`emitforms.substitution` is linked by `fern.fern` and `playground_run.fern`
+alone). Instead:
 - a test that checks what the language does moves to the CLI;
 - a test that exists to inspect the AST lowering's own output goes with it.
 
