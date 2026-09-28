@@ -86,8 +86,12 @@ bin/fern-selfhost -target wasm32-wasi -emit asm /ABS/prog.fern $PWD/internal/std
 wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
 ```
 
-**`bin/fern-selfhost` is NATIVE-built, so A/B-ing it cannot see a lowering
-change.** The binary that target produces was compiled by `bin/fern`, which
+**`bin/fern-selfhost` from `make selfhost-cli` is NATIVE-built, so A/B-ing it
+cannot see a lowering change.** (`make bootstrap` installs the pin's output at
+the same path, a self-built compiler; `scripts/perf-bench-selfhost` and
+`scripts/coreutils-bench` rebuild only when the binary is older than the
+sources, so say which producer a measurement used.) The binary that target
+produces was compiled by `bin/fern`, which
 applies native's own lowering — so a self-host lowering improvement is absent
 from the code being timed, and the only difference an A/B measures is the cost
 of the new analysis. #8224's field-append change read as +0.2% Ir that way while

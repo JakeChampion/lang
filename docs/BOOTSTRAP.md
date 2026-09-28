@@ -18,7 +18,7 @@ STAGE0=bin/fern-selfhost make bootstrap   # run the chain from a local candidate
 ```
 
 Everything lands in `build/bootstrap/`: the cached stage0 under
-`stage0/<release>/`, `stage1`, `stage2`, and the smoke programs. The smoke is
+`stage0/<release>/`, `stage1`, `stage2`, `stage3`, and the smoke programs. The smoke is
 a one-line program and `coreutils/tr` built with `-O` and run: a stage1 that
 an old stage0 built through its AST-lowering fallback compiles the first and
 aborts on the second (#9763), so a one-liner alone installed a compiler that
@@ -46,8 +46,10 @@ on; cross-compiling stage1 for another host is not part of the chain, because
 stage1 has to run to be smoke-tested and (in `distcheck`) to compile stage2,
 which in turn compiles stage3.
 
-**The artifact is a native binary per host, hosted as a release asset, not a
-file in the tree.** Settled by measurement on 2026-09-01:
+**The artifact is a compiler binary per host, hosted as a release asset, not a
+file in the tree**: on the Linux hosts the self-built stage2 the publish job
+reaches, on arm64-darwin the native-built candidate (#8479). Settled by
+measurement on 2026-09-01, on native builds:
 
 | | size | gzip -9 | xz -9 |
 |---|---|---|---|
@@ -60,10 +62,11 @@ clone — the cost the issue (#6644) flagged — where a release asset costs the
 tree one line. A checked-in `.s` set is not more auditable in practice (tens of
 MB of assembly nobody reads) and needs an external assembler, which the
 in-process backends exist to avoid. The audit that does work is regeneration:
-the lock names the source commit, and `make selfhost-cli` at that commit
-rebuilds the exact binary — the bytes are deterministic per commit
-(`TEST-GATES.md`'s emit hashes rest on the same fact) — so anyone can check the
-pinned sha256 against a build of their own.
+the lock names the source commit, and at that commit `make selfhost-cli`
+rebuilds arm64-darwin's pin exactly, while `STAGE0=bin/fern-selfhost make
+distcheck` rebuilds a Linux pin as its `build/bootstrap/stage2` — the bytes
+are deterministic per commit (`TEST-GATES.md`'s emit hashes rest on the same
+fact) — so anyone can check the pinned sha256 against a build of their own.
 
 WASM as the snapshot format (`BOOTSTRAP-RESEARCH.md §7`) is ruled out twice over
 today. Native cannot compile `fern.fern` to wasm: `write_file_exec` needs
@@ -100,11 +103,15 @@ The candidate is built by the **native** toolchain, but on the Linux hosts it
 is not what gets pinned: the publish job runs `STAGE0=candidate make
 distcheck` and uploads `build/bootstrap/stage2`, the self-built fixed point.
 Those bytes are what the current source emits for itself, so any correct
-compiler of that source reproduces them. The first pin published this way
-still has one native-built generation in its ancestry, since its stage1 was
-the native candidate's output; the one after it has none, and from then on
-`make bootstrap` never needs a native-built stage0. arm64-darwin still
-uploads the candidate:
+compiler of that source reproduces them. Using the pin — `make bootstrap`,
+the `verify` lanes — needs no native binary from that refresh on. Producing
+the next pin still seeds a native-built candidate on every publish, so each
+Linux pin has one native-built generation in its ancestry (stage2 is
+stage1's output, stage1 the candidate's). Seeding a publish from the current
+pin instead would remove that generation, at the cost of the route a refresh
+needs when the pin cannot build the source — as on 2026-09-28, when the arm64
+pin's stage1 looped on the compiler. arm64-darwin still uploads the
+candidate:
 its stage2 exhausts the arena compiling the compiler (#8479), so no fixed
 point is reachable there yet, and the day it is, the darwin step joins the
 other two.
@@ -161,5 +168,7 @@ curl -fsSL <url>/fern-selfhost-x86-64-linux.gz | gzip -dc | sha256sum
 ```
 
 must print the lock's `x86-64-linux` line. To go further, check out the lock's
-`source` commit, `make selfhost-cli`, and compare `bin/fern-selfhost` to the
-download byte for byte.
+`source` commit and rebuild the pin there: `make selfhost-cli` and compare
+`bin/fern-selfhost` to the arm64-darwin download, or `make selfhost-cli &&
+STAGE0=bin/fern-selfhost make distcheck` and compare `build/bootstrap/stage2`
+to a Linux download, byte for byte.

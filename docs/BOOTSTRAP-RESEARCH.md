@@ -700,9 +700,11 @@ spec; diff-oracle is the regression test."
 
 **Built 2026-09-01 (#6644) — `docs/BOOTSTRAP.md` is the
 current shape.** Two stages as below, with two changes
-from this sketch: the snapshot is a native binary per
-host published as a release asset and pinned by sha256
-in `bootstrap/stage0.lock` (wasm is ruled out for now,
+from this sketch: the snapshot is a compiler binary per
+host published as a release asset — the self-built stage2
+on the Linux hosts, a native build on arm64-darwin — and
+pinned by sha256 in `bootstrap/stage0.lock` (wasm is ruled
+out for now,
 §7), and `make distcheck` compares stage2 with stage3,
 since the pin's code generation predates the source's.
 

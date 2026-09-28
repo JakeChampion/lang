@@ -51,10 +51,10 @@ parity.
 - `tools/freeze_gate.sh` reads the CI wiring and prints precondition 1 GREEN;
   every precondition is green, and `NATIVE-FREEZE.md` records the state.
 
-## Not covered
+## Measured elsewhere
 
-- arm64-linux: measured on the `ubuntu-24.04-arm` runner (run 36438554232)
-  rather than here. The current compiler's chain is a fixed point: a
+- arm64-linux: on the `ubuntu-24.04-arm` runner (run 36438554232) rather than
+  here. The current compiler's chain is a fixed point: a
   native-built candidate compiles `fern.fern`, that stage1 compiles it in
   82 s, stage2 compiles it in 79 s, and stage2 == stage3 (13,386,776 bytes).
   The `stage0-20260925-f81d8d7` pin is not: its stage1 (360 s, 14,759,432
@@ -64,5 +64,8 @@ parity.
   2026-09-25 arm64 backend emits for today's source, which today's backend
   does not reproduce; #10448 has the observation. The pin was refreshed to
   the self-built stage2 of the branch that wired the lane.
+
+## Not covered
+
 - arm64-darwin: stage2 exhausts the arena (#8479); the darwin pin stays
   native-built.
