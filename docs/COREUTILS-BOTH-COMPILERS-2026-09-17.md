@@ -308,13 +308,13 @@ points that own reclaim internally.
 
 Routing has started. Under the typed lowering, a map whose key is a string,
 `i32`, `u32` or `boolean`, and whose value is one of those or a box (a record,
-an enum, a tuple, a `dyn` value, or an array other than `string[]`), runs on
-core/map (`ssarc.routed_map`): 20,000 inserts and 40,000 lookups went from
-3.05 s to 5 ms, against native's 4 ms; `tsort` over a 20,000-edge DAG from
-1.68 s to 10 ms, against native's 9 ms; the same workload on
-`Map[string, string]` from 1.72 s to 11 ms, against native's 10 ms, and on
-`Map[string, i32[]]` from 1.54 s to 11 ms, against native's 9 ms. Struct and
-enum keys, wide scalars and `string[]` values are the next slices.
+an enum, a tuple, a `dyn` value or an array), runs on core/map
+(`ssarc.routed_map`): 20,000 inserts and 40,000 lookups went from 3.05 s to
+5 ms, against native's 4 ms; `tsort` over a 20,000-edge DAG from 1.68 s to
+10 ms, against native's 9 ms; the same workload on `Map[string, string]` from
+1.72 s to 11 ms, against native's 10 ms, and on `Map[string, i32[]]` from
+1.54 s to 11 ms, against native's 9 ms. Struct and enum keys and wide scalars
+are the next slices.
 
 **3. String self-reassign is not in-place.** Native lowers `held = held + c` to
 `__fern_str_append`, which grows the buffer in place; the self-host emits a
