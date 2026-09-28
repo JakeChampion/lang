@@ -11676,9 +11676,28 @@ function lower_variant_ctor_args(args: ast.Expr[], decl_idx: i32, selfrebind: st
             && !ctor_selfrebind_payload(args[i], selfrebind)) {
             st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
         }
+        if (fty == "fn" && enum_all_variants_rc_droppable(st.frame.structs, st.frame.structs.decls[decl_idx].enum_owner)) {
+            st = count_closure_payload(args[i], st);
+        }
         i = i + 1;
     }
     return st;
+}
+
+// count_closure_payload: the box of an admitted (enum_all_variants_rc_droppable)
+// enum holds a count on its closure payload, which the enum release gives back.
+// A counted value (closure_value_is_counted)
+// brings one; a closure local the construction moves hands over the one its
+// scope-exit release would have given back; anything else is retained.
+function count_closure_payload(arg: ast.Expr, s: LowerState): LowerState {
+    if (closure_value_is_counted(arg, s.frame.sigs.closure_fns)) { return s; }
+    if let ast.ExprIdent(id) = arg {
+        var slot: i32 = s.slot_of(id.name);
+        if (slot >= 0 && s.moves_local_at(id.name, id.line, id.col) && arr_slot_shallow_release_ok(s, slot)) {
+            return s.note_moved_elided(slot);
+        }
+    }
+    return s.retain_tos("variant-clo-payload");
 }
 
 // variant_counted_struct_payload: `arg` is a bare ident stored into a variant
@@ -47282,8 +47301,10 @@ function confirm_map_get_frees(fr: EnumFrees, body: ast.Stmt[], i: i32, s: Lower
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
 // sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
-// freshness gate), OR a map (released by nothing, see below). NOT a scalar (no rc
-// — released with the box), NOT enum / opt / tuple, and NOT a non-leaf (cycle-risk)
+// freshness gate), OR a map (released by nothing, see below), OR a closure (one
+// rc-guarded dec of the env box; lower_variant_ctor_args counts every closure
+// payload, so the box always holds a claim of its own). NOT a scalar (no rc —
+// released with the box), NOT enum / opt / tuple, and NOT a non-leaf (cycle-risk)
 // struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
@@ -47311,7 +47332,8 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
         // count, so no drop here could tell whether the enum is its only holder,
         // and it leaks as it always did. Refusing it instead turned off the whole
         // enum's release, every other variant's payloads with it (#9304).
-        || is_map_type_name(t);
+        || is_map_type_name(t)
+        || t == "fn";
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
@@ -47340,13 +47362,20 @@ function enum_variant_has_rc_payload(structs: StructTab, vname: string): boolean
     return false;
 }
 
+// enum_walk_payload_field: a payload the element walk releases with one
+// rc-guarded arr_dec — a LEAK-SAFE scalar array, or a closure's env box.
+function enum_walk_payload_field(ft: string): boolean {
+    return is_leaksafe_array_field(ft) || ft == "fn";
+}
+
 // enum_arr_elems_walk_ok: the enum-ARRAY element walk (__enum_arr_elems_drop_<E>)
 // may release payloads for enum E — every variant's payload fields are scalars
-// or LEAK-SAFE scalar arrays, and some variant actually carries one. Only that
-// payload kind's counting is guaranteed at construction (the variant ctor incs
-// a bare-ident array payload — the #3720 dup — and a fresh literal is owned),
-// so the walk's rc-guarded arr_dec balances either way; a string / nested-box
-// payload can reach the box uncounted and keeps the enum outside the walk.
+// or enum_walk_payload_field, and some variant actually carries one. Only those
+// kinds' counting is guaranteed at construction (the variant ctor incs a
+// bare-ident array payload — the #3720 dup — and any closure that does not
+// arrive counted, and a fresh literal is owned), so the walk's rc-guarded
+// arr_dec balances either way; a string / nested-box payload can reach the box
+// uncounted and keeps the enum outside the walk.
 pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean {
     if (!decl_is_enum(structs, ename)) { return false; }
     var any_arr: boolean = false;
@@ -47356,7 +47385,7 @@ pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean 
             var fi: i32 = 0;
             while (fi < n) {
                 var ft: string = decl_field_type_at(structs, sd.name, fi);
-                if (is_leaksafe_array_field(ft)) { any_arr = true; }
+                if (enum_walk_payload_field(ft)) { any_arr = true; }
                 else if (!is_scalar_type_name(ft)) { return false; }
                 fi = fi + 1;
             }
@@ -47378,14 +47407,14 @@ pub function enum_arr_release_walk_ok(structs: StructTab, ename: string): boolea
 }
 
 // enum_walk_payload_offsets: for one variant, the byte offsets of its
-// leak-safe-array payload fields ((k+1)*8 — shape@0, fields@8+), for the
+// enum_walk_payload_field payloads ((k+1)*8 — shape@0, fields@8+), for the
 // element-walk emitters.
 pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[] {
     var out: i32[] = [];
     var n: i32 = decl_field_count(structs, vname);
     var fi: i32 = 0;
     while (fi < n) {
-        if (is_leaksafe_array_field(decl_field_type_at(structs, vname, fi))) {
+        if (enum_walk_payload_field(decl_field_type_at(structs, vname, fi))) {
             out = out.append((fi + 1) * 8);
         }
         fi = fi + 1;
@@ -47576,8 +47605,9 @@ function match_arm_binds_rc_payload(st: ast.Stmt, structs: StructTab): boolean {
                         // `extra_bindings[eb]` mis-infers the receiver on the
                         // self-host path, emitting an undefined __fn_i32__len.)
                         if (pv.binding != "" && pv.binding != "_") {
-                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
-                                if (binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
+                            var ft0: string = decl_field_type_at(structs, vname, 0);
+                            if (enum_field_rc_droppable(structs, ft0)) {
+                                if (payload_binding_escapes_arm(arm, pv.binding, ft0)) { return true; }
                             }
                         }
                         // extra bindings (fields 1..).
@@ -47585,8 +47615,9 @@ function match_arm_binds_rc_payload(st: ast.Stmt, structs: StructTab): boolean {
                         while (eb < pv.extra_bindings.len()) {
                             var ebn: string = pv.extra_bindings[eb];
                             if (ebn != "" && ebn != "_") {
-                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
-                                    if (binding_escapes_arm(arm, ebn, no_names())) { return true; }
+                                var ftk: string = decl_field_type_at(structs, vname, eb + 1);
+                                if (enum_field_rc_droppable(structs, ftk)) {
+                                    if (payload_binding_escapes_arm(arm, ebn, ftk)) { return true; }
                                 }
                             }
                             eb = eb + 1;
@@ -47645,6 +47676,42 @@ function enum_stmt_binds_rc_payload(st: ast.Stmt, name: string, structs: StructT
 function binding_escapes_arm(arm: ast.MatchArm, name: string, borrowable: string[]): boolean {
     if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
     return body_unsafe_for(arm.body, name, borrowable, []);
+}
+
+// payload_binding_escapes_arm: binding_escapes_arm for an rc payload of type
+// `ft`. A closure payload called directly (`name(args)`) is borrowed for the
+// call, so only a mention that is not such a call — a capture included —
+// escapes.
+function payload_binding_escapes_arm(arm: ast.MatchArm, name: string, ft: string): boolean {
+    if (ft != "fn") { return binding_escapes_arm(arm, name, no_names()); }
+    return clo_binding_other_uses(arm, name, false) > 0;
+}
+
+// clo_binding_other_uses: the mentions of closure binding `name` in `arm` that
+// are neither a direct call `name(args)` nor, when `returns` is set, a bare
+// `return name` — which retains the box (ret_closure_uncounted). A capture by a
+// lambda counts.
+function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean): i32 {
+    function at_expr(e: ast.Expr, own n: i32): i32 {
+        if let ast.ExprCall(c) = e {
+            if (ident_name_or_empty(c.callee) == name) { return n + 1; }
+        }
+        return n;
+    }
+    function at_stmt(st: ast.Stmt, own n: i32): i32 {
+        if let ast.StmtReturn(r) = st {
+            if (returns && ident_name_or_empty(r.value) == name) { return n + 1; }
+        }
+        return n;
+    }
+    var mentions: i32 = astwalk.count_ident_stmts(arm.body, name);
+    var borrows: i32 = 0;
+    for st in arm.body { borrows = astwalk.fold_stmt_nodes(st, borrows, at_stmt, at_expr, astwalk.not_lambda); }
+    if (arm.has_guard) {
+        mentions = mentions + astwalk.count_ident_expr(arm.guard, name);
+        borrows = astwalk.fold_expr_pruned(arm.guard, borrows, at_expr, astwalk.not_lambda);
+    }
+    return mentions - borrows;
 }
 
 // binding_escapes_arm_scrut is binding_escapes_arm with the MATCH-SCRUTINEE
@@ -47706,7 +47773,9 @@ function store_out_takes_counted_claim(structs: StructTab, ft: string): boolean 
 //
 // An array payload stored to an outer local or handed to a call keeps its dec: the
 // store's own retain means the dec lands on that claim, and skipping strands it.
+// So does a closure payload whose only escape is a bare return, which retains it.
 function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs: StructTab): boolean {
+    if (ft == "fn") { return clo_binding_other_uses(arm, name, true) > 0; }
     if (!store_out_takes_counted_claim(structs, ft)) { return true; }
     return binding_returns_from_arm(arm.body, name);
 }
@@ -47750,7 +47819,7 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                         if (pv.binding != "" && pv.binding != "_") {
                             var ft0: string = decl_field_type_at(structs, vname, 0);
                             if (enum_field_rc_droppable(structs, ft0)) {
-                                if (binding_escapes_arm(arm, pv.binding, no_names())
+                                if (payload_binding_escapes_arm(arm, pv.binding, ft0)
                                         && moved_skip_applies(arm, pv.binding, ft0, structs)) { moved = moved.append(vname + "#0"); }
                             }
                         }
@@ -47760,7 +47829,7 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                             if (ebn != "" && ebn != "_") {
                                 var ftk: string = decl_field_type_at(structs, vname, eb + 1);
                                 if (enum_field_rc_droppable(structs, ftk)) {
-                                    if (binding_escapes_arm(arm, ebn, no_names())
+                                    if (payload_binding_escapes_arm(arm, ebn, ftk)
                                             && moved_skip_applies(arm, ebn, ftk, structs)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
                                 }
                             }
@@ -47982,9 +48051,9 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_leaksafe_array_field(eft)) {
-                    // scalar-element array payload: one dec frees the buffer (scalar
-                    // elements carry no inner pointers to release).
+                } else if (enum_walk_payload_field(eft)) {
+                    // scalar-element array or closure payload: one dec releases the
+                    // buffer or env box (neither holds a pointer this walk releases).
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -67437,14 +67506,12 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string, ptype: str
                     match (arm.pattern) {
                         ast.PatVariant(pv) => {
                             if (pv.binding != "" && pv.binding != "_"
-                                && !payload_is_scalar(structs, ptype, pv.type_name, 0)
-                                && binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
+                                && param_payload_binding_escapes(arm, pv.binding, payload_type_at(structs, ptype, pv.type_name, 0))) { return true; }
                             var eb: i32 = 0;
                             while (eb < pv.extra_bindings.len()) {
                                 var ebn: string = pv.extra_bindings[eb];
                                 if (ebn != "" && ebn != "_"
-                                    && !payload_is_scalar(structs, ptype, pv.type_name, eb + 1)
-                                    && binding_escapes_arm(arm, ebn, no_names())) { return true; }
+                                    && param_payload_binding_escapes(arm, ebn, payload_type_at(structs, ptype, pv.type_name, eb + 1))) { return true; }
                                 eb = eb + 1;
                             }
                         },
@@ -67467,15 +67534,24 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string, ptype: str
     return false;
 }
 
-// payload_is_scalar: payload `k` of `variant` in the enum type `ptype` is a
-// scalar.
-function payload_is_scalar(structs: StructTab, ptype: string, variant: string, k: i32): boolean {
-    if (ptype.len() == 0) { return false; }
+// param_payload_binding_escapes: an arm binding of a payload of type `ft`
+// ("" when unknown) escapes its arm. A scalar is a copy and never does.
+function param_payload_binding_escapes(arm: ast.MatchArm, name: string, ft: string): boolean {
+    return !is_scalar_type_name(ft) && payload_binding_escapes_arm(arm, name, ft);
+}
+
+// payload_type_at: the declared type of payload `k` of `variant` in the enum
+// type `ptype`, or "" when it cannot be resolved.
+function payload_type_at(structs: StructTab, ptype: string, variant: string, k: i32): string {
+    if (ptype.len() == 0) { return ""; }
     var opt: string = opt_payload_type(ptype, variant);
-    if (opt.len() > 0) { return k == 0 && is_scalar_type_name(opt); }
+    if (opt.len() > 0) {
+        if (k == 0) { return opt; }
+        return "";
+    }
     var vi: i32 = variant_decl_index(structs, variant, ptype);
-    if (vi < 0 || k >= structs.decls[vi].fields.len()) { return false; }
-    return is_scalar_type_name(structs.decls[vi].fields[k].type_name);
+    if (vi < 0 || k >= structs.decls[vi].fields.len()) { return ""; }
+    return structs.decls[vi].fields[k].type_name;
 }
 
 // A borrowability registry is a fixed-width bucket array, NOT a list of entries:
