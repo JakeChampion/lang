@@ -22,8 +22,9 @@
 # oversights: a human has to notice that a condition changed, and nobody is
 # assigned to notice. So anything derivable is derived here instead. The
 # ones this cannot cheaply measure (is the Perceus port at parity? — `make
-# distcheck` answers it, at ~14 GB and minutes) are printed as UNVERIFIABLE
-# with a pointer, rather than silently assumed either way.
+# distcheck` answers it, at ~6 GB and ten minutes) are read off the CI wiring
+# that runs them, and printed as UNVERIFIABLE with a pointer when nothing
+# does, rather than silently assumed either way.
 #
 # EXIT STATUS. 0 unless a derivable precondition has REGRESSED — an AST emitter
 # comes back, a backend loses its IR-or-error routing, the checker-codes filter
@@ -56,22 +57,23 @@ else
   bad "struct_fields_reusable_cross is gone — reuse admission was removed?"
 fi
 # Parity's criterion is `make distcheck` green (NATIVE-CONVERGENCE.md
-# precondition 1). The gate cannot RUN it — it needs ~14 GB and several
-# minutes — but it does not have to: .github/workflows/bootstrap.yml says
-# distcheck joins the `verify` job the day it passes, so the wiring IS the
-# signal, and it cannot be switched on while the target is red.
+# precondition 1). The gate cannot RUN it — three whole-compiler compiles at
+# ~6 GB — but it does not have to: distcheck runs in
+# .github/workflows/bootstrap.yml's `verify` job, and a lane that cannot pass
+# would be red on every PR, so the wiring IS the signal.
 #
 # Match an INVOCATION, not a mention: `^[^#]*` cannot span a '#', so the
-# comment in that file explaining why distcheck is absent does not read as
-# distcheck being present. Keying on the comment's wording instead would turn
-# any rewrite of it into a false GREEN on a freeze precondition.
+# comments in that file that describe distcheck do not read as it running, and
+# a step's `name:` line is dropped so a step whose `run:` was removed does not
+# either. Keying on prose instead would turn any rewrite of it into a false
+# GREEN on a freeze precondition.
 #
 # The wiring only stands in for the measurement while the lane can actually
 # FAIL. A step neutered by `continue-on-error` or `|| true` would be wired and
 # green with distcheck still broken, so those disqualify rather than pass —
 # UNVERIFIABLE, never GREEN, since a wrong green here is the whole failure mode
 # this gate exists to prevent.
-distcheck_wired=$(grep -E '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null)
+distcheck_wired=$(grep -E '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null | grep -v 'name:')
 if [ -n "$distcheck_wired" ]; then
   if printf '%s' "$distcheck_wired" | grep -q '|| *true' \
      || grep -Eq '^[^#]*continue-on-error:[[:space:]]*true' .github/workflows/bootstrap.yml 2>/dev/null; then
@@ -80,7 +82,7 @@ if [ -n "$distcheck_wired" ]; then
     ok "make distcheck runs in CI — the self-host compiler reproduces itself"
   fi
 else
-  huh "parity itself — criterion is \`make distcheck\` green (red today: docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
+  huh "parity itself — criterion is \`make distcheck\` green, and nothing in CI runs it (docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
 fi
 echo
 
