@@ -1,4 +1,4 @@
-// Regeneration notes for fern.bin / http.bin.
+// Regeneration notes for fern.bin / http.bin / proxy.bin.
 //
 // The two .bin files hold the inner *payload* of the
 // `component-type` custom section that wasm-tools writes when
@@ -18,6 +18,8 @@
 //	    /tmp/empty.wasm -o /tmp/fern.wasm
 //	wasm-tools component embed cmd/fern/wit -w http \
 //	    /tmp/empty.wasm -o /tmp/http.wasm
+//	wasm-tools component embed cmd/fern/wit -w proxy \
+//	    /tmp/empty.wasm -o /tmp/proxy.wasm
 //
 //	# 3. Strip everything before the custom-section payload:
 //	#    8 (module header) + 1 (custom section id) + 2 (size uleb)
@@ -26,9 +28,15 @@
 //	#    re-derive this offset from `wasm-tools dump`.)
 //	dd if=/tmp/fern.wasm of=internal/wasm/componenttype/fern.bin bs=1 skip=26
 //	dd if=/tmp/http.wasm of=internal/wasm/componenttype/http.bin bs=1 skip=26
+//	dd if=/tmp/proxy.wasm of=internal/wasm/componenttype/proxy.bin bs=1 skip=26
+//
+//	# 4. The self-host compiler embeds the proxy payload as Fern source
+//	#    (examples/self_host/wit_proxy_world.fern); rewrite it from proxy.bin
+//	#    with the same \xNN-per-byte spelling. TestProxyWorldFernPayload pins
+//	#    the two equal.
 //
 // Anything that changes the WIT (adding/removing imports,
-// version bumps) requires regenerating both files. The CI
+// version bumps) requires regenerating all three files. The CI
 // equivalence test (componenttype_test.go) compares our output
 // to a live wasm-tools embed and catches drift if regeneration
 // is skipped.

@@ -2,9 +2,7 @@ package e2eselfhost
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -24,30 +22,9 @@ func TestSelfHostWitSectionRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-decode e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" + witSectionSelfTestMain(t)
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-decode self-test")
-	}
-	watPath := filepath.Join(dir, "wit_section_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_section_selftest", witSectionSelfTestMain(t))
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -101,30 +78,9 @@ func TestSelfHostWitValtypeRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-valtype e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" + witValtypeSelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-valtype self-test")
-	}
-	watPath := filepath.Join(dir, "wit_valtype_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_valtype_selftest", witValtypeSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -177,31 +133,9 @@ func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-world e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" +
-		witPayloadFunc(t, "FERN_BIN", "fern") + witPayloadFunc(t, "HTTP_BIN", "http") + witWorldSelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-world self-test")
-	}
-	watPath := filepath.Join(dir, "wit_world_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_world_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witPayloadFunc(t, "HTTP_BIN", "http") + witWorldSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -258,30 +192,9 @@ func TestSelfHostWitWorldLift(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-lift e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witLiftSelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-lift self-test")
-	}
-	watPath := filepath.Join(dir, "wit_lift_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_lift_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witLiftSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -327,11 +240,7 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-emit e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
 	w, err := componenttype.DecodeWorld("fern")
 	if err != nil {
@@ -342,25 +251,7 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 		t.Fatalf("EmitWorldImports: %v", err)
 	}
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" +
-		witPayloadFunc(t, "FERN_BIN", "fern") + witBytesFunc("EMIT_REF", ref) + witEmitSelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-emit self-test")
-	}
-	watPath := filepath.Join(dir, "wit_emit_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_emit_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witBytesFunc("EMIT_REF", ref) + witEmitSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -409,30 +300,9 @@ func TestSelfHostWitClassify(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-classify e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witClassifySelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-classify self-test")
-	}
-	watPath := filepath.Join(dir, "wit_classify_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_classify_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witClassifySelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -476,30 +346,9 @@ func TestSelfHostWitPrefixLayout(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wit-layout e2e")
 	}
-	gcc, runner := x86_64Tooling(t)
-
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	leb, err := os.ReadFile("../../examples/self_host/watbin.fern")
-	if err != nil {
-		t.Fatalf("read watbin.fern: %v", err)
-	}
-	decode, err := os.ReadFile("../../examples/self_host/wit_decode.fern")
-	if err != nil {
-		t.Fatalf("read wit_decode.fern: %v", err)
-	}
-	source := string(leb) + "\n" + string(decode) + "\n" + witPayloadFunc(t, "FERN_BIN", "fern") + witLayoutSelfTestMain
-
-	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
-	if len(wat) == 0 {
-		t.Fatal("wasm emitter produced 0 bytes for the wit-layout self-test")
-	}
-	watPath := filepath.Join(dir, "wit_layout_selftest.wat")
-	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
-		t.Fatalf("write wat: %v", err)
-	}
+	watPath := witCompileToWat(t, dir, "wit_layout_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witLayoutSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
