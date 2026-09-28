@@ -87,6 +87,12 @@ jobs:
           github_token: ${{ github.token }}
           install_args: go
 
+      # Its own step, outside Playwright's webServer timeout: it builds the
+      # self-host compiler and then the playground with it. Ahead of the browser
+      # download, so a broken build fails before the network work.
+      - name: Build the playground bundle
+        run: ./web/build.sh
+
       - name: Set up Node
         uses: actions/setup-node@v7
         with:

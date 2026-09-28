@@ -43,8 +43,6 @@ export default defineConfig({
     url: `http://127.0.0.1:${port}/index.html`,
     cwd: "../../..",
     reuseExistingServer: !process.env.CI,
-    // build.sh compiles the self-host compiler first on a cold checkout,
-    // then two wasm bundles: four minutes on a 4-core machine.
-    timeout: 480_000,
+    timeout: 60_000,
   },
 });

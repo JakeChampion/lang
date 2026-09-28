@@ -319,9 +319,12 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 // calling an emitter entry point also reports parser sentinels and runs the
 // declaration gate. The gates cannot live in the emitters, which see the module
 // after the local-function lift has added untyped capture parameters, so each
-// driver carries its own call and a new driver must too.
+// driver carries its own call and a new driver must too. A driver is a file
+// with a main; emitforms.fern is a library its drivers reach the wasm emitter
+// through, so a call into it counts as an emitter call.
 func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
-	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(`)
+	emits := regexp.MustCompile(`\b(asm_ir|asm_arm64_ir|wasm_ir)\.emit_\w*\(|\bemitforms\.wasm_component\(`)
+	hasMain := regexp.MustCompile(`(?m)^(pub )?function main\(`)
 	declGate := regexp.MustCompile(`\b(refuse_decl_names|check_decl_names)\(`)
 	sentinelGate := regexp.MustCompile(`\b(refuse_parse_unknowns|parse_unknown_errors_module)\(`)
 	files, err := filepath.Glob(filepath.Join("..", "..", "examples", "self_host", "*.fern"))
@@ -341,7 +344,7 @@ func TestSelfHostEmittingDriversRunDeclGates(t *testing.T) {
 			}
 		}
 		src := code.String()
-		if !emits.MatchString(src) {
+		if !emits.MatchString(src) || !hasMain.MatchString(src) {
 			continue
 		}
 		drivers++

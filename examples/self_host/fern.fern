@@ -166,6 +166,7 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
     return 0;
 }
 import "./watbin";
+import "./wit_compose";
 import "./constfold";
 import "./embed";
 import "./platforms";
@@ -1850,7 +1851,10 @@ function check_file(entry_path: string, root: string, target: string, target_giv
             return 1;
         },
     }
-    var b: Bundle = load_bundle(entry_path, parser.parse_module(lexer.tokenize(src)), root);
+    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+    var missing: string = emitforms.http_entry_missing(entry_mod, target);
+    if (missing.len() > 0) { eprint(missing); return 1; }
+    var b: Bundle = load_bundle(entry_path, entry_mod, root);
     if (!b.ok) { return 1; }
     if (bundle_visibility_diags(b)) { return 1; }
     return check_bundle(b, target, target_given);
@@ -2199,7 +2203,9 @@ function run(): i32 {
         eprint(read_failure("entry file", entry_path, eerr));
         return 1;
     }
-    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
+    var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(esrc, target)));
+    var missing_handle: string = emitforms.http_entry_missing(entry_mod, target);
+    if (missing_handle.len() > 0) { eprint(missing_handle); return 1; }
 
     var b: Bundle = load_bundle(entry_path, entry_mod, root);
     if (!b.ok) { return 1; }
@@ -2490,6 +2496,20 @@ function run(): i32 {
             return 2;
         }
         out_asm = string_from_bytes_unchecked(util.to_u8(comp));
+    } else if (target == "wasm32-wasi-http" && emit_text) {
+        out_asm = emitforms.wasm_http_core(full, sub);
+    } else if (target == "wasm32-wasi-http" && emit == "core-module") {
+        var hwat: string = emitforms.wasm_http_core(full, sub);
+        if (hwat.len() == 0) { return 2; }
+        out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+    } else if (target == "wasm32-wasi-http") {
+        // A wasi:http/incoming-handler component of the proxy world.
+        var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+        if (hc.bytes.len() == 0) {
+            if (hc.refused.len() > 0) { eprint(emitforms.http_refused(hc.refused)); }
+            return 2;
+        }
+        out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
     } else {
         // #3457 slice 3: the x86 CLI path routes IR-or-error, never the legacy
         // AST emitter. As of slice 5 asm.emit_module has no callers at all.
