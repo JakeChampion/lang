@@ -61,9 +61,43 @@ done
 cp "$0" "$out"
 `
 
-// driftingCompiler appends a line to itself on every generation, so stage1
-// and stage2 differ by exactly one line.
+// driftingCompiler appends a line to itself on every generation, so each
+// stage differs from the one before by exactly one line.
 const driftingCompiler = fixpointCompiler + `echo "# one more generation" >> "$out"
+`
+
+// sourceCompiler compiles the entry source literally: handed a fern.fern, its
+// output is that file, so what a generation does is decided by the SOURCE it
+// was built from, as with the real compiler, and not inherited from the
+// compiler that built it. Any other program compiles to a copy of itself.
+const sourceCompiler = `#!/bin/sh
+out=""
+src=""
+tr_source=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    */coreutils/tr.fern) tr_source="$1"; shift ;;
+    */fern.fern) src="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+[ -n "$out" ] || exit 42
+if [ -n "$tr_source" ]; then
+  [ -f "$tr_source" ] || exit 1
+  cat > "$out" <<'PROGRAM'
+#!/bin/sh
+exec tr "$@"
+PROGRAM
+  exit 0
+fi
+if [ -n "$src" ]; then cp "$src" "$out"; else cp "$0" "$out"; fi
+`
+
+// olderPinCompiler is sourceCompiler with an older code generator: it emits
+// the same program with one extra trailing line, as a pin built before a
+// codegen change does.
+const olderPinCompiler = sourceCompiler + `echo "# an older code generator emitted this" >> "$out"
 `
 
 // failingCompiler stands in for an old stage0 meeting a construct it does not
@@ -236,13 +270,42 @@ func TestDistcheckReachesFixedPoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success: %v", err)
 	}
-	if !strings.Contains(out, "stage1 == stage2") {
+	if !strings.Contains(out, "stage2 == stage3") {
 		t.Errorf("output does not report the fixed point")
 	}
-	for _, s := range []string{"stage1", "stage2"} {
+	for _, s := range []string{"stage1", "stage2", "stage3"} {
 		if _, err := os.Stat(filepath.Join(root, "build", "bootstrap", s)); err != nil {
 			t.Errorf("%s not left in build/bootstrap: %v", s, err)
 		}
+	}
+}
+
+// A pin built before a code generator change emits a stage1 that differs from
+// stage2, and that is not a failure: stage1 carries the pin's code generation,
+// stage2 and stage3 the current source's. The fixed point is stage2 == stage3.
+func TestDistcheckPassesWhenThePinPredatesACodegenChange(t *testing.T) {
+	root := checkout(t)
+	write(t, filepath.Join(root, "examples", "self_host", "fern.fern"), []byte(sourceCompiler), 0o644)
+	stage0 := filepath.Join(root, "candidate")
+	write(t, stage0, []byte(olderPinCompiler), 0o755)
+
+	out, err := run(t, root, "distcheck", []string{"STAGE0=" + stage0}, "")
+	if err != nil {
+		t.Fatalf("expected success: %v", err)
+	}
+	if !strings.Contains(out, "stage1 != stage2") || !strings.Contains(out, "stage2 == stage3") {
+		t.Errorf("output does not report the pin's divergence and the fixed point")
+	}
+	s1, err1 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage1"))
+	s2, err2 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage2"))
+	if err1 != nil || err2 != nil {
+		t.Fatalf("stage1/stage2 not kept: %v / %v", err1, err2)
+	}
+	if bytes.Equal(s1, s2) {
+		t.Errorf("stage1 equals stage2; the fake pin did not emit differently")
+	}
+	if !bytes.Equal(s2, []byte(sourceCompiler)) {
+		t.Errorf("stage2 is not the current source's compiler")
 	}
 }
 
@@ -255,16 +318,16 @@ func TestDistcheckDivergentStagesFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("a drifting compiler must not reach a fixed point")
 	}
-	if !strings.Contains(out, "stage1 != stage2") {
+	if !strings.Contains(out, "stage2 != stage3") {
 		t.Errorf("failure does not name the divergence")
 	}
 	// Both generations stay on disk for the bisection recipe.
-	s1, err1 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage1"))
 	s2, err2 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage2"))
-	if err1 != nil || err2 != nil {
-		t.Fatalf("stage1/stage2 not kept: %v / %v", err1, err2)
+	s3, err3 := os.ReadFile(filepath.Join(root, "build", "bootstrap", "stage3"))
+	if err2 != nil || err3 != nil {
+		t.Fatalf("stage2/stage3 not kept: %v / %v", err2, err3)
 	}
-	if bytes.Equal(s1, s2) {
+	if bytes.Equal(s2, s3) {
 		t.Errorf("kept stages are identical; the fake did not drift")
 	}
 }
