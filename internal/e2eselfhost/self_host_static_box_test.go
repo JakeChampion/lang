@@ -210,9 +210,12 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 // literal. `bytes_rounds` overwrites a `u8[]` literal's length through its data
 // pointer each round and reads it before and after. `poke_len` does the same
 // to an `i32[]` literal with `__store_i32`, and `fresh_len`, which never
-// touches the floor, must still read its own equal literal's length. `shorten`
-// calls `__arr_set_len`, which lends its buffer, so its body is produced. Wasm
-// is left out: it has no emit arm for the raw byte store.
+// touches the floor, must still read its own equal literals' lengths.
+// `shorten_lit` and `raw_ptr_len` reach the floor on an equal literal through
+// `__arr_set_len` and `__raw_arr_ptr`; if either were placed, `fresh_len` would
+// read something other than 33. `shorten` calls `__arr_set_len` on a heap
+// buffer, which lends it, so its body is produced. Wasm is left out: it has no
+// emit arm for the raw byte store.
 const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
     var b: u8[] = __alloc_u8(4);
     __arr_set_len(b, n);
@@ -223,9 +226,20 @@ const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
     __store_i32(a as usize, 99);
     return a.len();
 }
+@noinline function shorten_lit(): i32 {
+    var a: u8[] = [7u8, 8u8, 9u8];
+    __arr_set_len(a, 2);
+    return a.len();
+}
+@noinline function raw_ptr_len(): i32 {
+    var a: i32[] = [7, 8, 9];
+    __store_i32(__raw_arr_ptr(a), 99);
+    return a.len();
+}
 @noinline function fresh_len(): i32 {
     var v: i32[] = [7, 8, 9];
-    return v.len();
+    var w: u8[] = [7u8, 8u8, 9u8];
+    return v.len() * 10 + w.len();
 }
 @noinline function bytes_rounds(): i32 {
     var before: i64 = __heap_alloc_count();
@@ -249,13 +263,15 @@ function main(): i32 {
     print_int(bytes_rounds()); print("");
     print_int(shorten(2)); print("");
     print_int(poke_len()); print("");
+    print_int(shorten_lit()); print("");
+    print_int(raw_ptr_len()); print("");
     print_int(fresh_len()); print("");
     return 0;
 }
 `
 
 func TestSelfHostRawReachedLiteralIsFresh(t *testing.T) {
-	want := "400100\n2\n99\n3\n"
-	runSemanticProgram(t, "rawliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "poke_len", "fresh_len"},
+	want := "400100\n2\n99\n2\n99\n33\n"
+	runSemanticProgram(t, "rawliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "poke_len", "shorten_lit", "raw_ptr_len", "fresh_len"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want})
 }

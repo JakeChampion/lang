@@ -21,12 +21,15 @@ A literal returned first and cast by its caller still reaches the floor
 shared. That is the floor's existing property for string literals, which
 `docs/RUNTIME-IN-FERN.md` already records.
 
-`TestSelfHostRawReachedLiteralIsFresh` checks both cases:
+`TestSelfHostRawReachedLiteralIsFresh` checks each of the three ways in:
 
 - a `u8[]` literal whose length is overwritten through its data pointer each
   round reads 400 in total with the rule, and 202 without it;
 - after `__store_i32` rewrites an `i32[]` literal's length, a function
-  reading an equal literal still sees 3 with the rule, and 99 without it.
+  reading an equal literal still sees 3 with the rule, and 99 without it;
+- the same holds for a literal passed to `__arr_set_len` or `__raw_arr_ptr`.
+  Removing either name from the rule makes `fresh_len` read the rewritten
+  length.
 
 An element that is a copy of a constant also counts. A spliced accessor such
 as `function seven(): i32 { return 7; }` arrives as one (#10521), so records
