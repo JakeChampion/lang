@@ -467,11 +467,11 @@ pub function is_string_array(v: typeinfo.Type): boolean {
 }
 
 // A value column whose entries are boxes of a shape the runtime does not
-// know: a record, a union, an array of anything but strings, a tuple. A
-// function value is lent everywhere here and owned nowhere, so a column of
-// them has no unit to release; a map's box carries no count on the register
-// backends, so a read of a column of them has nothing to retain. Both stay
-// refused.
+// know: a record, a union, an array of anything but strings, a tuple, a dyn
+// value. A function value is lent everywhere here and owned nowhere, so a
+// column of them has no unit to release; a map's box carries no count on the
+// register backends, so a read of a column of them has nothing to retain.
+// Both stay refused.
 pub function boxed_map_value(v: typeinfo.Type): boolean {
     return reference(v) && !is_string(v) && !is_string_array(v) && !is_func(v) && !is_map(v);
 }
@@ -1397,7 +1397,20 @@ pub function type_key(t: typeinfo.Type): string {
     if let typeinfo.TypeTuple(tup) = t { return key_args("$tup", tup.elements); }
     if let typeinfo.TypeFunc(fn) = t { return key_args("$fn", fn.param_types.append(fn.ret_type)); }
     if let typeinfo.TypeMap(m) = t { return key_args("$map", [m.key, m.value]); }
+    if let typeinfo.TypeDyn(d) = t { return "$dyn$" + trait_set_key(d.traits); }
     return leaf_key(t);
+}
+
+// A canonical trait set, `A + b.C`, spelled as symbol characters: `A$b__C`.
+function trait_set_key(traits: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < traits.len()) {
+        var b: i32 = traits[i] as i32;
+        if (b == 43) { out = out + "$"; } else if (b == 46) { out = out + "__"; } else if (b != 32) { out = out + slice_unchecked(traits, i, i + 1); }
+        i = i + 1;
+    }
+    return out;
 }
 
 function key_args(name: string, args: typeinfo.Type[]): string {

@@ -324,6 +324,37 @@ function main(): i32 {
 }
 `
 
+// routedMapTwoDynValuesSrc: two dyn types release through helpers of their
+// own; keyed alike, one type's release would leave the other's concretes.
+const routedMapTwoDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Aa { function a(self: Self): i32; }
+trait Bb { function b(self: Self): i32; }
+struct Xa { s: string, n: i32 }
+struct Yb { t: string, u: string }
+impl Aa for Xa { function a(self: Self): i32 { return self.s.len() + self.n; } }
+impl Bb for Yb { function b(self: Self): i32 { return self.t.len() + self.u.len(); } }
+function main(): i32 {
+    var ma: Map[string, dyn Aa] = Map {};
+    var mb: Map[string, dyn Bb] = Map {};
+    var i: i32 = 0;
+    while (i < 5) {
+        ma = ma.insert("k" + i.to_string(), Xa { s: "x" + i.to_string(), n: i });
+        mb = mb.insert("k" + (i % 2).to_string(), Yb { t: "t" + i.to_string(), u: "u" + i.to_string() });
+        i = i + 1;
+    }
+    var r: (Map[string, dyn Bb], boolean) = mb.without("k0");
+    mb = r.0;
+    var t: i32 = 0;
+    for (k, v) in ma { t = t + v.a(); }
+    for (k, v) in mb { t = t + v.b(); }
+    var xs: dyn Bb[] = [Yb { t: "p" + "q", u: "r" }];
+    t = t + xs[0].b();
+    print(t.to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -346,6 +377,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"box_values", routedMapBoxValuesSrc, "2 5 3 4 27 true true false 21236 199 6 four! n44 9 12 21627 0"},
 		{"tuple_values", routedMapTupleValuesSrc, "430 v24 override 6 true"},
 		{"dyn_values", routedMapDynValuesSrc, "716"},
+		{"two_dyn_values", routedMapTwoDynValuesSrc, "27"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {
@@ -367,10 +399,14 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		})
 	}
 
-	// The routed program calls core/map and nothing of the runtime's map.
-	asm := routedMapAsm(t, selfHostBin, stdlibRoot, routedMapSurfaceSrc)
-	if !strings.Contains(asm, "call __fn___map_set_impl") || strings.Contains(asm, "call __fern_map_set") {
-		t.Fatal("the surface program's maps are not routed onto core/map")
+	// Each routed program calls core/map and nothing of the runtime's map, so
+	// a value column that stopped routing turns its case red here rather than
+	// passing on the runtime map.
+	for _, c := range cases {
+		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
+		if !strings.Contains(asm, "call __fn___map_set_impl") || strings.Contains(asm, "call __fern_map_set") {
+			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
+		}
 	}
 
 	// A bisect knob keeps a mixed module, so under one every map stays on the
