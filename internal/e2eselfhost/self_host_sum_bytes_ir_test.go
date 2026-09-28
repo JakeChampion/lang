@@ -29,8 +29,9 @@ import (
 // compares `__sum_bytes` against it, so the sweep is exhaustive with no
 // Go-side expectation list to keep in step.
 //
-// Lengths 0..40 — two full 16-byte blocks plus a partial tail either side, so
-// a vector body's boundaries are covered before one exists.
+// Lengths 0..40 — two full 16-byte blocks plus a partial tail either side —
+// cover the vector bodies' block boundaries, and a 16 MiB string the wrap of
+// the 32-bit result.
 //
 // A failure returns a small distinct code rather than a sum, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
@@ -76,6 +77,11 @@ function main(): i32 {
     if (__sum_bytes("\x00b\x00") != 98) { return 10; }
     if (__sum_bytes("\x7f\x80") != 255) { return 11; }
     if (__sum_bytes("\x80\x80\x80\x80") != 512) { return 12; }
+    // 16 MiB of 0xff sums to 4278190080, which the 32-bit result wraps.
+    var big: string = "\xff";
+    var d: i32 = 0;
+    while (d < 24) { big = big + big; d = d + 1; }
+    if (__sum_bytes(big) != 0 - 16777216) { return 13; }
     return 42;
 }
 `
@@ -102,6 +108,14 @@ func runSumBytesIR(t *testing.T, target string) int {
 	progAsm, progDir := compileSourceModload(t, runner, driverBin, sumBytesIRProg, extra...)
 	if len(progAsm) == 0 {
 		t.Fatal("self-host emitter produced 0 bytes")
+	}
+	// The vector helper, not a scalar body inline at the call site.
+	vector := "psadbw"
+	if target == "arm64-linux" {
+		vector = "uadalp"
+	}
+	if !strings.Contains(string(progAsm), "__fern_sum_bytes:") || !strings.Contains(string(progAsm), vector) {
+		t.Fatalf("the %s program has no vector __fern_sum_bytes helper", target)
 	}
 	progBin := buildBin(t, linkGcc, progDir, "sum_bytes_ir", progAsm)
 

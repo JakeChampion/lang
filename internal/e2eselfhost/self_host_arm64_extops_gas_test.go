@@ -490,6 +490,13 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"saddlv h23, v9.16b", 0x4e303937},
 		{"uaddlv s23, v9.8h", 0x6e703937},
 
+		{"uaddlp v1.8h, v0.16b", 0x6e202801},
+		{"uadalp v2.4s, v1.8h", 0x6e606822},
+		{"uaddlp v9.4s, v23.8h", 0x6e602ae9},
+		{"uadalp v23.2d, v9.4s", 0x6ea06937},
+		{"saddlp v3.4h, v4.8b", 0x0e202883},
+		{"sadalp v5.1d, v6.2s", 0x0ea068c5},
+
 		{"pmull v0.8h, v1.8b, v2.8b", 0x0e22e020},
 		{"pmull2 v0.8h, v1.16b, v2.16b", 0x4e22e020},
 		{"pmull v0.1q, v1.1d, v2.1d", 0x0ee2e020},
@@ -529,6 +536,12 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"umaxv s23, v9.2s",
 		"addv d23, v9.2d",
 		"sminv v0.8h, v9.8h",
+		// A widening pairwise add names only its source arrangement: the
+		// destination is one element size up at the same width, and a
+		// doubleword source has nothing wider to pair into.
+		"uaddlp v1.4s, v0.16b",
+		"uadalp v2.2s, v1.8h",
+		"saddlp v0.2d, v1.2d",
 		// pmull's `2` IS the Q bit and both forms write a full-width
 		// destination, so nothing in the operands repeats it: a source
 		// arrangement disagreeing with the mnemonic is the OTHER
