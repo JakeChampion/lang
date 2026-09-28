@@ -357,11 +357,14 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns 
 }
 
 // __host_platform — the bag the accept loops hand every handler: the host
-// mode, a sink nothing writes to, and the worker's reactor as its handle.
+// mode, a sink nothing writes to, and the worker's reactor as its handle,
+// 0 where the target has none, as a bag from `platform_new` carries.
 // Recording is a MockPlatform's job; it builds a bag over its own cell
 // (std/mock_platform). Built once per loop rather than per request, since
 // no request can change it.
-function __host_platform(handle: i32): Platform {
+function __host_platform(reactor: i32): Platform {
+    var handle: i32 = reactor;
+    if (handle < 0) { handle = 0; }
     return Platform { version: 2, mode: 0, sink: cell_new(""), handle: handle };
 }
 
