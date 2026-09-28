@@ -30,6 +30,13 @@ each compiler built by itself:
 The size is each literal compare's inline length test. The built `tsort`
 gives identical output, and stage 3 = stage 4.
 
+The larger lowering also costs the compiler allocations while it works.
+`scripts/selfhost-alloc-bench`, which builds the compiler with the native
+one and compiles `checker.fern`, counts 90,770,386 allocations against
+main's 90,179,559 (+0.66%). Each literal compare now lowers to about fourteen
+IR operations instead of three, and every later pass carries them. The
+instruction counts above already include that cost.
+
 `TestSelfHostTextEqLiteral` checks, on arm64, x86-64 and wasm, leak-checked
 and under `FERN_SANITIZE`:
 
