@@ -11385,12 +11385,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     if (!ts.ok) { return ts; }
                     return ts.emit(ir.op_tuple_get_w(tn, 64, true));
                 }
-                // An i32 tuple element `t.N` consumed in an i64 context: read the
-                // i32 element (lower_expr) and widen instead of bailing to AST.
-                if (tnt == "i32" || tnt == "u32") {
+                // A 32-bit-or-narrower tuple element `t.N` consumed in an i64
+                // context: read it (lower_expr) and widen instead of bailing to AST.
+                if (is_narrow_int_tag(tnt)) {
                     var tw: LowerState = lower_expr(e, s);
                     if (!tw.ok) { return tw; }
-                    return tw.emit(ir.op_int_extend(tnt == "u32"));
+                    return tw.emit(ir.op_int_extend(tnt != "i32"));
                 }
                 return s.fail();
             }
@@ -11403,15 +11403,14 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (!fs.ok) { return fs; }
                 return fs.emit(ir.op_struct_get_i64(fidx));
             }
-            // An i32 struct field `p.x` consumed in an i64 context (`s64 + p.x`):
-            // read the i32 field (lower_expr) and sign/zero-extend to i64 instead
-            // of bailing the module to AST. The checker forbids i64 + u32, so a
-            // plain i32 field here is signed; the u32 flag stays defensive.
+            // A 32-bit-or-narrower struct field `p.x` consumed in an i64 context
+            // (`s64 + p.x`): read the field (lower_expr) and sign/zero-extend to
+            // i64 instead of bailing the module to AST.
             var ffty: string = decl_field_type(s.frame.structs, fty, fa.field);
-            if (ffty == "i32" || ffty == "u32") {
+            if (is_narrow_int_tag(ffty)) {
                 var fw: LowerState = lower_expr(e, s);
                 if (!fw.ok) { return fw; }
-                return fw.emit(ir.op_int_extend(ffty == "u32"));
+                return fw.emit(ir.op_int_extend(ffty != "i32"));
             }
             return s.fail();
         },
@@ -11444,6 +11443,13 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
         },
         _ => { return s.fail(); }
     }
+}
+
+// is_narrow_int_tag reports whether a scalar type tag is an integer the i32
+// path reads (i32, u32, u8), which an i64 context widens; all but i32 are
+// unsigned and zero-extend.
+function is_narrow_int_tag(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "u8";
 }
 
 // str_free_call_field maps a two-arg string builtin FREE-function name to the
