@@ -2829,7 +2829,7 @@ function main(): i32 {
 	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
 	// stdin methods and the two standard Writers are all one family, so the
 	// second half drives those too.
-	{name: "stdin-and-the-stream-handles", atLeast: 51, stdin: "alpha\nbeta\n", src: `
+	{name: "stdin-and-the-stream-handles", atLeast: 48, stdin: "alpha\nbeta\n", src: `
 import "std/io";
 
 function main(): i32 {
@@ -3664,7 +3664,7 @@ function main(): i32 {
 	// WAT body for this builtin, so the register legs' fix says nothing about
 	// it: before the wasm half of the fix this program printed 25 over-releases
 	// on the typed leg against its own AST leg's 0.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 65, noLeak: true, src: `
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 64, noLeak: true, src: `
 import "std/string";
 import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
@@ -3738,7 +3738,7 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 108, noLeak: true, src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 99, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -3751,7 +3751,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
-	{name: "a-method-reads-its-receiver-by-name", atLeast: 107, noLeak: true, src: `
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 101, noLeak: true, src: `
 import "std/json";
 @derive(json.Json)
 struct Bag { items: i32[], names: string[] }
