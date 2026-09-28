@@ -19360,7 +19360,7 @@ function vb_tail_structarr_fresh(e: ast.Expr, fresh_ret: string[], shares: strin
     if let ast.StmtVar(q) = body[k] {
         var after: ast.Stmt[] = vb_after_decl(body, k);
         var none: string[] = [];
-        return structarr_lit_is_fresh(q.init) && !structarr_unsafe_for(after, q.name, none, fresh_ret) && !structarr_elem_escapes(after, q.name, none, shares) && !structarr_arg_hands_out(after, q.name, none, none, ret_types);
+        return structarr_lit_is_fresh(q.init) && !structarr_unsafe_for(after, q.name, none, fresh_ret) && !structarr_elem_escapes(after, q.name, none, shares) && !structarr_arg_hands_out(after, q.name, none, none, ret_types, fresh_ret);
     }
     return false;
 }
@@ -53125,8 +53125,9 @@ function credit_elem_shares(shares: string[], out: string[]): string[] {
 // body_unsafe_for asks proves the callee keeps no reference to the buffer, and
 // says nothing about an element it hands back uncounted — `keep(q, i)`
 // returning `q[i]` — which the element walk then frees under its new holder.
+// A threader's position (#10420) hands the array back only through its result.
 // The arrstruct twin asks the same question.
-function structarr_arg_hands_out(stmts: ast.Stmt[], name: string, borrowable: string[], cntret: string[], ret_types: SigReg): boolean {
+function structarr_arg_hands_out(stmts: ast.Stmt[], name: string, borrowable: string[], cntret: string[], ret_types: SigReg, rows: string[]): boolean {
     var calls: ast.ExprCall[] = [];
     for st in stmts { calls = astwalk.fold_stmt(st, calls, call_node_at); }
     for c in calls {
@@ -53136,7 +53137,8 @@ function structarr_arg_hands_out(stmts: ast.Stmt[], name: string, borrowable: st
             var i: i32 = 0;
             while (i < c.args.len()) {
                 if (ident_name_or_empty(c.args[i]) == name
-                    && !(param_is_borrowable(borrowable, "ELB:" + callee, i) || param_is_borrowable(borrowable, "CNT:" + callee, i))) { return true; }
+                    && !(param_is_borrowable(borrowable, "ELB:" + callee, i) || param_is_borrowable(borrowable, "CNT:" + callee, i)
+                         || util.index_of_str(rows, thread_row(i, callee)) >= 0)) { return true; }
                 i = i + 1;
             }
         }
@@ -83094,7 +83096,7 @@ while (sa2i < sarrs2.len()) {
     if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
         && !structarr_unsafe_for(body, sanm, borrowable, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"))
         && !structarr_elem_escapes(body, sanm, borrowable, shares)
-        && !structarr_arg_hands_out(body, sanm, borrowable, cntret, ret_types)) {
+        && !structarr_arg_hands_out(body, sanm, borrowable, cntret, ret_types, fresh_ret)) {
         // Append-built candidates take the SEPARATE STRUCTARRA: credit,
         // which slot_is_reclaimable_structarr additionally gates on the
         // element struct being all-scalar (#6127 / #6129). Literal-built
