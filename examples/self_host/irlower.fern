@@ -10410,6 +10410,18 @@ function lower_address_widened(e: ast.Expr, s: LowerState): LowerState {
     return pw.emit(ir.op_int_extend_ptr());
 }
 
+// lower_narrow_widened lowers a value of 32 bits or fewer through lower_expr,
+// which wraps it at its own width, and extends it to 64 bits. The extension's
+// signedness is the SOURCE's (internal/ir keys it on `srcInt.IsSigned()`): a
+// u32 or u8 zero-extends and an i32 sign-extends, so `u32 as i64` keeps
+// 4294967295 positive and `i32 as u64` turns -1 into 0xFFFF_FFFF_FFFF_FFFF.
+function lower_narrow_widened(e: ast.Expr, s: LowerState): LowerState {
+    if (expr_is_usize(e, s)) { return lower_address_widened(e, s); }
+    var nw: LowerState = lower_expr(e, s);
+    if (!nw.ok) { return nw; }
+    return nw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
+}
+
 // syscall_arity is the argument count a `__syscallN` intrinsic takes, or -1.
 function syscall_arity(name: string): i32 {
     if (name == "__syscall3") { return 3; }
@@ -10696,7 +10708,7 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
 // expr_subword_kind returns the sub-32-bit integer kind ("u8")
 // an expression evaluates to, or "". It mirrors expr_is_u32 for the
 // sub-word domain: a sub-word-tracked local/param, a sub-word array element
-// read, an `as u8` cast, or an arithmetic/bitwise/
+// read, field or tuple element, an `as u8` cast, or an arithmetic/bitwise/
 // shift combination of sub-word operands (a shift follows the LEFT operand;
 // other binaries take whichever side is sub-word). Comparisons yield a plain
 // i32 bool. Drives the post-arithmetic width wrap in the binary lowering.
@@ -10735,6 +10747,10 @@ pub function expr_subword_kind(e: ast.Expr, s: LowerState): string {
         // `250u8 +| 10u8` — no call, no variable — also missed the clamp.
         ast.ExprNumber(n) => {
             if (n.suffix == "u8") { return "u8"; }
+            return "";
+        },
+        ast.ExprFieldAccess(fa) => {
+            if (fa_type_tag(fa, s) == "u8") { return "u8"; }
             return "";
         },
         ast.ExprBinary(b) => {
@@ -11122,15 +11138,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // An i32-width scalar leaf consumed in an i64 context — `s64 + i`, a
             // mixed-width param/local, or a for-range loop var accumulated into an
             // i64 — widens to i64 instead of bailing the module.
-            // lower_expr pushes the i32 value; op_int_extend widens it (zero-extend
-            // for u32, sign-extend for a signed i32 / subword). Because the
-            // ExprBinary arm recurses through lower_i64, this also lifts the i32
-            // leaves of nested sub-expressions (`s64 + (i + 1)`) for free.
-            if (sl >= 0 && s.is_i32_scalar_slot(sl)) {
-                var iw: LowerState = lower_expr(e, s);
-                if (!iw.ok) { return iw; }
-                return iw.emit(ir.op_int_extend(s.is_u32_slot(sl)));
-            }
+            if (sl >= 0 && s.is_i32_scalar_slot(sl)) { return lower_narrow_widened(e, s); }
             // A `const B: i64` read. A const desugars to a zero-arg accessor
             // function (parser: `const NAME: T = E;` → `function NAME(): T`), so
             // the bare ident is a CALL returning i64 — which infer_expr_width
@@ -11191,36 +11199,30 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (infer_expr_width(u.operand, s) == 64) {
                     return lower_i64(u.operand, s);
                 }
-                if (expr_is_usize(u.operand, s)) { return lower_address_widened(u.operand, s); }
-                var sw: LowerState = lower_expr(u.operand, s);
-                if (!sw.ok) { return sw; }
-                // The extension's signedness is the SOURCE's, not the
-                // destination's (internal/ir keys it on `srcInt.IsSigned()`):
-                // `u32 as i64` zero-extends, so 4294967295 stays positive, and
-                // `i32 as u64` sign-extends, so -1 becomes 0xFFFF_FFFF_FFFF_FFFF.
-                return sw.emit(ir.op_int_extend(expr_is_u32(u.operand, s) || expr_subword_kind(u.operand, s) != ""));
+                return lower_narrow_widened(u.operand, s);
             }
             // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
             // read, so the unwrapped value is a true i64 here (the `var x: i64 =
             // inner?` binding lands in lower_i64). lower_try bails for non-i64/u64
-            // payloads, so this stays sound for the i64 domain.
-            if (u.op == "try_") { return lower_try(u.operand, s); }
+            // payloads, so this stays sound for the i64 domain. A 32-bit-or-narrower
+            // payload (`s64 + (a +? b)?`) is unwrapped at its own width and widened.
+            if (u.op == "try_") {
+                if (infer_expr_width(e, s) != 64) { return lower_narrow_widened(e, s); }
+                return lower_try(u.operand, s);
+            }
             return s.fail();
         },
         ast.ExprBinary(b) => {
+            // Comparisons aren't i64 values (they yield an i32 bool).
+            if (is_cmp_kind(map_binop(b.op))) { return s.fail(); }
+            // A binary of 32-bit-or-narrower operands is a narrow value, and
+            // lower_expr wraps it at its own width (u32_wrap, the sub-word
+            // int_cast, the i32 sign-extend). Recursing here would compute it at
+            // 64 bits and skip that wrap: `s64 + b * 2u8` with `b = 200` read 400.
+            if (infer_expr_width(e, s) != 64 && !is_chk_op(b.op) && !expr_is_f64(b.left, s) && !expr_is_f64(b.right, s)) { return lower_narrow_widened(e, s); }
             // Saturating arithmetic (#5542) carries its own width-aware
-            // lowering (clamped, not wrapped) at every width. When its OPERANDS
-            // are 32-bit-or-narrower it produces a 32-bit value, so an i64
-            // context — e.g. `(p +| q) == 4294967295`, whose literal is an i64
-            // and drags the whole compare to width 64 — has to widen it, the
-            // same way the ExprIdent arm below widens a narrow local. Without
-            // that the wasm module fails to validate (i32 where i64 expected).
-            if (is_sat_op(b.op)) {
-                var satw: LowerState = lower_sat_binary(b, e, s);
-                if (!satw.ok) { return satw; }
-                if (infer_expr_width(e, s) == 64) { return satw; }
-                return satw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
-            }
+            // lowering (clamped, not wrapped) at every width.
+            if (is_sat_op(b.op)) { return lower_sat_binary(b, e, s); }
             // A composite operator overload (#2706) whose method returns i64 /
             // u64 is an i64 VALUE: the desugar to `a.<m>(b)` lives in
             // lower_expr, and that call pushes a full-width result. Without
@@ -11234,13 +11236,11 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 && decl_is_struct(s.frame.structs, expr_struct_type(b.left, s))) {
                 return lower_expr(e, s);
             }
-            var kind: string = map_binop(b.op);
-            if (kind == "") { return s.fail(); }
-            // Comparisons aren't i64 values (they yield an i32 bool). i64
-            // division/remainder ARE lowered (width 64): x86 drops the i32
+            // i64 division/remainder ARE lowered (width 64): x86 drops the i32
             // movslq truncation, arm64's sdiv is already 64-bit, wasm calls the
             // $__fern_idiv64 / $__fern_irem64 non-trapping helpers.
-            if (is_cmp_kind(kind)) { return s.fail(); }
+            var kind: string = map_binop(b.op);
+            if (kind == "") { return s.fail(); }
             var l: LowerState = lower_i64(b.left, s);
             if (!l.ok) { return l; }
             var r: LowerState = lower_i64(b.right, l);
@@ -11364,17 +11364,9 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 },
                 _ => {}
             }
-            // A 32-bit-slot call consumed in an i64 context (`s64 + g()`): lower
-            // the result (lower_expr, the normal call path) and extend it to i64
-            // instead of bailing the module to AST. expr_is_u32 reads the call's
-            // checker-stamped result type: a u32 call zero-extends, an i32 call
-            // sign-extends, and a u8 call's signed extend is exact because the
-            // slot already holds 0..255.
-            if (infer_expr_width(e, s) == 32) {
-                var cw: LowerState = lower_expr(e, s);
-                if (!cw.ok) { return cw; }
-                return cw.emit(ir.op_int_extend(expr_is_u32(e, s)));
-            }
+            // A 32-bit call consumed in an i64 context (`s64 + g()`) widens
+            // instead of bailing the module.
+            if (infer_expr_width(e, s) == 32) { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         ast.ExprFieldAccess(fa) => {
@@ -11391,12 +11383,8 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     return ts.emit(ir.op_tuple_get_w(tn, 64, true));
                 }
                 // A 32-bit-or-narrower tuple element `t.N` consumed in an i64
-                // context: read it (lower_expr) and widen instead of bailing to AST.
-                if (is_narrow_int_tag(tnt)) {
-                    var tw: LowerState = lower_expr(e, s);
-                    if (!tw.ok) { return tw; }
-                    return tw.emit(ir.op_int_extend(tnt != "i32"));
-                }
+                // context widens.
+                if (is_narrow_int_tag(tnt)) { return lower_narrow_widened(e, s); }
                 return s.fail();
             }
             var fty: string = expr_struct_type(fa.obj, s);
@@ -11409,14 +11397,9 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 return fs.emit(ir.op_struct_get_i64(fidx));
             }
             // A 32-bit-or-narrower struct field `p.x` consumed in an i64 context
-            // (`s64 + p.x`): read the field (lower_expr) and sign/zero-extend to
-            // i64 instead of bailing the module to AST.
+            // (`s64 + p.x`) widens.
             var ffty: string = decl_field_type(s.frame.structs, fty, fa.field);
-            if (is_narrow_int_tag(ffty)) {
-                var fw: LowerState = lower_expr(e, s);
-                if (!fw.ok) { return fw; }
-                return fw.emit(ir.op_int_extend(ffty != "i32"));
-            }
+            if (is_narrow_int_tag(ffty)) { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         ast.ExprIndex(ix) => {
@@ -11434,16 +11417,9 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (ix.unchecked) { return bs.emit(ir.op_arr_get_i64_nc()); }
                 return bs.emit(ir.op_arr_get_i64());
             }
-            // An i32-element array indexed in an i64 context (`s64 + a[i]`, a
-            // numeric reduction): lower the i32 element via lower_expr (arr_get)
-            // and widen to i64 instead of bailing the module to AST. The checker
-            // forbids i64 + u32, so a plain i32[] element here is signed;
-            // expr_is_u32 still selects zero-extend for the defensive u32[] case.
-            if (arr_index_is_i32_scalar(ix.array, s)) {
-                var ws: LowerState = lower_expr(e, s);
-                if (!ws.ok) { return ws; }
-                return ws.emit(ir.op_int_extend(expr_is_u32(e, s)));
-            }
+            // A 32-bit array element in an i64 context (`s64 + a[i]`, a numeric
+            // reduction) widens.
+            if (arr_index_is_i32_scalar(ix.array, s)) { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         _ => { return s.fail(); }
@@ -11687,9 +11663,28 @@ function lower_variant_ctor_args(args: ast.Expr[], decl_idx: i32, selfrebind: st
             && !ctor_selfrebind_payload(args[i], selfrebind)) {
             st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
         }
+        if (fty == "fn" && enum_all_variants_rc_droppable(st.frame.structs, st.frame.structs.decls[decl_idx].enum_owner)) {
+            st = count_closure_payload(args[i], st);
+        }
         i = i + 1;
     }
     return st;
+}
+
+// count_closure_payload: the box of an admitted (enum_all_variants_rc_droppable)
+// enum holds a count on its closure payload, which the enum release gives back.
+// A counted value (closure_value_is_counted, closure_method_call)
+// brings one; a closure local the construction moves hands over the one its
+// scope-exit release would have given back; anything else is retained.
+function count_closure_payload(arg: ast.Expr, s: LowerState): LowerState {
+    if (closure_value_is_counted(arg, s.frame.sigs.closure_fns) || closure_method_call(arg, s)) { return s; }
+    if let ast.ExprIdent(id) = arg {
+        var slot: i32 = s.slot_of(id.name);
+        if (slot >= 0 && s.moves_local_at(id.name, id.line, id.col) && arr_slot_shallow_release_ok(s, slot)) {
+            return s.note_moved_elided(slot);
+        }
+    }
+    return s.retain_tos("variant-clo-payload");
 }
 
 // variant_counted_struct_payload: `arg` is a bare ident stored into a variant
@@ -31855,10 +31850,10 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
             var callee_unsafe: boolean = false;
             var callee_name: string = "";
             match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    callee_name = cid.name;   // free call: record callee for the borrow check below
-                    if (cid.name == name) { callee_unsafe = true; }   // a value used AS the callee escapes (preserve prior behaviour)
-                },
+                // A bare callee is a free function or a function value; calling
+                // a function value reads its env box and keeps nothing, so
+                // `name(args)` borrows `name`.
+                ast.ExprIdent(cid) => { callee_name = cid.name; },
                 ast.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         ast.ExprIdent(_) => {
@@ -35057,7 +35052,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
             if (rcenfrees.vidxs[rej] < i && i <= rcenfrees.idxs[rej]) {
                 var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
                 if (reslot2 >= st.frame.n_params && !slot_credit_at(st, reslot2, "TYPEDENUM:")) {
-                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.frame.structs))));
+                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.frame.structs, st.frame.sigs.borrowable_params))));
                 }
             }
             rej = rej + 1;
@@ -35240,7 +35235,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 // see the RCENUMS sweep's note.
                 if (rslot2 >= st.frame.n_params && !slot_list_has(st.frame.moved_elided, rslot2)
                     && !slot_credit_at(st, rslot2, "TYPEDENUM:")) {
-                    st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.frame.structs), true);
+                    st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.frame.structs, st.frame.sigs.borrowable_params), true);
                 }
             }
             ref2 = ref2 + 1;
@@ -48039,8 +48034,10 @@ function confirm_map_get_frees(fr: EnumFrees, body: ast.Stmt[], i: i32, s: Lower
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
 // sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
-// freshness gate), OR a map (released by nothing, see below). NOT a scalar (no rc
-// — released with the box), NOT enum / opt / tuple, and NOT a non-leaf (cycle-risk)
+// freshness gate), OR a map (released by nothing, see below), OR a closure (one
+// rc-guarded dec of the env box; lower_variant_ctor_args counts every closure
+// payload, so the box always holds a claim of its own). NOT a scalar (no rc —
+// released with the box), NOT enum / opt / tuple, and NOT a non-leaf (cycle-risk)
 // struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
@@ -48068,7 +48065,8 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
         // count, so no drop here could tell whether the enum is its only holder,
         // and it leaks as it always did. Refusing it instead turned off the whole
         // enum's release, every other variant's payloads with it (#9304).
-        || is_map_type_name(t);
+        || is_map_type_name(t)
+        || t == "fn";
 }
 
 // enum_variant_rc_droppable: every payload field of variant `vname` is either a
@@ -48097,29 +48095,36 @@ function enum_variant_has_rc_payload(structs: StructTab, vname: string): boolean
     return false;
 }
 
+// enum_walk_payload_field: a payload the element walk releases with one
+// rc-guarded arr_dec — a LEAK-SAFE scalar array, or a closure's env box.
+function enum_walk_payload_field(ft: string): boolean {
+    return is_leaksafe_array_field(ft) || ft == "fn";
+}
+
 // enum_arr_elems_walk_ok: the enum-ARRAY element walk (__enum_arr_elems_drop_<E>)
 // may release payloads for enum E — every variant's payload fields are scalars
-// or LEAK-SAFE scalar arrays, and some variant actually carries one. Only that
-// payload kind's counting is guaranteed at construction (the variant ctor incs
-// a bare-ident array payload — the #3720 dup — and a fresh literal is owned),
-// so the walk's rc-guarded arr_dec balances either way; a string / nested-box
-// payload can reach the box uncounted and keeps the enum outside the walk.
+// or enum_walk_payload_field, and some variant actually carries one. Only those
+// kinds' counting is guaranteed at construction (the variant ctor incs a
+// bare-ident array payload — the #3720 dup — and any closure that does not
+// arrive counted, and a fresh literal is owned), so the walk's rc-guarded
+// arr_dec balances either way; a string / nested-box payload can reach the box
+// uncounted and keeps the enum outside the walk.
 pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean {
     if (!decl_is_enum(structs, ename)) { return false; }
-    var any_arr: boolean = false;
+    var any_walked: boolean = false;
     for sd in structs.decls {
         if (sd.enum_owner == ename) {
             var n: i32 = decl_field_count(structs, sd.name);
             var fi: i32 = 0;
             while (fi < n) {
                 var ft: string = decl_field_type_at(structs, sd.name, fi);
-                if (is_leaksafe_array_field(ft)) { any_arr = true; }
+                if (enum_walk_payload_field(ft)) { any_walked = true; }
                 else if (!is_scalar_type_name(ft)) { return false; }
                 fi = fi + 1;
             }
         }
     }
-    return any_arr;
+    return any_walked;
 }
 
 // enum_arr_release_walk_ok: the enum-array element release may run for E —
@@ -48135,14 +48140,14 @@ pub function enum_arr_release_walk_ok(structs: StructTab, ename: string): boolea
 }
 
 // enum_walk_payload_offsets: for one variant, the byte offsets of its
-// leak-safe-array payload fields ((k+1)*8 — shape@0, fields@8+), for the
+// enum_walk_payload_field payloads ((k+1)*8 — shape@0, fields@8+), for the
 // element-walk emitters.
 pub function enum_walk_payload_offsets(structs: StructTab, vname: string): i32[] {
     var out: i32[] = [];
     var n: i32 = decl_field_count(structs, vname);
     var fi: i32 = 0;
     while (fi < n) {
-        if (is_leaksafe_array_field(decl_field_type_at(structs, vname, fi))) {
+        if (enum_walk_payload_field(decl_field_type_at(structs, vname, fi))) {
             out = out.append((fi + 1) * 8);
         }
         fi = fi + 1;
@@ -48333,8 +48338,9 @@ function match_arm_binds_rc_payload(st: ast.Stmt, structs: StructTab): boolean {
                         // `extra_bindings[eb]` mis-infers the receiver on the
                         // self-host path, emitting an undefined __fn_i32__len.)
                         if (pv.binding != "" && pv.binding != "_") {
-                            if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, 0))) {
-                                if (binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
+                            var ft0: string = decl_field_type_at(structs, vname, 0);
+                            if (enum_field_rc_droppable(structs, ft0)) {
+                                if (payload_binding_escapes_arm(arm, pv.binding, ft0)) { return true; }
                             }
                         }
                         // extra bindings (fields 1..).
@@ -48342,8 +48348,9 @@ function match_arm_binds_rc_payload(st: ast.Stmt, structs: StructTab): boolean {
                         while (eb < pv.extra_bindings.len()) {
                             var ebn: string = pv.extra_bindings[eb];
                             if (ebn != "" && ebn != "_") {
-                                if (enum_field_rc_droppable(structs, decl_field_type_at(structs, vname, eb + 1))) {
-                                    if (binding_escapes_arm(arm, ebn, no_names())) { return true; }
+                                var ftk: string = decl_field_type_at(structs, vname, eb + 1);
+                                if (enum_field_rc_droppable(structs, ftk)) {
+                                    if (payload_binding_escapes_arm(arm, ebn, ftk)) { return true; }
                                 }
                             }
                             eb = eb + 1;
@@ -48402,6 +48409,58 @@ function enum_stmt_binds_rc_payload(st: ast.Stmt, name: string, structs: StructT
 function binding_escapes_arm(arm: ast.MatchArm, name: string, borrowable: string[]): boolean {
     if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
     return body_unsafe_for(arm.body, name, borrowable, []);
+}
+
+// payload_binding_escapes_arm: binding_escapes_arm for an rc payload of type
+// `ft`. A closure payload called directly (`name(args)`) is borrowed for the
+// call, so only a mention that is not such a call — a capture included —
+// escapes.
+function payload_binding_escapes_arm(arm: ast.MatchArm, name: string, ft: string): boolean {
+    if (ft != "fn") { return binding_escapes_arm(arm, name, no_names()); }
+    return clo_binding_other_uses(arm, name, false, no_names()) > 0;
+}
+
+// clo_binding_other_uses: the mentions of closure binding `name` in `arm` that
+// are neither a direct call `name(args)`, nor a bare `name` argument at a
+// position `borrowable` says the callee only reads, nor, when `returns` is set,
+// a bare `return name` — which retains the box (ret_closure_uncounted). A
+// capture by a lambda counts.
+function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean, borrowable: string[]): i32 {
+    function at_expr(e: ast.Expr, own n: i32): i32 {
+        if let ast.ExprCall(c) = e {
+            var cn: string = ident_name_or_empty(c.callee);
+            if (cn == name) { return n + 1; }
+            return n + borrowed_arg_count(c, cn, name, borrowable);
+        }
+        return n;
+    }
+    function at_stmt(st: ast.Stmt, own n: i32): i32 {
+        if let ast.StmtReturn(r) = st {
+            if (returns && ident_name_or_empty(r.value) == name) { return n + 1; }
+        }
+        return n;
+    }
+    var mentions: i32 = astwalk.count_ident_stmts(arm.body, name);
+    var borrows: i32 = 0;
+    for st in arm.body { borrows = astwalk.fold_stmt_nodes(st, borrows, at_stmt, at_expr, astwalk.not_lambda); }
+    if (arm.has_guard) {
+        mentions = mentions + astwalk.count_ident_expr(arm.guard, name);
+        borrows = astwalk.fold_expr_pruned(arm.guard, borrows, at_expr, astwalk.not_lambda);
+    }
+    return mentions - borrows;
+}
+
+// borrowed_arg_count: the bare `name` arguments of call `c`, to the free
+// function `cn`, at positions `borrowable` marks as only read.
+function borrowed_arg_count(c: ast.ExprCall, cn: string, name: string, borrowable: string[]): i32 {
+    var n: i32 = 0;
+    if (cn.len() == 0) { return n; }
+    var ai: i32 = 0;
+    while (ai < c.args.len()) {
+        if (ident_name_or_empty(c.args[ai]) == name && param_is_borrowable(borrowable, cn, ai)) { n = n + 1; }
+        ai = ai + 1;
+    }
+    return n;
 }
 
 // binding_escapes_arm_scrut is binding_escapes_arm with the MATCH-SCRUTINEE
@@ -48463,7 +48522,10 @@ function store_out_takes_counted_claim(structs: StructTab, ft: string): boolean 
 //
 // An array payload stored to an outer local or handed to a call keeps its dec: the
 // store's own retain means the dec lands on that claim, and skipping strands it.
-function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs: StructTab): boolean {
+// So does a closure payload whose only escapes are a bare return, which retains
+// it, and arguments at borrowable positions.
+function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs: StructTab, borrowable: string[]): boolean {
+    if (ft == "fn") { return clo_binding_other_uses(arm, name, true, borrowable) > 0; }
     if (!store_out_takes_counted_claim(structs, ft)) { return true; }
     return binding_returns_from_arm(arm.body, name);
 }
@@ -48489,7 +48551,7 @@ function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs
 // therefore REJECTS any candidate that mixes a non-empty moved set with a
 // guarded arm (match_has_guarded_arm); by emission time a non-empty moved set
 // implies every arm is unguarded, so exactly the escaping arm ran.
-function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
+function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab, borrowable: string[]): string[] {
     var moved: string[] = [];
     match (st) {
         ast.StmtMatch(m) => {
@@ -48507,8 +48569,8 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                         if (pv.binding != "" && pv.binding != "_") {
                             var ft0: string = decl_field_type_at(structs, vname, 0);
                             if (enum_field_rc_droppable(structs, ft0)) {
-                                if (binding_escapes_arm(arm, pv.binding, no_names())
-                                        && moved_skip_applies(arm, pv.binding, ft0, structs)) { moved = moved.append(vname + "#0"); }
+                                if (payload_binding_escapes_arm(arm, pv.binding, ft0)
+                                        && moved_skip_applies(arm, pv.binding, ft0, structs, borrowable)) { moved = moved.append(vname + "#0"); }
                             }
                         }
                         var eb: i32 = 0;
@@ -48517,8 +48579,8 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                             if (ebn != "" && ebn != "_") {
                                 var ftk: string = decl_field_type_at(structs, vname, eb + 1);
                                 if (enum_field_rc_droppable(structs, ftk)) {
-                                    if (binding_escapes_arm(arm, ebn, no_names())
-                                            && moved_skip_applies(arm, ebn, ftk, structs)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
+                                    if (payload_binding_escapes_arm(arm, ebn, ftk)
+                                            && moved_skip_applies(arm, ebn, ftk, structs, borrowable)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
                                 }
                             }
                             eb = eb + 1;
@@ -48612,7 +48674,7 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], reassigned: string[], s
                         // arm that did not move the payload, making the skip a
                         // per-call leak — such mixes fall back to the exit sweep.
                         var guarded_move: boolean = match_has_guarded_arm(body[match_idx])
-                            && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
+                            && match_moved_rc_payloads(body[match_idx], structs, borrowable).len() > 0;
                         if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
                             vidxs = vidxs.append(vi);
@@ -48739,9 +48801,9 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_leaksafe_array_field(eft)) {
-                    // scalar-element array payload: one dec frees the buffer (scalar
-                    // elements carry no inner pointers to release).
+                } else if (enum_walk_payload_field(eft)) {
+                    // scalar-element array or closure payload: one dec releases the
+                    // buffer or env box (neither holds a pointer this walk releases).
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -63202,7 +63264,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
             if (rcenumfrees.vidxs[rej] < j && j <= rcenumfrees.idxs[rej] && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
                 var reslot2: i32 = s.slot_of(rcenumfrees.names[rej]);
                 if (reslot2 >= s.frame.n_params) {
-                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.frame.structs))));
+                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.frame.structs, s.frame.sigs.borrowable_params))));
                 }
             }
             rej = rej + 1;
@@ -63531,7 +63593,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 if (rxslot >= s.frame.n_params && !slot_list_has(s.frame.moved_elided, rxslot)) {
                     // Skip the dec of payload fields whose arm binding escaped —
                     // ownership moved to the escapee (#4400).
-                    s = emit_enum_variant_drops_gated(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.frame.structs), true);
+                    s = emit_enum_variant_drops_gated(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.frame.structs, s.frame.sigs.borrowable_params), true);
                 }
             }
             rei = rei + 1;
@@ -68350,14 +68412,12 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string, ptype: str
                     match (arm.pattern) {
                         ast.PatVariant(pv) => {
                             if (pv.binding != "" && pv.binding != "_"
-                                && !payload_is_scalar(structs, ptype, pv.type_name, 0)
-                                && binding_escapes_arm(arm, pv.binding, no_names())) { return true; }
+                                && param_payload_binding_escapes(arm, pv.binding, payload_type_at(structs, ptype, pv.type_name, 0))) { return true; }
                             var eb: i32 = 0;
                             while (eb < pv.extra_bindings.len()) {
                                 var ebn: string = pv.extra_bindings[eb];
                                 if (ebn != "" && ebn != "_"
-                                    && !payload_is_scalar(structs, ptype, pv.type_name, eb + 1)
-                                    && binding_escapes_arm(arm, ebn, no_names())) { return true; }
+                                    && param_payload_binding_escapes(arm, ebn, payload_type_at(structs, ptype, pv.type_name, eb + 1))) { return true; }
                                 eb = eb + 1;
                             }
                         },
@@ -68380,15 +68440,24 @@ function param_match_binding_escapes_stmt(st: ast.Stmt, name: string, ptype: str
     return false;
 }
 
-// payload_is_scalar: payload `k` of `variant` in the enum type `ptype` is a
-// scalar.
-function payload_is_scalar(structs: StructTab, ptype: string, variant: string, k: i32): boolean {
-    if (ptype.len() == 0) { return false; }
+// param_payload_binding_escapes: an arm binding of a payload of type `ft`
+// ("" when unknown) escapes its arm. A scalar is a copy and never does.
+function param_payload_binding_escapes(arm: ast.MatchArm, name: string, ft: string): boolean {
+    return !is_scalar_type_name(ft) && payload_binding_escapes_arm(arm, name, ft);
+}
+
+// payload_type_at: the declared type of payload `k` of `variant` in the enum
+// type `ptype`, or "" when it cannot be resolved.
+function payload_type_at(structs: StructTab, ptype: string, variant: string, k: i32): string {
+    if (ptype.len() == 0) { return ""; }
     var opt: string = opt_payload_type(ptype, variant);
-    if (opt.len() > 0) { return k == 0 && is_scalar_type_name(opt); }
+    if (opt.len() > 0) {
+        if (k == 0) { return opt; }
+        return "";
+    }
     var vi: i32 = variant_decl_index(structs, variant, ptype);
-    if (vi < 0 || k >= structs.decls[vi].fields.len()) { return false; }
-    return is_scalar_type_name(structs.decls[vi].fields[k].type_name);
+    if (vi < 0 || k >= structs.decls[vi].fields.len()) { return ""; }
+    return structs.decls[vi].fields[k].type_name;
 }
 
 // A borrowability registry is a fixed-width bucket array, NOT a list of entries:

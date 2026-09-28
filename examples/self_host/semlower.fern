@@ -655,9 +655,9 @@ pub function substitution(mod: parser.Module, lowered: parser.FuncDecl[], struct
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         if (r.keep[i]) {
-            callees = callees.append(ssarc.Callee { name: call_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], method: mod.funcs[i].receiver_type.len() > 0 });
+            callees = callees.append(ssarc.Callee { name: call_key(mod.funcs[i]), f: built.decls[i].func, modes: built.decls[i].modes, plan: r.plans[i], receiver: semsource.has_receiver(mod.funcs[i]) });
             seeds = seeds.append(call_key(mod.funcs[i]) + "|"
-                + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, mod.funcs[i].receiver_type.len() > 0));
+                + ssarc.grow_mask(call_key(mod.funcs[i]), built.decls[i].func, r.grows, semsource.has_receiver(mod.funcs[i])));
             if (mod.funcs[i].receiver_type.len() == 0) {
                 consumed = util.append_all(consumed, ssarc.consumed_array_rows(mod.funcs[i].name, built.decls[i].func, built.decls[i].modes));
             }

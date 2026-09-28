@@ -1126,19 +1126,20 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 var eo_insts: ssa.SInst[] = [];
                 var es: i32 = 0;
                 while (es < nslots) {
-                    var vals: i32[] = [];
-                    var qe: i32 = 0;
-                    while (qe < bidx.len()) { vals = vals.append(edge_vals[bidx[qe] * nslots + es]); qe = qe + 1; }
-                    if (falls_through) { vals = vals.append(fslots[es]); }
-                    if (vals.len() == 0) {
-                        // unreachable exit; leave slot as-is.
-                    } else {
-                        var first: i32 = vals[0];
-                        var alleq: boolean = true;
-                        var qv: i32 = 0;
-                        while (qv < vals.len()) { if (vals[qv] != first) { alleq = false; } qv = qv + 1; }
+                    // An exit no edge reaches leaves the slot as-is. The
+                    // incoming values are gathered only when they disagree.
+                    if (bidx.len() > 0 || falls_through) {
+                        var first: i32 = 0;
+                        if (bidx.len() > 0) { first = edge_vals[bidx[0] * nslots + es]; } else { first = fslots[es]; }
+                        var alleq: boolean = !falls_through || fslots[es] == first;
+                        var qv: i32 = 1;
+                        while (alleq && qv < bidx.len()) { if (edge_vals[bidx[qv] * nslots + es] != first) { alleq = false; } qv = qv + 1; }
                         if (alleq) { slots = slots.with(es, first); }
                         else {
+                            var vals: i32[] = [];
+                            var qe: i32 = 0;
+                            while (qe < bidx.len()) { vals = vals.append(edge_vals[bidx[qe] * nslots + es]); qe = qe + 1; }
+                            if (falls_through) { vals = vals.append(fslots[es]); }
                             var phe: i32 = nvals; nvals = nvals + 1;
                             eo_insts = eo_insts.append(ssa.SInst { kind_tag: 8, result: phe, args: vals, imm: 0, str: "" });
                             slots = slots.with(es, phe);

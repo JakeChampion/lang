@@ -1505,48 +1505,28 @@ function sig_table(sigs: FuncSig[]): SigTable {
 // the struct table, which lookup_struct scanned end to end per query.
 pub struct StructTable {
   structs: StructSig[],
-  // The declared names, in `structs` order. The type resolvers want the names
-  // and nothing else from a StructSig, and they used to project this array per
-  // QUERY — 93,552 rebuilds of ~171 names, 5.17% of a compile (#8887). It is
-  // built once here, with the index, and read straight from the scope.
-  names: string[],
-  // head[b] is the first structs index in bucket b (-1 when empty); next[i]
-  // chains to the next index in the same bucket, ascending.
-  head: i32[],
-  next: i32[],
+  // The declared names, in `structs` order, which is also what the type
+  // resolvers read (TypeNames).
+  index: util.NameIndex,
 }
 
-// struct_table indexes `structs` by name. Built backward so each chain ends up
-// in ascending index order, which is the order the scan visited: a duplicate
-// name still answers with the FIRST entry.
+// TypeNames is the declared struct and union names a type spelling resolves
+// against. A scope reads it off its tables (Scope.type_names); a caller holding
+// bare name lists indexes them once with type_names.
+pub struct TypeNames {
+  structs: util.NameIndex,
+  unions: util.NameIndex,
+}
+
+function type_names(struct_names: string[], union_names: string[]): TypeNames {
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names) };
+}
+
+// struct_table indexes `structs` by name.
 function struct_table(structs: StructSig[]): StructTable {
-  var head: i32[] = [];
-  var b: i32 = 0;
-  var nb: i32 = sig_buckets();
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
-  var next: i32[] = [];
-  var j: i32 = 0;
-  while (j < structs.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
-  var k: i32 = structs.len() - 1;
-  while (k >= 0) {
-    var bk: i32 = sig_name_bucket(structs[k].name);
-    next = next.with(k, head[bk]);
-    head = head.with(bk, k);
-    k = k - 1;
-  }
   var names: string[] = [];
-  var m: i32 = 0;
-  while (m < structs.len()) {
-    names = names.append(structs[m].name);
-    m = m + 1;
-  }
-  return StructTable { structs: structs, names: names, head: head, next: next };
+  for sd in structs { names = names.append(sd.name); }
+  return StructTable { structs: structs, index: util.name_index(names) };
 }
 
 // UnionTable is the module's union/enum-alias table plus a bucket index over
@@ -1561,9 +1541,9 @@ pub struct UnionTable {
   // answers with the FIRST declared union naming the variant, as the scan did.
   vnames: string[],
   vowner: i32[],
-  // The union/alias names themselves, in `unions` order — the projection the
-  // type resolvers want, built once beside the variant index (#8887).
-  names: string[],
+  // The union/alias names themselves, in `unions` order, indexed for the type
+  // resolvers (TypeNames).
+  index: util.NameIndex,
   head: i32[],
   next: i32[],
   // lib_head / lib_next index the same entries minus the entry module's enums
@@ -1634,7 +1614,7 @@ function union_table(unions: UnionSig[]): UnionTable {
     names = names.append(unions[m].name);
     m = m + 1;
   }
-  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, names: names, head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false };
+  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false };
 }
 
 function declared_by_entry(u: UnionSig): boolean {
@@ -1734,8 +1714,12 @@ function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
 // body goes through here — a `var` annotation, a lambda's parameter or return,
 // a cast — so a type parameter cannot be captured by a same-named declared type
 // at one of them.
+function (s: Scope) type_names(): TypeNames {
+  return TypeNames { structs: s.structs.index, unions: s.unions.index };
+}
+
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
-  return type_from_name_erasing_tparams(name, s.tparams, s.structs.names, s.unions.names);
+  return type_from_name_erasing_tparams(name, s.tparams, s.type_names());
 }
 
 // bind_tpvar records that value `name` was declared with the type parameter
@@ -2574,7 +2558,7 @@ function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): t
       var tps: string[] = [elem_param];
       var targs: typeinfo.Type[] = [ra.elem];
       var rref: parser.TypeRef = parser.parse_type_ref(arm.ret_type_name);
-      return type_from_ref_subst(rref, tps, targs, s.structs.names, s.unions.names);
+      return type_from_ref_subst(rref, tps, targs, s.type_names());
     },
     _ => {}
   }
@@ -2585,12 +2569,12 @@ function (s: Scope) arr_recv_ret_type(recv_ty: typeinfo.Type, arm: MethodSig): t
 // whether the name is a struct at all: the miss sentinel is five empty arrays
 // they build and drop.
 function (s: Scope) has_struct(name: string): boolean {
-  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  var i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name) {
       return true;
     }
-    i = s.structs.next[i];
+    i = s.structs.index.next[i];
   }
   return false;
 }
@@ -2604,13 +2588,13 @@ function (s: Scope) has_struct(name: string): boolean {
 // lookup_variant or lookup_owned_struct.
 function (s: Scope) lookup_struct(name: string): StructSig {
   var first: i32 = 0 - 1;
-  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  var i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name) {
       if (s.structs.structs[i].enum_owner.len() == 0) { return s.structs.structs[i]; }
       if (first < 0) { first = i; }
     }
-    i = s.structs.next[i];
+    i = s.structs.index.next[i];
   }
   if (first >= 0) { return s.structs.structs[first]; }
   // Sentinel: empty name signals "no such struct".
@@ -2626,12 +2610,12 @@ function (s: Scope) lookup_struct(name: string): StructSig {
 // — a struct-union's member is a declared struct. An unqualified pattern or
 // a constructor call is a variant first, as native reads it.
 function (s: Scope) lookup_variant(name: string): StructSig {
-  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  var i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0 && !s.variant_hidden(s.structs.structs[i])) {
       return s.structs.structs[i];
     }
-    i = s.structs.next[i];
+    i = s.structs.index.next[i];
   }
   return s.lookup_struct(name);
 }
@@ -2676,12 +2660,12 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
 // that tells them apart (conformance/cases/shared_variant_payload). Falls
 // back to the name-only answer when nothing in the bucket claims `owner`.
 function (s: Scope) lookup_owned_struct(name: string, owner: string): StructSig {
-  var i: i32 = s.structs.head[sig_name_bucket(name)];
+  var i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner == owner) {
       return s.structs.structs[i];
     }
-    i = s.structs.next[i];
+    i = s.structs.index.next[i];
   }
   return s.lookup_struct(name);
 }
@@ -2783,7 +2767,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   var i: i32 = 0;
   while (i < ss.field_names.len() && i < ss.field_type_names.len()) {
     if (ss.field_names[i] == want) {
-      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, u.args, s.structs.names, s.unions.names);
+      return type_from_ref_subst(parser.parse_type_ref(ss.field_type_names[i]), us.type_params, u.args, s.type_names());
     }
     i = i + 1;
   }
@@ -3515,7 +3499,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
 // to a width-tagged TypeI32 (see the struct comment), which is what lets a
 // receiver method on one pass the E021 gate and a call site recover the width.
 function type_from_name(name: string): typeinfo.Type {
-  return type_from_spelling(name, [], []);
+  return type_from_spelling(name, type_names([], []));
 }
 
 // =================== CHECKER ====================
@@ -3623,7 +3607,7 @@ function settle_shared_literal_typevars(c: ast.ExprCall, nargs: ast.Expr[], s: S
   // type_params list.
   var tvs: string[] = [];
   for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.structs.names, s.unions.names)) {
+    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
       tvs = tvs.append(ptn);
     }
   }
@@ -4503,7 +4487,7 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       }
     }
     if (bn.len() > 0) {
-      var gsubst: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.structs.names, s.unions.names);
+      var gsubst: typeinfo.Type = type_from_ref_subst(parser.parse_type_ref(sig.ret_type_name), bn, bt, s.type_names());
       if (!type_contains_unknown(gsubst)) {
         return gsubst;
       }
@@ -4518,7 +4502,7 @@ function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typei
   var bt: typeinfo.Type[] = [];
   var i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.structs.names, s.unions.names, bn, bt);
+    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(sig.param_type_names[i]), binding_arg_type(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -4626,7 +4610,7 @@ function bound_entry_diag(sig: FuncSig, tp: string, at: typeinfo.Type, bref: par
   var clash: boolean = false;
   var k: i32 = 0;
   while (k < iargs.len()) {
-    var w: typeinfo.Type = type_from_ref_subst(bref.args[k], bn, bt, s.structs.names, s.unions.names);
+    var w: typeinfo.Type = type_from_ref_subst(bref.args[k], bn, bt, s.type_names());
     if (type_contains_unknown(w)) { return none; }
     if (!type_eq(w, iargs[k])) { clash = true; }
     want = want.append(w);
@@ -4682,7 +4666,7 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
       let (bn, bt) = arg_bindings(sig, c, s);
       let (cn, ct) = bound_bindings(sig, s, bn, bt);
       if (bound_arg_diags(sig, c, cn, ct, s).len() > 0) { return none; }
-      let (dn, dt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest, sig.type_params, s.structs.names, s.unions.names, bn, bt);
+      let (dn, dt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), dest, sig.type_params, s.type_names(), bn, bt);
       if (dn.len() == bn.len()) { return none; }
       let (fn_, ft) = bound_bindings(sig, s, dn, dt);
       return bound_arg_diags(sig, c, fn_, ft, s);
@@ -4736,7 +4720,7 @@ function bound_bindings(sig: FuncSig, s: Scope, names: string[], types: typeinfo
           if (iargs.len() == bref.args.len()) {
             var k: i32 = 0;
             while (k < iargs.len()) {
-              let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], sig.type_params, s.structs.names, s.unions.names, ns, ts);
+              let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], sig.type_params, s.type_names(), ns, ts);
               ns = n2;
               ts = t2;
               k = k + 1;
@@ -4761,10 +4745,10 @@ function impl_trait_args(bound: parser.TypeRef, at: typeinfo.Type, s: Scope): ty
   var tr: string = parser.derive_simple_name(bound.base);
   for imp in s.impls {
     if (imp.trait_name == tr && util.base_type_name(imp.impl_type) == base) {
-      let (in_, it_) = gc_bind_param(parser.parse_type_ref(imp.impl_type), at, imp.all_type_params, s.structs.names, s.unions.names, [], []);
+      let (in_, it_) = gc_bind_param(parser.parse_type_ref(imp.impl_type), at, imp.all_type_params, s.type_names(), [], []);
       var out: typeinfo.Type[] = [];
       for targ in parser.parse_type_ref(imp.trait_ref).args {
-        var ty: typeinfo.Type = type_from_ref_subst(targ, in_, it_, s.structs.names, s.unions.names);
+        var ty: typeinfo.Type = type_from_ref_subst(targ, in_, it_, s.type_names());
         if (type_contains_unknown(ty)) { return none; }
         out = out.append(ty);
       }
@@ -4787,7 +4771,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     // An empty array literal binds nothing; it takes whatever the others fix.
     if let ast.ExprArray(ea) = sl.field_values[i] { if (ea.elements.len() == 0) { binds = false; } }
     if (binds) {
-      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.structs.names, s.unions.names, bn, bt);
+      let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(ssig.field_type_names[fi]), check_expr(sl.field_values[i], s), ssig.type_params, s.type_names(), bn, bt);
       bn = bn2;
       bt = bt2;
     }
@@ -5379,7 +5363,7 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
           // erased unknown.
           if (fai < fsig.field_type_names.len() && fsig.type_params.len() > 0 && sn.args.len() > 0) {
             var fref: parser.TypeRef = parser.parse_type_ref(fsig.field_type_names[fai]);
-            return type_from_ref_subst(fref, fsig.type_params, sn.args, s.structs.names, s.unions.names);
+            return type_from_ref_subst(fref, fsig.type_params, sn.args, s.type_names());
           }
           return fsig.field_types[fai];
         }
@@ -5764,11 +5748,11 @@ function check_program(prog: ast.Stmt[]): ProgramTypes {
 // (including recursive / mutually-recursive ones) can resolve.
 // func_ret_type resolves a FuncDecl's declared return type, re-entering the
 // `[T]` view-ness the parse-time erasure recorded on ret_slice (#9944).
-function func_ret_type(fd: parser.FuncDecl, struct_names: string[], union_names: string[]): typeinfo.Type {
+function func_ret_type(fd: parser.FuncDecl, tn: TypeNames): typeinfo.Type {
   if (fd.ret_fn_ret.len() > 0 && (fd.ret_type == "fn" || fd.ret_type == "fn[]")) {
-    return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, struct_names, union_names);
+    return declared_callable_type(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types, fd.type_params, tn);
   }
-  var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, struct_names, union_names);
+  var rt: typeinfo.Type = type_from_name_erasing_tparams(fd.ret_type, fd.type_params, tn);
   if (fd.ret_slice) { return as_view(rt); }
   return rt;
 }
@@ -5804,7 +5788,7 @@ const INFERRED_RESULT: string = "inferred lambda result";
 function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
   if (lm.ret_type.len() == 0) { return t_unknown(INFERRED_RESULT); }
   if (lm.ret_fn_ret.len() > 0 && (lm.ret_type == "fn" || lm.ret_type == "fn[]")) {
-    return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.structs.names, s.unions.names);
+    return declared_callable_type(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, s.tparams, s.type_names());
   }
   return s.resolve_type(lm.ret_type);
 }
@@ -5813,13 +5797,13 @@ function lambda_ret_type(lm: ast.ExprLambda, s: Scope): typeinfo.Type {
 // view-ness the parse-time erasure recorded on is_view (#9944).
 function var_declared_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.fn_ret.len() > 0 && (v.type_name == "fn" || v.type_name == "fn[]")) {
-    return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.structs.names, s.unions.names);
+    return declared_callable_type(v.type_name, v.fn_ret, v.fn_param_types, s.tparams, s.type_names());
   }
   if (v.is_view) { return as_view(s.resolve_type(v.type_name)); }
   return s.resolve_type(v.type_name);
 }
 
-function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], union_names: string[]): FuncSig[] {
+function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
   var out: FuncSig[] = [];
   var i: i32 = 0;
   while (i < funcs.len()) {
@@ -5838,12 +5822,12 @@ function collect_func_sigs(funcs: parser.FuncDecl[], struct_names: string[], uni
       // (#5986's call-site half), so argument checks against it are live —
       // a lambda or named-function argument passes the fn-to-fn arm, a
       // non-function argument is a real mismatch.
-      pts = pts.append(param_decl_type(param, fd.type_params, struct_names, union_names));
+      pts = pts.append(param_decl_type(param, fd.type_params, tn));
       powns = powns.append(param.own);
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, struct_names, union_names), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -5872,14 +5856,14 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Ty
   while (offset >= 0 && wi < c.type_args.len()) {
     if (c.type_args[wi].len() > 0) {
       names = names.append(full[offset + wi]);
-      types = types.append(type_from_name_with_names_and_unions(c.type_args[wi], s.structs.names, s.unions.names));
+      types = types.append(type_from_spelling(c.type_args[wi], s.type_names()));
       written = written.append(full[offset + wi]);
     }
     wi = wi + 1;
   }
   var ri: i32 = 0;
   while (ri < rref.args.len() && ri < recv_args.len()) {
-    let (n2, t2) = gc_bind_param(rref.args[ri], recv_args[ri], full, s.structs.names, s.unions.names, names, types);
+    let (n2, t2) = gc_bind_param(rref.args[ri], recv_args[ri], full, s.type_names(), names, types);
     names = n2;
     types = t2;
     ri = ri + 1;
@@ -5892,7 +5876,7 @@ function method_binding(c: ast.ExprCall, msig: MethodSig, recv_args: typeinfo.Ty
 function ref_type_vars(r: parser.TypeRef, tparams: string[], s: Scope, acc: string[]): string[] {
   var out: string[] = acc;
   if (r.args.len() == 0) {
-    if (gc_is_typevar_name(r.base, tparams, s.structs.names, s.unions.names) && !util.has_str(out, r.base)) { out = out.append(r.base); }
+    if (gc_is_typevar_name(r.base, tparams, s.type_names()) && !util.has_str(out, r.base)) { out = out.append(r.base); }
     return out;
   }
   for a in r.args { out = ref_type_vars(a, tparams, s, out); }
@@ -5915,7 +5899,7 @@ function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig,
   while (ai < c.args.len() && ai < msig.param_type_names.len()) {
     var pref: parser.TypeRef = parser.parse_type_ref(msig.param_type_names[ai]);
     if (type_ref_names_any(pref, mb.written)) {
-      var want: typeinfo.Type = type_from_ref_subst(pref, mb.names, mb.types, s.structs.names, s.unions.names);
+      var want: typeinfo.Type = type_from_ref_subst(pref, mb.names, mb.types, s.type_names());
       var got: typeinfo.Type = check_expr(c.args[ai], s);
       if (!is_unknown(got) && !coercible(got, want, s)) {
         out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(got), expr_line(c.args[ai]), expr_col(c.args[ai])));
@@ -5936,7 +5920,7 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
   var bt: typeinfo.Type[] = mb.types;
   var i: i32 = 0;
   while (i < msig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), binding_arg_type(c.args[i], s), mb.full, s.structs.names, s.unions.names, bn, bt);
+    let (bn2, bt2) = gc_bind_param(parser.parse_type_ref(msig.param_type_names[i]), binding_arg_type(c.args[i], s), mb.full, s.type_names(), bn, bt);
     bn = bn2;
     bt = bt2;
     i = i + 1;
@@ -5948,7 +5932,7 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
     }
   }
   if (bn.len() == 0) { return msig.ret_type; }
-  return type_from_ref_subst(parser.parse_type_ref(msig.ret_type_name), bn, bt, s.structs.names, s.unions.names);
+  return type_from_ref_subst(parser.parse_type_ref(msig.ret_type_name), bn, bt, s.type_names());
 }
 
 // binding_arg_type is an argument's type as type-variable binding reads it. A
@@ -5974,7 +5958,7 @@ function binding_arg_type(a: ast.Expr, s: Scope): typeinfo.Type {
 // parameters bound as `mb` binds them, when `t` holds an erased one.
 function receiver_bound(t: typeinfo.Type, spelling: string, mb: MethodBinding, s: Scope): typeinfo.Type {
   if (!type_contains_unknown(t) || spelling.len() == 0 || mb.names.len() == 0) { return t; }
-  return type_from_ref_subst(parser.parse_type_ref(spelling), mb.names, mb.types, s.structs.names, s.unions.names);
+  return type_from_ref_subst(parser.parse_type_ref(spelling), mb.names, mb.types, s.type_names());
 }
 
 function param_type_name_at(msig: MethodSig, i: i32): string {
@@ -6035,7 +6019,7 @@ function type_ref_names_any(r: parser.TypeRef, vars: string[]): boolean {
 // module's FuncDecls — picking up only those with a non-empty
 // receiver_name. Param types resolve through the same
 // structs + unions tables as func sigs.
-function collect_method_sigs(funcs: parser.FuncDecl[], struct_names: string[], union_names: string[]): MethodSig[] {
+function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig[] {
   var out: MethodSig[] = [];
   for fd in funcs {
     if (fd.receiver_name.len() > 0) {
@@ -6043,10 +6027,10 @@ function collect_method_sigs(funcs: parser.FuncDecl[], struct_names: string[], u
       var ptn: string[] = [];
       for param in fd.params {
         // Same sidecar resolution as collect_func_sigs (#5986).
-        pts = pts.append(param_decl_type(param, fd.type_params, struct_names, union_names));
+        pts = pts.append(param_decl_type(param, fd.type_params, tn));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, struct_names, union_names), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params });
     }
   }
   return out;
@@ -6066,6 +6050,7 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
   for sd in structs {
     names = names.append(sd.name);
   }
+  var tn: TypeNames = type_names(names, union_names);
   // Second pass: resolve fields with the full name set
   // available. Struct-to-struct field references resolve via
   // the name set; union-typed fields (`f: SomeUnion`, `xs:
@@ -6078,9 +6063,9 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
     for elem in sd.fields {
       fnames = fnames.append(elem.name);
       if (elem.fn_ret.len() > 0 && (elem.type_name == "fn" || elem.type_name == "fn[]")) {
-        ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, names, union_names));
+        ftypes = ftypes.append(declared_callable_type(elem.type_name, elem.fn_ret, elem.fn_param_types, sd.type_params, tn));
       } else {
-        ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
+        ftypes = ftypes.append(type_from_spelling(elem.type_name, tn));
       }
       // The field's raw declared type spelling — kept so field access on
       // a generic-struct instantiation can recognise a field typed by a
@@ -6100,22 +6085,22 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
 // disagreeing about a SHAPE: a resolver modelling fewer of them answers
 // `unknown`, and an unknown type widens silently into every consumer (#8459).
 pub function type_from_name_with_structs(name: string, structs: StructSig[]): typeinfo.Type {
-  return type_from_spelling(name, struct_sig_names(structs), []);
+  return type_from_spelling(name, type_names(struct_sig_names(structs), []));
 }
 
 pub function type_from_name_with_struct_names(name: string, struct_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, struct_names, []);
+  return type_from_spelling(name, type_names(struct_names, []));
 }
 
 // The two `_unions` resolvers are the context that can also name a union alias.
 // A struct name and an alias name can't collide — collect_union_sigs rejects the
 // overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): typeinfo.Type {
-  return type_from_spelling(name, struct_sig_names(structs), union_sig_names(unions));
+  return type_from_spelling(name, type_names(struct_sig_names(structs), union_sig_names(unions)));
 }
 
 pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
-  return type_from_spelling(name, struct_names, union_names);
+  return type_from_spelling(name, type_names(struct_names, union_names));
 }
 
 function struct_sig_names(structs: StructSig[]): string[] {
@@ -6135,8 +6120,8 @@ function union_sig_names(unions: UnionSig[]): string[] {
 }
 
 // Parse once, then resolve every constituent through the same structured ladder.
-function type_from_spelling(name: string, struct_names: string[], union_names: string[]): typeinfo.Type {
-  return type_from_ref_names(parser.parse_type_ref(name), struct_names, union_names);
+function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
+  return type_from_ref_names(parser.parse_type_ref(name), tn);
 }
 
 // type_from_ref_names is the one resolution ladder: parse the spelling once
@@ -6146,13 +6131,13 @@ function type_from_spelling(name: string, struct_names: string[], union_names: s
 // node's canonical spelling for the scalar / struct / union name compares and
 // the unknown reason; for canonical inputs (what the parser feeds every caller)
 // this equals the original substring.
-function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_names: string[]): typeinfo.Type {
+function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // Array suffix `Elem[]` → TypeArray of the element, one `[]` peeled per level
   // (so `X[][]` nests). Checked FIRST, so a `Map[…][]` / `(A, B)[]` array wraps
   // its element rather than being read as a generic / tuple.
   if (r.array_depth > 0) {
     var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_ref_names(elem, struct_names, union_names));
+    return t_array(type_from_ref_names(elem, tn));
   }
   // array_depth == 0 below. `name` is this node's canonical spelling — the
   // primitive / struct / union key and the unknown-reason text.
@@ -6203,7 +6188,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   }
   // Retained arrows have known arity, including zero. Only bare fn is opaque.
   if (parser.ref_is_fn_value(r)) {
-    return callable_from_ref_names(r, struct_names, union_names);
+    return callable_from_ref_names(r, tn);
   }
   if (name == "fn") {
     return t_func_opaque(t_unknown("fn result (the coarse tag records none)"));
@@ -6215,7 +6200,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     if (r.args.len() >= 2) {
       var elems: typeinfo.Type[] = [];
       for arg in r.args {
-        elems = elems.append(type_from_ref_names(arg, struct_names, union_names));
+        elems = elems.append(type_from_ref_names(arg, tn));
       }
       return t_tuple(elems);
     }
@@ -6224,11 +6209,11 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     // straight into t_map's return-position wrap — an intermediate
     // `var: Type = <recursive call>` doesn't reliably trigger the struct→union
     // wrap here; see the t_i32 note.)
-    return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
+    return t_map(type_from_ref_names(r.args[0], tn), type_from_ref_names(r.args[1], tn));
   } else if (is_cell_ref(r)) {
-    return t_struct_g("Cell", [type_from_ref_names(r.args[0], struct_names, union_names)]);
+    return t_struct_g("Cell", [type_from_ref_names(r.args[0], tn)]);
   } else if (is_map_iter_ref(r)) {
-    return t_struct_g("MapIter", [type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names)]);
+    return t_struct_g("MapIter", [type_from_ref_names(r.args[0], tn), type_from_ref_names(r.args[1], tn)]);
   } else if (is_wide_map_ref(r)) {
     // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
     // the first comma" — the trailing args re-joined and resolved as one name
@@ -6239,7 +6224,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
       v_name = v_name + ", " + parser.render_type_ref(r.args[vk]);
       vk = vk + 1;
     }
-    return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_spelling(v_name, struct_names, union_names));
+    return t_map(type_from_ref_names(r.args[0], tn), type_from_spelling(v_name, tn));
   }
   // Builtin generic enums (#4346 piece 2): `Option[T]` / `Result[T, E]` (and
   // the bare `JsonValue` / `IoError`) resolve to a NAME-ONLY union — the
@@ -6254,7 +6239,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
     // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
     var uargs: typeinfo.Type[] = [];
     for arg in r.args {
-      uargs = uargs.append(type_from_ref_names(arg, struct_names, union_names));
+      uargs = uargs.append(type_from_ref_names(arg, tn));
     }
     return t_union_g(r.base, uargs);
   }
@@ -6267,43 +6252,35 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   // Only fires for an actual instantiation (args present); a bare `Box`
   // resolves through the full-spelling loop as before.
   if (r.args.len() > 0) {
-    for sname in struct_names {
-      if (sname == r.base) {
-        // Carry the resolved instantiation args so field access can
-        // substitute a type-parameter field (`Box[i32].v` → i32);
-        // assignability still ignores them (#4346 piece 2).
-        var gargs: typeinfo.Type[] = [];
-        for arg in r.args {
-          gargs = gargs.append(type_from_ref_names(arg, struct_names, union_names));
-        }
-        return t_struct_g(r.base, gargs);
+    if (tn.structs.has(r.base)) {
+      // Carry the resolved instantiation args so field access can
+      // substitute a type-parameter field (`Box[i32].v` → i32);
+      // assignability still ignores them (#4346 piece 2).
+      var gargs: typeinfo.Type[] = [];
+      for arg in r.args {
+        gargs = gargs.append(type_from_ref_names(arg, tn));
       }
+      return t_struct_g(r.base, gargs);
     }
-    for uname in union_names {
-      if (uname == r.base) {
-        // Same for a generic ENUM, and for the same reason: a spelling that
-        // drops the argument names the GENERIC, which the enum monomorphiser
-        // has dropped by the time anything reads it back.
-        var uinst: typeinfo.Type[] = [];
-        for arg in r.args {
-          uinst = uinst.append(type_from_ref_names(arg, struct_names, union_names));
-        }
-        return t_union_g(r.base, uinst);
+    if (tn.unions.has(r.base)) {
+      // Same for a generic ENUM, and for the same reason: a spelling that
+      // drops the argument names the GENERIC, which the enum monomorphiser
+      // has dropped by the time anything reads it back.
+      var uinst: typeinfo.Type[] = [];
+      for arg in r.args {
+        uinst = uinst.append(type_from_ref_names(arg, tn));
       }
+      return t_union_g(r.base, uinst);
     }
   }
   // Any other shape (a bare name, a single-element tuple, a Map with <2 args, a
   // non-Map generic whose base names no declared type) resolves by its full
   // spelling: struct → union → unknown.
-  for sname in struct_names {
-    if (sname == name) {
-      return t_struct(name);
-    }
+  if (tn.structs.has(name)) {
+    return t_struct(name);
   }
-  for uname in union_names {
-    if (uname == name) {
-      return t_union(name);
-    }
+  if (tn.unions.has(name)) {
+    return t_union(name);
   }
   // The front end injects Reader / Writer / MapIter / … as struct
   // declarations on every program (checker.go's builtinStructDecls), so
@@ -6331,18 +6308,7 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
   // unknown resolution (the Go checker resolves those to the declared
   // type — no E023 — so they must not take this branch).
   if (!r.is_tuple && r.args.len() > 0 && r.base != "Map" && r.base != "Cell") {
-    var bk: boolean = false;
-    for sname in struct_names {
-      if (sname == r.base) {
-        bk = true;
-      }
-    }
-    for uname in union_names {
-      if (uname == r.base) {
-        bk = true;
-      }
-    }
-    if (!bk) {
+    if (!tn.structs.has(r.base) && !tn.unions.has(r.base)) {
       return t_union(r.base);
     }
   }
@@ -6351,17 +6317,17 @@ function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_na
 
 // Keep callable construction separate from the scalar/nominal resolution ladder:
 // its recursive parameter traversal needs no other ladder state.
-function callable_from_ref_names(r: parser.TypeRef, struct_names: string[], union_names: string[]): typeinfo.Type {
+function callable_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   var f: parser.TypeRef = parser.ref_ungroup(r);
   var params: typeinfo.Type[] = [];
   var owns: boolean[] = [];
   var i: i32 = 0;
   while (i + 1 < f.args.len()) {
     owns = owns.append(parser.ref_is_own(f.args[i]));
-    params = params.append(type_from_ref_names(parser.ref_without_own(f.args[i]), struct_names, union_names));
+    params = params.append(type_from_ref_names(parser.ref_without_own(f.args[i]), tn));
     i = i + 1;
   }
-  return t_func_own(params, owns, type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
+  return t_func_own(params, owns, type_from_ref_names(parser.ref_fn_result(r), tn));
 }
 
 // type_from_ref_subst resolves a field's declared type spelling against a
@@ -6377,10 +6343,10 @@ function callable_from_ref_names(r: parser.TypeRef, struct_names: string[], unio
 // arg (`inner: Box[T]`) falls to the plain name-only resolution — its args are
 // erased, matching how this partial type system carries no generic args on a
 // bare name.
-function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], struct_names: string[], union_names: string[]): typeinfo.Type {
+function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   if (r.array_depth > 0) {
     var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_ref_subst(elem, tparams, targs, struct_names, union_names));
+    return t_array(type_from_ref_subst(elem, tparams, targs, tn));
   }
   if (!r.is_tuple && r.args.len() == 0) {
     var tpi: i32 = util.index_of_str(tparams, r.base);
@@ -6395,26 +6361,26 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     var i: i32 = 0;
     while (i + 1 < f.args.len()) {
       owns = owns.append(parser.ref_is_own(f.args[i]));
-      pts = pts.append(type_from_ref_subst(parser.ref_without_own(f.args[i]), tparams, targs, struct_names, union_names));
+      pts = pts.append(type_from_ref_subst(parser.ref_without_own(f.args[i]), tparams, targs, tn));
       i = i + 1;
     }
-    return t_func_own(pts, owns, type_from_ref_subst(parser.ref_fn_result(r), tparams, targs, struct_names, union_names));
+    return t_func_own(pts, owns, type_from_ref_subst(parser.ref_fn_result(r), tparams, targs, tn));
   }
   if (r.is_tuple && r.args.len() >= 2) {
     var elems: typeinfo.Type[] = [];
     for arg in r.args {
-      elems = elems.append(type_from_ref_subst(arg, tparams, targs, struct_names, union_names));
+      elems = elems.append(type_from_ref_subst(arg, tparams, targs, tn));
     }
     return t_tuple(elems);
   }
   if (r.base == "Map" && r.args.len() == 2) {
-    return t_map(type_from_ref_subst(r.args[0], tparams, targs, struct_names, union_names), type_from_ref_subst(r.args[1], tparams, targs, struct_names, union_names));
+    return t_map(type_from_ref_subst(r.args[0], tparams, targs, tn), type_from_ref_subst(r.args[1], tparams, targs, tn));
   }
-  var whole: typeinfo.Type = type_from_ref_names(r, struct_names, union_names);
+  var whole: typeinfo.Type = type_from_ref_names(r, tn);
   if (r.is_tuple || r.args.len() == 0) { return whole; }
   var sargs: typeinfo.Type[] = [];
   for arg in r.args {
-    sargs = sargs.append(type_from_ref_subst(arg, tparams, targs, struct_names, union_names));
+    sargs = sargs.append(type_from_ref_subst(arg, tparams, targs, tn));
   }
   return with_nominal_args(whole, sargs);
 }
@@ -6442,16 +6408,16 @@ function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Ty
 // A type variable erases to unknown in this partial type system, so each
 // parameter substitutes to unknown; a spelling naming none of them resolves
 // unchanged.
-function type_from_name_erasing_tparams(name: string, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
+function type_from_name_erasing_tparams(name: string, tparams: string[], tn: TypeNames): typeinfo.Type {
   // A top-level dyn trait set cannot name an enclosing type variable.
   if (tparams.len() == 0 || name.len() == 0 || (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ")) {
-    return type_from_spelling(name, struct_names, union_names);
+    return type_from_spelling(name, tn);
   }
   var erased: typeinfo.Type[] = [];
   for tp in tparams {
     erased = erased.append(t_unknown("type parameter " + tp));
   }
-  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, struct_names, union_names);
+  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, tn);
 }
 
 // gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE of the
@@ -6460,14 +6426,14 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], struct_
 // resolves-to-nothing fallback catches the unbounded parameters parse_func_decl
 // drops from the decl, so `f64` and a declared `Box` still cannot be read as
 // variables.
-function gc_is_typevar_name(n: string, tparams: string[], struct_names: string[], union_names: string[]): boolean {
+function gc_is_typevar_name(n: string, tparams: string[], tn: TypeNames): boolean {
   if (n.len() == 0) {
     return false;
   }
   if (util.index_of_str(tparams, n) >= 0) {
     return true;
   }
-  return type_contains_unknown(type_from_spelling(n, struct_names, union_names));
+  return type_contains_unknown(type_from_spelling(n, tn));
 }
 
 // gc_bind_param collects type-parameter bindings by unifying a parameter's
@@ -6490,14 +6456,14 @@ function gc_is_typevar_name(n: string, tparams: string[], struct_names: string[]
 // registry resolves the one position. Widening only the checker's answer there
 // would type the call i64 while the tuple read stays 4-byte — a silent
 // miscompile in place of today's refusal (#8722 part 4).
-function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], struct_names: string[], union_names: string[], names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], tn: TypeNames, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   var ns: string[] = names;
   var ts: typeinfo.Type[] = types;
   if (r.array_depth > 0) {
     match (at) {
       typeinfo.TypeArray(a) => {
         var elem: parser.TypeRef = parser.elem_type_ref(r);
-        return gc_bind_param(elem, a.elem, tparams, struct_names, union_names, ns, ts);
+        return gc_bind_param(elem, a.elem, tparams, tn, ns, ts);
       },
       _ => {
         return (ns, ts);
@@ -6512,12 +6478,12 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
       if (f.params_known && f.param_types.len() + 1 == fr.args.len()) {
         var fi: i32 = 0;
         while (fi < f.param_types.len()) {
-          let (fn2, ft2) = gc_bind_param(parser.ref_without_own(fr.args[fi]), f.param_types[fi], tparams, struct_names, union_names, ns, ts);
+          let (fn2, ft2) = gc_bind_param(parser.ref_without_own(fr.args[fi]), f.param_types[fi], tparams, tn, ns, ts);
           ns = fn2;
           ts = ft2;
           fi = fi + 1;
         }
-        let (rn2, rt2) = gc_bind_param(parser.ref_fn_result(r), f.ret_type, tparams, struct_names, union_names, ns, ts);
+        let (rn2, rt2) = gc_bind_param(parser.ref_fn_result(r), f.ret_type, tparams, tn, ns, ts);
         ns = rn2;
         ts = rt2;
       }
@@ -6530,7 +6496,7 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
         if (tp.elements.len() == r.args.len()) {
           var ti: i32 = 0;
           while (ti < r.args.len()) {
-            let (tn2, tt2) = gc_bind_param(r.args[ti], tp.elements[ti], tparams, struct_names, union_names, ns, ts);
+            let (tn2, tt2) = gc_bind_param(r.args[ti], tp.elements[ti], tparams, tn, ns, ts);
             ns = tn2;
             ts = tt2;
             ti = ti + 1;
@@ -6545,14 +6511,14 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
   if (r.args.len() > 0 && nargs.len() == r.args.len()) {
     var ni: i32 = 0;
     while (ni < r.args.len()) {
-      let (nn2, nt2) = gc_bind_param(r.args[ni], nargs[ni], tparams, struct_names, union_names, ns, ts);
+      let (nn2, nt2) = gc_bind_param(r.args[ni], nargs[ni], tparams, tn, ns, ts);
       ns = nn2;
       ts = nt2;
       ni = ni + 1;
     }
     return (ns, ts);
   }
-  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, struct_names, union_names) && util.index_of_str(ns, r.base) < 0) {
+  if (r.args.len() == 0 && !is_unknown(at) && !elemless_array(at) && gc_is_typevar_name(r.base, tparams, tn) && util.index_of_str(ns, r.base) < 0) {
     ns = ns.append(r.base);
     ts = ts.append(at);
   }
@@ -6655,13 +6621,13 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   }
   s = s.with_tparams(tps, tbs);
   if (fd.ret_type.len() > 0) {
-    s = s.with_ret_type(func_ret_type(fd, structs.names, unions.names));
+    s = s.with_ret_type(func_ret_type(fd, s.type_names()));
   }
   if (fd.receiver_name.len() > 0) {
-    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, tps, structs.names, unions.names));
+    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, tps, s.type_names()));
   }
   for param in fd.params {
-    s = s.bind(param.name, param_decl_type(param, tps, structs.names, unions.names));
+    s = s.bind(param.name, param_decl_type(param, tps, s.type_names()));
     if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
       s = s.bind_tpvar(param.name, param.type_name);
     }
@@ -6716,24 +6682,24 @@ function split_fn_param_spellings(csv: string): string[] {
 // fields and results. No recorded result means an opaque tag, not zero arity.
 // param_decl_type is a declared parameter's type: its sidecar type, else its
 // resolved name, re-entering the `[T]` view-ness the parser erased (#9944).
-function param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
-  var t: typeinfo.Type = fn_param_decl_type(p, tparams, struct_names, union_names);
-  if (is_unknown(t)) { t = type_from_name_erasing_tparams(p.type_name, tparams, struct_names, union_names); }
+function param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
+  var t: typeinfo.Type = fn_param_decl_type(p, tparams, tn);
+  if (is_unknown(t)) { t = type_from_name_erasing_tparams(p.type_name, tparams, tn); }
   if (p.is_view) { return as_view(t); }
   return t;
 }
 
-function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
+function fn_param_decl_type(p: ast.ParamDecl, tparams: string[], tn: TypeNames): typeinfo.Type {
   if ((p.type_name != "fn" && p.type_name != "fn[]") || p.fn_ret.len() == 0) {
     return t_unknown("opaque fn param");
   }
-  return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, struct_names, union_names);
+  return declared_callable_type(p.type_name, p.fn_ret, p.fn_param_types, tparams, tn);
 }
 
 // Every lambda scope and diagnostic walk consumes the same declaration
 // contract as top-level functions, including callable signatures and views.
 function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
-  var ty = fn_param_decl_type(p, s.tparams, s.structs.names, s.unions.names);
+  var ty = fn_param_decl_type(p, s.tparams, s.type_names());
   if (!is_unknown(ty)) { return ty; }
   if (p.is_view) { return as_view(s.resolve_type(p.type_name)); }
   return s.resolve_type(p.type_name);
@@ -6742,16 +6708,16 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
 // The parser retains callable signatures beside coarse fn/fn[] tags. All
 // declaration sites consume that same contract. A recorded result distinguishes
 // a genuine empty parameter list from an opaque tag with no signature at all.
-function declared_callable_type(name: string, ret: string, params: string, tparams: string[], struct_names: string[], union_names: string[]): typeinfo.Type {
+function declared_callable_type(name: string, ret: string, params: string, tparams: string[], tn: TypeNames): typeinfo.Type {
   var pts: typeinfo.Type[] = [];
   var powns: boolean[] = [];
   if (params.len() > 0) {
     for seg in split_fn_param_spellings(params) {
       powns = powns.append(parser.spelling_is_own(seg));
-      pts = pts.append(type_from_name_erasing_tparams(parser.spelling_without_own(seg), tparams, struct_names, union_names));
+      pts = pts.append(type_from_name_erasing_tparams(parser.spelling_without_own(seg), tparams, tn));
     }
   }
-  var ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_erasing_tparams(ret, tparams, struct_names, union_names));
+  var ft: typeinfo.Type = t_func_own(pts, powns, type_from_name_erasing_tparams(ret, tparams, tn));
   if (name == "fn[]") { return t_array(ft); }
   return ft;
 }
@@ -12130,7 +12096,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
 // struct's arguments when there are as many as it has parameters.
 function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scope): typeinfo.Type {
   if (args.len() == 0 || args.len() != ssig.type_params.len() || fi >= ssig.field_type_names.len()) { return ssig.field_types[fi]; }
-  return type_from_ref_subst(parser.parse_type_ref(ssig.field_type_names[fi]), ssig.type_params, args, s.structs.names, s.unions.names);
+  return type_from_ref_subst(parser.parse_type_ref(ssig.field_type_names[fi]), ssig.type_params, args, s.type_names());
 }
 
 // The call walk of an expression bound to a destination of type `dest`. An
@@ -15553,7 +15519,7 @@ function e049_type_reaches_fn(ty: string, tparams: string[], mod: parser.Module,
 //     skipped, because its surface text may legitimately mention an erased
 //     generic parameter, a builtin, or syntax the simple resolver doesn't
 //     model. Callers further restrict this to NON-generic declarations.
-function e064_unknown_bare(type_name: string, struct_names: string[], union_names: string[]): boolean {
+function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (type_name.len() == 0) {
     return false;
   }
@@ -15599,7 +15565,7 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
       return false;
     }
   }
-  return is_unknown(type_from_name_with_names_and_unions(type_name, struct_names, union_names));
+  return is_unknown(type_from_spelling(type_name, tn));
 }
 
 // e064_unknown_name is the recursive form of the E064 check (#4363 item 3): it
@@ -15623,15 +15589,15 @@ function e064_unknown_bare(type_name: string, struct_names: string[], union_name
 //   - a bare leaf falls through to the same conservative e064_unknown_bare.
 // The callers restrict this to NON-generic, NON-method decls, so an inner bare
 // name is never an erased type parameter — a genuine typo, matching the oracle.
-function e064_unknown_name(type_name: string, struct_names: string[], union_names: string[], extra_known: string[]): string {
-  return e064_unknown_name_tref(parser.parse_type_ref(type_name), struct_names, union_names, extra_known);
+function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[]): string {
+  return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known);
 }
 
-function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], union_names: string[], extra_known: string[]): string {
+function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: string[]): string {
   // Array `E[]` → element E (peel one level, keeping the base/args).
   if (tr.array_depth > 0) {
     var elem: parser.TypeRef = parser.elem_type_ref(tr);
-    return e064_unknown_name_tref(elem, struct_names, union_names, extra_known);
+    return e064_unknown_name_tref(elem, tn, extra_known);
   }
   // Tuple: out of scope for the array/generic-arg widening.
   if (tr.is_tuple) {
@@ -15653,12 +15619,12 @@ function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], unio
           kx = true;
         }
       }
-      if (!kx && e064_unknown_bare(tr.base, struct_names, union_names)) {
+      if (!kx && e064_unknown_bare(tr.base, tn)) {
         return tr.base;
       }
     }
     for arg in tr.args {
-      var u: string = e064_unknown_name_tref(arg, struct_names, union_names, extra_known);
+      var u: string = e064_unknown_name_tref(arg, tn, extra_known);
       if (u.len() > 0) {
         return u;
       }
@@ -15666,7 +15632,7 @@ function e064_unknown_name_tref(tr: parser.TypeRef, struct_names: string[], unio
     return "";
   }
   // Bare leaf: the original conservative identifier check names the type.
-  if (e064_unknown_bare(tr.base, struct_names, union_names)) {
+  if (e064_unknown_bare(tr.base, tn)) {
     return tr.base;
   }
   return "";
@@ -15749,10 +15715,10 @@ function unknown_type_hint(name: string): string {
 // undefined. The caller restricts this to functions with no type parameters, so
 // a plain identifier that resolves to unknown is a genuine typo, never an
 // erased generic parameter.
-function e064_annot_diags(an: Annot[], struct_names: string[], union_names: string[], extra_known: string[]): util.Diag[] {
+function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[]): util.Diag[] {
   var out: util.Diag[] = [];
   for elem in an {
-    var vu: string = e064_unknown_name(elem.type_name, struct_names, union_names, extra_known);
+    var vu: string = e064_unknown_name(elem.type_name, tn, extra_known);
     if (vu.len() > 0) {
       out = out.append(dg_at("E064", "unknown type \"" + vu + "\"" + unknown_type_hint(vu), elem.line, elem.col));
     }
@@ -15831,7 +15797,7 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 // rather than four more parameters because the walk now recurses through
 // EXPRESSIONS as well as statements, and the expression side has twenty-five
 // recursive call sites.
-struct E044Walk { is_generic: boolean, struct_names: string[], union_names: string[], void_fns: string[] }
+struct E044Walk { is_generic: boolean, tn: TypeNames, void_fns: string[] }
 
 // e044_diags ports the Go checker's capture-eligibility rule (E044): a
 // closure may capture scalars and pointer-shaped values, but NOT a value
@@ -15876,7 +15842,7 @@ function lambda_suspects(lm: ast.ExprLambda, wk: E044Walk): string[] {
   var out: string[] = [];
   if (!wk.is_generic) { return out; }
   for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.struct_names, wk.union_names)) { out = out.append(param.name); }
+    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.name); }
   }
   return out;
 }
@@ -15885,7 +15851,7 @@ function lambda_labels(lm: ast.ExprLambda, wk: E044Walk): string[] {
   var out: string[] = [];
   if (!wk.is_generic) { return out; }
   for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.struct_names, wk.union_names)) { out = out.append(param.type_name); }
+    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.type_name); }
   }
   return out;
 }
@@ -15992,7 +15958,7 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
         if (is_void_init && v.type_name.len() == 0) {
           suspects = suspects.append(v.name);
           labels = labels.append("void");
-        } else if (wk.is_generic && e064_unknown_bare(v.type_name, wk.struct_names, wk.union_names)) {
+        } else if (wk.is_generic && e064_unknown_bare(v.type_name, wk.tn)) {
           suspects = suspects.append(v.name);
           labels = labels.append(v.type_name);
         }
@@ -16035,19 +16001,19 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
   return out;
 }
 
-function e044_diags(efn: parser.FuncDecl, struct_names: string[], union_names: string[], void_fns: string[]): util.Diag[] {
+function e044_diags(efn: parser.FuncDecl, tn: TypeNames, void_fns: string[]): util.Diag[] {
   var suspects: string[] = [];
   var labels: string[] = [];
   var is_generic: boolean = efn.type_params.len() > 0 || efn.all_type_params.len() > 0;
   if (is_generic) {
     for param in efn.params {
-      if (e064_unknown_bare(param.type_name, struct_names, union_names)) {
+      if (e064_unknown_bare(param.type_name, tn)) {
         suspects = suspects.append(param.name);
         labels = labels.append(param.type_name);
       }
     }
   }
-  var wk: E044Walk = E044Walk { is_generic: is_generic, struct_names: struct_names, union_names: union_names, void_fns: void_fns };
+  var wk: E044Walk = E044Walk { is_generic: is_generic, tn: tn, void_fns: void_fns };
   return e044_stmts(efn.body, wk, suspects, labels);
 }
 
@@ -18231,11 +18197,12 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     well_typed = false;
   }
   var union_names: string[] = union_sig_names(unions);
-  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names);
+  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   var st: SigTable = sig_table(sigs);
   var stt: StructTable = struct_table(structs);
   var ut: UnionTable = union_table(unions);
-  var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, struct_names, union_names));
+  var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   var body_diags: util.Diag[] = [];
   var ambig: string[] = ambiguous_variants(mod.enums);
   // E067 runs only when the module declares a @must_consume type — the
@@ -18469,7 +18436,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
     // parameters that aren't in scope for this resolver.
     if (in_focus(focus, efn) && efn.type_params.len() == 0 && efn.all_type_params.len() == 0 && efn.receiver_name.len() == 0) {
       for param in efn.params {
-        var pu: string = e064_unknown_name(param.type_name, struct_names, union_names, e064_extra);
+        var pu: string = e064_unknown_name(param.type_name, tn, e064_extra);
         if (pu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + pu + "\"" + unknown_type_hint(pu), efn.line, efn.col));
         }
@@ -18478,14 +18445,14 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
         // so a generic's `Cell[T]` is never flagged).
         body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
       }
-      var ru: string = e064_unknown_name(efn.ret_type, struct_names, union_names, e064_extra);
+      var ru: string = e064_unknown_name(efn.ret_type, tn, e064_extra);
       if (ru.len() > 0) {
         body_diags = body_diags.append(dg_at("E064", "unknown type \"" + ru + "\"" + unknown_type_hint(ru), efn.line, efn.col));
       }
       body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
       // Body `var x: T` annotations (same non-generic scope).
       var efn_annots: Annot[] = collect_annots(efn.body);
-      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, struct_names, union_names, e064_extra));
+      body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, tn, e064_extra));
       body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
   }
@@ -18500,7 +18467,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   }
   for func in mod.funcs {
     if (in_focus(focus, func)) {
-      body_diags = util.append_diags(body_diags, e044_diags(func, struct_names, union_names, e044_void_fns));
+      body_diags = util.append_diags(body_diags, e044_diags(func, tn, e044_void_fns));
     }
   }
   // E053 (`fip` no-allocation verification), E065 (`str` view escaping a
@@ -18613,7 +18580,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
       for field in esd.fields {
-        var fu: string = e064_unknown_name(field.type_name, struct_names, union_names, e064_extra);
+        var fu: string = e064_unknown_name(field.type_name, tn, e064_extra);
         if (fu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + fu + "\"" + unknown_type_hint(fu), esd.line, esd.col));
         }
@@ -18664,12 +18631,13 @@ function module_env(mod: parser.Module): ModuleEnv {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
+  var tn: TypeNames = type_names(struct_names, union_names);
+  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
   return ModuleEnv {
     sigs: sig_table(sigs),
     structs: struct_table(structs),
     unions: union_table(unions),
-    methods: method_table(collect_method_sigs(mod.funcs, struct_names, union_names)),
+    methods: method_table(collect_method_sigs(mod.funcs, tn)),
     imports: import_paths_of(mod),
     impls: assoc_func_impls(mod.impls, mod.funcs),
     trait_reqs: mod.trait_reqs
@@ -19759,8 +19727,9 @@ function build_module_tables(mod: parser.Module): ModuleTables {
     unions = unions.append(enum_union_sig(ed));
   }
   var union_names: string[] = union_sig_names(unions);
-  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, struct_names, union_names);
-  var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, struct_names, union_names));
+  var tn: TypeNames = type_names(struct_names, union_names);
+  var sigs: FuncSig[] = collect_func_sigs(mod.funcs, tn);
+  var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, tn));
   return ModuleTables { structs: struct_table(structs), unions: union_table(unions), sigs: sig_table(sigs), methods: methods, imports: import_paths_of(mod), impls: assoc_func_impls(mod.impls, mod.funcs), trait_reqs: mod.trait_reqs };
 }
 
@@ -21110,7 +21079,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
 function gcall_tvars(sig: FuncSig, s: Scope): string[] {
   var tvs: string[] = [];
   for ptn in sig.param_type_names {
-    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.structs.names, s.unions.names)) {
+    if (util.index_of_str(tvs, ptn) < 0 && gc_is_typevar_name(ptn, sig.type_params, s.type_names())) {
       tvs = tvs.append(ptn);
     }
   }
@@ -21167,7 +21136,7 @@ function gcall_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer):
   if (!ok) { return st; }
   if let ast.ExprCall(c) = ce {
     var sig: FuncSig = gcall_sig(c, s);
-    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, gcall_tvars(sig, s), s.structs.names, s.unions.names, [], []);
+    let (bn, bt) = gc_bind_param(parser.parse_type_ref(sig.ret_type_name), lifted, gcall_tvars(sig, s), s.type_names(), [], []);
     var out: LitInfer = st;
     var i: i32 = 0;
     while (i < bn.len()) {

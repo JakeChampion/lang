@@ -3914,7 +3914,15 @@ function main(): i32 {
         eprint("produced " + fd.name + "\n");
         var key: string = fd.name;
         if (fd.receiver_type.len() > 0) { key = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-        callees = callees.append(ssarc.Callee { name: key, f: p.func, modes: p.modes, plan: plans[at], method: fd.receiver_type.len() > 0 });
+        callees = callees.append(ssarc.Callee { name: key, f: p.func, modes: p.modes, plan: plans[at], receiver: semsource.has_receiver(fd) });
+        // The AST's grow mask holds a receiver slot and then one token per
+        // declared parameter, so the produced mask must too — an associated
+        // function (Qp.make) has a receiver_type and no receiver.
+        var mask: string = ssarc.grow_mask(key, p.func, grows, semsource.has_receiver(fd));
+        var semis: i32 = 0;
+        var c: i32 = 0;
+        while (c < mask.len()) { if (mask[c] == b';') { semis = semis + 1; } c = c + 1; }
+        if (mask.len() == 0 || semis != fd.params.len()) { eprint(key + ": grow mask " + mask + " misplaces the AST positions"); return 7; }
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
         for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
