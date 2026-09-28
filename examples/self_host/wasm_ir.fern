@@ -4915,6 +4915,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 79) {  // ptr_width
         // () -> heap-pointer width in bytes. 4 on wasm32 (NOT 8).
         parts = parts.append("    i32.const 4\n");
+    } else if (o.kind_tag == 345) {  // str_data
+        // stack: block ptr -> its bytes, which follow the length at +0.
+        parts = parts.append("    i32.const 4\n    i32.add\n");
     } else if (o.kind_tag == 18) {  // load_local
         parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 19) {  // store_local
