@@ -185,6 +185,7 @@ import "./x86_native";
 import "./elf";
 import "./ircore";
 import "./emitforms";
+import "./semlower";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
@@ -1951,6 +1952,10 @@ function run(): i32 {
     var entry_path: string = "";
     var out_path: string = "";
     var root: string = "";
+    var have_root: boolean = false;
+    // Positionals past the stdlib root are the program's own, as `-interp
+    // FILE ARG...` hands them to `args()` behind the entry's path.
+    var prog_args: string[] = [];
     var target: string = "x86-64-linux";
     // Output FORM, independent of the target: "" is the target's default
     // (a linked executable, or a component on wasm), "asm" the emitter's
@@ -2075,8 +2080,11 @@ function run(): i32 {
             if (!have_entry) {
                 entry_path = a;
                 have_entry = true;
-            } else {
+            } else if (!have_root) {
                 root = a;
+                have_root = true;
+            } else {
+                prog_args = prog_args.append(a);
             }
         }
         i = i + 1;
@@ -2241,7 +2249,13 @@ function run(): i32 {
         // result becomes the process exit code (VInt → its value,
         // VBool → 1/0), matching interp_run.fern. A non-i32/bool
         // result exits 254.
-        var result: interp.Value = interp.eval_module(merged);
+        var argv: string[] = [entry_path];
+        var pa: i32 = 0;
+        while (pa < prog_args.len()) {
+            argv = argv.append(prog_args[pa]);
+            pa = pa + 1;
+        }
+        var result: interp.Value = interp.eval_module_argv(merged, argv);
         match (result) {
             interp.VInt(iv) => { return iv.v; },
             interp.VBool(bv) => {
@@ -2385,12 +2399,9 @@ function run(): i32 {
 
     var typed: parser.Module = parser.module_with_builtins_typed(merged);
     var full: parser.Module = parser.erase_str_module(typed);
-    // The typed semantic lowering, unless FERN_SEM_IR= turns it off. It is produced
-    // HERE and threaded into whichever emit path runs, so the pipeline behind
-    // it is linked by the CLI and not by every driver that links a backend
-    // (docs/SELFHOST-SEMANTIC-SOURCE.md). Off, this is ircore.no_sub() and the
-    // emit paths behave exactly as they did.
-    var sub: ircore.Sub = emitforms.substitution(typed, target);
+    // The typed semantic lowering, unless FERN_SEM_IR= turns it off, threaded
+    // into whichever emit path runs. Off, this is ircore.no_sub().
+    var sub: ircore.Sub = semlower.target_substitution(typed, target);
     var out_asm: string = "";
     var emit_text: boolean = emit == "asm";
     if (target == "arm64-linux") {

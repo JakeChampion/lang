@@ -75,6 +75,7 @@ pub struct Analysis {
 
 // Negative tags belong to this semantic phase. Physical SSA consumers do not
 // implement them. Existing parameter, copy, phi and scalar tags are reused.
+pub function param(): i32 { return 6; }
 pub function array_new(): i32 { return 0 - 1; }
 pub function tuple_new(): i32 { return 0 - 2; }
 pub function array_get(): i32 { return 0 - 3; }

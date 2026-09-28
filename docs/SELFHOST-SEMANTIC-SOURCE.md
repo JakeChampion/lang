@@ -2210,8 +2210,8 @@ What is left, in order:
 ### What deleting the AST lowering touches, 2026-09-26
 
 **The drivers.** The CLI and the playground driver build a substitution from
-the typed path: `emitforms.substitution` calls `semlower.substitution`. The
-other drivers fall into four groups:
+the typed path, through `semlower.target_substitution`. The other drivers fall
+into four groups:
 
 - Emitting drivers, which call the backends' plain entry points
   (`asm_ir.emit_module_or_error`, `wasm_ir.emit_module_mode_or_error` and the
@@ -2234,31 +2234,19 @@ other drivers fall into four groups:
   as a `Sub`. It needs rewriting against a typed-path substitution, not
   threading.
 
-**The plan for the drivers.** Most of them do not take the substitution:
-linking the typed path into them would grow each by 6.7–10.2% (the reason
-`emitforms.substitution` is linked by `fern.fern` and `playground_run.fern`
-alone). Instead:
-- a test that checks what the language does moves to the CLI;
-- a test that exists to inspect the AST lowering's own output goes with it.
+**The plan for the drivers.** The emitting drivers take the typed path's
+substitution (`semlower.target_substitution`), and their tests stay where
+they are.
+Linking the typed path grows a driver by 6.7–10.2% while it still carries the
+AST lowering, but the lowering is about a quarter of `asm_ir_run`'s 174,000
+source lines and the typed path adds about 16,600, so once step 3 lands each
+driver is smaller than it is today. A test that exists to inspect the AST
+lowering's own output goes with the lowering.
 
-The drivers keep the AST lowering until the lowering is deleted. Then the
-ones whose tests have all moved or gone go too.
-
-Three drivers are exceptions, because what they are for is neither a
-language test nor the AST lowering, and the CLI cannot stand in for them.
-Each takes a typed-path substitution before step 3, and pays the growth:
-- `playground_run` is the browser playground's compiler. It is a product,
-  and it should emit what the CLI emits. Its embedded stdlib overlay is the
-  thing the CLI does not have. It ships as a wasm module, so the typed path
-  has to build for `wasm32-wasi` inside it, which nothing yet shows; and the
-  6.7–10.2% was measured on the x86-64 emitter, not on its 4.1 MB bundle,
-  whose size nothing gates.
-- `ir_const_numeric_run` checks that each backend reads both forms of a
-  numeric constant. It rewrites the constants in the substitution it is
-  given, not in an AST-lowered one.
-- `wasm_units_probe` checks that two separately emitted wasm units link. Its
-  lowering (`lower_all_for_view` / `lower_all_for_base`) gains a substitution
-  parameter.
+`ir_const_numeric_run` rewrites the constants in the substitution it is given,
+so it needs a typed-path substitution rather than threading.
+`wasm_units_probe`'s lowering (`lower_all_for_view` / `lower_all_for_base`)
+gains a substitution parameter.
 
 **`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
 `lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
