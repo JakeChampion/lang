@@ -136,11 +136,18 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    + `elf.fern`, so both Linux targets produce a finished binary with
    nothing on `$PATH`. `-target x86-64-linux -emit asm` is the escape hatch that still
    emits text.
-3. **A decision on the oracle.** `BOOTSTRAP-RESEARCH.md §1` recommends
+3. **A decision on the oracle.** ~~`BOOTSTRAP-RESEARCH.md §1` recommends
    *two-implementations-forever* precisely so the fuzz-diff oracle keeps two
-   witnesses; that directly contradicts deleting the native backends. The
-   contradiction between these two docs is unresolved and needs a call
-   before any deletion PR makes sense.
+   witnesses; that directly contradicts deleting the native backends.~~
+   **Decided 2026-09-28: the native backends are deleted, and they are not
+   witnesses.** The oracle is `internal/interp` (§3), which the differential
+   suites anchor on and which stays. `BOOTSTRAP-RESEARCH.md §1`'s
+   recommendation is superseded for the backends and holds for the
+   interpreter. A gate that compares self-host codegen output against native
+   codegen output (byte-identical emit comparisons, the native half of the
+   leak and alloc-count matrices) therefore goes with the backends or is
+   re-anchored on the interpreter; that is scope for the deletion PRs, not a
+   reason to keep a backend.
 4. **The non-compiler consumers.** `internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
    need the self-host compiler compiled to wasm instead. **Measured 2026-09-01
