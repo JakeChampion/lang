@@ -17585,6 +17585,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			}
 			c.callOwnFlags[n] = calleeOwnFlags
 		}
+		// An empty array literal at a parameter still spelled with a type
+		// variable binds nothing: it is checked once the other arguments and
+		// the destination have bound the variable, as a generic struct
+		// literal's empty field is (#10499).
+		type deferredEmptyArg struct {
+			i        int
+			expected ast.Type
+			own      bool
+		}
+		var deferredArgs []deferredEmptyArg
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				c.setElemHintFor(n.Args[i], ft.Params[i])
@@ -17703,6 +17713,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 				own := i < len(calleeOwnFlags) && calleeOwnFlags[i] ||
 					!calleeIsValue && storesArgument(calleeName, i)
+				if arr, isArr := at.(ast.ArrayType); isArr && arr.Elem == nil && sub != nil && containsParamType(expected) {
+					deferredArgs = append(deferredArgs, deferredEmptyArg{i, expected, own})
+					continue
+				}
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
 						// Report what the parameter came to MEAN here, not how
@@ -17773,6 +17787,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 							}
 						}
 					}
+				}
+			}
+			for _, d := range deferredArgs {
+				want := substituteType(d.expected, sub)
+				if containsParamType(want) {
+					continue
+				}
+				c.settleNumeric(n.Args[d.i], want)
+				if !c.argOK(&n.Args[d.i], want, c.postSettleType(n.Args[d.i], ast.ArrayType{}), d.own) {
+					c.errArgMismatch(n, d.i, recvIsArg0, want, ast.ArrayType{})
 				}
 			}
 			// Substitute the inferred sub through the result so
