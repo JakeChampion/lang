@@ -214,12 +214,14 @@ pub function sleep_scratch_bytes(): i32 { return 88; }
 // ip_flat_addr is the 48-byte wasi:sockets ip-socket-address record
 // $__fern_ip_flat writes: the family discriminant and the eleven payload
 // words each bind, connect and stream pushes. ip_box_addr and ip_box2_addr
-// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot) for
-// the bodies that still take a packed IPv4 address (tcp_connect, udp_send)
-// and bind to 0.0.0.0. Scratch rather than heap: a socket body consumes them
-// before it returns, none holds one across a call into another socket body,
-// and an allocation here is one more `__heap_alloc_count()` tick per call,
-// which the guest storage probes pin at exactly one.
+// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot;
+// no rc/bsz header below the pointer, since nothing counts or releases a
+// scratch box and only $__fern_ip_flat reads one) for the bodies that still
+// take a packed IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
+// Scratch rather than heap: a socket body consumes them before it returns,
+// none holds one across a call into another socket body, and an allocation
+// here is one more `__heap_alloc_count()` tick per call, which the guest
+// storage probes pin at exactly one.
 pub function ip_flat_addr(): i32 { return (sleep_scratch_addr() + sleep_scratch_bytes() + 7) / 8 * 8; }
 pub function ip_box_addr(): i32 { return ip_flat_addr() + 48; }
 pub function ip_box2_addr(): i32 { return ip_box_addr() + 24; }
@@ -228,9 +230,8 @@ pub function ip_box2_addr(): i32 { return ip_box_addr() + 24; }
 // scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
 // aligned. Named rather than inlined because const_str emits offsets RELATIVE
 // to it (#5331 step 1), so the two must agree by construction — and because
-// every slot added below has moved it (24 -> 32 -> 40 -> 128), which every
-// literal offset and both derived bases (fl_base / heap_base) follow
-// automatically.
+// every slot added below moves it, which every literal offset and both
+// derived bases (fl_base / heap_base) follow automatically.
 pub function str_region_base(): i32 { return (ip_box2_addr() + 24 + 7) / 8 * 8; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
