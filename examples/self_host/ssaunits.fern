@@ -656,6 +656,36 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
             if (words != "") { out = out.with(ins.result, words); }
         }
     }
+    for v in raw_reached(f, defs) { out = out.with(v, ""); }
+    return out;
+}
+
+// The values whose storage this body hands to the raw floor: an array cast to
+// its data pointer, or given to `__arr_set_len` or `__raw_arr_ptr`, traced back
+// through copies and phis. The floor writes that storage without a count, so a
+// literal reaching it is built fresh rather than shared.
+function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
+    var work: i32[] = [];
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.args.len() == 0) { continue; }
+            var raw: boolean = ins.kind_tag == ssasem.cast() && is_array(f.values[ins.args[0]]);
+            raw = raw || (ins.kind_tag == ssasem.call() && (ins.str == "__arr_set_len" || ins.str == "__raw_arr_ptr"));
+            if (raw) { work = work.append(ins.args[0]); }
+        }
+    }
+    var seen: boolean[] = bits(f.graph.nvals);
+    var out: i32[] = [];
+    var at: i32 = 0;
+    while (at < work.len()) {
+        var v: i32 = work[at];
+        at = at + 1;
+        if (v < 0 || v >= seen.len() || seen[v]) { continue; }
+        seen = seen.with(v, true);
+        out = out.append(v);
+        var d: ssa.SInst = defs[v];
+        if (d.kind_tag == 7 || d.kind_tag == 8) { for a in d.args { work = work.append(a); } }
+    }
     return out;
 }
 
@@ -666,12 +696,8 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
 function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
     var none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
     var t: typeinfo.Type = f.values[ins.result];
-    // A `u8[]` is the raw floor's byte buffer: `__arr_set_len` and a store
-    // through its data pointer write it in place without a count, so its
-    // literal stays a fresh box.
     if (ins.kind_tag == ssasem.array_new()) {
         if let typeinfo.TypeArray(a) = t {
-            if (ssasem.is_u8(a.elem)) { return none; }
             var elems: semrecords.Field[] = [];
             while (elems.len() < ins.args.len()) { elems = elems.append(semrecords.Field { name: "", ty: a.elem }); }
             return elems;

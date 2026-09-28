@@ -204,23 +204,28 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
 
-// A `u8[]` literal stays a fresh box: the raw floor writes a byte buffer
-// through its data pointer, which no count guards, so a static one would
-// carry the write into every later evaluation. Each round reads the length
-// before and after overwriting its low byte. The byte floor's two
-// reference-taking intrinsics lend their argument, so a body calling them is
-// produced: `shorten` and `first_byte`. Wasm's AST lowering, which the driver
-// runs over every body, does not take the raw store.
+// A literal whose storage the body hands to the raw floor is built fresh
+// rather than placed: the floor writes through a data pointer with no count,
+// so a shared box would carry the write into every evaluation of an equal
+// literal. `bytes_rounds` overwrites a `u8[]` literal's length through its data
+// pointer each round and reads it before and after. `poke_len` does the same
+// to an `i32[]` literal with `__store_i32`, and `fresh_len`, which never
+// touches the floor, must still read its own equal literal's length. `shorten`
+// calls `__arr_set_len`, which lends its buffer, so its body is produced. Wasm
+// is left out: it has no emit arm for the raw byte store.
 const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
     var b: u8[] = __alloc_u8(4);
     __arr_set_len(b, n);
     return b.len();
 }
-@noinline function first_byte(s: string): i32 {
-    var scratch: usize = __alloc(16);
-    var c: i32 = __load_u8(__str_bytes(s, scratch));
-    __free(scratch, 16);
-    return c;
+@noinline function poke_len(): i32 {
+    var a: i32[] = [7, 8, 9];
+    __store_i32(a as usize, 99);
+    return a.len();
+}
+@noinline function fresh_len(): i32 {
+    var v: i32[] = [7, 8, 9];
+    return v.len();
 }
 @noinline function bytes_rounds(): i32 {
     var before: i64 = __heap_alloc_count();
@@ -243,13 +248,14 @@ function print_int(n: i32): i32 {
 function main(): i32 {
     print_int(bytes_rounds()); print("");
     print_int(shorten(2)); print("");
-    print_int(first_byte("hi")); print("");
+    print_int(poke_len()); print("");
+    print_int(fresh_len()); print("");
     return 0;
 }
 `
 
-func TestSelfHostByteLiteralIsFresh(t *testing.T) {
-	want := "400100\n2\n104\n"
-	runSemanticProgram(t, "byteliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "first_byte"},
+func TestSelfHostRawReachedLiteralIsFresh(t *testing.T) {
+	want := "400100\n2\n99\n3\n"
+	runSemanticProgram(t, "rawliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "poke_len", "fresh_len"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want})
 }

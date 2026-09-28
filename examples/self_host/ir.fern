@@ -1786,7 +1786,9 @@ pub function op_const_closure(body: string): Op {
 // scalars as one static array box shared by every evaluation, `values` its
 // comma-separated elements. Its length and capacity are both the element count
 // under the immortal rc, so a push onto it finds no room and grows into a
-// fresh box, and an element write fails the uniqueness test and copies.
+// fresh box, and `with` fails the uniqueness test and copies. The raw floor
+// tests nothing, so a literal whose storage it reaches is not placed
+// (ssaunits.raw_reached).
 pub function op_const_array(values: string): Op { return op_const_struct("&arr", 0, values); }
 pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr"; }
 
