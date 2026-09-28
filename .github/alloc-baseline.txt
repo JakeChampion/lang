@@ -24,8 +24,8 @@
 # as a real measurement. The pair banked below is the one GitHub's runner
 # produces, since that is where the gate runs.
 #
-# WHY THE GAP. allocs exceeds frees by the ~8.9M objects live when the process
-# exits — a compiler that runs once and exits does not tear its world down. The
+# WHY THE GAP. allocs exceeds frees by the objects live when the process exits —
+# a compiler that runs once and exits does not tear its world down. The
 # two are baselined separately so a change that stops freeing shows up as one
 # row moving rather than being netted away.
 #
