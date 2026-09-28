@@ -696,7 +696,11 @@
   window.__fernRuntimeReady = WebAssembly
     .instantiateStreaming(fetch("fern.wasm"), go.importObject)
     .then(function (result) { go.run(result.instance); return result.instance; });
-  window.__fernRuntimeReady.then(function () {
+  // The self-host compiler (web/playground.wasm), compiled once here and
+  // instantiated afresh for every run by web/wasi-shim.js, so nothing one
+  // run leaves behind reaches the next.
+  window.__fernDriverReady = WebAssembly.compileStreaming(fetch("playground.wasm"));
+  Promise.all([window.__fernRuntimeReady, window.__fernDriverReady]).then(function () {
     var el = document.getElementById("status");
     if (!el) return;
     // Mirror the editor module's embed detection (urlFlag "embed"/"minimal")
@@ -1226,42 +1230,49 @@ shareBtn.addEventListener("click", async () => {
   }
 });
 
-function runOnce() {
-  if (typeof globalThis.fernInterpret !== "function") {
+// ---- The self-host compiler ----
+//
+// web/playground.wasm is examples/self_host/playground_run.fern built by the
+// self-host compiler: the program on stdin, the mode in argv, the artifact on
+// stdout, diagnostics on stderr. It is compiled once at boot
+// (window.__fernDriverReady) and instantiated afresh for every call through
+// web/wasi-shim.js. Run, Run (wasm), View assembly and Build component all go
+// through it; the language server and the wasi:http world still come from
+// fern.wasm, the Go toolchain, until the self-host compiler has them.
+let driverModule = null;
+function runDriver(src, args) {
+  return runCoreWasm(driverModule, { stdin: src, args: ["fern"].concat(args) });
+}
+
+async function runOnce() {
+  if (!driverModule) {
     outEl.textContent = "(runtime not ready)";
     return;
   }
   runBtn.disabled = true;
   runBtn.textContent = "Running…";
-  // Yield to the event loop so the disabled state paints before
-  // the wasm call blocks.
-  setTimeout(() => {
-    try {
-      const result = globalThis.fernInterpret(getSrc());
-      let body = result.stdout || "";
-      if (result.stderr) {
-        body += (body ? "\n" : "") + "[stderr]\n" + result.stderr;
-      }
-      if (result.error) {
-        body += (body ? "\n\n" : "") + "[error]\n" + result.error;
-      }
-      // Empty body is normal for programs that communicate only
-      // via the exit code (most of the example presets, plus
-      // anything that does pure computation). Make sure the user
-      // sees `main()` returned 20 even when stdout is empty.
-      outEl.textContent = body || "(program produced no output)";
-      const cls = result.exit === 0 ? "exit-ok" : "exit-err";
-      metaEl.innerHTML =
-        '<span class="exit-label">main() returned exit code </span>' +
-        '<span class="' + cls + '">' + result.exit + '</span>';
-    } catch (e) {
-      outEl.textContent = "JS error: " + e;
-      metaEl.textContent = "";
-    } finally {
-      runBtn.disabled = false;
-      runBtn.textContent = "Run";
+  try {
+    const result = await runDriver(getSrc(), ["-interp"]);
+    let body = result.stdout || "";
+    if (result.stderr) {
+      body += (body ? "\n" : "") + "[stderr]\n" + result.stderr;
     }
-  }, 0);
+    // Empty body is normal for programs that communicate only
+    // via the exit code (most of the example presets, plus
+    // anything that does pure computation). Make sure the user
+    // sees `main()` returned 20 even when stdout is empty.
+    outEl.textContent = body || "(program produced no output)";
+    const cls = result.exit === 0 ? "exit-ok" : "exit-err";
+    metaEl.innerHTML =
+      '<span class="exit-label">main() returned exit code </span>' +
+      '<span class="' + cls + '">' + result.exit + '</span>';
+  } catch (e) {
+    outEl.textContent = "JS error: " + e;
+    metaEl.textContent = "";
+  } finally {
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
+  }
 }
 
 runBtn.addEventListener("click", runOnce);
@@ -1270,9 +1281,9 @@ runBtn.addEventListener("click", runOnce);
 
 // ---- Run (wasm): compile + execute the real backend in-browser ----
 //
-// Unlike Run (which drives the AST interpreter), this compiles the
-// source to a raw preview-1 core WebAssembly module via
-// `fernCompileCoreWasm` and instantiates it directly against
+// Unlike Run (which drives the interpreter), this compiles the
+// source to a raw preview-1 core WebAssembly module (the self-host
+// compiler's `-emit core-module`) and instantiates it directly against
 // web/wasi-shim.js — no component / jco transpile, no CDN. It's the
 // actual compiled wasm backend running in the page, so it also
 // surfaces the backend's coverage gaps as "[compile error]" when a
@@ -1328,10 +1339,10 @@ function renderHttpResponse(resp) {
 // Both paths run the real compiled backend in-browser, no jco.
 function runWasmOnce() {
   const httpWorld = worldSelectEl.value === "wasm32-wasi-http";
-  const compileFn = httpWorld
-    ? globalThis.fernCompileHttpHandlerCore
-    : globalThis.fernCompileCoreWasm;
-  if (typeof compileFn !== "function") {
+  const ready = httpWorld
+    ? typeof globalThis.fernCompileHttpHandlerCore === "function"
+    : driverModule !== null;
+  if (!ready) {
     outEl.textContent = "(runtime not ready)";
     return;
   }
@@ -1345,12 +1356,22 @@ function runWasmOnce() {
   // the synchronous compile call blocks the UI thread.
   setTimeout(async () => {
     try {
-      const result = compileFn(getSrc());
-      if (result.error) {
-        outEl.textContent = "[compile error]\n" + result.error;
-        return;
+      let bytes;
+      if (httpWorld) {
+        const result = globalThis.fernCompileHttpHandlerCore(getSrc());
+        if (result.error) {
+          outEl.textContent = "[compile error]\n" + result.error;
+          return;
+        }
+        bytes = b64ToBytes(result.wasm);
+      } else {
+        const compiled = await runDriver(getSrc(), ["-emit", "core-module"]);
+        if (compiled.exit !== 0) {
+          outEl.textContent = "[compile error]\n" + compiled.stderr;
+          return;
+        }
+        bytes = compiled.stdoutBytes;
       }
-      const bytes = b64ToBytes(result.wasm);
       if (httpWorld) {
         const resp = await runHttpHandler(bytes, {
           method: httpMethodEl.value,
@@ -1411,10 +1432,12 @@ syncHttpReqVisibility();
 
 // ---- Build a WebAssembly Component ----
 //
-// `fernCompileComponent(src, world)` returns the base64 of a real
-// Component Model binary (the same bytes `fern -target wasm32-wasi` /
-// `-target wasm32-wasi-http` write). We decode it and offer a download plus
-// the exact command to run it locally.
+// The self-host compiler's `-emit component` writes the wasi:cli/run
+// component `fern -target wasm32-wasi` writes; for the wasi:http world
+// `fernCompileHttpComponent(src)` returns the base64 of the
+// incoming-handler component `-target wasm32-wasi-http` writes. Either
+// way we offer the bytes for download plus the exact command to run
+// them locally.
 //
 // Note: we intentionally do NOT transpile/run the component in the
 // browser. jco's `transpile` depends on Node's `fs`, which throws
@@ -1444,25 +1467,39 @@ function offerDownload(bytes, world) {
 }
 
 function buildComponentOnce() {
-  if (typeof globalThis.fernCompileComponent !== "function") {
+  const world = worldSelectEl.value || "wasm32-wasi";
+  const httpWorld = world === "wasm32-wasi-http";
+  const ready = httpWorld
+    ? typeof globalThis.fernCompileHttpComponent === "function"
+    : driverModule !== null;
+  if (!ready) {
     outEl.textContent = "(runtime not ready)";
     return;
   }
-  const world = worldSelectEl.value || "wasm32-wasi";
   buildComponentBtn.disabled = true;
   buildComponentBtn.textContent = "Building…";
   outEl.textContent = "compiling to a " + world + " component…";
   metaEl.textContent = "";
   // Defer to the event loop so the disabled state + label paint
   // before the synchronous wasm call blocks.
-  setTimeout(() => {
+  setTimeout(async () => {
     try {
-      const result = globalThis.fernCompileComponent(getSrc(), world);
-      if (result.error) {
-        outEl.textContent = "[component error]\n" + result.error;
-        return;
+      let bytes;
+      if (httpWorld) {
+        const result = globalThis.fernCompileHttpComponent(getSrc());
+        if (result.error) {
+          outEl.textContent = "[component error]\n" + result.error;
+          return;
+        }
+        bytes = b64ToBytes(result.wasm);
+      } else {
+        const built = await runDriver(getSrc(), ["-emit", "component"]);
+        if (built.exit !== 0) {
+          outEl.textContent = "[component error]\n" + built.stderr;
+          return;
+        }
+        bytes = built.stdoutBytes;
       }
-      const bytes = b64ToBytes(result.wasm);
       const cmd = offerDownload(bytes, world);
       outEl.textContent =
         "Built a " + world + " component (" + bytes.length + " bytes).\n" +
@@ -1480,7 +1517,8 @@ buildComponentBtn.addEventListener("click", buildComponentOnce);
 
 // ---- Assembly view ----
 //
-// Wraps `fernCompile(src, target)` from the wasm bundle. Reveals
+// The self-host compiler's `-target <t>` emits the assembly text
+// `fern -target <t> -emit asm` writes. Reveals
 // the .asm-panel below the source / output grid the first time
 // the user clicks "View assembly"; subsequent compiles refresh in
 // place. The target dropdown re-compiles whenever it changes.
@@ -1490,25 +1528,27 @@ buildComponentBtn.addEventListener("click", buildComponentOnce);
 // the pane every time they tweak the source.
 let asmPanelOpen = false;
 let asmAutoRebuild = false; // turned on after first explicit open
-function refreshAsm() {
-  if (typeof globalThis.fernCompile !== "function") return;
+async function refreshAsm() {
+  if (!driverModule) return;
   const target = targetSelectEl.value || "arm64-linux";
   asmStatusEl.textContent = `compiling for ${target}…`;
   asmPanel.classList.remove("errored");
-  // Defer to the event loop so the "compiling…" label paints
-  // before the synchronous wasm call freezes the UI.
-  setTimeout(() => {
-    const result = globalThis.fernCompile(getSrc(), target);
-    if (result.error) {
+  try {
+    const result = await runDriver(getSrc(), ["-target", target]);
+    if (result.exit !== 0) {
       asmPanel.classList.add("errored");
-      asmOutEl.textContent = result.error;
+      asmOutEl.textContent = result.stderr || `the compiler exited ${result.exit}`;
       asmStatusEl.textContent = `${target} · error`;
       return;
     }
-    asmOutEl.textContent = result.asm;
-    const lines = (result.asm.match(/\n/g) || []).length + 1;
+    asmOutEl.textContent = result.stdout;
+    const lines = (result.stdout.match(/\n/g) || []).length + 1;
     asmStatusEl.textContent = `${target} · ${lines} line${lines === 1 ? "" : "s"}`;
-  }, 0);
+  } catch (e) {
+    asmPanel.classList.add("errored");
+    asmOutEl.textContent = "JS error: " + e;
+    asmStatusEl.textContent = `${target} · error`;
+  }
 }
 viewAsmBtn.addEventListener("click", () => {
   asmPanelOpen = !asmPanelOpen;
@@ -1956,8 +1996,9 @@ editorView = new EditorView({
 // enable the controls, start the LSP, and autorun once the shared boot
 // resolves. Decoupling the boot from this module's esm.sh import is the #4590
 // fix: a CDN stall can no longer strand the runtime at "loading runtime…".
-window.__fernRuntimeReady
-  .then(() => {
+Promise.all([window.__fernRuntimeReady, window.__fernDriverReady])
+  .then(([, driver]) => {
+    driverModule = driver;
     runBtn.disabled = false;
     runWasmBtn.disabled = false;
     viewAsmBtn.disabled = false;

@@ -151,9 +151,15 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    leak and alloc-count matrices) therefore goes with the backends or is
    re-anchored on the interpreter; that is scope for the deletion PRs, not a
    reason to keep a backend.
-4. **The non-compiler consumers.** `internal/wasm/playground` and
+4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
-   need the self-host compiler compiled to wasm instead. **Measured 2026-09-01
+   need the self-host compiler compiled to wasm instead.~~ **Moved
+   2026-09-28:** the playground compiles, checks, interprets, shows assembly
+   and builds cli/run components on `web/playground.wasm`, the self-host
+   compiler built by itself (`PLAYGROUND-SELFHOST-WASM.md`, top). What is
+   still on the Go toolchain is the language server (#6641) and the
+   wasi:http world (#6636), which the self-host compiler does not emit for at
+   all; `cmd/fern-wasm` and `internal/wasm/playground` now carry only those. **Measured 2026-09-01
    (#6643) — `docs/PLAYGROUND-SELFHOST-WASM.md`:** this is not size- or
    memory-bound. The self-host compiler already runs *as* wasm — a stdin-driven
    wasm-emitting driver is 2.3 MB (614 KB gzipped) against the playground

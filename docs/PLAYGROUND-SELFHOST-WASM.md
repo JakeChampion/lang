@@ -5,6 +5,29 @@ Answers `NATIVE-CONVERGENCE.md §3a` precondition 4 (#6643): the playground is
 built on native codegen, and retiring the native backends needs it rebuilt on
 the self-host compiler instead.
 
+## Status, 2026-09-28: the playground runs on the self-host compiler
+
+`web/playground.wasm` is `examples/self_host/playground_run.fern`, compiled to
+a WASI command module by `bin/fern-selfhost` (`web/build.sh`). The page
+compiles it once at boot and instantiates it afresh per call through
+`web/wasi-shim.js`, the program on stdin and the mode in argv: Run is
+`-interp`, Run (wasm) is `-emit core-module` and the shim running the result,
+View assembly is `-target x86-64-linux|arm64-linux|arm64-darwin`, Build
+component is `-emit component`. Every form is the CLI's own pipeline, and
+`TestSelfHostPlaygroundEmitsWhatTheCLIEmits` pins each byte for byte against
+`fern`. The page's examples and the docs' embeds run through the driver in
+`TestSelfHostPlaygroundExamples` / `TestSelfHostDocsPlaygroundEmbeds`.
+
+`web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to what the
+self-host compiler does not do: the language server behind diagnostics, hover
+and completion (`fernLsp`), and the wasi:http world (`fernCompileHttpComponent`,
+`fernCompileHttpHandlerCore`), which the self-host toolchain does not know at
+all — `fern.fern` refuses `-target wasm32-wasi-http`, and nothing in
+`wasm_ir.fern` or `watbin.fern` frames an incoming-handler (#6636). Those two
+(#6641 is the language server) are what `NATIVE-CONVERGENCE.md §3a.4` still
+lists. Everything below is the measurement
+and the reasoning that led here, kept as written.
+
 ## Headline
 
 **The precondition is not bounded by module size or by memory.** Both come in
