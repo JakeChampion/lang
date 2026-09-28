@@ -1805,6 +1805,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"type-param-unbound-no-args", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk(); }\n", []string{"E040"}},
 		{"type-param-explicit", "function mk[T](): i32 { return 1; }\nfunction main(): i32 { return mk[i32](); }\n", nil},
 		{"type-param-later-arg-binds", "function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }\nfunction add(x: i32, own acc: string[]): string[] { return acc.append(\"a\"); }\nfunction main(): i32 {\n    var r: string[] = fold(1, [], add);\n    return r.len();\n}\n", nil},
+		// A parameter only a bound names is bound through the impl, never by an
+		// argument, so the rule leaves it alone.
+		{"type-param-bound-only", "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\nimpl Feed[f64] for Wide { function head(self: Self): f64 { return self.v; } }\nfunction tally[T, I: Feed[T]](it: I): i32 { return 0; }\nfunction main(): i32 { return tally(Wide { v: 6.5 }); }\n", nil},
 		{"type-param-destination-binds", "function id[T](own x: T): T { return x; }\nfunction main(): i32 {\n    var r: i32[] = id([]);\n    return r.len();\n}\n", nil},
 		{"type-arg-ok", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id[i32](5); }\n", nil},
 		{"type-arg-nongeneric-ok", "function f(x: i32): i32 { return x; }\nfunction main(): i32 { return f[i32](5); }\n", nil},
