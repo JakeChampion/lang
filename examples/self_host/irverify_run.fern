@@ -497,8 +497,8 @@ function selfhost_reuse(gate: i32, token: i32): ir.Op[] {
 }
 
 // keep_reuse builds ssarc's kept-field shape: keep_token's select, a read in
-// between, then keep_release's select on the token, the donor cleared, and the
-// allocation.
+// between, then keep_release's select on the token with the donor's whole-value
+// release on the decline arm, the donor cleared, and the allocation.
 function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
     return [
         ir.op_load_local(gate),
@@ -519,7 +519,7 @@ function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
         ir.op_if(0),
         ir.op_else(),
         ir.op_load_local(dec),
-        ir.op_call_direct("__fern_rc_dec", 1),
+        ir.op_call_direct("__sem_release_P", 1),
         ir.op_drop(),
         ir.op_end(),
         ir.op_const_i32(0),

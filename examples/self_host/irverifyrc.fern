@@ -164,6 +164,7 @@ function generated_drop_prefixes(): string[] {
         "__drop_map_",
         "__drop_mapchain_",
         "__closure_drop_",
+        "__sem_release_",
     ];
 }
 
