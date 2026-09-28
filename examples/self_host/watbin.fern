@@ -1088,19 +1088,22 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         }
         return out;
     }
+    // A local operand is a `$name` or, as the export wrappers write their
+    // unnamed params, a numeric index — the same two forms the flat encoder
+    // takes (flat_idx).
     if (op == "local.get") {
         out = out.append(32);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "local.set") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.append(33);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "local.tee") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.append(34);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "global.get") {
         out = out.append(35);
@@ -1776,10 +1779,78 @@ function emit_binary(mod: SExpr): i32[] {
     return out;
 }
 
+// func_sig spells a func node's signature, for comparing two imports.
+function func_sig(fn: SExpr): string {
+    var o: string = "";
+    var ps: string[] = func_param_types(fn);
+    var i: i32 = 0;
+    while (i < ps.len()) { o = o + ps[i] + ","; i = i + 1; }
+    o = o + "->";
+    var rs: string[] = func_result_types(fn);
+    i = 0;
+    while (i < rs.len()) { o = o + rs[i] + ","; i = i + 1; }
+    return o;
+}
+
+// rename_atoms returns `n` with every atom in `from` respelled as the
+// `to` at the same index.
+function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
+    if (n.kind == 2) {
+        var k: i32 = index_of_str(from, n.text);
+        if (k >= 0) { return SExpr { kind: 2, text: to[k], items: [] }; }
+        return n;
+    }
+    if (n.kind != 0) { return n; }
+    var out: SExpr[] = [];
+    var i: i32 = 0;
+    while (i < n.items.len()) {
+        out = out.append(rename_atoms(n.items[i], from, to));
+        i = i + 1;
+    }
+    return SExpr { kind: 0, text: n.text, items: out };
+}
+
+// merge_duplicate_imports keeps one declaration of a function import the
+// module declares twice with the same type, renaming the later name's
+// references to the first. A core module may import the same host function
+// under two names; a component may not ("duplicate import name" from the
+// component step), and the emitter's runtime and an `@import` extern can each
+// name the same one — the stdout path and a wasi:io stream write both import
+// blocking-write-and-flush. Two declarations of different types are left as
+// they are: that conflict is the component step's to report.
+function merge_duplicate_imports(mod: SExpr): SExpr {
+    var keep: SExpr[] = [];
+    var seen_key: string[] = [];
+    var seen_name: string[] = [];
+    var from: string[] = [];
+    var to: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.items.len()) {
+        var it: SExpr = mod.items[i];
+        if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
+            var fn: SExpr = func_node(it);
+            var key: string = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
+            var k: i32 = index_of_str(seen_key, key);
+            if (k >= 0) {
+                from = from.append(func_name(fn));
+                to = to.append(seen_name[k]);
+                i = i + 1;
+                continue;
+            }
+            seen_key = seen_key.append(key);
+            seen_name = seen_name.append(func_name(fn));
+        }
+        keep = keep.append(it);
+        i = i + 1;
+    }
+    if (from.len() == 0) { return mod; }
+    return rename_atoms(SExpr { kind: mod.kind, text: mod.text, items: keep }, from, to);
+}
+
 // wat_to_binary is the public pipeline entry: WAT text -> wasm binary
 // bytes (an i32[] of 0..255). Used by the fern CLI's -target wasm32-wasi -emit core-module.
 pub function wat_to_binary(wat: string): i32[] {
-    return emit_binary(wat_parse(wat_tokenize(wat)));
+    return emit_binary(merge_duplicate_imports(wat_parse(wat_tokenize(wat))));
 }
 
 // === component framing (merged from wat_component.fern) ===

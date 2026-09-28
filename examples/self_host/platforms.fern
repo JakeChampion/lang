@@ -110,13 +110,14 @@ function target_environment(name: string): string {
     if (name == "arm64-android") { return "android"; }
     if (name == "arm64-darwin") { return "darwin"; }
     if (name == "wasm32-wasi") { return "wasi"; }
+    if (name == "wasm32-wasi-http") { return "wasi-http"; }
     if (name == "arm64-freestanding" || name == "x86-64-freestanding") { return "freestanding"; }
     return "";
 }
 
 function target_isa(name: string): string {
     if (name == "x86-64-linux" || name == "x86-64-freestanding") { return "x86-64"; }
-    if (name == "wasm32-wasi") { return "wasm32"; }
+    if (name == "wasm32-wasi" || name == "wasm32-wasi-http") { return "wasm32"; }
     return "arm64";
 }
 
@@ -124,7 +125,7 @@ function target_isa(name: string): string {
 // the order `fern -targets` prints them in, and native's own order.
 pub function targets(): string[] {
     return ["arm64-android", "arm64-darwin", "arm64-freestanding", "arm64-linux",
-            "wasm32-wasi", "x86-64-freestanding", "x86-64-linux"];
+            "wasm32-wasi", "wasm32-wasi-http", "x86-64-freestanding", "x86-64-linux"];
 }
 
 // emits_code is false for a target no backend lowers yet: the freestanding

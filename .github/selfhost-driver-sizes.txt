@@ -118,9 +118,8 @@
 #     under the tolerance. The claim above that the smaller drivers "localise a
 #     regression to a backend" holds for the IR, asm and wasm-IR backends and
 #     NOT for the native emitters, which have no localising driver at all.
-#   * THREE LIBRARY MODULES ARE LINKED BY NO BASELINED DRIVER: wit_decode
-#     (1,127 lines, imported nowhere in the tree), wit_compose, and
-#     wasm_objfile — the last reachable only from wasm_modload_run, which
+#   * ONE LIBRARY MODULE IS LINKED BY NO BASELINED DRIVER:
+#     wasm_objfile — reachable only from wasm_modload_run, which
 #     wasm-wholecompiler-link builds as a WASM module rather than an x86-64
 #     ELF, a size that does not belong in this file's one architecture.
 #     Covering it means paying for an x86-64 link of a driver nothing else

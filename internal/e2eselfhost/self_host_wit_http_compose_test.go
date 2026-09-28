@@ -121,6 +121,12 @@ function main(): i32 {
 // free port, sends one request, and returns its status, headers and body.
 func serveComponent(t *testing.T, wasmtime, component, method, path, body string) (int, http.Header, string) {
 	t.Helper()
+	return serveComponentHeaders(t, wasmtime, component, method, path, body, nil)
+}
+
+// serveComponentHeaders is serveComponent with request headers.
+func serveComponentHeaders(t *testing.T, wasmtime, component, method, path, body string, headers map[string]string) (int, http.Header, string) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("pick port: %v", err)
@@ -147,6 +153,9 @@ func serveComponent(t *testing.T, wasmtime, component, method, path, body string
 		req, err := http.NewRequest(method, fmt.Sprintf("http://%s%s", addr, path), strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
 		}
 		resp, err = client.Do(req)
 		if err == nil {
