@@ -10,7 +10,8 @@
 // own methods are the sanctioned route, so the walk stops at them.
 //
 // The walk is the tree-shaker's: a body reaches every function whose name it
-// spells (a call, a method name, a function value), and the reach is grown
+// spells (a call, a method name, a function value; a method only by a method
+// or operator spelling, never a bare name), and the reach is grown
 // to a fixpoint from the handler. That is the same over-approximation native
 // uses for its call graph, minus the row for calls through a value the walk
 // cannot name, which charges nothing on either compiler.
@@ -128,7 +129,7 @@ function handler_violations(mod: parser.Module, hi: i32, bag: string, wanted: st
             }
             ci = ci + 1;
         }
-        var rs: treeshake.RefSet = treeshake.body_refs(fd);
+        var rs: treeshake.BodyRefs = treeshake.body_refs(fd);
         var fi: i32 = 0;
         while (fi < mod.funcs.len()) {
             if (parent[fi] == 0 - 2 && !is_bag_method(mod.funcs[fi]) && treeshake.refs_name(rs, mod.funcs[fi])) {

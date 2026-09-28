@@ -279,15 +279,28 @@ function ts_recv_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
 // the front of its bucket.
 pub struct RefSet { names: string[], head: i32[], next: i32[] }
 
-// body_refs is the set of names `fd`'s body spells, and refs_name whether
-// `fd` is one the set reaches — the two halves of the shake's reachability,
-// for a caller walking a call graph function by function (ambient.fern).
-pub function body_refs(fd: parser.FuncDecl): RefSet {
-    return refset_of(ts_func_names(fd, []));
+// body_refs is the names `fd`'s body spells, and refs_name whether `fd` is one
+// they reach — the two halves of the shake's reachability, for a caller walking
+// a call graph function by function (ambient.fern). A method is reached only by
+// a method or operator spelling: a bare name is a local or a free function, as
+// native's call graph reads it, so `var close` does not reach a `close` method.
+pub struct BodyRefs { any: RefSet, methods: RefSet }
+
+pub function body_refs(fd: parser.FuncDecl): BodyRefs {
+    var methods: string[] = [];
+    var i: i32 = 0;
+    while (i < fd.body.len()) { methods = astwalk.fold_stmt(fd.body[i], methods, ts_method_name_of); i = i + 1; }
+    return BodyRefs { any: refset_of(ts_func_names(fd, [])), methods: refset_of(methods) };
 }
 
-pub function refs_name(rs: RefSet, fd: parser.FuncDecl): boolean {
-    return ts_kept_name(fd, rs);
+pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {
+    if (fd.receiver_type.len() > 0) { return ts_kept_name(fd, br.methods); }
+    return ts_kept_name(fd, br.any);
+}
+
+function ts_method_name_of(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprIdent(_) = e { return acc; }
+    return ts_name_of(e, acc);
 }
 
 function ts_buckets(): i32 { return 4093; }
