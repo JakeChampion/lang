@@ -394,11 +394,12 @@ function main(): i32 {
     if (!passPlan.ok) { eprint(passPlan.why); return 108; }
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [2], passPlan, false).return_fresh_struct_ret_fns, "mk") >= 0) { return 109; }
     // A record the body builds is the caller's only reference, whatever the
-    // counts on its fields (#10415). A method keeps the floor: its AST callers
-    // key it by receiver type, so a bare-name row would describe another
-    // function.
+    // counts on its fields (#10415). A method's row goes under the
+    // Base.name key its AST callers look it up by, and nowhere else.
     if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", recordFunc, [2], recordPlan, false).return_fresh_struct_ret_fns, "mk") < 0) { return 201; }
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", recordFunc, [2], recordPlan, true).return_fresh_struct_ret_fns, "mk") >= 0) { return 202; }
+    var methodSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "Rec.mk", recordFunc, [2], recordPlan, true);
+    if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "Rec.mk") < 0) { return 202; }
+    if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "mk") >= 0) { return 203; }
     // The parameter rows come from the contract, not the syntax: a borrowed
     // reference parameter is the retained-keep row, and without a plan to show
     // it keeps nothing never the bare one; a counted or scalar parameter has
@@ -412,6 +413,15 @@ function main(): i32 {
     rowAll = "";
     for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
     if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
+    // A method's receiver is parameter 0 of the Func but has no position in
+    // the AST's per-parameter rows, which start at the first declared
+    // parameter (#10515). The rows its syntax gave are replaced.
+    var methodRows = ssarc.caller_sigs(irlower.FnSigs { ...irlower.fn_sigs_empty(), borrowable_params: irlower.borrow_reg_set([], "W.mk", "11"),
+        param_counted: ["PCNT:W.mk|11"] }, "W.mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 2], ssaunits.refused("no plan"), true);
+    rowAll = "";
+    for bucket in methodRows.borrowable_params { rowAll = rowAll + bucket; }
+    if (!has_sub(rowAll, "CNT:W.mk|01\n") || has_sub("\n" + rowAll, "\nW.mk|")) { eprint(rowAll); return 204; }
+    if (util.index_of_str(methodRows.param_counted, "PCNT:W.mk|01") < 0 || methodRows.param_counted.len() != 1) { return 205; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -425,6 +435,11 @@ function main(): i32 {
     var lenRows: string = "";
     for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "len", arrLen, [2], arrLenPlan, false).borrowable_params { lenRows = lenRows + bucket; }
     if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
+    // The same body as a method keeps nothing of its receiver, which the AST
+    // rows have no position for, so it writes no parameter row at all.
+    lenRows = "";
+    for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "Arr.len", arrLen, [2], arrLenPlan, true).borrowable_params { lenRows = lenRows + bucket; }
+    if (has_sub(lenRows, "len|")) { eprint(lenRows); return 206; }
     var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty(), []);
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
     var sawArrLen: boolean = false;
