@@ -220,7 +220,7 @@ function main(): i32 {
     if (acc.len() > 0) { var h: Holder = { Holder { x: acc[0] } }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
     return acc.append(Inst { name: "w" + "", depth: n });
 }
-` + threadInstMain, false, [2]int64{36, 24}},
+` + threadInstMain, false, [2]int64{36, 13}},
 	{"elem_holder", threadHolder + `function hold(e: Inst): Holder { return Holder { x: e }; }
 function walk(n: i32, acc: Inst[]): Inst[] {
     if (acc.len() > 0) { var h: Holder = hold(acc[0]); return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }

@@ -55626,7 +55626,9 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
             if (arrstruct_counted_field_share(e, name, structs, msites)) { return 1; }
             return 0;
         },
-        ast.ExprLambda(_) => { return 1; },
+        // A value block is inlined into this frame, so its statements are
+        // scanned as the frame's own (code 6); a closure's body is not.
+        ast.ExprLambda(lm) => { if (parser.is_value_block_origin(lm.origin)) { return 6; } return 1; },
         ast.ExprMapLit(_) => { return 1; },
         ast.ExprFString(_) => { return 1; },
         ast.ExprUnknown(_) => { return 1; },
@@ -55745,6 +55747,10 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
             },
             _ => { return true; }
         }
+    }
+    if (code == 6) {
+        if let ast.ExprLambda(lm) = x { return arrstruct_elem_payload_escapes(lm.body, name, sty, structs, msites, borrowable, sfok, producers); }
+        return true;
     }
     if (code == 5) {
         // The sanctioned self-store scans only the FIRST argument — `append`'s
