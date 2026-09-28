@@ -3262,8 +3262,8 @@ function main(): i32 {
 	// field takes (ssarc.drop_variant_fields drops a variant's fields as a
 	// record's). Nested in an array or tuple it stays refused, as for a
 	// record. `dropped` is a chain never run, so its closures are released by
-	// the walk alone; the AST lowering releases none of them (#9841), so the
-	// pin here is absolute.
+	// the walk alone; the AST lowering leaks every chain built through
+	// `f(w)` (#10577), so the pin here is absolute.
 	{name: "closure-in-a-variant-field", atLeast: 4, noLeak: true, src: `
 enum Step {
     Done(i32),
