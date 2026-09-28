@@ -25,7 +25,7 @@ function build(n: i32): i32 {
     var xs: Tok[] = [];
     var i: i32 = 0;
     while (i < n) {
-        var t: string = "tok" + "abcdefghij"[0:(i % 10) + 1];
+        var t: string = "tok" + slice_unchecked("abcdefghij", 0, (i % 10) + 1);
         xs = xs.append(Ident(t));
         i = i + 1;
     }
