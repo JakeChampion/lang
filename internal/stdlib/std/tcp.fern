@@ -1,8 +1,8 @@
 // std/tcp — HTTP/1.1 accept loop + handler-friendly env helper.
 //
 // `tcp_serve(port, handler)` runs an HTTP/1.1 accept loop on
-// `port`, calling `handler(req, plat)` once per accepted
-// connection. The `plat: Platform` capability bag is the seam
+// `port`, calling `handler(req, plat)` once per request. The
+// `plat: Platform` capability bag is the seam
 // where future host-side effects (fetch / kv / secrets / log /
 // now) will be plumbed per docs/PLATFORM-RESEARCH.md Rec §1;
 // for Phase 1 it carries a single `version: i32` placeholder
@@ -25,13 +25,19 @@
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (headers must fit in
 //      8 KiB, the body in 1 MiB, the parser's caps).
-//   3. http_parse_request_bytes — return None ⇒ keep reading, or on EOF close
+//   3. http_parse_request_framed — return None ⇒ keep reading, or on EOF close
 //      the socket without a response (HTTP/1.1 §10 explicitly allows
 //      server-side reset on malformed input).
 //   4. handler(req) returns the HttpResponse.
-//   5. http_serialize_response → tcp_send; what the kernel does not take
-//      stays with the connection, watched for writability until it
-//      drains → unwatch → tcp_close.
+//   5. http_serialize_response_conn → tcp_send; what the kernel does not
+//      take stays with the connection, watched for writability until it
+//      drains.
+//   6. a connection persists across requests (RFC 9112 §9.3: HTTP/1.1
+//      unless `Connection: close`, HTTP/1.0 only with `Connection:
+//      keep-alive`) until the keep-alive idle span passes with no request
+//      or it has answered `keep_alive_requests`; the request's bytes are
+//      dropped from its buffer, so requests pipelined behind them are
+//      answered from the same readable event → unwatch → tcp_close.
 //
 // The native targets wire this through the Fern-bodied __fern_tcp_* and
 // __fern_reactor_* helpers over the syscall floor. The wasm side gates
@@ -71,18 +77,24 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // ServeOptions — what a serve loop asks of its listener and of each
 // connection: the accept queue depth, whether other listeners may share
 // the port (`SO_REUSEPORT`, the kernel balancing accepted connections
-// across them; ignored on wasm, where a port is one socket's), and the
-// per-request read deadline `tcp_serve_deadline` describes.
+// across them; ignored on wasm, where a port is one socket's), the
+// per-request read deadline `tcp_serve_deadline` describes, how long an
+// idle persistent connection is kept waiting for its next request, and
+// how many requests one connection may carry before its response says
+// `Connection: close`.
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
     recv_deadline: Duration,
+    keep_alive_idle: Duration,
+    keep_alive_requests: i32,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
-// by one listener, and the 10 s read deadline.
+// by one listener, the 10 s read deadline, a 130 s keep-alive idle span
+// and 1000 requests per connection.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default() };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000 };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -92,7 +104,7 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop(listener, handler, opts.recv_deadline);
+    return __serve_loop(listener, handler, opts);
 }
 
 // tcp_serve_deadline(port, handler, recv_deadline) — `tcp_serve`
@@ -142,7 +154,7 @@ pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, hand
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop_with(listener, init, handler, opts.recv_deadline);
+    return __serve_loop_with(listener, init, handler, opts);
 }
 
 // tcp_serve_with_deadline(port, init, handler, recv_deadline) —
@@ -225,11 +237,18 @@ function __recv_scratch(): u8[] {
 }
 
 // __Conns — the open connections of a serve loop, by position: the
-// descriptor, the request bytes read so far, the response bytes the
-// kernel has not taken yet ("" while the request is being read), and the
-// monotonic time its deadline falls due (the read deadline, then the
-// same span again for the write).
-struct __Conns { fds: i32[], bufs: u8[][], pending: string[], deadlines: i64[] }
+// descriptor, the request bytes read and not yet answered, how many of
+// them the requests answered in the current event occupied (0 between
+// events: the answered bytes are dropped once per event, not per
+// request), the response bytes the kernel has not taken yet ("" while a
+// request is being read), the monotonic time its deadline falls due (the
+// read deadline, the same span again for a write, the keep-alive idle
+// span between requests), whether the connection persists once the
+// response in flight is sent, how many requests it has answered, and
+// whether a complete request is still buffered because the event's
+// burst ended before it (answered on the next wait, which returns at
+// once).
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[] }
 
 function __conns_index(c: __Conns, fd: i32): i32 {
     var i: i32 = 0;
@@ -242,30 +261,42 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
     var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline) };
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false) };
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
     var fds: i32[] = [];
     var bufs: u8[][] = [];
+    var offs: i32[] = [];
     var pending: string[] = [];
     var deadlines: i64[] = [];
+    var keep: boolean[] = [];
+    var served: i32[] = [];
+    var backlog: boolean[] = [];
     var i: i32 = 0;
     while (i < c.fds.len()) {
         if (i != at) {
             fds = fds.append(c.fds[i]);
             bufs = bufs.append(c.bufs[i]);
+            offs = offs.append(c.offs[i]);
             pending = pending.append(c.pending[i]);
             deadlines = deadlines.append(c.deadlines[i]);
+            keep = keep.append(c.keep[i]);
+            served = served.append(c.served[i]);
+            backlog = backlog.append(c.backlog[i]);
         }
         i = i + 1;
     }
-    return __Conns { fds: fds, bufs: bufs, pending: pending, deadlines: deadlines };
+    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
-// earliest read deadline (0 once one is due), or -1 with nothing open.
+// earliest read deadline (0 once one is due, or while a connection has a
+// request its event's burst left unanswered), or -1 with nothing open.
 function __conns_timeout(c: __Conns, now: i64): i32 {
+    for b in c.backlog {
+        if (b) { return 0; }
+    }
     var best: i64 = -1 as i64;
     for d in c.deadlines {
         if (best < (0 as i64) || d < best) { best = d; }
@@ -299,60 +330,251 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
     return __conns_remove(c, at);
 }
 
-// __serve_read(c, at, scratch) — the readable connection at `at` read
-// until nothing is queued: `(conns, done, request)`, where `done` says
-// the connection is finished (a complete request to answer, EOF, an
-// error, or the size cap) and `request` is the complete request when
-// there is one.
-function __serve_read(c: __Conns, at: i32, scratch: u8[]): (__Conns, boolean, Option[HttpRequest]) {
+// __serve_read(c, at, scratch, opts) — the readable connection at `at`
+// read until nothing is queued: `(conns, done)`, where `done` says the
+// peer is finished (EOF, an error, or the size cap) and what it sent is
+// what the buffer holds. The first bytes of a request start its read
+// deadline, replacing the keep-alive idle span an answered connection
+// was waiting under.
+function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (__Conns, boolean) {
     var buf: u8[] = c.bufs[at];
+    var was_idle: boolean = buf.len() == 0;
     while (true) {
         var n: i32 = tcp_recv_into(c.fds[at], scratch);
         if (n == 0 - __eagain()) {
-            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, false, None);
+            var deadline: i64 = c.deadlines[at];
+            if (was_idle && buf.len() > 0) { deadline = monotonic_ns() + opts.recv_deadline.as_nanos(); }
+            return (__Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) }, false);
         }
         if (n <= 0) {
-            return (c, true, None);
+            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
         buf = buf.concat(scratch.take(n));
-        // Hard cap to keep slow / hostile clients from pinning
-        // unbounded memory. Headers must fit in the first 8 KiB; body
-        // capped at 1 MiB. Matches the parser's internal caps.
+        // A connection holds at most the parser's largest request (8 KiB
+        // of headers, 1 MiB of body) unread; past that the peer is
+        // treated as finished: what is complete is answered, then the
+        // connection is closed.
         if (buf.len() > 8192 + 1048576) {
-            return (c, true, None);
-        }
-        match (http.http_parse_request_bytes(buf)) {
-            Some(parsed) => { return (c, true, Some(parsed)); },
-            None => {
-                // Still partial, or definitively malformed: more bytes
-                // decide, the deadline or the cap ends it.
-            }
+            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
     }
-    return (c, true, None);
+    return (c, true);
 }
 
+// __bytes_from(buf, from) — buf[from, len) as a fresh array: the bytes
+// behind an answered request, the next pipelined request's or nothing.
+function __bytes_from(buf: u8[], from: i32): u8[] {
+    var n: i32 = buf.len() - from;
+    if (n < 0) { n = 0; }
+    var out: u8[] = __alloc_u8(n);
+    var i: i32 = 0;
+    while (i < n) {
+        out = out.with(i, buf[from + i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// __has_request(c, at) — whether a complete request follows the bytes
+// already answered.
+function __has_request(c: __Conns, at: i32): boolean {
+    match (http.http_parse_request_framed_from(c.bufs[at], c.offs[at])) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+    return false;
+}
+
+// __serve_took(c, at, f, opts, eof) — the request behind the answered
+// bytes consumed: the offset moved past it, the served count up, and
+// whether the connection persists after this response decided (the
+// request's own say, the per-connection request cap, and, once the peer
+// has finished sending, whether another complete request is still
+// buffered: the last response on a half-closed connection says `close`,
+// since the close follows it): `(conns, keep_alive)`.
+function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOptions, eof: boolean): (__Conns, boolean) {
+    var served: i32 = c.served[at] + 1;
+    var keep: boolean = f.keep_alive && served < opts.keep_alive_requests;
+    c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false) };
+    if (keep && eof) { keep = __has_request(c, at); }
+    return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep);
+}
+
+// __serve_compact(c, at) — the bytes the event's answered requests
+// occupied dropped, once, when the event is done with the connection.
+function __serve_compact(c: __Conns, at: i32): __Conns {
+    if (c.offs[at] == 0) { return c; }
+    return __Conns { ...c, bufs: c.bufs.with(at, __bytes_from(c.bufs[at], c.offs[at])), offs: c.offs.with(at, 0) };
+}
+
+// __pipeline_burst() — how many pipelined requests one readiness event
+// answers before the loop returns to the wait, so one connection's
+// pipeline cannot hold every other client off the reactor. What is left
+// is the connection's backlog, answered on the next wait.
+function __pipeline_burst(): i32 {
+    return 32;
+}
+
+// __serve_next(c, at, opts) — an answered connection with nothing left
+// to answer, and the deadline it waits under: the idle span once its
+// buffer is empty, the read deadline while a partial request holds
+// bytes in it. The deadline bounds the wait for the peer, not the
+// handlers run before it, so a partial request's clock starts here
+// rather than at its first byte, which may have arrived a burst ago.
+function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
+    var span: Duration = opts.keep_alive_idle;
+    if (c.bufs[at].len() > c.offs[at]) { span = opts.recv_deadline; }
+    return __Conns { ...c, deadlines: c.deadlines.with(at, monotonic_ns() + span.as_nanos()) };
+}
+
+// __serve_ready(c, at, opts) — a persisting connection whose response has
+// gone out whole: `(conns, more)`, `more` when a complete request is
+// buffered, for the loop to answer now; a connection with a request to
+// answer is not waiting on the peer, so its deadline is left alone.
+// Otherwise it waits under `__serve_next`'s deadline.
+function __serve_ready(c: __Conns, at: i32, opts: ServeOptions): (__Conns, boolean) {
+    if (__has_request(c, at)) { return (c, true); }
+    return (__serve_next(c, at, opts), false);
+}
+
+// __serve_respond(drv, c, at, wire, opts, answered) — the response sent
+// and the connection's next state: `(conns, more)`, where `more` says
+// the connection persists with its next request already buffered, so
+// the loop answers it now. A short write leaves the rest pending, to be
+// finished by a later wait (`__serve_drain`); a write the kernel refuses
+// closes the connection; a finished write closes a connection that does
+// not persist; and the `answered`th response of one event ends the
+// event's burst, leaving a request still buffered as the connection's
+// backlog.
+function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: string, opts: ServeOptions, answered: i32): (__Conns, boolean) {
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, wire, opts.recv_deadline);
+    c = sent.0;
+    match (sent.1) {
+        Partial => { return (c, false); },
+        Failed => { return (__serve_close(drv, c, at), false); },
+        Whole => { }
+    }
+    if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
+    var ready: (__Conns, boolean) = __serve_ready(c, at, opts);
+    c = ready.0;
+    if (!ready.1) { return (c, false); }
+    if (answered >= __pipeline_burst()) {
+        return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false);
+    }
+    return (c, true);
+}
+
+// __serve_drain(drv, c, at, opts) — a writable connection with a response
+// still pending: the rest written, and `(conns, at, false)` once it has
+// gone out whole on a persisting connection with a request buffered
+// behind it, watched for reads again; `(conns, -1, false)` while it is
+// still draining, when the connection waits for its next request, or
+// when it is closed (the write failed, the connection does not persist,
+// or the reactor refused to watch it again).
+function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, i32, boolean) {
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts.recv_deadline);
+    c = sent.0;
+    match (sent.1) {
+        Partial => { return (c, -1, false); },
+        Failed => { return (__serve_close(drv, c, at), -1, false); },
+        Whole => { }
+    }
+    if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
+    if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
+    var ready: (__Conns, boolean) = __serve_ready(__Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+    if (!ready.1) { return (ready.0, -1, false); }
+    return (ready.0, at, false);
+}
+
+// __serve_eof(drv, c, at) — the peer has finished sending: a response
+// still draining goes out and then closes the connection; anything else
+// closes it now.
+function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
+    if (c.pending[at].len() > 0) { return __Conns { ...c, keep: c.keep.with(at, false) }; }
+    return __serve_close(drv, c, at);
+}
+
+// __serve_event(drv, c, fd, scratch, opts) — one readiness event on the
+// connection `fd`, brought to where its buffered requests can be answered:
+// `(conns, at, eof)`, with `at` the connection's position, or -1 when this
+// event ends with nothing to answer (an unknown descriptor, a response still
+// draining, a connection closed once it drained), and `eof` when the peer
+// has finished sending.
+function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions): (__Conns, i32, boolean) {
+    var at: i32 = __conns_index(c, fd);
+    if (at < 0) { return (c, -1, false); }
+    if (c.pending[at].len() > 0) { return __serve_drain(drv, c, at, opts); }
+    var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+    return (read.0, at, read.1);
+}
+
+// __serve_finish(drv, c, fd, eof) — after an event's requests are answered:
+// the answered bytes dropped, and a peer that has finished sending
+// closed, once anything still draining has gone out. A connection whose
+// burst left a request buffered is not closed yet: the backlog answers
+// it on the next wait, whose read sees the end of stream again.
+function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boolean): __Conns {
+    var at: i32 = __conns_index(c, fd);
+    if (at < 0) { return c; }
+    c = __serve_compact(c, at);
+    if (!eof || c.backlog[at]) { return c; }
+    return __serve_eof(drv, c, at);
+}
+
+// __with_backlog(c, events) — the wait's events with one more for every
+// connection whose burst left a request buffered and that the wait did
+// not report itself, so the loop answers the backlog on this pass
+// without the peer having to send anything, and once per pass.
+function __with_backlog(c: __Conns, events: i32[]): i32[] {
+    var reported: i32 = events.len();
+    var i: i32 = 0;
+    while (i < c.fds.len()) {
+        if (c.backlog[i] && !__reported(events, reported, c.fds[i])) { events = events.append(c.fds[i]).append(0); }
+        i = i + 1;
+    }
+    return events;
+}
+
+// __reported(events, n, fd) — whether `fd` is among the first `n` entries
+// of the wait's (fd, readiness) pairs.
+function __reported(events: i32[], n: i32, fd: i32): boolean {
+    var k: i32 = 0;
+    while (k + 1 < n) {
+        if (events[k] == fd) { return true; }
+        k = k + 2;
+    }
+    return false;
+}
+
+// __Sent — how far a write got: the kernel took it all, keeps the rest
+// as the connection's pending bytes, or refused it.
+enum __Sent { Whole, Partial, Failed }
+
 // __serve_send(drv, c, at, payload, deadline) — the response written to
-// the connection at `at`: `(conns, done)`, done when the kernel took it
-// all or refused it. A short write keeps the rest as the connection's
-// pending bytes, watches it for writability instead of reads and gives
-// it `deadline` to drain; the loop finishes the write on later waits.
-function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, deadline: Duration): (__Conns, boolean) {
+// the connection at `at`: `(conns, sent)`. A short write keeps the rest
+// as the connection's pending bytes, watches it for writability instead
+// of reads and gives it `deadline` to drain; the loop finishes the write
+// on later waits. A write the kernel refuses (the peer is gone) leaves
+// the connection to the caller to close.
+function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, deadline: Duration): (__Conns, __Sent) {
     var n: i32 = tcp_send(c.fds[at], payload);
-    if (n >= payload.len()) { return (c, true); }
-    if (n < 0 && n != 0 - __eagain()) { return (c, true); }
+    if (n >= payload.len()) { return (c, Whole); }
+    if (n < 0 && n != 0 - __eagain()) { return (c, Failed); }
     var rest: string = payload;
     if (n > 0) { rest = slice_unchecked(payload, n, payload.len()).to_owned(); }
     drv.watch(c.fds[at], 2);
-    return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, false);
+    return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, Partial);
 }
 
 // __serve_expire(drv, c, now) — every connection whose deadline is due
-// closed, without a response or with the rest of one unsent.
+// closed, without a response or with the rest of one unsent. A
+// connection whose backlog holds a request is not waiting on the peer:
+// its deadline is stale from the read that filled the backlog, and it
+// stays open for the next wait to answer it.
 function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns {
     var i: i32 = 0;
     while (i < c.fds.len()) {
-        if (c.deadlines[i] <= now) {
+        if (c.deadlines[i] <= now && !c.backlog[i]) {
             c = __serve_close(drv, c, i);
         } else {
             i = i + 1;
@@ -381,46 +603,46 @@ function __host_platform(reactor: i32): Platform {
 // death. Loops forever under normal operation; the i32 return only
 // materialises for the type system (no clean-shutdown channel exposed
 // yet), except that a listener the reactor cannot watch returns its
-// -errno like a failed bind. `recv_deadline` bounds each connection's
-// request read (see `tcp_serve_deadline`).
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
+// -errno like a failed bind. `opts` bounds each connection's request
+// read (see `tcp_serve_deadline`) and its persistence.
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions): i32 {
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {
-        var events: i32[] = drv.wait(64, __conns_timeout(conns, monotonic_ns()));
+        var events: i32[] = __with_backlog(conns, drv.wait(64, __conns_timeout(conns, monotonic_ns())));
         var k: i32 = 0;
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
             k = k + 2;
             if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, recv_deadline);
+                conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
                 continue;
             }
-            var at: i32 = __conns_index(conns, fd);
+            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts);
+            conns = ev.0;
+            var at: i32 = ev.1;
             if (at < 0) { continue; }
-            if (conns.pending[at].len() > 0) {
-                var sent: (__Conns, boolean) = __serve_send(drv, conns, at, conns.pending[at], recv_deadline);
-                conns = sent.0;
-                if (sent.1) { conns = __serve_close(drv, conns, at); }
-                continue;
+            var more: boolean = true;
+            var count: i32 = 0;
+            while (more) {
+                match (http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at])) {
+                    Some(f) => {
+                        var took: (__Conns, boolean) = __serve_took(conns, at, f, opts, ev.2);
+                        conns = took.0;
+                        count = count + 1;
+                        var resp: HttpResponse = handler(f.request, plat);
+                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, http.http_serialize_response_conn(resp, took.1), opts, count);
+                        conns = answered.0;
+                        more = answered.1;
+                    },
+                    None => { more = false; }
+                }
             }
-            var read: (__Conns, boolean, Option[HttpRequest]) = __serve_read(conns, at, scratch);
-            conns = read.0;
-            var done: boolean = read.1;
-            match (read.2) {
-                Some(req) => {
-                    var resp: HttpResponse = handler(req, plat);
-                    var sent: (__Conns, boolean) = __serve_send(drv, conns, at, http.http_serialize_response(resp), recv_deadline);
-                    conns = sent.0;
-                    done = sent.1;
-                },
-                None => {}
-            }
-            if (done) { conns = __serve_close(drv, conns, at); }
+            conns = __serve_finish(drv, conns, fd, ev.2);
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
     }
@@ -435,46 +657,46 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // value through the handler chain. The state lives in the loop frame,
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions): i32 {
     var st: S = init;
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {
-        var events: i32[] = drv.wait(64, __conns_timeout(conns, monotonic_ns()));
+        var events: i32[] = __with_backlog(conns, drv.wait(64, __conns_timeout(conns, monotonic_ns())));
         var k: i32 = 0;
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
             k = k + 2;
             if (fd == listener) {
-                conns = __serve_accept(drv, listener, conns, recv_deadline);
+                conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
                 continue;
             }
-            var at: i32 = __conns_index(conns, fd);
+            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts);
+            conns = ev.0;
+            var at: i32 = ev.1;
             if (at < 0) { continue; }
-            if (conns.pending[at].len() > 0) {
-                var sent: (__Conns, boolean) = __serve_send(drv, conns, at, conns.pending[at], recv_deadline);
-                conns = sent.0;
-                if (sent.1) { conns = __serve_close(drv, conns, at); }
-                continue;
+            var more: boolean = true;
+            var count: i32 = 0;
+            while (more) {
+                match (http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at])) {
+                    Some(f) => {
+                        var took: (__Conns, boolean) = __serve_took(conns, at, f, opts, ev.2);
+                        conns = took.0;
+                        count = count + 1;
+                        var next: (S, HttpResponse) = handler(st, f.request, plat);
+                        st = next.0;
+                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, http.http_serialize_response_conn(next.1, took.1), opts, count);
+                        conns = answered.0;
+                        more = answered.1;
+                    },
+                    None => { more = false; }
+                }
             }
-            var read: (__Conns, boolean, Option[HttpRequest]) = __serve_read(conns, at, scratch);
-            conns = read.0;
-            var done: boolean = read.1;
-            match (read.2) {
-                Some(req) => {
-                    var next: (S, HttpResponse) = handler(st, req, plat);
-                    st = next.0;
-                    var sent: (__Conns, boolean) = __serve_send(drv, conns, at, http.http_serialize_response(next.1), recv_deadline);
-                    conns = sent.0;
-                    done = sent.1;
-                },
-                None => {}
-            }
-            if (done) { conns = __serve_close(drv, conns, at); }
+            conns = __serve_finish(drv, conns, fd, ev.2);
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
     }
@@ -528,7 +750,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
         if (pid == -38) {
             // ENOSYS: no fork on this host. Graceful degradation.
             eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
-            return __serve_loop(listener, handler, __recv_deadline_default());
+            return __serve_loop(listener, handler, opts);
         }
         if (pid < 0) {
             return pid;
@@ -538,7 +760,7 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
             // inherited listener. It never returns under normal
             // operation; if it somehow does, exit with its code
             // rather than falling into a second supervision loop.
-            var rc: i32 = __serve_loop(listener, handler, __recv_deadline_default());
+            var rc: i32 = __serve_loop(listener, handler, opts);
             exit(rc);
             return rc;
         }

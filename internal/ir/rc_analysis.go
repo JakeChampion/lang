@@ -1514,6 +1514,18 @@ var copyingBuiltinArgs = map[string][]int{
 	"__method_Map_get_or": {1},
 	"__method_Map_has":    {1},
 	"__method_Map_delete": {1},
+	// A socket send writes its bytes to the kernel and answers a count,
+	// and a bind or connect reads its address bytes into a sockaddr;
+	// neither retains the argument. Without the send's credit the serve
+	// loop's serialised response, a local passed to a helper that sends
+	// it, lost its release: one response per request stranded.
+	"tcp_send":         {1},
+	"udp_send":         {0, 2},
+	"udp_sendto":       {1, 3},
+	"udp_bind":         {0},
+	"udp_connect":      {1},
+	"tcp_listen_with":  {0},
+	"tcp_connect_with": {0},
 }
 
 func copyingBuiltinArg(name string, i int) bool {
@@ -3832,6 +3844,19 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			if !isLocal && b.returnsFreshBox[id.Name] {
 				return false
 			}
+			// A pair-form user callee whose result a slot keeps arrives
+			// through emitRepackPairAsHeapBox: a fresh rc=1 box holding the
+			// count the return ABI handed over (emitPairFormPayloadRetain),
+			// so the binding owns it whatever the payload aliases, like the
+			// variant constructor above. A Map payload keeps the taint: its
+			// release reclaims the columns without reading the count.
+			if !isLocal && b.pairForm[id.Name] {
+				if _, isUserFn := b.returnsFreshPairPayload[id.Name]; isUserFn {
+					if et, isEnum := b.exprType(x).(ast.EnumType); isEnum && !pairFormPayloadIsMap(et) {
+						return false
+					}
+				}
+			}
 			// A call through a function value reaches only an address-taken
 			// function or a lifted lambda; when every one of those hands back
 			// a box of its own, so does this call.
@@ -4028,6 +4053,20 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		if _, ok := b.reclaimableTryScrutinee(x); ok {
 			if _, isStr := x.Type.(ast.StringType); isStr {
 				return false
+			}
+		}
+		// A pair-form user callee's payload arrives counted by the return
+		// ABI (emitPairFormPayloadRetain), the try site frees its rebox
+		// shallow (tryPairReboxSize), and the payload moves into the
+		// binding, which therefore owns that count. A Map payload keeps
+		// the taint, as everywhere the count is not read before a release.
+		if c, isCall := x.Inner.(*ast.Call); isCall && x.Type != nil && !isMapType(x.Type) {
+			if id, isIdent := c.Callee.(*ast.Ident); isIdent && b.pairForm[id.Name] {
+				if _, isLocal := b.locals[id.Name]; !isLocal {
+					if _, isUserFn := b.returnsFreshPairPayload[id.Name]; isUserFn {
+						return false
+					}
+				}
 			}
 		}
 		return true

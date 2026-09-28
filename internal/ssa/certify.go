@@ -379,7 +379,7 @@ func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]S
 					cur[root] = ownGone
 				}
 			}
-		case OpCall:
+		case OpCall, OpCallPair:
 			applyCall(o, cur, units, sigs, poisoned)
 		case OpCallIndirect, OpCallDyn:
 			poisonArgs(o, cur, units, poisoned)
