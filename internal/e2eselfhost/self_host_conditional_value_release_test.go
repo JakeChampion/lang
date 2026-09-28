@@ -410,6 +410,24 @@ function main(): i32 {
 }
 `
 
+// A struct local rebound from a generic identity over a FRESH value owns the
+// result: nothing else holds what comes back, so it keeps its credit.
+const condHandbackFreshSrc = `struct P { x: i32, y: i32 }
+function idg[T](v: T): T { return v; }
+function mkp(j: i32): P { return P { x: 1000, y: j }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    var b: P = P { x: 0, y: 0 };
+    while (j < 10) {
+        b = idg(mkp(j + 1));
+        t = t + b.y;
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
 // Interpreter-confirmed answers. astCensus, when set, is the exact
 // allocs/frees the AST lowering reports, which then need not balance.
 var condReleaseCases = []struct {
@@ -434,6 +452,7 @@ var condReleaseCases = []struct {
 	{"row_handout", condRowHandoutSrc, 59, true, [2]int64{}},
 	{"option_match_return", condOptionMatchReturnSrc, 38, true, [2]int64{}},
 	{"block_tail_match_credit", condBlockTailMatchSrc, 81, true, [2]int64{}},
+	{"handback_fresh", condHandbackFreshSrc, 55, true, [2]int64{}},
 }
 
 func TestSelfHostConditionalValueReleaseX86_64(t *testing.T) {
@@ -452,6 +471,39 @@ func TestSelfHostConditionalValueReleaseX86_64(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// condPlanOffCensus pins the AST census under FERN_SELFHOST_RC_PLAN=0 where it
+// differs from the plan's. Every other case is held to its plan-on AST
+// expectation, so a plan-off census moving on one of those fails with the
+// refused-row message even when the frees fell short rather than grew. The off-plan struct gate (body_unsafe_for_alias)
+// reads `Some(p)` as an escape rather than a counted sink, so p is refused
+// there: a sound leak of p and its buffer, never an over-release (#10618).
+var condPlanOffCensus = map[string][2]int64{
+	"option_match_return": {60, 20},
+}
+
+// TestSelfHostConditionalValueReleasePlanOffX86_64 runs the AST lowering with
+// the rc plan off, so a change to either route that moves a census fails here.
+func TestSelfHostConditionalValueReleasePlanOffX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range condReleaseCases {
+		t.Run(tc.name, func(t *testing.T) {
+			census := tc.astCensus
+			if pin, ok := condPlanOffCensus[tc.name]; ok {
+				census = pin
+			}
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			balanced := assertCondCensus(t, stderr, tc.balanced, census, "ast")
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
 	}
 }
 
