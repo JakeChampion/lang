@@ -5,7 +5,7 @@ import "testing"
 // A value-position if, match or block handed straight to a consumer that does
 // not bind it — a borrowing call's argument, a `.len()` receiver, an index or
 // field read — is released there when it is owned whichever arm ran (#10438):
-// an array local its arm retained, or a fresh value. The AST lowering left it
+// a local its arm retained, or a fresh value. The AST lowering left it
 // in a temp nothing swept. Arrays, strings, structs, and a struct handed to a
 // `dyn` parameter, through each form and each consumer.
 const condArrReleaseSrc = `function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
@@ -143,41 +143,167 @@ function main(): i32 {
 }
 `
 
-// Arms that yield a string, struct or dyn local are not retained, and a
-// parameter yielded by a conditional reads as escaping, so none of these is
-// provably owned: each has to leak rather than be released under its source.
-const condNotOwnedSrc = `struct P { x: i32, y: i32 }
-trait Shape { function area(self: Self): i32; }
+// An arm that yields a string, struct or dyn local declared outside the
+// conditional retains it, so a mix of such arms and fresh ones is owned
+// whichever arm ran (#10570): released by its consumer, credited as a binding,
+// and a counted return. The yielded local keeps its own release.
+const condAliasStrSrc = `function slen(s: string): i32 { return s.len(); }
+function tail(): string { return "xyz"; }
+function rets(j: i32): string { var s = "r" + tail(); return if (j > 1) { s } else { s + "q" }; }
+function retm(j: i32): string { var s = "r" + tail(); return match (j) { 0 => s + "m", _ => s }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var s = "abc" + tail();
+        t = t + slen(if (j > 1) { s } else { s + "x" });
+        t = t + slen(match (j) { 0 => s + "y", _ => s });
+        t = t + slen({ var k = j; if (k > 1) { s } else { s + "z" } });
+        t = t + (if (j > 0) { s } else { s + "w" }).len();
+        t = t + ((match (j) { 1 => s, _ => s + "v" })[1] as i32);
+        var b = if (j > 1) { s } else { s + "x" };
+        var m = match (j) { 0 => s + "m", _ => s };
+        t = t + b.len() + m.len();
+        t = t + rets(j).len();
+        var r = retm(j);
+        t = t + r.len();
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
+const condAliasStructSrc = `struct P { x: i32, y: i32 }
+function px(p: P): i32 { return p.x; }
+function mkp(j: i32): P { return P { x: j, y: 4 }; }
+function retp(j: i32): P { var p = P { x: j, y: 7 }; return if (j > 1) { p } else { mkp(j) }; }
+function retq(j: i32): P { var p = P { x: j, y: 8 }; return match (j) { 0 => P { x: 1, y: j }, _ => p }; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var p = P { x: j, y: 2 };
+        t = t + px(if (j > 1) { p } else { mkp(j) });
+        t = t + px(match (j) { 0 => P { x: 6, y: j }, _ => p });
+        t = t + (if (j > 1) { p } else { P { x: 5, y: j } }).y;
+        t = t + (match (j) { 1 => p, _ => mkp(j) }).x;
+        var q = if (j > 0) { p } else { mkp(j) };
+        var w = match (j) { 2 => p, _ => P { x: 9, y: j } };
+        t = t + q.y + w.x;
+        t = t + retp(j).y;
+        var rp = retq(j);
+        t = t + rp.x;
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
+// The fresh dyn arm is a local the arm declares and yields; a dyn producer's
+// result is not provably owned yet (#10572), and neither is a dyn local
+// re-declared in a loop body, so the bindings sit in functions of their own.
+const condAliasDynSrc = `trait Shape { function area(self: Self): i32; }
+struct Square { side: i32 }
+impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
+function measure(d: dyn Shape): i32 { return d.area(); }
+function bind_one(j: i32): i32 {
+    var d: dyn Shape = Square { side: j + 2 };
+    var e: dyn Shape = if (j > 1) { d } else { var z: dyn Shape = Square { side: j }; z };
+    return e.area() + d.area();
+}
+function bind_two(j: i32): i32 {
+    var d: dyn Shape = Square { side: j + 2 };
+    var d2: dyn Shape = Square { side: j + 5 };
+    var e: dyn Shape = match (j) { 0 => d2, _ => d };
+    return e.area() + measure(if (j > 1) { d } else { d2 });
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    var d: dyn Shape = Square { side: 3 + t };
+    while (j < 3) {
+        t = t + measure(if (j > 1) { d } else { var z: dyn Shape = Square { side: j }; z });
+        t = t + measure(match (j) { 0 => d, _ => { var y: dyn Shape = Square { side: j + 1 }; y } });
+        t = t + bind_one(j) + bind_two(j);
+        j = j + 1;
+    }
+    return (t + d.area()) % 101;
+}
+`
+
+// The yielded locals outlive every conditional that yields them, and a struct
+// parameter yielded at a call is retained and released there.
+const condAliasOutlivesSrc = `struct P { x: i32, y: i32 }
+function slen(s: string): i32 { return s.len(); }
+function px(p: P): i32 { return p.x; }
+function tail(): string { return "xyz"; }
+function mkp(j: i32): P { return P { x: j, y: 4 }; }
+function viap(a: P, j: i32): i32 { return px(if (j > 1) { a } else { mkp(j) }); }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    var s = "abc" + tail();
+    var p = P { x: 9, y: 2 };
+    while (j < 3) {
+        var g = if (j > 1) { s } else { s + "g" };
+        var pg = if (j > 0) { p } else { mkp(j) };
+        t = t + g.len() + pg.x + s.len() + p.y;
+        t = t + viap(p, j);
+        j = j + 1;
+    }
+    return (t + s.len() + p.y + slen(s) + px(p)) % 101;
+}
+`
+
+// A block of a bare name, `{ a }`, is the plain read of `a`: no arm store
+// retains it, so no consumer may release it. Releasing it freed `a`'s buffer
+// under the local.
+const condBareNameBlockSrc = `function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 3) {
+        var a = [j, 7];
+        t = t + sum({ a });
+        t = t + ({ a }).len() + ({ a })[1];
+        var b = { a };
+        t = t + a[0] + a.len() + b[1];
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
+// Not provably owned, so each has to leak rather than be released under its
+// source: a parameter yielded by a conditional reads as escaping to the borrow
+// inference (#10571), a dyn producer's arm is not counted (#10572), and a
+// block hands its tail alias on without a count of its own.
+const condNotOwnedSrc = `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 struct Rect { w: i32, h: i32, tag: string }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
 impl Shape for Rect { function area(self: Self): i32 { return self.w * self.h + self.tag.len(); } }
 function measure(d: dyn Shape): i32 { return d.area(); }
 function slen(s: string): i32 { return s.len(); }
-function px(p: P): i32 { return p.x; }
 function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
 function mk(j: i32): i32[] { return [j, j, j]; }
 function via_param(a: i32[], b: i32[], c: boolean): i32 { return sum(if (c) { a } else { b }); }
+function via_str(a: string, j: i32): i32 { return slen(if (j > 1) { a } else { a + "z" }); }
 function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     var s = "abc" + "def";
-    var p = P { x: 9, y: 2 };
     var d1: dyn Shape = Square { side: 3 };
     var t: i32 = 0;
     var j: i32 = 0;
     while (j < 3) {
-        t = t + slen(if (j > 1) { s } else { s + "x" });
-        t = t + slen(match (j) { 0 => s, _ => s + "y" });
-        t = t + slen({ var q = s; q });
-        t = t + (if (j > 1) { s } else { s + "x" }).len();
-        t = t + px(if (j > 1) { p } else { P { x: 3, y: j } });
-        t = t + px(match (j) { 0 => p, _ => P { x: 7, y: j } });
         t = t + measure(if (j > 0) { d1 } else { mkd(j) });
         t = t + measure(match (j) { 0 => mkd(j), _ => d1 });
         t = t + via_param([j], mk(j), j > 1);
+        t = t + via_str(s, j);
+        t = t + slen({ var q = s; q });
         j = j + 1;
     }
-    return (t + s.len() + p.x + d1.area()) % 101;
+    return (t + s.len() + d1.area()) % 101;
 }
 `
 
@@ -193,7 +319,12 @@ var condReleaseCases = []struct {
 	{"struct", condStructReleaseSrc, 89, true},
 	{"struct_array_locals", condStructArrLocalsSrc, 88, true},
 	{"element_handout", condElemHandoutSrc, 75, true},
-	{"not_owned", condNotOwnedSrc, 84, false},
+	{"alias_string", condAliasStrSrc, 34, true},
+	{"alias_struct", condAliasStructSrc, 65, true},
+	{"alias_dyn", condAliasDynSrc, 12, true},
+	{"alias_outlives", condAliasOutlivesSrc, 95, true},
+	{"bare_name_block", condBareNameBlockSrc, 81, true},
+	{"not_owned", condNotOwnedSrc, 98, false},
 }
 
 func TestSelfHostConditionalValueReleaseX86_64(t *testing.T) {

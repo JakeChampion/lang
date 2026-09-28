@@ -7379,13 +7379,18 @@ function emit_i32_minmax_slots(p: LowerState, aslot: i32, bslot: i32, is_max: bo
 // primitive type name; the box pointer becomes the `dyn` value. op_dyn_dispatch
 // then reads offset 0 and, on a primitive arm, reloads the value from offset 8.
 pub function lower_dyn_arg(e: ast.Expr, s: LowerState): LowerState {
+    return lower_dyn_arg_counted(e, s, false);
+}
+
+// lower_dyn_arg_counted is lower_dyn_arg retaining the value first when
+// `retain` is set, so a boxed cell holds a counted reference to it.
+function lower_dyn_arg_counted(e: ast.Expr, s: LowerState, retain: boolean): LowerState {
     var prim: string = expr_recv_prim_type(e, s);
-    if (prim == "") {
-        // Struct / enum concrete — already shape-carrying, no box.
-        return lower_expr(e, s);
-    }
     var ls: LowerState = lower_expr(e, s);
     if (!ls.ok) { return ls; }
+    if (retain) { ls = ls.retain_tos("cond-alias-leaf"); }
+    // A struct / enum concrete is already shape-carrying, so it takes no box.
+    if (prim == "") { return ls; }
     return ls.emit(ir.op_dyn_box(prim));
 }
 
@@ -18635,19 +18640,26 @@ function vb_body_leaves(body: ast.Stmt[], acc: ast.Expr[]): (boolean, ast.Expr[]
 }
 
 // vb_leaves_fresh_str: every live leaf of a value-block initializer is a fresh
-// heap string (str_local_binding_is_fresh), or with `lits` also a literal, and
-// at least one leaf is not a literal when `lits` is false.
+// heap string (str_local_binding_is_fresh), a local the block does not bind,
+// which its arm retains, or with `lits` also a literal. At least one leaf is a
+// literal when `lits` is set, and a fresh string otherwise.
 function vb_leaves_fresh_str(init: ast.Expr, lits: boolean): boolean {
     var leaves: ast.Expr[] = vb_live_leaves(init);
-    if (leaves.len() == 0) { return false; }
+    var body: ast.Stmt[] = cond_value_body(init);
     var any_lit: boolean = false;
+    var any_fresh: boolean = false;
     for lf in leaves {
         match (lf) {
             ast.ExprString(_) => { any_lit = true; },
-            _ => { if (!str_local_binding_is_fresh(lf)) { return false; } }
+            ast.ExprIdent(id) => { if (body_declares_name(body, id.name)) { return false; } },
+            _ => {
+                if (!str_local_binding_is_fresh(lf)) { return false; }
+                any_fresh = true;
+            }
         }
     }
-    return any_lit == lits;
+    if (lits) { return any_lit; }
+    return !any_lit && any_fresh;
 }
 
 // ── owned if / match / block values (#10438) ────────────────────────────────
@@ -18657,8 +18669,48 @@ function vb_leaves_fresh_str(init: ast.Expr, lits: boolean): boolean {
 // `.len()` receiver, an index or field read — is the only place it can be
 // released. That is sound only when the value is owned whichever arm ran:
 // every arm yields a reference the arm retained or a value that is already
-// owned, native's countedConditionalType. The arms retain an array local and
-// nothing else, so a string, struct or dyn arm has to be fresh.
+// owned, native's countedConditionalType. An arm retains the local it yields
+// when that local is an array, string, struct or dyn value declared outside
+// the conditional (native's emitCountedYield); any other arm has to be fresh.
+
+// cond_alias_leaf_retains: `e` names a string, struct or dyn value declared
+// outside the conditional whose value temp is `tslot` — a local, a parameter or
+// a const — which its arm retains.
+function cond_alias_leaf_retains(e: ast.Expr, tslot: i32, s: LowerState): boolean {
+    if let ast.ExprIdent(id) = e {
+        var slot: i32 = s.slot_of(id.name);
+        if (slot >= tslot || s.is_arr_slot(slot)) { return false; }
+        return slot_holds_counted_box(s, slot) || expr_is_str(e, s) || decl_is_struct(s.frame.structs, expr_struct_type(e, s));
+    }
+    return false;
+}
+
+// slot_holds_counted_box: the slot holds one string, struct or dyn box.
+function slot_holds_counted_box(s: LowerState, slot: i32): boolean {
+    if (s.is_arr_slot(slot)) { return false; }
+    if (s.is_str_slot(slot)) { return true; }
+    var ty: string = s.struct_type_of_slot(slot);
+    return decl_is_struct(s.frame.structs, ty) || is_dyn_value_name(ty);
+}
+
+// is_cond_value_temp: `slot` is the temp an if, match or block value is
+// stored into.
+function is_cond_value_temp(s: LowerState, slot: i32): boolean {
+    var nm: string = s.locals[slot].slot_name;
+    return util.contains(nm, "$ife") || util.contains(nm, "$vbi");
+}
+
+// cond_outer_leaf_slot is the slot of the local an arm's bare-ident leaf names
+// when the conditional's body does not bind that name, so the arm retained it
+// (cond_alias_leaf_retains); -1 otherwise.
+function cond_outer_leaf_slot(lf: ast.Expr, body: ast.Stmt[], s: LowerState): i32 {
+    if let ast.ExprIdent(id) = lf {
+        if (body_declares_name(body, id.name)) { return 0 - 1; }
+        var slot: i32 = s.slot_of(id.name);
+        if (slot >= 0 && slot_holds_counted_box(s, slot)) { return slot; }
+    }
+    return 0 - 1;
+}
 
 // cond_value_body is the body of an if-, match- or block value, or empty.
 function cond_value_body(e: ast.Expr): ast.Stmt[] {
@@ -18666,10 +18718,21 @@ function cond_value_body(e: ast.Expr): ast.Stmt[] {
     if let ast.ExprCall(c) = e {
         if let ast.ExprLambda(lam) = c.callee {
             if (c.args.len() != 0 || lam.params.len() != 0) { return none; }
+            if (block_of_bare_name(lam)) { return none; }
             if (lam.origin == parser.ORIGIN_BLOCK || lam.origin == parser.ORIGIN_IF_EXPR || lam.origin == parser.ORIGIN_MATCH_EXPR) { return lam.body; }
         }
     }
     return none;
+}
+
+// block_of_bare_name: `{ x }`. It lowers to the plain read of x, with no arm
+// store to retain at, so it is not a conditional value.
+function block_of_bare_name(lam: ast.ExprLambda): boolean {
+    if (lam.origin != parser.ORIGIN_BLOCK || lam.body.len() != 1) { return false; }
+    if let ast.StmtReturn(r) = lam.body[0] {
+        if let ast.ExprIdent(_) = r.value { return true; }
+    }
+    return false;
 }
 
 // cond_value_leaves lists what such a body can yield: its final statement's
@@ -18681,6 +18744,54 @@ function cond_value_leaves(body: ast.Stmt[]): ast.Expr[] {
     let (ok, leaves) = vb_stmt_leaves(body[body.len() - 1], none);
     if (!ok) { return none; }
     return leaves;
+}
+
+// cond_yield_arms lists the bodies whose final `return` yields one of
+// cond_value_leaves(body), in the same order: `body` itself for a block's
+// tail, each live if or match arm otherwise. Empty for a shape the walk does
+// not know.
+function cond_yield_arms(body: ast.Stmt[]): ast.Stmt[][] {
+    var none: ast.Stmt[][] = [];
+    if (body.len() == 0) { return none; }
+    let (ok, arms) = cond_stmt_arms(body, none);
+    if (!ok) { return none; }
+    return arms;
+}
+
+// cond_stmt_arms appends the arms of the value statement ending `body`.
+function cond_stmt_arms(body: ast.Stmt[], acc: ast.Stmt[][]): (boolean, ast.Stmt[][]) {
+    match (body[body.len() - 1]) {
+        ast.StmtReturn(_) => { return (true, acc.append(body)); },
+        ast.StmtIf(f) => {
+            let (tok, a) = cond_branch_arms(f.then_body, acc);
+            if (!tok) { return (false, acc); }
+            return cond_branch_arms(f.else_body, a);
+        },
+        ast.StmtMatch(m) => {
+            var a: ast.Stmt[][] = acc;
+            for marm in m.arms {
+                let (aok, na) = cond_branch_arms(marm.body, a);
+                if (!aok) { return (false, acc); }
+                a = na;
+            }
+            return (true, a);
+        },
+        _ => { return (false, acc); }
+    }
+    return (false, acc);
+}
+
+// cond_branch_arms: one branch body. A diverging branch yields nothing.
+function cond_branch_arms(body: ast.Stmt[], acc: ast.Stmt[][]): (boolean, ast.Stmt[][]) {
+    if (body.len() == 0) { return (false, acc); }
+    if (value_arm_diverges(body)) { return (true, acc); }
+    return cond_stmt_arms(body, acc);
+}
+
+// arm_yield is the value an arm from cond_yield_arms returns.
+function arm_yield(arm: ast.Stmt[]): ast.Expr {
+    if let ast.StmtReturn(r) = arm[arm.len() - 1] { return r.value; }
+    return parser.e_unknown("");
 }
 
 // cond_temps_bare: no match-expression temp added from slot `from` on is
@@ -18767,22 +18878,111 @@ function cond_tail_var_init(body: ast.Stmt[], name: string): ast.Expr {
     return parser.e_unknown("");
 }
 
+// cond_leaf_credit_view is `body` with each bare `name` that an if, match or
+// block value yields, without binding `name` itself, read as an unknown value:
+// the arm retains that local (cond_alias_leaf_retains), so the yield is a
+// counted share of a string, struct or dyn local rather than an escape.
+function cond_leaf_credit_view(body: ast.Stmt[], name: string): ast.Stmt[] {
+    var unyield = (e: ast.Expr): ast.Expr => {
+        var vb: ast.Stmt[] = cond_value_body(e);
+        if (vb.len() == 0 || body_declares_name(vb, name)) { return e; }
+        if let ast.ExprCall(c) = e {
+            if let ast.ExprLambda(lam) = c.callee {
+                return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lam, body: cond_body_unyield(lam.body, name) } };
+            }
+        }
+        return e;
+    };
+    return astwalk.map_stmts(body, unyield);
+}
+
+// cond_yielded_names lists every bare name an if, match or block value in
+// `body` yields.
+function cond_yielded_names(body: ast.Stmt[]): string[] {
+    var acc: string[] = [];
+    for st in body { acc = astwalk.fold_stmt_nodes(st, acc, no_stmt_strs, cond_yields_at, astwalk.descend_all); }
+    return acc;
+}
+
+function cond_yields_at(e: ast.Expr, own acc: string[]): string[] {
+    for lf in cond_value_leaves(cond_value_body(e)) {
+        if let ast.ExprIdent(id) = lf { acc = push_str_unique(acc, id.name); }
+    }
+    return acc;
+}
+
+// cond_credit_body is the body a string, struct or dyn local's escape gate
+// reads: cond_leaf_credit_view when a conditional yields `name` (it is in
+// `yielded`, from cond_yielded_names), else `body` itself.
+function cond_credit_body(body: ast.Stmt[], name: string, yielded: string[]): ast.Stmt[] {
+    if (util.index_of_str(yielded, name) < 0) { return body; }
+    return cond_leaf_credit_view(body, name);
+}
+
+// cond_body_unyield replaces a bare `name` in the positions cond_value_leaves
+// reads with an unknown value.
+function cond_body_unyield(body: ast.Stmt[], name: string): ast.Stmt[] {
+    if (body.len() == 0 || value_arm_diverges(body)) { return body; }
+    var out: ast.Stmt[] = value_arm_leading(body);
+    match (body[body.len() - 1]) {
+        ast.StmtReturn(r) => {
+            if let ast.ExprIdent(id) = r.value {
+                if (id.name == name) { return out.append(ast.StmtReturn { ...r, value: parser.e_unknown("") }); }
+            }
+        },
+        ast.StmtIf(f) => { return out.append(ast.StmtIf { ...f, then_body: cond_body_unyield(f.then_body, name), else_body: cond_body_unyield(f.else_body, name) }); },
+        ast.StmtMatch(m) => {
+            var arms: ast.MatchArm[] = [];
+            for arm in m.arms { arms = arms.append(ast.MatchArm { ...arm, body: cond_body_unyield(arm.body, name) }); }
+            return out.append(ast.StmtMatch { ...m, arms: arms });
+        },
+        _ => {}
+    }
+    return body;
+}
+
+// cond_moved_tail_init is the initializer of the block tail local `lf` names
+// (cond_tail_var_init), or ExprUnknown. A bare-local initializer is refused:
+// the block hands that local's box on without a count of its own.
+function cond_moved_tail_init(lf: ast.Expr, body: ast.Stmt[]): ast.Expr {
+    if let ast.ExprIdent(id) = lf {
+        var init: ast.Expr = cond_tail_var_init(body, id.name);
+        if let ast.ExprIdent(_) = init { return parser.e_unknown(""); }
+        return init;
+    }
+    return parser.e_unknown("");
+}
+
+// counted_box_struct_type is the struct type a retained struct or dyn local's
+// release walks: its own type, or for a dyn local the concrete its "DYN:"
+// credit names. "" when neither is known.
+function counted_box_struct_type(s: LowerState, slot: i32): string {
+    var ty: string = s.struct_type_of_slot(slot);
+    if (is_dyn_value_name(ty)) { ty = dyn_reclaim_concrete_of(s, s.reclaim_site_key(slot)); }
+    if (decl_is_struct(s.frame.structs, ty)) { return ty; }
+    return "";
+}
+
 // cond_owned_str: `e` is a string-valued if, match or block whose every leaf
-// is a fresh string.
+// is a fresh string or a string local its arm retained.
 function cond_owned_str(e: ast.Expr, s: LowerState): boolean {
     var body: ast.Stmt[] = cond_value_body(e);
-    var leaves: ast.Expr[] = cond_value_leaves(body);
-    if (leaves.len() == 0) { return false; }
-    for lf in leaves { if (!cond_leaf_owned_str(lf, body, s)) { return false; } }
+    var arms: ast.Stmt[][] = cond_yield_arms(body);
+    if (arms.len() == 0) { return false; }
+    for arm in arms { if (!cond_leaf_owned_str(arm_yield(arm), arm, body, s)) { return false; } }
     return true;
 }
 
-function cond_leaf_owned_str(lf: ast.Expr, body: ast.Stmt[], s: LowerState): boolean {
+// cond_leaf_owned_str: the leaf `lf` of `arm`, one arm of the conditional
+// with body `body`, is a fresh string or a string local the arm retained.
+function cond_leaf_owned_str(lf: ast.Expr, arm: ast.Stmt[], body: ast.Stmt[], s: LowerState): boolean {
     match (lf) {
-        ast.ExprIdent(id) => {
-            var init: ast.Expr = cond_tail_var_init(body, id.name);
+        ast.ExprIdent(_) => {
+            var oslot: i32 = cond_outer_leaf_slot(lf, body, s);
+            if (oslot >= 0) { return s.is_str_slot(oslot); }
+            var init: ast.Expr = cond_moved_tail_init(lf, arm);
             if let ast.ExprUnknown(_) = init { return false; }
-            return cond_leaf_owned_str(init, body, s);
+            return cond_leaf_owned_str(init, arm, body, s);
         },
         ast.ExprString(_) => { return true; },
         ast.ExprCall(_) => { if (cond_value_body(lf).len() > 0) { return cond_owned_str(lf, s); } },
@@ -18792,30 +18992,32 @@ function cond_leaf_owned_str(lf: ast.Expr, body: ast.Stmt[], s: LowerState): boo
 }
 
 // cond_owned_struct is the struct type of an if, match or block whose every
-// leaf is a fresh box of that one type — a base-less literal or a strict-fresh
-// producer's result — or "".
+// leaf is a box of that one type it owns — a base-less literal, a strict-fresh
+// producer's result, or a struct or dyn local its arm retained — or "".
 function cond_owned_struct(e: ast.Expr, s: LowerState): string {
     var body: ast.Stmt[] = cond_value_body(e);
-    var leaves: ast.Expr[] = cond_value_leaves(body);
-    if (leaves.len() == 0) { return ""; }
+    var arms: ast.Stmt[][] = cond_yield_arms(body);
+    if (arms.len() == 0) { return ""; }
     var ty: string = "";
-    for lf in leaves {
-        var lt: string = cond_leaf_owned_struct(lf, body, s);
+    for arm in arms {
+        var lt: string = cond_leaf_owned_struct(arm_yield(arm), arm, body, s);
         if (lt == "" || (ty != "" && lt != ty)) { return ""; }
         ty = lt;
     }
     return ty;
 }
 
-function cond_leaf_owned_struct(lf: ast.Expr, body: ast.Stmt[], s: LowerState): string {
+function cond_leaf_owned_struct(lf: ast.Expr, arm: ast.Stmt[], body: ast.Stmt[], s: LowerState): string {
     match (lf) {
         ast.ExprStructLit(sl) => {
             if (!sl.has_base) { return sl.type_name; }
         },
-        ast.ExprIdent(id) => {
-            var init: ast.Expr = cond_tail_var_init(body, id.name);
+        ast.ExprIdent(_) => {
+            var oslot: i32 = cond_outer_leaf_slot(lf, body, s);
+            if (oslot >= 0) { return counted_box_struct_type(s, oslot); }
+            var init: ast.Expr = cond_moved_tail_init(lf, arm);
             if let ast.ExprUnknown(_) = init { return ""; }
-            return cond_leaf_owned_struct(init, body, s);
+            return cond_leaf_owned_struct(init, arm, body, s);
         },
         ast.ExprCall(c) => {
             if (cond_value_body(lf).len() > 0) { return cond_owned_struct(lf, s); }
@@ -20794,7 +20996,7 @@ function lower_value_tail(body: ast.Stmt[], tslot: i32, s: LowerState): LowerSta
             // in owns the reference its exit sweep releases, and the source's
             // next update finds the buffer shared. A fresh producer (a literal,
             // a slice, a call) is a move and stays as it is.
-            if (ifexpr_leaf_is_array_read(r.value, cs)) { cs = cs.retain_tos("ifexpr-alias-leaf"); }
+            if (ifexpr_leaf_is_array_read(r.value, cs) || cond_alias_leaf_retains(r.value, tslot, cs)) { cs = cs.retain_tos("ifexpr-alias-leaf"); }
             return cs.emit(ir.op_store_local(tslot));
         },
         ast.StmtIf(nested) => {
@@ -24902,8 +25104,16 @@ function lower_stmt_var_dyn_scalar(v: ast.StmtVar, s: LowerState): LowerState {
     // A "string" payload is excluded: its cell holds a POINTER whose box may
     // be borrowed, and the sweep's string tag frees that box too. A string
     // LITERAL init keeps the analysis-time credit that proves it fresh.
-    if (dvprim.len() > 0 && dvprim != "string" && reclaim_has(dvb.frame.reclaimable_names, "DYNCAND:", reclaim_site_key_of(v.name, v.line, v.col))) {
-        dvb = LowerState { ...dvb, frame: LowerFrame { ...dvb.frame, reclaimable_names: dvb.frame.reclaimable_names.append("DYN:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + dvprim) } };
+    // An if, match or block value owned whichever arm ran holds its box at a
+    // count of its own. The concrete must have no fields to walk: the arm's
+    // retain may leave this box shared with the local it yielded.
+    var dvtag: string = dvprim;
+    if (dvprim.len() == 0) {
+        dvtag = cond_owned_struct(v.init, dvs);
+        if (!struct_is_scalar_only(dvs.frame.structs, dvtag)) { dvtag = ""; }
+    }
+    if (dvtag.len() > 0 && dvtag != "string" && reclaim_has(dvb.frame.reclaimable_names, "DYNCAND:", reclaim_site_key_of(v.name, v.line, v.col))) {
+        dvb = LowerState { ...dvb, frame: LowerFrame { ...dvb.frame, reclaimable_names: dvb.frame.reclaimable_names.append("DYN:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + dvtag) } };
     }
     return dvb.emit(ir.op_store_local(dvslot));
 }
@@ -25389,9 +25599,10 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // instead of coercing the whole grown ARRAY into a single dyn cell
     // [shape, array] and storing THAT into ds (which mis-typed ds and made
     // every later `ds[i].method()` read a garbage self → 0 / SIGSEGV).
+    var cond_leaf_inc: boolean = is_cond_value_temp(s, slot) && cond_alias_leaf_retains(a.value, slot, s);
     var asg_dty: string = s.struct_type_of_slot(slot);
     if (asg_dty.len() > 4 && slice_unchecked(asg_dty, 0, 4) == "dyn " && !is_array_type_name(asg_dty) && !s.is_arr_slot(slot)) {
-        var das: LowerState = lower_dyn_arg(a.value, s);
+        var das: LowerState = lower_dyn_arg_counted(a.value, s, cond_leaf_inc);
         if (!das.ok) { return das; }
         return das.emit(ir.op_store_local(slot));
     }
@@ -25788,6 +25999,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     var se: LowerState = lower_expr(a.value, aas);
     se = se.with_selfrebind("");
     if (!se.ok) { return se; }
+    if (cond_leaf_inc) { return se.retain_tos("cond-alias-leaf").emit(ir.op_store_local(slot)); }
     // The COUNTED struct alias reassign (`keep = p`) retains HERE rather than via
     // emit_arr_store's alias_inc, because the struct classes return earlier —
     // emit_field_reclaim_store and the snapshot/deep paths take no alias_inc
@@ -39435,9 +39647,24 @@ function str_return_is_fresh_reg_in(e: ast.Expr, reg: string[], body: ast.Stmt[]
     if (str_return_is_fresh_reg(e, reg, body, params)) { return true; }
     match (e) {
         ast.ExprIdent(id) => { return str_local_is_fresh_ret(body, id.name, reg, params); },
+        ast.ExprCall(_) => { return cond_str_return_counted(e, reg, body, params); },
         _ => {}
     }
     return false;
+}
+
+// cond_str_return_counted: `e` is an if, match or block value each of whose
+// leaves is a fresh string or a local of the function it does not bind, which
+// its arm retains, so the caller receives a count of its own.
+function cond_str_return_counted(e: ast.Expr, reg: string[], body: ast.Stmt[], params: ast.ParamDecl[]): boolean {
+    var vb: ast.Stmt[] = cond_value_body(e);
+    var leaves: ast.Expr[] = cond_value_leaves(vb);
+    if (leaves.len() == 0) { return false; }
+    for lf in leaves {
+        var local: boolean = cond_leaf_is_outer_local(lf, vb, body, []);
+        if (!local && !str_return_is_fresh_reg_in(lf, reg, body, params)) { return false; }
+    }
+    return true;
 }
 
 function str_return_is_fresh_reg(e: ast.Expr, reg: string[], body: ast.Stmt[], params: ast.ParamDecl[]): boolean {
@@ -40307,6 +40534,70 @@ function credit_unannotated_fresh_ret(v: ast.StmtVar, body: ast.Stmt[], params: 
     var rty: string = sig_reg_value_of(struct_ret_fns, key);
     if (rty.len() == 0 || !decl_is_struct(structs, rty) || !decl_is_leaksafe(structs, rty)) { return acc; }
     return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col));
+}
+
+// collect_cond_struct_names: every `var q = <if or match value>` that owns its
+// box whichever arm ran (cond_init_struct_type), recursing through nested
+// blocks like its siblings.
+function collect_cond_struct_names(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                var ct: string = cond_init_struct_type(v.init, body, params, structs, fresh_ret, struct_ret_fns);
+                if (ct.len() > 0 && (v.type_name.len() == 0 || v.type_name == ct)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+            },
+            ast.StmtIf(f) => { a = collect_cond_struct_names(f.then_body, body, params, structs, fresh_ret, struct_ret_fns, a); a = collect_cond_struct_names(f.else_body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtWhile(w) => { a = collect_cond_struct_names(w.body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtFor(fo) => { a = collect_cond_struct_names(fo.body, body, params, structs, fresh_ret, struct_ret_fns, a); },
+            ast.StmtMatch(m) => { for arm in m.arms { a = collect_cond_struct_names(arm.body, body, params, structs, fresh_ret, struct_ret_fns, a); } },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// cond_init_struct_type is the leak-safe struct type an if or match value
+// initializer owns whichever arm ran, or "". Every leaf is a fresh box of that
+// type (cond_fresh_leaf_struct_type) or a local of the function the value does
+// not bind, which its arm retains; a fresh leaf names the type.
+function cond_init_struct_type(init: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg): string {
+    var vb: ast.Stmt[] = cond_value_body(init);
+    var ty: string = "";
+    for lf in vb_live_leaves(init) {
+        var lt: string = cond_fresh_leaf_struct_type(lf, body, params, fresh_ret, struct_ret_fns);
+        if (lt.len() == 0 && !cond_leaf_is_outer_local(lf, vb, body, params)) { return ""; }
+        if (lt.len() > 0 && ty.len() > 0 && lt != ty) { return ""; }
+        if (lt.len() > 0) { ty = lt; }
+    }
+    if (!decl_is_struct(structs, ty) || !decl_is_leaksafe(structs, ty)) { return ""; }
+    return ty;
+}
+
+// cond_fresh_leaf_struct_type is the type of a base-less struct literal leaf
+// or a strict-fresh producer's result, or "".
+function cond_fresh_leaf_struct_type(lf: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], fresh_ret: string[], struct_ret_fns: SigReg): string {
+    match (lf) {
+        ast.ExprStructLit(sl) => { if (!sl.has_base) { return sl.type_name; } },
+        ast.ExprCall(c) => {
+            if let ast.ExprIdent(cid) = c.callee {
+                if (util.index_of_str(fresh_ret, cid.name) >= 0 && !body_declares_name(body, cid.name) && !name_is_param(params, cid.name)) {
+                    return sig_reg_value_of(struct_ret_fns, cid.name);
+                }
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// cond_leaf_is_outer_local: `lf` names a local or parameter of the function
+// that the conditional with body `vb` does not bind.
+function cond_leaf_is_outer_local(lf: ast.Expr, vb: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[]): boolean {
+    if let ast.ExprIdent(id) = lf {
+        return !body_declares_name(vb, id.name) && (body_declares_name(body, id.name) || name_is_param(params, id.name));
+    }
+    return false;
 }
 
 function collect_fresh_ret_call_names(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, fresh_ret: string[], struct_ret_fns: SigReg, acc: string[]): string[] {
@@ -43787,6 +44078,8 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // whichever return produced it, and sinkshare_counted_handbacks below
     // gates its field walk for the case where that box is the argument's.
     fresh = collect_fresh_ret_call_names(body, body, params, structs, append_all(fresh_ret, cntret), struct_ret_fns, fresh);
+    var condfresh: string[] = collect_cond_struct_names(body, body, params, structs, fresh_ret, struct_ret_fns, []);
+    fresh = append_all(fresh, condfresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
@@ -43801,6 +44094,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // guarantee.
     out = reclaimable_alias_sink_share(body, borrowable, fresh, recv_borrow, out);
     out = sinkshare_counted_handbacks(out, body, params, structs, cnt_handback);
+    out = sinkshare_cond_shares(out, body, condfresh);
     // "NODEEP:" markers (#3425 residual miscompile): the exit/return/precise
     // sweeps' DEEP field drop (emit_struct_field_drops → __struct_drop_<T>) is
     // sound only while the dead box still OWNS its rc fields. A method-RECEIVER
@@ -46206,8 +46500,22 @@ function body_has_uncounted_return(stmts: ast.Stmt[], fn: parser.FuncDecl, struc
 function counted_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab, arr_fresh: string[], fwd: string[], sfok: string[], acc: string[]): boolean {
     if (return_value_is_strictfresh_struct(e, structs, fn.body, arr_fresh, fwd, fn.params, sfok)) { return true; }
     if let ast.ExprIdent(rid) = e { return counted_handback_param(fn, rid.name); }
+    var vb: ast.Stmt[] = cond_value_body(e);
+    if (vb.len() > 0) { return cond_leaves_counted(vb, fn, structs, arr_fresh, fwd, sfok, acc); }
     var key: string = counted_forward_key(e, fn, structs);
     return key.len() > 0 && util.index_of_str(acc, key) >= 0;
+}
+
+// cond_leaves_counted: every leaf of the if, match or block value with body
+// `vb` is a counted return, or a local of `fn` the value does not bind, which
+// its arm retains.
+function cond_leaves_counted(vb: ast.Stmt[], fn: parser.FuncDecl, structs: StructTab, arr_fresh: string[], fwd: string[], sfok: string[], acc: string[]): boolean {
+    var leaves: ast.Expr[] = cond_value_leaves(vb);
+    if (leaves.len() == 0) { return false; }
+    for lf in leaves {
+        if (!cond_leaf_is_outer_local(lf, vb, fn.body, []) && !counted_ret_value(lf, fn, structs, arr_fresh, fwd, sfok, acc)) { return false; }
+    }
+    return true;
 }
 // counted_handback_param: `name` is a non-own parameter or the receiver of
 // `fn`, of its return type, never reassigned or redeclared in the body — the
@@ -81470,6 +81778,7 @@ while (sei < scenums.len()) {
 }
 
 function reclaimable_string(body: ast.Stmt[], borrowable: string[], tup_ok: string[], emit_msites: string[], reassigned: string[], recv_borrow: string[], sfok: string[], str_cands: string[], strs: string[], structs: StructTab, out: string[]): string[] {
+var cyn: string[] = cond_yielded_names(body);
 var si: i32 = 0;
 while (si < strs.len()) {
     // The lists now hold BINDING-SITE keys (#7292 / #7253 step 1); the gates
@@ -81515,7 +81824,7 @@ while (si < strs.len()) {
     var sfi: i32 = 0;
     while (sfi < sfsites.len()) { str_tup_ok = str_tup_ok.append("SFLD:" + sfsites[sfi]); sfi = sfi + 1; }
     if (util.index_of_str(reassigned, snm) < 0
-        && !body_unsafe_for_tup_alias(body, snm, borrowable, str_tup_ok, recv_borrow, sal_all)) {
+        && !body_unsafe_for_tup_alias(cond_credit_body(body, snm, cyn), snm, borrowable, str_tup_ok, recv_borrow, sal_all)) {
         out = out.append("STR:" + strs[si]);
         out = credit_alias_sites(out, "STR:", sal_all);
         if (sra.len() > 0) {
@@ -81575,6 +81884,7 @@ function collect_field_read_str_names(stmts: ast.Stmt[], acc: string[]): string[
 }
 
 function reclaimable_litstr_local(body: ast.Stmt[], borrowable: string[], tup_ok: string[], lits: string[], reassigned: string[], recv_borrow: string[], str_cands: string[], strs: string[], out: string[]): string[] {
+var cyn: string[] = cond_yielded_names(body);
 var li2: i32 = 0;
 while (li2 < lits.len()) {
     var lnm: string = reclaim_site_name(lits[li2]);
@@ -81585,7 +81895,7 @@ while (li2 < lits.len()) {
     if (util.index_of_str(strs, lits[li2]) < 0
         && util.index_of_str(reassigned, lnm) < 0
         && !litstr_tostring_recv_body(body, lnm)
-        && !body_unsafe_for_tup_alias(body, lnm, borrowable, tup_ok, recv_borrow, lal)) {
+        && !body_unsafe_for_tup_alias(cond_credit_body(body, lnm, cyn), lnm, borrowable, tup_ok, recv_borrow, lal)) {
         out = out.append("STR:" + lits[li2]);
         out = credit_alias_sites(out, "STR:", lal);
         if (lra.len() > 0) { out = out.append("STRALIASSRC:" + lits[li2]); }
@@ -82047,6 +82357,7 @@ while (sa2i < sarrs2.len()) {
 }
 
 function reclaimable_dyn_struct(body: ast.Stmt[], borrowable: string[], dyns: string[], reassigned: string[], recv_borrow: string[], out: string[]): string[] {
+var cyn: string[] = cond_yielded_names(body);
 var dyi: i32 = 0;
 while (dyi < dyns.len()) {
     var dentry: string = dyns[dyi];
@@ -82059,7 +82370,7 @@ while (dyi < dyns.len()) {
     var dname: string = reclaim_site_name(dsite + "");
     if (dsite.len() > 0
         && util.index_of_str(reassigned, dname) < 0
-        && !body_unsafe_for(body, dname, borrowable, recv_borrow)) {
+        && !body_unsafe_for(cond_credit_body(body, dname, cyn), dname, borrowable, recv_borrow)) {
         if (dbar + 1 >= dentry.len()) { out = out.append("DYNCAND:" + dsite); }
         else { out = out.append("DYN:" + dentry); }
     }
@@ -82114,6 +82425,8 @@ function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string
 }
 
 function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: StructTab, out: string[]): string[] {
+var cyn: string[] = [];
+if (!plan_on) { cyn = cond_yielded_names(body); }
 var i: i32 = 0;
 while (i < fresh.len()) {
     // Borrow-AWARE escape gate (the same predicate the array reclaim uses in
@@ -82177,7 +82490,7 @@ while (i < fresh.len()) {
         st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
             && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
     }
-    else { st_esc_ok = !body_unsafe_for_alias(body, fnm, borrowable, recv_borrow, sal); }
+    else { st_esc_ok = !body_unsafe_for_alias(cond_credit_body(body, fnm, cyn), fnm, borrowable, recv_borrow, sal); }
     // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
     // Its header named the precondition itself — "family knowledge until
     // assignments carry the co-extensive retain" — and lower_stmt_assign now
@@ -82266,6 +82579,21 @@ function sinkshare_counted_handbacks(out: string[], body: ast.Stmt[], params: as
             res = push_str_unique(res, "SINKSHARE:" + out[i]);
         }
         i = i + 1;
+    }
+    return res;
+}
+// sinkshare_cond_shares marks "SINKSHARE:" on every credited struct site bound
+// from a conditional (`condsites`) and every one whose name a conditional
+// yields: the arm's retain leaves both on one box, so each walks the fields
+// only on finding rc 1.
+function sinkshare_cond_shares(out: string[], body: ast.Stmt[], condsites: string[]): string[] {
+    var yielded: string[] = cond_yielded_names(body);
+    if (yielded.len() == 0) { return out; }
+    var res: string[] = out;
+    for row in out {
+        if (row_is_bare_site(row) && (util.index_of_str(condsites, row) >= 0 || util.index_of_str(yielded, reclaim_site_name(row)) >= 0)) {
+            res = push_str_unique(res, "SINKSHARE:" + row);
+        }
     }
     return res;
 }
