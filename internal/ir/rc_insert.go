@@ -323,7 +323,9 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 
 // countedConditionalType reports an if- or match-expression whose value is an
 // owned reference whichever arm runs: emitCountedYield retains every arm that
-// yields an alias, so each remaining arm has to be owned by construction.
+// yields an alias, so each remaining arm has to be owned by construction. Both
+// sides ask needsRcIncOnAlias of the same arm node and must keep doing so; the
+// assign path's moveSites classification is a different contract.
 func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr) (ast.Type, bool) {
 	t := b.exprType(e)
 	if !b.retainsOnAlias(t) {

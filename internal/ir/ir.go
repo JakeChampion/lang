@@ -12929,8 +12929,8 @@ func (b *builder) fieldOwner(e ast.Expr) string {
 		if st, ok := x.Type.(ast.StructType); ok {
 			return st.Name
 		}
-	default:
-		// An if / match / block value: its arms share the struct type.
+	case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		// A conditional or block value: its arms share the struct type.
 		if st, ok := b.exprType(e).(ast.StructType); ok {
 			return st.Name
 		}
