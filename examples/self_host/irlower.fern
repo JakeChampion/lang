@@ -10735,6 +10735,8 @@ pub function expr_subword_kind(e: ast.Expr, s: LowerState): string {
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return ""; }
             if (b.op == "<<" || b.op == ">>") { return expr_subword_kind(b.left, s); }
+            // A u32 operand makes the result a u32 (`s32 + (b + c)`).
+            if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return ""; }
             var lk: string = expr_subword_kind(b.left, s);
             if (lk != "") { return lk; }
             return expr_subword_kind(b.right, s);
@@ -11357,14 +11359,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 },
                 _ => {}
             }
-            // An i32-returning call consumed in an i64 context (`s64 + g()`): lower
-            // the i32 result (lower_expr, the normal call path) and sign-extend to
-            // i64 instead of bailing the module to AST. The checker forbids i64 +
-            // f64/string/u32 and rejects binding a bare i32 call to an i64 (it needs
-            // an explicit `as i64`), so a call reaching this point in a valid program
-            // — width 32, not i64-returning, not the 0-arg if/match IIFE handled
-            // above — necessarily returns a signed i32. infer_expr_width gates the
-            // widen; expr_is_u32 (false for calls) leaves it sign-extended.
+            // A 32-bit-slot call consumed in an i64 context (`s64 + g()`): lower
+            // the result (lower_expr, the normal call path) and extend it to i64
+            // instead of bailing the module to AST. expr_is_u32 reads the call's
+            // checker-stamped result type: a u32 call zero-extends, an i32 call
+            // sign-extends, and a u8 call's signed extend is exact because the
+            // slot already holds 0..255.
             if (infer_expr_width(e, s) == 32) {
                 var cw: LowerState = lower_expr(e, s);
                 if (!cw.ok) { return cw; }
@@ -11385,12 +11385,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     if (!ts.ok) { return ts; }
                     return ts.emit(ir.op_tuple_get_w(tn, 64, true));
                 }
-                // An i32 tuple element `t.N` consumed in an i64 context: read the
-                // i32 element (lower_expr) and widen instead of bailing to AST.
-                if (tnt == "i32" || tnt == "u32") {
+                // A 32-bit-or-narrower tuple element `t.N` consumed in an i64
+                // context: read it (lower_expr) and widen instead of bailing to AST.
+                if (is_narrow_int_tag(tnt)) {
                     var tw: LowerState = lower_expr(e, s);
                     if (!tw.ok) { return tw; }
-                    return tw.emit(ir.op_int_extend(tnt == "u32"));
+                    return tw.emit(ir.op_int_extend(tnt != "i32"));
                 }
                 return s.fail();
             }
@@ -11403,15 +11403,14 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (!fs.ok) { return fs; }
                 return fs.emit(ir.op_struct_get_i64(fidx));
             }
-            // An i32 struct field `p.x` consumed in an i64 context (`s64 + p.x`):
-            // read the i32 field (lower_expr) and sign/zero-extend to i64 instead
-            // of bailing the module to AST. The checker forbids i64 + u32, so a
-            // plain i32 field here is signed; the u32 flag stays defensive.
+            // A 32-bit-or-narrower struct field `p.x` consumed in an i64 context
+            // (`s64 + p.x`): read the field (lower_expr) and sign/zero-extend to
+            // i64 instead of bailing the module to AST.
             var ffty: string = decl_field_type(s.frame.structs, fty, fa.field);
-            if (ffty == "i32" || ffty == "u32") {
+            if (is_narrow_int_tag(ffty)) {
                 var fw: LowerState = lower_expr(e, s);
                 if (!fw.ok) { return fw; }
-                return fw.emit(ir.op_int_extend(ffty == "u32"));
+                return fw.emit(ir.op_int_extend(ffty != "i32"));
             }
             return s.fail();
         },
@@ -11444,6 +11443,13 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
         },
         _ => { return s.fail(); }
     }
+}
+
+// is_narrow_int_tag reports whether a scalar type tag is an integer the i32
+// path reads (i32, u32, u8), which an i64 context widens; all but i32 are
+// unsigned and zero-extend.
+function is_narrow_int_tag(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "u8";
 }
 
 // str_free_call_field maps a two-arg string builtin FREE-function name to the
@@ -16305,6 +16311,9 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
         // `mk()(args)` — the callee is itself a CALL, so what it returns is a
         // function value, and every function value is an env box
         // [funcval, caps…]: dispatch env-first, the shape a closure local uses.
+        // The box carries its own count, so the temp releases the box of the
+        // previous evaluation as a rebound closure local does, and the exit
+        // sweep the last.
         ast.ExprCall(cocall) => {
             var bs: LowerState = lower_expr(c.callee, s);   // inner call -> box on TOS
             if (!bs.ok) { return bs; }
@@ -16312,7 +16321,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
             bs = bs.add_local(btmp);
             var bslot: i32 = bs.slot_of(btmp);
             bs = bs.mark_arr(bslot, true);
-            bs = bs.emit(ir.op_store_local(bslot));
+            bs = emit_arr_store_from(bs, bslot, false, arr_slot_shallow_release_ok(bs, bslot), true);
             bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
             // One declared signature drives both halves — the width each
             // argument is lowered at and the funcref type the call names.
@@ -17898,6 +17907,9 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
             // by construction rather than by two conditions agreeing (#7253).
             if (!fav_alias_inc
                     && str_field_share_read(slit.field_values[found], cfft, slit.type_name, s).len() > 0) {
+                fav_alias_inc = true;
+            }
+            if (!fav_alias_inc && clo_field_ident_counted(cfft, slit.field_values[found], slit.type_name, s)) {
                 fav_alias_inc = true;
             }
             // COMPACT: load the copied result box UNDER the value so struct_set
@@ -21539,6 +21551,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     moved_slots = returned_own_struct_param_slot(r.value, se, moved_slots);
     if (ret_enum_alias_uncounted(r.value, se, moved_slots)) { se = se.retain_tos("ret-enum-alias"); }
     if (ret_enum_param_handback(r.value, se)) { se = se.retain_tos("ret-enum-param"); }
+    if (ret_closure_uncounted(r.value, se, moved_slots)) { se = se.retain_tos("ret-borrowed-closure"); }
     se = emit_consumed_param_exit(se, r.value, true);
     se = emit_dec_sweep_except_list(se, moved_slots);
     return se.emit(ir.op_return());
@@ -21555,6 +21568,66 @@ function ret_enum_param_handback(e: ast.Expr, s: LowerState): boolean {
     var ty: string = s.struct_type_of_slot(slot);
     if let ast.ExprFieldAccess(fa) = e { ty = decl_field_type(s.frame.structs, ty, fa.field); }
     return decl_is_enum(s.frame.structs, ty);
+}
+
+// ret_closure_uncounted: a function returning a closure hands the caller a
+// counted box, so the return retains `e` unless this frame provably holds its
+// count — a fresh or call-returned box (closure_value_is_counted,
+// closure_method_call), an `own` fn parameter, a closure local the exit sweep
+// leaves to the caller, or a value local every arm fills with an owned box
+// ("CLOVAL:", owned_closure_value_locals). Anything else is a borrow, however
+// it is spelled; a missed owner leaks.
+function ret_closure_uncounted(e: ast.Expr, s: LowerState, moved: i32[]): boolean {
+    if (s.frame.cur_ret != "fn") { return false; }
+    if (closure_value_is_counted(e, s.frame.sigs.closure_fns) || closure_method_call(e, s)) { return false; }
+    if let ast.ExprIdent(id) = e {
+        var slot: i32 = s.slot_of(id.name);
+        if (slot < 0 || !s.is_closure_local(id.name)) { return !reclaim_has(s.frame.reclaimable_names, "CLOVAL:", id.name); }
+        if (slot < s.frame.n_params) { return !s.is_own_param(id.name); }
+        return !slot_list_has(moved, slot) || !arr_slot_shallow_release_ok(s, slot);
+    }
+    return true;
+}
+
+// closure_method_call: `e` is `x.m(…)` where `m` is a method of x's struct type
+// declared to return a closure, so its own return hands back a counted box.
+function closure_method_call(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rty: string = expr_struct_type(fa.obj, s);
+            return rty.len() > 0 && util.index_of_str(s.frame.sigs.closure_fns, "METHCLO:" + rty + "." + fa.field) >= 0;
+        }
+    }
+    return false;
+}
+
+// CloValScan: the value locals an arm stores into, and those one store left
+// without a proven count.
+struct CloValScan { cloret: string[], stored: string[], unowned: string[] }
+
+// owned_closure_value_locals credits "CLOVAL:<name>" to each value local of a
+// closure-returning function (IfChain.value_local) whose every arm stores a
+// counted box (closure_value_is_counted), so returning it hands that count on.
+function owned_closure_value_locals(fn: parser.FuncDecl, cloret: string[], acc: string[]): string[] {
+    if (fn.ret_type != "fn") { return acc; }
+    var sc: CloValScan = CloValScan { cloret: cloret, stored: [], unowned: [] };
+    for st in fn.body { sc = astwalk.fold_stmt_spine(st, sc, cloval_scan_stmt); }
+    var out: string[] = acc;
+    for name in sc.stored {
+        if (util.index_of_str(sc.unowned, name) < 0) { out = out.append("CLOVAL:" + name); }
+    }
+    return out;
+}
+
+function cloval_scan_stmt(st: ast.Stmt, own sc: CloValScan): CloValScan {
+    if let ast.StmtAssign(a) = st {
+        if (is_arm_value_store(a)) {
+            var stored: string[] = push_str_unique(sc.stored, a.target);
+            if (closure_value_is_counted(a.value, sc.cloret)) { return CloValScan { ...sc, stored: stored }; }
+            return CloValScan { ...sc, stored: stored, unowned: push_str_unique(sc.unowned, a.target) };
+        }
+    }
+    return sc;
 }
 
 // handback_param_name: `p` for a bare `p` or a field read `p.f`, else "".
@@ -22821,12 +22894,13 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // which frees the view BOX rather than decrementing a shared buffer, so a
     // second claim here would free a box the local still owns.
     //
-    // "TUPSTRW:" is the other half of that guard, and it is about the OTHER
+    // "TUPOWNW:" is the other half of that guard, and it is about the OTHER
     // writers: this list is recorded from the var site's literal but replayed
-    // against whatever box the slot holds, so an 's' is only sound when every
-    // assign-form rebind agrees the position holds a counted owned string too
-    // (assigns_str_pos_owned). Without the credit the position records "." and
-    // the tuple's reference to the string leaks — the safe direction.
+    // against whatever box the slot holds, so a string or closure position is
+    // only sound when every assign-form rebind agrees it holds a count too
+    // (assigns_rc_pos_owned). Without the credit the position records "." and
+    // the tuple's reference leaks — the safe direction. A closure position
+    // records "a": the box is an rc-headered array, released by one rc_dec.
     if (sb.tuple_elem_tag(slot, 0).len() > 0
         && reclaim_has(sb.frame.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
         match (v.init) {
@@ -22834,7 +22908,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                 var tk: string = "";
                 var tki: i32 = 0;
                 var tkany: boolean = false;
-                var strw: boolean = reclaim_has(sb.frame.reclaimable_names, "TUPSTRW:", sb.reclaim_site_key(slot));
+                var strw: boolean = reclaim_has(sb.frame.reclaimable_names, "TUPOWNW:", sb.reclaim_site_key(slot));
                 while (tki < tinit.elements.len()) {
                     var kc: string = ".";
                     match (tinit.elements[tki]) {
@@ -22871,6 +22945,10 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                             }
                         },
                         _ => {}
+                    }
+                    if (tuple_type_elem_tag(v.type_name, tki) == "clo") {
+                        kc = tup_clo_elem_kind(tinit.elements[tki], strw, sb);
+                        if (kc != ".") { tkany = true; }
                     }
                     var fk: string = tuple_field_share_kind(tinit.elements[tki]);
                     if (fk == "a" && is_box_elem_array_type(sb.frame.structs, sb.tuple_elem_tag(slot, tki))) { fk = "b"; }
@@ -23166,6 +23244,21 @@ match (v.init) {
 }
 
     return sb;
+}
+
+// tup_clo_elem_kind: the element-kinds entry for a tuple literal's closure
+// position — "a" when the tuple holds a count there (a closure local the
+// construction retained, or a counted closure value) and every writer agrees
+// (`agreed`, the "TUPOWNW:" credit), "." otherwise.
+function tup_clo_elem_kind(e: ast.Expr, agreed: boolean, s: LowerState): string {
+    if (!agreed) { return "."; }
+    var n: string = ident_name_or_empty(e);
+    if (n.len() > 0) {
+        if (s.slot_is_rc_container(s.slot_of(n))) { return "a"; }
+        return ".";
+    }
+    if (closure_value_is_counted(e, s.frame.sigs.closure_fns)) { return "a"; }
+    return ".";
 }
 
 function mark_tuple_elem_binding(v: ast.StmtVar, slot: i32, sb: LowerState): LowerState {
@@ -25221,9 +25314,9 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
     // held before (a loop-local's previous iteration; null on the first
     // bind). Without the element retain the slot's exit dec freed the box out
     // of the array that still pointed at it. A fresh lambda / `__mkclo$` /
-    // closure-returning-call init is already owned at rc=1 and takes no
-    // retain, but it still releases the previous value wherever the sweep
-    // would have released it.
+    // closure-returning-call init carries its own count and takes no retain,
+    // but it still releases the previous value wherever the sweep would have
+    // released it, even when a call hands back the box the slot already holds.
     // An `__env[i]` capture read is not a closure-array read — its slot is an
     // "ENVCAP:" borrow the sweep skips, so it takes no retain here either.
     var clo_alias: boolean = ident_name_or_empty(v.init).len() > 0;
@@ -25232,7 +25325,7 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
         if (cixn.len() > 0 && s.is_closurearr_slot(s.slot_of(cixn))) { clo_alias = true; }
     }
     if (clo_alias) { return emit_arr_store(cvb, cslot, true, true); }
-    return emit_arr_store(cvb, cslot, false, arr_slot_shallow_release_ok(cvb, cslot));
+    return emit_arr_store_from(cvb, cslot, false, arr_slot_shallow_release_ok(cvb, cslot), true);
 }
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
@@ -29887,9 +29980,10 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
 // least one such position.
 //
 // 'a', 'S' and 'b' qualify unconditionally — an array element's release is a
-// type-fixed rc-guarded release whichever writer stored it. 's' qualifies because it is only ever
-// recorded under the "TUPSTRW:" writer agreement (assigns_str_pos_owned), which
-// is exactly the proof that every writer left a counted owned string there. 't'
+// type-fixed rc-guarded release whichever writer stored it. 's', and an 'a' at a
+// closure position, qualify because they are only ever recorded under the
+// "TUPOWNW:" writer agreement (assigns_rc_pos_owned), which is exactly the proof
+// that every writer left a counted string or closure there. 't'
 // does not: a struct position's release is a deep field drop keyed on the var
 // site's MOVE of the source, which no rebind repeats.
 function tup_kinds_rebind_safe(kinds: string): boolean {
@@ -31943,8 +32037,8 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
             //
             // Both credits are required because between them they say every
             // position of this tuple releases: "TUPE:" that the element walk is
-            // emitted at all, "TUPSW:" that no STRING position of it is left
-            // unproven (vacuously true of a tuple with no string position, whose
+            // emitted at all, "TUPSW:" that no STRING or CLOSURE position of it
+            // is left unproven (vacuously true of a tuple with neither, whose
             // array positions release whichever writer filled them).
             //
             // The credits are BINDING-SITE keyed and an assignment carries no
@@ -36592,7 +36686,9 @@ function tuple_type_is_all_scalar(t: string): boolean {
 // TYPE annotation `t`: a SCALAR-annotated position may hold ANY expression (the
 // type proves the element references nothing), and every non-scalar position
 // must hold a bare IDENT or a retained array field read (tuple_field_share_kind)
-// — the shapes whose construction retain the element-kinds walk gives back.
+// — the shapes whose construction retain the element-kinds walk gives back — or,
+// at a closure position, a counted closure (closure_value_is_counted, `cloret`
+// the closure-returning registry), whose count the walk takes over.
 // Any other rc element (an array literal, a
 // fresh concat, a union-typed call) belongs to the deep "TUPRC:"/"TUPRCS:"
 // classes, and admitting it here would put one slot in BOTH classes — the
@@ -36600,7 +36696,7 @@ function tuple_type_is_all_scalar(t: string): boolean {
 // is the class boundary, not conservatism. Annotation and literal must agree
 // on length; an un-annotated binding answers false and keeps its prior
 // admission.
-function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr): boolean {
+function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr, cloret: string[]): boolean {
     if (t.len() < 3 || slice_unchecked(t, 0, 1) != "(") { return false; }
     match (init) {
         ast.ExprTuple(tl) => {
@@ -36609,11 +36705,7 @@ function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr): boolean {
             while (n < tl.elements.len()) {
                 var tag: string = tuple_type_elem_tag(t, n);
                 if (tag == "") { return false; }
-                if (!is_scalar_type_name(tag)) {
-                    var okid: boolean = false;
-                    match (tl.elements[n]) { ast.ExprIdent(_) => { okid = true; }, _ => {} }
-                    if (!okid && tuple_field_share_kind(tl.elements[n]).len() == 0) { return false; }
-                }
+                if (!is_scalar_type_name(tag) && !tuple_mixed_elem_owned(tag, tl.elements[n], cloret)) { return false; }
                 n = n + 1;
             }
             return tuple_type_elem_tag(t, tl.elements.len()) == "";
@@ -36623,17 +36715,24 @@ function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr): boolean {
     return false;
 }
 
+// tuple_mixed_elem_owned: `e` at a non-scalar position tagged `tag` is one the
+// mixed class admits (tuple_ann_admits_fresh_mixed).
+function tuple_mixed_elem_owned(tag: string, e: ast.Expr, cloret: string[]): boolean {
+    if (ident_name_or_empty(e).len() > 0 || tuple_field_share_kind(e).len() > 0) { return true; }
+    return tag == "clo" && closure_value_is_counted(e, cloret);
+}
+
 // collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
 // scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
 // same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
 // applied by reclaimable_names_of before any is credited, so a returned / stored /
 // escaping tuple local is excluded (never freed here — moved to its new owner).
-function collect_fresh_scalar_tuple_names(stmts: ast.Stmt[], acc: string[]): string[] {
+function collect_fresh_scalar_tuple_names(stmts: ast.Stmt[], cloret: string[], acc: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts { a = collect_fresh_tuple_in_stmt(stmt, a); }
+    for stmt in stmts { a = collect_fresh_tuple_in_stmt(stmt, cloret, a); }
     return a;
 }
-function collect_fresh_tuple_in_stmt(st: ast.Stmt, acc: string[]): string[] {
+function collect_fresh_tuple_in_stmt(st: ast.Stmt, cloret: string[], acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
             // A fresh tuple local is reclaimable when its literal is all-scalar
@@ -36642,22 +36741,22 @@ function collect_fresh_tuple_in_stmt(st: ast.Stmt, acc: string[]): string[] {
             // hold any expression — `(i, 1): (i32, i32)`, and `(i + 1, ys):
             // (i32, i32[])` alike — with bare idents required at rc positions.
             var tfresh: boolean = tuple_lit_is_fresh_scalar(v.init);
-            if (!tfresh) { tfresh = tuple_ann_admits_fresh_mixed(v.type_name, v.init); }
+            if (!tfresh) { tfresh = tuple_ann_admits_fresh_mixed(v.type_name, v.init, cloret); }
             if (tfresh) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
         ast.StmtIf(iff) => {
-            var a: string[] = collect_fresh_scalar_tuple_names(iff.then_body, acc);
-            return collect_fresh_scalar_tuple_names(iff.else_body, a);
+            var a: string[] = collect_fresh_scalar_tuple_names(iff.then_body, cloret, acc);
+            return collect_fresh_scalar_tuple_names(iff.else_body, cloret, a);
         },
-        ast.StmtWhile(w) => { return collect_fresh_scalar_tuple_names(w.body, acc); },
-        ast.StmtFor(f) => { return collect_fresh_scalar_tuple_names(f.body, acc); },
+        ast.StmtWhile(w) => { return collect_fresh_scalar_tuple_names(w.body, cloret, acc); },
+        ast.StmtFor(f) => { return collect_fresh_scalar_tuple_names(f.body, cloret, acc); },
         ast.StmtMatch(m) => {
             var a: string[] = acc;
-            for arm in m.arms { a = collect_fresh_scalar_tuple_names(arm.body, a); }
+            for arm in m.arms { a = collect_fresh_scalar_tuple_names(arm.body, cloret, a); }
             return a;
         },
-        ast.StmtDefer(d) => { return collect_fresh_tuple_in_stmt(d.action, acc); },
+        ast.StmtDefer(d) => { return collect_fresh_tuple_in_stmt(d.action, cloret, acc); },
         _ => { return acc; },
     }
 }
@@ -36682,33 +36781,33 @@ function collect_fresh_tuple_in_stmt(st: ast.Stmt, acc: string[]): string[] {
 // assignment anywhere disqualifies the name and it keeps its current leak. The
 // SARR: discipline: validate each rebind rather than refuse the name for being
 // rebound at all.
-function all_assigns_fresh_scalar_tuple(stmts: ast.Stmt[], name: string, ann: string): boolean {
+function all_assigns_fresh_scalar_tuple(stmts: ast.Stmt[], name: string, ann: string, cloret: string[]): boolean {
     for stmt in stmts {
-        if (!stmt_assigns_fresh_scalar_tuple(stmt, name, ann)) { return false; }
+        if (!stmt_assigns_fresh_scalar_tuple(stmt, name, ann, cloret)) { return false; }
     }
     return true;
 }
 
-function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann: string): boolean {
+function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann: string, cloret: string[]): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target != name) { return true; }
             if (tuple_lit_is_fresh_scalar(a.value)) { return true; }
-            return tuple_ann_admits_fresh_mixed(ann, a.value);
+            return tuple_ann_admits_fresh_mixed(ann, a.value, cloret);
         },
         ast.StmtIf(f) => {
-            return all_assigns_fresh_scalar_tuple(f.then_body, name, ann)
-                && all_assigns_fresh_scalar_tuple(f.else_body, name, ann);
+            return all_assigns_fresh_scalar_tuple(f.then_body, name, ann, cloret)
+                && all_assigns_fresh_scalar_tuple(f.else_body, name, ann, cloret);
         },
-        ast.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name, ann); },
-        ast.StmtFor(fo) => { return all_assigns_fresh_scalar_tuple(fo.body, name, ann); },
+        ast.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name, ann, cloret); },
+        ast.StmtFor(fo) => { return all_assigns_fresh_scalar_tuple(fo.body, name, ann, cloret); },
         ast.StmtMatch(m) => {
             for arm in m.arms {
-                if (!all_assigns_fresh_scalar_tuple(arm.body, name, ann)) { return false; }
+                if (!all_assigns_fresh_scalar_tuple(arm.body, name, ann, cloret)) { return false; }
             }
             return true;
         },
-        ast.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann); },
+        ast.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann, cloret); },
         _ => { return true; }
     }
 }
@@ -36735,38 +36834,38 @@ function tup_str_writer_owned(e: ast.Expr, body: ast.Stmt[], str_fresh: string[]
     return false;
 }
 
-// assigns_str_pos_owned: EVERY assign-form rebind of `name` stores an owned
-// counted string (tup_str_writer_owned) at each STRING position of the
-// declaration's tuple annotation `ann` — the WRITER AGREEMENT the "TUPSTRW:"
-// credit carries (#7226).
+// assigns_rc_pos_owned: EVERY assign-form rebind of `name` stores an owned
+// counted string (tup_str_writer_owned) at each STRING position, and a counted
+// closure (cloarr_elem_is_owned, `cloret` the closure-returning registry) at
+// each CLOSURE position, of the declaration's tuple annotation `ann` — the
+// WRITER AGREEMENT the "TUPOWNW:" credit carries (#7226).
 //
 // The element-kinds string is recorded ONCE, from the var site's literal, and
 // replayed by every site that frees the box: the rebind store, the scope-exit
 // sweep, the precise drop. Those sites therefore replay it against a box some
-// OTHER writer filled, so an 's' position is sound only when the writers agree
-// about what lives there. The array limb needs no such agreement — an array
-// element's release is one type-fixed rc_dec whichever writer stored it.
+// OTHER writer filled, so a string or closure position is sound only when the
+// writers agree it holds a count. The array limb needs no such agreement — an
+// array element's release is one type-fixed rc_dec whichever writer stored it.
 //
 // A name with no assignment agrees vacuously, so a tuple that is never rebound
 // keeps exactly the kinds it had. An assignment whose value is not a tuple
 // literal disagrees: it leaves the slot holding a box this pass cannot describe.
-function assigns_str_pos_owned(stmts: ast.Stmt[], name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[]): boolean {
+function assigns_rc_pos_owned(stmts: ast.Stmt[], name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[], cloret: string[]): boolean {
     for stmt in stmts {
-        if (!stmt_assigns_str_pos_owned(stmt, name, ann, body, str_fresh, reassigned)) { return false; }
+        if (!stmt_assigns_rc_pos_owned(stmt, name, ann, body, str_fresh, reassigned, cloret)) { return false; }
     }
     return true;
 }
 
-function stmt_assigns_str_pos_owned(st: ast.Stmt, name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[]): boolean {
+function stmt_assigns_rc_pos_owned(st: ast.Stmt, name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[], cloret: string[]): boolean {
     if let ast.StmtAssign(a) = st {
         if (a.target != name) { return true; }
         if let ast.ExprTuple(tl) = a.value {
             var n: i32 = 0;
             while (n < tl.elements.len()) {
                 var tag: string = tuple_type_elem_tag(ann, n);
-                if (tag == "string" || tag == "str") {
-                    if (!tup_str_writer_owned(tl.elements[n], body, str_fresh, reassigned)) { return false; }
-                }
+                if ((tag == "string" || tag == "str") && !tup_str_writer_owned(tl.elements[n], body, str_fresh, reassigned)) { return false; }
+                if (tag == "clo" && !cloarr_elem_is_owned(tl.elements[n], body, cloret)) { return false; }
                 n = n + 1;
             }
             return true;
@@ -36774,18 +36873,18 @@ function stmt_assigns_str_pos_owned(st: ast.Stmt, name: string, ann: string, bod
         return false;
     }
     if let ast.StmtIf(f) = st {
-        return assigns_str_pos_owned(f.then_body, name, ann, body, str_fresh, reassigned)
-            && assigns_str_pos_owned(f.else_body, name, ann, body, str_fresh, reassigned);
+        return assigns_rc_pos_owned(f.then_body, name, ann, body, str_fresh, reassigned, cloret)
+            && assigns_rc_pos_owned(f.else_body, name, ann, body, str_fresh, reassigned, cloret);
     }
-    if let ast.StmtWhile(w) = st { return assigns_str_pos_owned(w.body, name, ann, body, str_fresh, reassigned); }
-    if let ast.StmtFor(fo) = st { return assigns_str_pos_owned(fo.body, name, ann, body, str_fresh, reassigned); }
+    if let ast.StmtWhile(w) = st { return assigns_rc_pos_owned(w.body, name, ann, body, str_fresh, reassigned, cloret); }
+    if let ast.StmtFor(fo) = st { return assigns_rc_pos_owned(fo.body, name, ann, body, str_fresh, reassigned, cloret); }
     if let ast.StmtMatch(m) = st {
         for arm in m.arms {
-            if (!assigns_str_pos_owned(arm.body, name, ann, body, str_fresh, reassigned)) { return false; }
+            if (!assigns_rc_pos_owned(arm.body, name, ann, body, str_fresh, reassigned, cloret)) { return false; }
         }
         return true;
     }
-    if let ast.StmtDefer(d) = st { return stmt_assigns_str_pos_owned(d.action, name, ann, body, str_fresh, reassigned); }
+    if let ast.StmtDefer(d) = st { return stmt_assigns_rc_pos_owned(d.action, name, ann, body, str_fresh, reassigned, cloret); }
     return true;
 }
 
@@ -37157,6 +37256,9 @@ function rctuple_esc_shape(e: ast.Expr, name: string, ttype: string, structs: St
             match (c.callee) {
                 ast.ExprIdent(_) => { return 4; },
                 ast.ExprFieldAccess(cfa) => {
+                    // name.<i>(args) : a call through a closure element borrows it.
+                    var cf: string = esc_tuple_field_of(c.callee, name);
+                    if (util.is_all_digits(cf) && tuple_type_elem_tag(ttype, util.digits_to_i32(cf)) == "clo") { return 3; }
                     if (cfa.field == "len") {
                         var rf: string = esc_tuple_field_of(cfa.obj, name);
                         if (rf.len() > 0 && util.is_all_digits(rf)) { return 3; }   // name.<i>.len() : array-element length borrow
@@ -41199,8 +41301,7 @@ function strarr_elem_store_ok(e: ast.Expr): boolean {
 // `__mkclo$…` env-box constructor call (the reuse-site walkers run on the
 // LIFTED module, where every fn-field lambda is already wrapped). Both build
 // a sole-owned rc=1 env box at the construction site, so the reuse arm's
-// shallow arr_dec of the OLD box can never free a live alias. The same dual
-// accept as the clofld admission scan (see clofld_scan's struct-lit arm).
+// shallow arr_dec of the OLD box can never free a live alias.
 function fn_field_value_is_fresh(e: ast.Expr): boolean {
     match (e) {
         ast.ExprLambda(_) => { return true; },
@@ -41214,6 +41315,19 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
             return false;
         },
         _ => { return false; }
+    }
+    return false;
+}
+
+// closure_value_is_counted: `e` hands whatever stores it a counted closure
+// box — a fresh one (fn_field_value_is_fresh), or the result of a call to a
+// closure-returning function (`closureset`, closure_ret_fns_of), whose return
+// retains any box it does not own (ret_closure_uncounted).
+function closure_value_is_counted(e: ast.Expr, closureset: string[]): boolean {
+    if (fn_field_value_is_fresh(e)) { return true; }
+    if let ast.ExprCall(c) = e {
+        var cn: string = ident_name_or_empty(c.callee);
+        return cn.len() > 0 && util.index_of_str(closureset, cn) >= 0;
     }
     return false;
 }
@@ -43861,7 +43975,7 @@ function vb_arm_scope(out: ast.Stmt[], arm: ast.Stmt[], yields: boolean): ast.St
     return out.append(vb_scope_stmt(rest));
 }
 
-function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], emit_msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[], cnt_handback: string[], cntret: string[], ret_types: SigReg): string[] {
+function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], emit_msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[], cnt_handback: string[], cntret: string[], ret_types: SigReg, cloret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, [], sfok);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
@@ -43970,13 +44084,13 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // and swept on every other path, and the caller's fresh-ret credit
     // releases the box it received.
     var tretn: string[] = tuple_ret_local_names_of(body);
-    var tups: string[] = collect_fresh_scalar_tuple_names(body, []);
+    var tups: string[] = collect_fresh_scalar_tuple_names(body, cloret, []);
     // Widen with tuple-fresh-ret CALL locals (`var t = mk(k)`, mk returning a
     // direct scalar tuple literal on every path — tuple_fresh_ret_fns_of): the
     // #4357 tuple-returning dead intermediate. Same "TUP:" class → the same
     // shallow box free (elements untouched), same escape gate below.
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
-    out = reclaimable_scalar_tuple(body, borrowable, reassigned, recv_borrow, structs, tretn, str_fresh_ret, tups, out);
+    out = reclaimable_scalar_tuple(body, borrowable, reassigned, recv_borrow, structs, tretn, str_fresh_ret, tups, cloret, out);
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
     // fresh ARRAY-literal element — credited "TUPRC:" so slot_is_reclaimable_rctuple
     // drives the DEEP loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each
@@ -52449,14 +52563,12 @@ function slot_is_reclaimable_cloarr(s: LowerState, i: i32): boolean {
 // builds a fresh rc=1 box; a closure LOCAL (bound once, by a lambda / marker /
 // closure-returning call — every form lower_stmt_var_closure marks is_arr) is
 // retained by the literal and by the self-append, so the buffer owns a count
-// alongside the local's own. A closure-returning CALL is not admitted: the
-// callee may hand back a param's or a field's box uncounted
-// (handback_params), and the walk would free it.
+// alongside the local's own. A closure-returning call hands back a counted box
+// (closure_value_is_counted), which the buffer takes over.
 function cloarr_elem_is_owned(e: ast.Expr, body: ast.Stmt[], closureset: string[]): boolean {
-    if let ast.ExprLambda(_) = e { return true; }
     var idn: string = ident_name_or_empty(e);
     if (idn.len() > 0) { return local_decl_count(body, idn) == 1 && body_binds_closure_local(body, idn, closureset); }
-    return clo_elem_is_box(e);
+    return closure_value_is_counted(e, closureset);
 }
 
 // cloarr_lit_is_fresh: an array literal of owned env boxes (empty included —
@@ -62328,8 +62440,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // moves. The emitter still consumes only the top-level view.
     var fn_moves_top: MlOut = rc_ml_compute_toplevel(fn, structs);
     var fn_moves_all: MlOut = rc_ml_extend_loops(fn, structs, fn_moves_top);
-    var reclaim: string[] = reclaimable_names_of(credit_body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns, sg.ret_type_fns);
+    var reclaim: string[] = reclaimable_names_of(credit_body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns, sg.ret_type_fns, sg.closure_fns);
     reclaim = enum_ret_alias_rows(fn, structs, sg.return_fresh_struct_ret_fns, reclaim);
+    reclaim = owned_closure_value_locals(fn, sg.closure_fns, reclaim);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -64818,6 +64931,14 @@ pub function struct_routes_field_reclaim_at(structs: StructTab, sfok: string[], 
         && reclaim_has(sfok, "", sty);
 }
 
+// clo_field_ident_counted: a bare ident stored into an fn-typed field of `sty`,
+// whose "clo:" admission gives the field a k_clo drop — the construction
+// retains it, so the drop takes back a count of the field's own.
+function clo_field_ident_counted(fty: string, e: ast.Expr, sty: string, s: LowerState): boolean {
+    if (fty != "fn" || ident_name_or_empty(e).len() == 0) { return false; }
+    return reclaim_has(s.frame.sigs.strfld_ok_types, "clo:", sty);
+}
+
 // strfld_reclaim_ok_types_of: struct types whose __field_reclaim_<T> body may
 // include the string arm — see the section comment for the contract. The
 // backends seed each admitted type as a "strfldok:<T>" need at their
@@ -64955,14 +65076,14 @@ pub function strfld_reclaim_ok_types_of(funcs: parser.FuncDecl[], structs: Struc
     }
     // CLOSURE-field admissions ("clo:"-prefixed, threaded exactly like the
     // "arr:" half): a type is admitted iff every fn-typed field name passes
-    // clofld_scan — fresh-lambda-only construction values (a lambda lifts to
-    // a sole-owned rc=1 `__mkclo$` box), no base-including construction of
-    // the type, and no read of the field outside a direct `b.f(x)` call.
-    // The k_clo drop arm then shallow-frees the field's closure box
-    // (captures leak — the k_struct one-level model).
+    // clofld_scan — counted construction values (closure_value_is_counted),
+    // no base-including construction of the type, and no read of the field
+    // outside a direct `b.f(x)` call. The k_clo drop arm then shallow-frees
+    // the field's closure box (captures leak — the k_struct one-level model).
     var clo_unsafe: string[] = [];
+    var cloret: string[] = closure_ret_fns_of(funcs);
     for fn in funcs {
-        clo_unsafe = clofld_scan_stmts(fn.body, structs, clo_unsafe);
+        clo_unsafe = clofld_scan_stmts(fn.body, structs, cloret, clo_unsafe);
     }
     for sd in structs.decls {
         var ct: string = sd.name;
@@ -65337,24 +65458,25 @@ function clo_field_names_of(structs: StructTab, sty: string): string[] {
 // clofld_scan / clofld_scan_stmts: the fn-field (closure-field) admission
 // walk, the closure sibling of strarrfld_scan. Marks a field NAME unsafe
 // (name-keyed over-approximation, like the string scans) when:
-//   - a struct-literal stores a NON-LAMBDA value into an fn-typed field —
-//     only a lambda literal lifts to a FRESH `__mkclo$` box (rc=1, solely
-//     the field's, so the k_clo shallow dec frees exactly once with no
-//     construction inc); a bare closure ident / field copy / call result
-//     may alias a box another owner also drops;
+//   - a struct-literal stores an UNCOUNTED value into an fn-typed field —
+//     the k_clo shallow dec takes back the count the value arrived with: a
+//     lambda, its `__mkclo$` box or a closure-returning call carries one
+//     (closure_value_is_counted), and the literal retains a bare ident
+//     (clo_field_ident_counted); a field copy is a second owner's box;
 //   - a struct-literal WITH A BASE constructs a type carrying fn fields —
 //     the base copy carries the field's box pointer into a second struct
 //     (two k_clo decs of one box);
-//   - the field is READ anywhere except as a direct CALL callee — `b.f(x)`
-//     borrows the box for the call, but `var g = b.f` binds an uncounted
-//     alias the drop would dangle.
+//   - the field is READ anywhere except as a direct CALL callee or a bare
+//     `return b.f` — `b.f(x)` borrows the box for the call and the return
+//     retains it, but `var g = b.f` binds an uncounted alias the drop would
+//     dangle.
 // Runs on the PRE-lift AST (fn-field values are still lambdas/idents there).
-function clofld_scan(e: ast.Expr, structs: StructTab, acc: string[]): string[] {
+function clofld_scan(e: ast.Expr, structs: StructTab, cset: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         ast.ExprFieldAccess(fa) => {
             a = push_str_unique(a, fa.field);
-            return clofld_scan(fa.obj, structs, a);
+            return clofld_scan(fa.obj, structs, cset, a);
         },
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -65362,22 +65484,22 @@ function clofld_scan(e: ast.Expr, structs: StructTab, acc: string[]): string[] {
                     // `b.f(args)` — the direct field CALL is the one tolerated
                     // borrow: skip marking f, keep walking beneath it.
                     match (cfa.obj) {
-                        ast.ExprFieldAccess(ffa) => { a = clofld_scan(ffa, structs, a); },
-                        _ => { a = clofld_scan(cfa.obj, structs, a); }
+                        ast.ExprFieldAccess(ffa) => { a = clofld_scan(ffa, structs, cset, a); },
+                        _ => { a = clofld_scan(cfa.obj, structs, cset, a); }
                     }
                 },
-                _ => { a = clofld_scan(c.callee, structs, a); }
+                _ => { a = clofld_scan(c.callee, structs, cset, a); }
             }
-            for arg in c.args { a = clofld_scan(arg, structs, a); }
+            for arg in c.args { a = clofld_scan(arg, structs, cset, a); }
             return a;
         },
-        ast.ExprBinary(b) => { return clofld_scan(b.right, structs, clofld_scan(b.left, structs, a)); },
-        ast.ExprUnary(u) => { return clofld_scan(u.operand, structs, a); },
-        ast.ExprIndex(ix) => { return clofld_scan(ix.index, structs, clofld_scan(ix.array, structs, a)); },
-        ast.ExprSlice(sl) => { return clofld_scan(sl.end, structs, clofld_scan(sl.start, structs, clofld_scan(sl.array, structs, a))); },
+        ast.ExprBinary(b) => { return clofld_scan(b.right, structs, cset, clofld_scan(b.left, structs, cset, a)); },
+        ast.ExprUnary(u) => { return clofld_scan(u.operand, structs, cset, a); },
+        ast.ExprIndex(ix) => { return clofld_scan(ix.index, structs, cset, clofld_scan(ix.array, structs, cset, a)); },
+        ast.ExprSlice(sl) => { return clofld_scan(sl.end, structs, cset, clofld_scan(sl.start, structs, cset, clofld_scan(sl.array, structs, cset, a))); },
         ast.ExprStructLit(sl2) => {
             if (sl2.has_base) {
-                a = clofld_scan(sl2.base, structs, a);
+                a = clofld_scan(sl2.base, structs, cset, a);
                 // A base copy of an fn-fielded type carries the closure box —
                 // mark every fn field of the type unsafe.
                 var sdi: i32 = stab_struct_first(structs, sl2.type_name);
@@ -65390,96 +65512,65 @@ function clofld_scan(e: ast.Expr, structs: StructTab, acc: string[]): string[] {
             }
             var i: i32 = 0;
             while (i < sl2.field_names.len()) {
-                if (decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn") {
-                    // Fresh forms: a LAMBDA literal (pre-lift AST) or its
-                    // lifted spelling — a `__mkclo$…` constructor call (the
-                    // emit orchestrations scan the LIFTED module, where every
-                    // fn-field lambda has already been wrapped). Both build a
-                    // sole-owned rc=1 box at the construction site.
-                    var tup_ok: boolean = false;
-                    match (sl2.field_values[i]) {
-                        ast.ExprLambda(_) => { tup_ok = true; },
-                        ast.ExprCall(cv) => {
-                            match (cv.callee) {
-                                ast.ExprIdent(cvid) => {
-                                    if (cvid.name.len() > 8 && slice_unchecked(cvid.name, 0, 8) == "__mkclo$") { tup_ok = true; }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                    if (!tup_ok) { a = push_str_unique(a, sl2.field_names[i]); }
+                if (decl_field_type(structs, sl2.type_name, sl2.field_names[i]) == "fn"
+                    && !closure_value_is_counted(sl2.field_values[i], cset) && ident_name_or_empty(sl2.field_values[i]).len() == 0) {
+                    a = push_str_unique(a, sl2.field_names[i]);
                 }
-                a = clofld_scan(sl2.field_values[i], structs, a);
+                a = clofld_scan(sl2.field_values[i], structs, cset, a);
                 i = i + 1;
             }
             return a;
         },
         ast.ExprArray(av2) => {
             var i: i32 = 0;
-            while (i < av2.elements.len()) { a = clofld_scan(av2.elements[i], structs, a); i = i + 1; }
+            while (i < av2.elements.len()) { a = clofld_scan(av2.elements[i], structs, cset, a); i = i + 1; }
             return a;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { a = clofld_scan(el, structs, a); }
+            for el in t.elements { a = clofld_scan(el, structs, cset, a); }
             return a;
         },
-        ast.ExprLambda(lm) => { return clofld_scan_stmts(lm.body, structs, a); },
+        ast.ExprLambda(lm) => { return clofld_scan_stmts(lm.body, structs, cset, a); },
         _ => { return a; }
     }
 }
-function clofld_scan_stmts(stmts: ast.Stmt[], structs: StructTab, acc: string[]): string[] {
+function clofld_scan_stmts(stmts: ast.Stmt[], structs: StructTab, cset: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { a = clofld_scan(v.init, structs, a); },
-            ast.StmtAssign(as2) => { a = clofld_scan(as2.value, structs, a); },
-            ast.StmtExpr(ex) => { a = clofld_scan(ex.value, structs, a); },
-            ast.StmtReturn(r) => { a = clofld_scan(r.value, structs, a); },
+            ast.StmtVar(v) => { a = clofld_scan(v.init, structs, cset, a); },
+            ast.StmtAssign(as2) => { a = clofld_scan(as2.value, structs, cset, a); },
+            ast.StmtExpr(ex) => { a = clofld_scan(ex.value, structs, cset, a); },
+            // `return b.f` retains the box for the caller (ret_closure_uncounted).
+            ast.StmtReturn(r) => {
+                if let ast.ExprFieldAccess(rfa) = r.value { a = clofld_scan(rfa.obj, structs, cset, a); }
+                else { a = clofld_scan(r.value, structs, cset, a); }
+            },
             ast.StmtIf(iff) => {
-                a = clofld_scan(iff.cond, structs, a);
-                a = clofld_scan_stmts(iff.then_body, structs, a);
-                a = clofld_scan_stmts(iff.else_body, structs, a);
+                a = clofld_scan(iff.cond, structs, cset, a);
+                a = clofld_scan_stmts(iff.then_body, structs, cset, a);
+                a = clofld_scan_stmts(iff.else_body, structs, cset, a);
             },
             ast.StmtWhile(w) => {
-                a = clofld_scan(w.cond, structs, a);
-                a = clofld_scan_stmts(w.body, structs, a);
+                a = clofld_scan(w.cond, structs, cset, a);
+                a = clofld_scan_stmts(w.body, structs, cset, a);
             },
             ast.StmtFor(fo) => {
-                a = clofld_scan(fo.iter, structs, a);
-                a = clofld_scan_stmts(fo.body, structs, a);
+                a = clofld_scan(fo.iter, structs, cset, a);
+                a = clofld_scan_stmts(fo.body, structs, cset, a);
             },
             ast.StmtMatch(m) => {
-                a = clofld_scan(m.scrutinee, structs, a);
+                a = clofld_scan(m.scrutinee, structs, cset, a);
                 for arm in m.arms {
-                    if (arm.has_guard) { a = clofld_scan(arm.guard, structs, a); }
-                    a = clofld_scan_stmts(arm.body, structs, a);
+                    if (arm.has_guard) { a = clofld_scan(arm.guard, structs, cset, a); }
+                    a = clofld_scan_stmts(arm.body, structs, cset, a);
                 }
             },
-            ast.StmtDefer(d) => { a = clofld_scan_stmts([d.action], structs, a); },
+            ast.StmtDefer(d) => { a = clofld_scan_stmts([d.action], structs, cset, a); },
             _ => {}
         }
     }
     return a;
-}
-
-// clo_elem_is_box reports whether array element `e` is a `__mkclo$…(caps)` call
-// — the env-box constructor the lift pass rewrites every function value in an
-// array literal to.
-function clo_elem_is_box(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(id) => {
-                    return id.name.len() > 8 && slice_unchecked(id.name, 0, 8) == "__mkclo$";
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
-    }
-    return false;
 }
 
 // fnfld_obj_type resolves the struct type of a field-access RECEIVER from
@@ -67304,9 +67395,12 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     // Every function value is an env box, so a function declared to return one
     // returns a box whatever its return statements spell (#10076). Without a
     // declared return, only a trailing `return <capturing lambda>` says so.
+    // A method is listed under its bare name and, as "METHCLO:<recv>.<name>",
+    // under the receiver type that resolves a call to it (closure_method_call).
     for fn in funcs {
         if (fn.ret_type == "fn") {
             out = out.append(fn.name);
+            if (fn.receiver_type.len() > 0) { out = out.append("METHCLO:" + fn.receiver_type + "." + fn.name); }
         } else if (fn.body.len() > 0) {
             match (fn.body[fn.body.len() - 1]) {
                 ast.StmtReturn(r) => {
@@ -81456,7 +81550,7 @@ function var_annot_in_stmts(stmts: ast.Stmt[], name: string): string {
     return "";
 }
 
-function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: StructTab, tretn: string[], str_fresh_ret: string[], tups: string[], out: string[]): string[] {
+function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: StructTab, tretn: string[], str_fresh_ret: string[], tups: string[], cloret: string[], out: string[]): string[] {
 var ti: i32 = 0;
 while (ti < tups.len()) {
     // tups holds BINDING-SITE keys (#7272); every gate below asks about the
@@ -81479,7 +81573,7 @@ while (ti < tups.len()) {
         // at exit, this that the SUPERSEDED box is freeable at the assignment.
         if (util.index_of_str(reassigned, tnm) >= 0
             && all_assigns_fresh_scalar_tuple(body, tnm,
-                    rctuple_type_of_decl(body, tnm))) {
+                    rctuple_type_of_decl(body, tnm), cloret)) {
             out = out.append("TUPREBIND:" + tups[ti]);
         }
         // The bare-ident element release (#7226) needs the owned-pointer-element
@@ -81497,17 +81591,16 @@ while (ti < tups.len()) {
         if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal, [], true)) {
             out = out.append("TUPELEMOK:" + tups[ti]);
         }
-        // The STRING limb of that release needs one fact the array limb does
-        // not: every writer of the slot must agree the position holds a counted
-        // owned string (assigns_str_pos_owned). The kinds are recorded from the
-        // var site alone but replayed against whatever box is in the slot, so
-        // without agreement a rebind could leave a VIEW there for the release to
-        // free out from under the view's own sweep. Vacuous for a tuple that is
-        // never rebound, which is why an un-reassigned string element keeps
-        // exactly the release it had.
+        // The STRING and CLOSURE limbs of that release need one fact the array
+        // limb does not: every writer of the slot must agree the position holds
+        // a count (assigns_rc_pos_owned). The kinds are recorded from the var
+        // site alone but replayed against whatever box is in the slot, so
+        // without agreement a rebind could leave a VIEW or a borrowed closure
+        // there for the release to free out from under its owner. Vacuous for a
+        // tuple that is never rebound.
         if (tupelemty != ""
-                && assigns_str_pos_owned(body, tnm, tupelemty, body, str_fresh_ret, reassigned)) {
-            out = out.append("TUPSTRW:" + tups[ti]);
+                && assigns_rc_pos_owned(body, tnm, tupelemty, body, str_fresh_ret, reassigned, cloret)) {
+            out = out.append("TUPOWNW:" + tups[ti]);
         }
     }
     ti = ti + 1;
@@ -82651,10 +82744,10 @@ while (tprc < out.len()) {
         tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
     }
     // The writer agreement applies here too: it is what decides whether a
-    // STRING position's release is emitted at all, and the assign-form
+    // STRING or CLOSURE position's release is emitted at all, and the assign-form
     // interlock in body_unsafe_for_tup_alias may only forgive an element whose
     // release it can count on.
-    if (out[tprc].len() > 8 && slice_unchecked(out[tprc], 0, 8) == "TUPSTRW:") {
+    if (out[tprc].len() > 8 && slice_unchecked(out[tprc], 0, 8) == "TUPOWNW:") {
         tup_ok = tup_ok.append("TUPSW:" + slice_unchecked(out[tprc], 8, out[tprc].len()));
     }
     tprc = tprc + 1;
