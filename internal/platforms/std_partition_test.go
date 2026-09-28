@@ -107,6 +107,7 @@ var stdModuleReach = map[string]string{
 	"std/url":           "",
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
+	"std/wasi_http":     "env,log,now,random",
 }
 
 // TestStdPartitionIsDerivedNotAsserted computes each `std/` module's host

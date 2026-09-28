@@ -4319,8 +4319,8 @@ function main(): i32 {
 			"runtime __fern_str_cmp: produced", "runtime __fern_str_to_upper: produced",
 			"runtime __fern_str_to_lower: produced", "runtime __fern_str_repeat: produced",
 			"runtime __fern_str_trim: produced", "runtime __fern_str_replace: produced",
-			"runtime __fern_string_from_bytes: produced", "runtime __fern_str_split: produced",
-			"runtime __fern_str_bytes: produced", "runtime __fern_arr_str_join: produced",
+			"runtime __fern_string_from_bytes_u8: produced", "runtime __fern_str_split: produced",
+			"runtime __fern_str_bytes_u8: produced", "runtime __fern_arr_str_join: produced",
 			"runtime __fern_str_lines: produced",
 		}, src: `
 import "std/string";
@@ -4360,7 +4360,7 @@ function main(): i32 {
 	// but the filesystem bundle they are emitted in routes only as a whole.
 	{name: "process-helpers-take-the-typed-path", atLeast: 1, nativeOnly: true, noLeak: true,
 		reports: []string{
-			"runtime __fern_random_bytes: produced", "runtime __fern_random_i32: produced",
+			"runtime __fern_random_bytes_u8: produced", "runtime __fern_random_i32: produced",
 			"runtime __fern_isatty: produced", "runtime __fern_process_alive: produced",
 			"runtime __fern_cpu_count: produced", "runtime __fern_sleep_ms: produced",
 			"runtime __fern_sleep_ns: produced",
@@ -4462,7 +4462,7 @@ function main(): i32 {
 		reports: []string{
 			"runtime __fern_create_dir_all: produced", "runtime __fern_write_file: produced",
 			"runtime __fern_read_file: produced", "runtime __fern_utf8_valid: produced",
-			"runtime __fern_read_file_bytes: produced", "runtime __fern_stat: produced",
+			"runtime __fern_read_file_bytes_u8: produced", "runtime __fern_stat: produced",
 			"runtime __fern_read_dir: produced", "runtime __fern_remove_dir_all: produced",
 		}, src: `
 function main(): i32 {

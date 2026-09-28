@@ -18,7 +18,7 @@ Import      = 'import' STRING [ 'as' IDENT ] ';' ;
 PubUse      = 'pub' 'use' STRING '.' '{' UseNames '}' ';' ;
 UseNames    = IDENT { ',' IDENT } [ ',' ] ;
 
-Attribute   = '@' IDENT [ '(' [ AttrArgs ] ')' ] ;
+Attribute   = '@' ( 'import' | IDENT ) [ '(' [ AttrArgs ] ')' ] ;
 AttrArgs    = AttrArg { ',' AttrArg } [ ',' ] ;
 AttrArg     = STRING | NUMBER | QualName ;
 

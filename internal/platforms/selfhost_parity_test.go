@@ -174,13 +174,6 @@ func TestSelfHostCapabilityProfilesMatch(t *testing.T) {
 	}
 }
 
-// targetExceptions records the targets this package declares that the
-// self-host does not. There is exactly one: the proxy world has no self-host
-// counterpart at all — no component wrapper, no handler entry — which is
-// #6636, not a naming difference. Listing it keeps every OTHER missing target
-// a failure.
-var targetExceptions = map[string]bool{"wasm32-wasi-http": true}
-
 // TestSelfHostTargetNamesMatch pins the target list itself. The two compilers
 // spelled targets differently until #6635 — `arm64` there, `arm64-linux` here
 // — which meant a build command could not be moved between them, and a
@@ -202,15 +195,7 @@ func TestSelfHostTargetNamesMatch(t *testing.T) {
 		if slices.Contains(got, name) {
 			continue
 		}
-		if targetExceptions[name] {
-			continue
-		}
 		t.Errorf("target %q exists here but not in the self-host's targets()", name)
-	}
-	for name := range targetExceptions {
-		if slices.Contains(got, name) {
-			t.Errorf("the self-host now declares %q, so its entry in targetExceptions is stale — delete it", name)
-		}
 	}
 	for _, name := range got {
 		if !slices.Contains(want, name) {

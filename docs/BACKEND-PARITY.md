@@ -101,11 +101,16 @@ DEFAULT emitter on the self-host driver is the register path on both native
 ISAs and the stack machine on wasm, which has no register path and is not
 getting one — wasm is a stack machine with locals, so the register path's
 wins do not exist there (`docs/SELFHOST-SSA-BACKEND.md`, "The other
-backends"). Two other
-differences remain, each with its own issue: `wasm32-wasi-http` has no
-self-host counterpart (#6636), and `-emit asm` has no native one — native
-always links, and the text form is how the self-host's emitters are observed in
-isolation (docs/TOOLCHAIN-SELF-HOSTING.md).
+backends"). One other
+difference remains: `-emit asm` has no native counterpart — native always
+links, and the text form is how the self-host's emitters are observed in
+isolation (docs/TOOLCHAIN-SELF-HOSTING.md). `wasm32-wasi-http` is built
+differently on the two sides and answers the same requests: native emits the
+handler entry as wasm instructions (`internal/codegen/wasmbin/wasi_http.go`),
+the self-host appends `std/wasi_http` — the entry written in Fern over
+`@import` externs — and composes the core against the embedded proxy world
+(`examples/self_host/wit_compose.fern`); `TestSelfHostWasiHttpTargetMatchesNative`
+is the differential.
 
 ## Internal networking syscall floor
 

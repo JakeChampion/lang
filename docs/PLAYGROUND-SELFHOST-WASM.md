@@ -18,14 +18,15 @@ component is `-emit component`. Every form is the CLI's own pipeline, and
 `fern`. The page's examples and the docs' embeds run through the driver in
 `TestSelfHostPlaygroundExamples` / `TestSelfHostDocsPlaygroundEmbeds`.
 
-`web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to what the
-self-host compiler does not do: the language server behind diagnostics, hover
-and completion (`fernLsp`), and the wasi:http world (`fernCompileHttpComponent`,
-`fernCompileHttpHandlerCore`), which the self-host toolchain does not know at
-all — `fern.fern` refuses `-target wasm32-wasi-http`, and nothing in
-`wasm_ir.fern` or `watbin.fern` frames an incoming-handler (#6636). Those two
-(#6641 is the language server) are what `NATIVE-CONVERGENCE.md §3a.4` still
-lists. Everything below is the measurement
+`web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to the language
+server behind diagnostics, hover and completion (`fernLsp`, #6641) and the
+two wasi:http entry points (`fernCompileHttpComponent`,
+`fernCompileHttpHandlerCore`). The self-host compiler emits for that world
+too — `fern.fern -target wasm32-wasi-http` (#6636), with `-emit core-module`
+producing the handler core `web/wasi-http-shim.js` instantiates and the
+default form the component — and `playground_run.fern` takes the same target
+and forms, so the page's http panes can move to `playground.wasm` the way the
+other panes did. Everything below is the measurement
 and the reasoning that led here, kept as written.
 
 ## Headline
