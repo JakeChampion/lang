@@ -38,8 +38,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Build the wasm bundle then serve web/ on the configured port.
-    // build.sh is idempotent — re-running it overwrites lang.wasm
+    // Build the wasm bundles then serve web/ on the configured port.
+    // build.sh is idempotent — re-running it overwrites both bundles
     // with the latest source.
     command: `bash -c "./web/build.sh && python3 -m http.server --bind 127.0.0.1 --directory web ${port}"`,
     url: `http://127.0.0.1:${port}/index.html`,

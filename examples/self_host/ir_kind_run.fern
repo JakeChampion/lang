@@ -88,7 +88,7 @@ function main(): i32 {
         "open_reader_with", "open_writer_with", "write_some",
         "read_dir_all", "heap_alloc_count", "tcp_local_port", "tcp_listen_with", "tcp_socket_ctl",
         "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
-        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into"
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -211,7 +211,7 @@ function main(): i32 {
         ir.op_open_reader_with(), ir.op_open_writer_with(), ir.op_write_some(),
         ir.op_read_dir_all(), ir.op_heap_alloc_count(), ir.op_tcp_local_port(), ir.op_tcp_listen_with(), ir.op_tcp_socket_ctl(),
         ir.op_udp_bind(), ir.op_udp_connect(), ir.op_udp_sendto(), ir.op_udp_recvfrom(), ir.op_tcp_connect_with(), ir.op_unix_listen(), ir.op_unix_connect(),
-        ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_tcp_recv_into()
+        ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_tcp_recv_into(), ir.op_str_data()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -245,7 +245,7 @@ function main(): i32 {
         "open_reader_with", "open_writer_with", "write_some",
         "read_dir_all", "heap_alloc_count", "tcp_local_port", "tcp_listen_with", "tcp_socket_ctl",
         "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
-        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into"
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;

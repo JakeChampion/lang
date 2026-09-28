@@ -446,6 +446,9 @@ pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
 // else 0. Strings are NOT reference-counted (they leak, matching asm.fern's AST
 // path — fine for short-lived CLI / edge programs), so no RC ops accompany them.
 pub function op_str_len(): Op { return op0("str_len"); }
+// `str_data` pops [str] → the address of its bytes: slot 0 of the register
+// backends' box, and the block plus 4 on wasm.
+pub function op_str_data(): Op { return op0("str_data"); }
 pub function op_str_concat(): Op { return op0("str_concat"); }
 pub function op_str_eq(): Op { return op0("str_eq"); }
 // `str_cmp` pops [a, b] → a signed i32: <0 if a<b, 0 if equal, >0 if a>b
@@ -2394,6 +2397,7 @@ function kind_id_len8_r(name: string): i32 {
 
 function kind_id_len8_s(name: string): i32 {
     if (name == "str_trim") { return 109; }
+    if (name == "str_data") { return 345; }
     if (name == "sleep_ms") { return 181; }
     if (name == "sleep_ns") { return 266; }
     if (name == "syscall3") { return 204; }
@@ -2932,6 +2936,7 @@ function kind_name_4(id: i32): string {
     if (id == 342) { return "reactor_ctl"; }
     if (id == 343) { return "reactor_wait"; }
     if (id == 344) { return "tcp_recv_into"; }
+    if (id == 345) { return "str_data"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 306) { return "buf_push_u64"; }
@@ -3136,7 +3141,7 @@ function pops1_mem(t: i32): boolean {
         || t == 76 || t == 77                                            // alloc, alloc_u8
         || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
         || t == 90 || t == 91                                            // arr_len, arr_rc
-        || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 97 || t == 103 || t == 104 || t == 345                   // str_len, str_from_bytes, str_bytes, str_data
         || t == 253                                                      // sum_bytes
         || t == 106 || t == 107 || t == 109                              // str_to_upper/lower, str_trim
         || t == 113                                                      // str_lines
