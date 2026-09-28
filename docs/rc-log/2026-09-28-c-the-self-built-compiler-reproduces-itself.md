@@ -53,9 +53,16 @@ parity.
 
 ## Not covered
 
-- arm64-linux: the same chain under `qemu-aarch64` was still in stage1 when
-  this was written, and #10448 reports gen2 of the opt-in whole-compiler
-  fixpoint segfaulting under qemu on 2026-09-27. The `verify-arm64-linux` CI
-  lane on the arm64 runner is the authoritative run.
+- arm64-linux: measured on the `ubuntu-24.04-arm` runner (run 36438554232)
+  rather than here. The current compiler's chain is a fixed point: a
+  native-built candidate compiles `fern.fern`, that stage1 compiles it in
+  82 s, stage2 compiles it in 79 s, and stage2 == stage3 (13,386,776 bytes).
+  The `stage0-20260925-f81d8d7` pin is not: its stage1 (360 s, 14,759,432
+  bytes, smoke passes) did not finish compiling the compiler in 39 minutes on
+  the runner, and under `qemu-aarch64` here it burned 2 h 25 m of CPU at a
+  stable 5.4 GB before being stopped. That is a loop in the code the
+  2026-09-25 arm64 backend emits for today's source, which today's backend
+  does not reproduce; #10448 has the observation. The pin was refreshed to
+  the self-built stage2 of the branch that wired the lane.
 - arm64-darwin: stage2 exhausts the arena (#8479); the darwin pin stays
   native-built.
