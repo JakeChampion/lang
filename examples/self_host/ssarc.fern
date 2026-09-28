@@ -1653,6 +1653,41 @@ function string_binary(own r: irlower.LowerResult, ins: ssa.SInst): irlower.Lowe
     return r;
 }
 
+// The operand of a string `==` or `!=` that is a literal, whose length then
+// decides most comparisons without the runtime's call; -1 for any other
+// instruction.
+function literal_text_eq(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 {
+    if (ins.kind_tag != 9 || (ins.str != "==" && ins.str != "!=") || ins.args.len() != 2) { return 0 - 1; }
+    if (!ssasem.is_text(f.values[ins.args[0]])) { return 0 - 1; }
+    if (p.text_lens[ins.args[1]] >= 0) { return 1; }
+    if (p.text_lens[ins.args[0]] >= 0) { return 0; }
+    return 0 - 1;
+}
+
+// A comparison against a literal of length K reads the other operand's length
+// first and calls `str_eq` only when it is K.
+function text_eq_by_length(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irlower.LowerResult {
+    var lit: i32 = literal_text_eq(f, p, ins);
+    var other: i32 = ins.args[1 - lit];
+    var res: i32 = scratch_base(f);
+    r = reserve(r, res + 1);
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(res));
+    r = emit(r, ir.op_load_local(other));
+    r = emit(r, ir.op_str_len());
+    r = emit(r, ir.op_const_i32(p.text_lens[ins.args[lit]]));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_str_eq());
+    r = emit(r, ir.op_store_local(res));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_load_local(res));
+    if (ins.str == "!=") { return emit(r, ir.op_bin("not", 0, false)); }
+    return r;
+}
+
 // The float operators are the stack IR's own f64 opcodes: arithmetic hands
 // back an f64, rounded to single precision where the result is an f32, a
 // comparison the i32 the boolean occupies, and negation flips the sign bit.
@@ -2351,6 +2386,7 @@ function instruction(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     if (ins.kind_tag == ssasem.arr_join()) { r = join_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.call() && fern_helper_call(ins.str, ins.args.len())) { r = helper_call(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == ssasem.append()) { r = append_push(r, f, p, ins, defer0, link); return emit(r, ir.op_store_local(ins.result)); }
+    if (literal_text_eq(f, p, ins) >= 0) { r = text_eq_by_length(r, f, p, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (ins.kind_tag == 9 && (ssasem.saturating(ins.str) || ssasem.checked_arith(ins.str))) { r = overflow_binary(r, f, ins); return emit(r, ir.op_store_local(ins.result)); }
     if (dyn_call(ins)) { r = dyn_site(r, ins); return emit(r, ir.op_store_local(ins.result)); }
     for arg in ins.args { r = emit(r, ir.op_load_local(arg)); }
