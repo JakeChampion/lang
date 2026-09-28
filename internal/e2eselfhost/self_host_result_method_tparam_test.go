@@ -16,8 +16,7 @@ import (
 // method receiver or a borrowed argument, a mixed Result[i32, string] local,
 // and a fresh Ok/Some/Err/None built at a borrowed argument position. The
 // unmarked rows still leak there: a box a callee hands back (`and`, `or`, a
-// generic pass-through; #10388), an Err string payload (#10439), and a nested
-// Result.
+// generic pass-through; #10388), and a nested Result.
 // Every answer is interpreter-confirmed.
 var resultMethodTParamCases = []struct {
 	name      string

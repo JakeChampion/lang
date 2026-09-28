@@ -14,8 +14,9 @@ import (
 // Every output form the page asks for — a native target's assembly for the
 // assembly pane, the wasm core module as text or as the binary a preview-1
 // host runs, the wasi:cli/run component the download offers — comes out of
-// the CLI's own pipeline (emitforms.substitution, the same gates and the same
-// emitter entry points), so what the page shows is what `fern` would build.
+// the CLI's own pipeline (semlower.target_substitution, the same gates and
+// the same emitter entry points), so what the page shows is what `fern`
+// would build.
 // This pins that byte for byte, per form, with the CLI resolving the stdlib
 // from its root argument and the driver from its embedded overlay.
 
