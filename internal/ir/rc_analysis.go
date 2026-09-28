@@ -3733,10 +3733,26 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// function, so `var line = words[0]` followed by `line = line + …`
 		// stranded every intermediate concat (#6567) — a seed of `""` was flat
 		// all along, which is what made the shape easy to miss.
+		//
+		// An array reached through struct / tuple fields of such a slot
+		// (`c.bufs[at]`) is the same alias one projection deeper: each
+		// container on the chain deep-drops the next, the array deep-drops
+		// its elements, and the binding takes its inc, so the element is
+		// counted at both ends exactly as the field read above is. The
+		// conservative taint left the serve loop's per-connection buffer
+		// (`var buf = c.bufs[at]; buf = buf.concat(…)`) stranding every
+		// concat result.
 		if !x.IsString && !x.IsSlice && !isMapType(b.exprType(x)) && needsRcIncOnAlias(x, b) {
-			if id, isIdent := x.Array.(*ast.Ident); isIdent {
-				if _, isLocal := b.locals[id.Name]; isLocal {
-					if _, isArr := b.exprType(id).(ast.ArrayType); isArr {
+			if _, isArr := b.exprType(x.Array).(ast.ArrayType); isArr {
+				src := x.Array
+				if fa, isField := src.(*ast.FieldAccess); isField {
+					src = b.projectionChainRoot(fa.Target)
+				}
+				if id, isIdent := src.(*ast.Ident); isIdent {
+					if _, isLocal := b.locals[id.Name]; isLocal {
+						return false
+					}
+					if _, isBinding := b.matchBindingTypes()[id.Name]; isBinding {
 						return false
 					}
 				}
