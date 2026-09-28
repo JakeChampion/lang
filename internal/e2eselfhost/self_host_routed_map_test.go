@@ -272,6 +272,58 @@ function main(): i32 {
 }
 `
 
+// routedMapTupleValuesSrc: a tuple value is a box like a record's.
+const routedMapTupleValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    var m: Map[string, (i32, string)] = Map {};
+    var i: i32 = 0;
+    while (i < 30) { m = m.insert("k" + (i % 7).to_string(), (i, "v" + i.to_string())); i = i + 1; }
+    var alias: Map[string, (i32, string)] = m;
+    alias = alias.insert("k1", (100, "over" + "ride"));
+    var r: (Map[string, (i32, string)], boolean) = m.without("k2");
+    var m2: Map[string, (i32, string)] = r.0;
+    var total: i32 = 0;
+    for (k, v) in m2 { total = total + v.0 + v.1.len(); }
+    for v in alias.values() { total = total + v.0; }
+    var hit: (i32, string) = m.get_or("k3", (0, ""));
+    var got: string = "none";
+    match (alias.get("k1")) { Some(v) => { got = v.1; }, None => {} }
+    print(total.to_string() + " " + hit.1 + " " + got + " " + m2.len().to_string() + " " + r.1.to_string());
+    return 0;
+}
+`
+
+// routedMapDynValuesSrc: a dyn value's box is whichever concrete it holds —
+// a boxed i32 or string, a record, an enum — and each is retained and
+// released through the one dyn release.
+const routedMapDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Show { function show(self: Self): i32; }
+struct Dot { r: i32 }
+enum Op { Add(i32), Neg }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
+impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
+function main(): i32 {
+    var m: Map[string, dyn Show] = Map {};
+    m = m.insert("a", 41);
+    m = m.insert("b", "hello" + "!");
+    m = m.insert("c", Dot { r: 5 });
+    m = m.insert("d", Add(7));
+    var alias: Map[string, dyn Show] = m;
+    alias = alias.insert("b", Neg);
+    var r: (Map[string, dyn Show], boolean) = m.without("c");
+    var total: i32 = 0;
+    for (k, v) in r.0 { total = total + v.show(); }
+    for v in alias.values() { total = total + v.show(); }
+    match (m.get("b")) { Some(v) => { total = total + v.show() * 100; }, None => {} }
+    print(total.to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -292,6 +344,8 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"u32_bool", routedMapU32BoolSrc, "true true 2 12"},
 		{"string_values", routedMapStringValuesSrc, "overwritten aliasonly v24 missed v27 true true false 2254 299 n44 9 0"},
 		{"box_values", routedMapBoxValuesSrc, "2 5 3 4 27 true true false 21236 199 6 four! n44 9 12 21627 0"},
+		{"tuple_values", routedMapTupleValuesSrc, "430 v24 override 6 true"},
+		{"dyn_values", routedMapDynValuesSrc, "716"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {
