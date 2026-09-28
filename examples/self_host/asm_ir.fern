@@ -686,14 +686,25 @@ function map_free_column_walk(s: asmcore.EmitState, col_off: i32, rel_at: i32, l
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
 // the block at; `tmp` is scratch, and %r8 is clobbered.
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
-    s = s.write("    pushq " + words + "\n");
-    s = s.write("    call __fern_capw\n");
-    s = s.write("    popq " + words + "\n");
+    s = capw_class(s, words);
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
     s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
     s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
     return s;
+}
+
+// capw_class turns the word count in `words` into its size class. Up to 256
+// words the class is the count itself, so only a larger block pays for the
+// call.
+function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmpq $256, " + words + "\n");
+    s = s.write("    jbe " + l.name + "\n");
+    s = s.write("    pushq " + words + "\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq " + words + "\n");
+    return s.write(l.name + ":\n");
 }
 
 // buf_block_free emits the inline release of one BARE byte block — the string
@@ -1379,6 +1390,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lsum_bytes_tail\n");
     s = s.write(".Lsum_bytes_ret:\n");
     s = s.write("    ret\n");
+    s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
     return s;
 }
 
@@ -2252,9 +2264,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jae .Lalloc_large\n");
     // The small tier bumps a block at its class's capacity, so any freed block
     // of the class satisfies any request that rounds to it.
-    s = s.write("    pushq %rcx\n");
-    s = s.write("    call __fern_capw\n");
-    s = s.write("    popq %rcx\n");
+    s = capw_class(s, "%rcx");
     s = s.write("    leaq 0(,%rcx,8), %rdi\n");
     s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rcx,8), %rax\n");
@@ -2522,9 +2532,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
     // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
-    // then native's 3-significant-bit capacities, so a buffer that grows a
-    // little at a time finds the block it just freed rather than a new class
-    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // which the callers test for inline before calling, then native's
+    // 3-significant-bit capacities, so a buffer that grows a little at a time
+    // finds the block it just freed rather than a new class per step. Clamped
+    // below 65536, where the large tier takes over. Preserves
     // every register.
     s = s.write("__fern_capw:\n");
     s = s.write("    pushq %rax\n");
@@ -6166,6 +6177,27 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
+// ssa_str_eq answers unequal lengths inline, the answer to almost every
+// comparison a compiler makes, and calls the helper's register entry only for
+// equal ones. %rdx and %rcx are never homes, so the operands pass through them
+// on the way to %rax / %rsi whichever of those they already occupy.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_str_eq();
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+    s = ssa_read(reg_of, ins.args[1], "%rcx", s);
+    var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+    var n: string = util.i32_to_string(ins.result);
+    s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
+    s = s.write("    movq " + a + ", %rdx\n");
+    if (b != "%rcx") { s = s.write("    movq " + b + ", %rcx\n"); }
+    s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+    s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
+    s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
@@ -6694,6 +6726,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49 && ins.str == "str_eq") { return ssa_str_eq(ins, reg_of, lp, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }

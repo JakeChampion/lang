@@ -18,7 +18,8 @@ import (
 // cannot be the oracle here — these assert the relational contract directly with
 // exact exit codes (cross-checked against the native backend, which lowers the
 // builtin via __fern_heap_bump_bytes), mirroring the native rc_heap_bump_* style.
-// Every result stays ≤ 120 (wasmtime exit-code clamp #2908).
+// Every result stays ≤ 120 (wasmtime exit-code clamp #2908). Each allocating
+// literal takes a runtime element, since a literal of constants is a static box.
 var heapBumpBytesIRCases = []struct {
 	name string
 	main string
@@ -27,9 +28,9 @@ var heapBumpBytesIRCases = []struct {
 	// Before any allocation the high-water mark is 0.
 	{"zero-before-alloc", `function main(): i32 { if ((__heap_bump_bytes() as i32) == 0) { return 7; } return 1; }`, 7},
 	// A fresh allocation advances the cursor above the zero baseline.
-	{"grows-on-alloc", `function main(): i32 { var before: i32 = (__heap_bump_bytes() as i32); var a: i32[] = [1, 2, 3, 4, 5]; var after: i32 = (__heap_bump_bytes() as i32); if (before == 0) { if (after > before) { return 7; } } return 1; }`, 7},
+	{"grows-on-alloc", `function main(): i32 { var before: i32 = (__heap_bump_bytes() as i32); var a: i32[] = [before, 2, 3, 4, 5]; var after: i32 = (__heap_bump_bytes() as i32); if (before == 0) { if (after > before) { return 7; } } return 1; }`, 7},
 	// Read across a call boundary + an explicit "after > 0" check.
-	{"after-positive", `function main(): i32 { var a: i32[] = [1, 2, 3]; if ((__heap_bump_bytes() as i32) > 0) { return 11; } return 1; }`, 11},
+	{"after-positive", `function main(): i32 { var a: i32[] = [__heap_bump_bytes() as i32, 2, 3]; if ((__heap_bump_bytes() as i32) > 0) { return 11; } return 1; }`, 11},
 	// The probe's declared result is i64 on the self-host too, not just
 	// natively: the arena is 16 GiB, so the mark passes 2^31 on a long run and
 	// an i32 result reads it back negative. Binding it to i64 locals and
@@ -37,7 +38,7 @@ var heapBumpBytesIRCases = []struct {
 	// it again this stops compiling rather than quietly returning a wrapped
 	// number. It also covers the wasm zero-extend, whose i32 cursor difference
 	// has to reach the i64 the builtin promises.
-	{"i64-typed", `function main(): i32 { var before: i64 = __heap_bump_bytes(); var a: i32[] = [1, 2, 3]; var after: i64 = __heap_bump_bytes(); if (before != (0 as i64)) { return 1; } if (after <= before) { return 2; } return 9; }`, 9},
+	{"i64-typed", `function main(): i32 { var before: i64 = __heap_bump_bytes(); var a: i32[] = [before as i32, 2, 3]; var after: i64 = __heap_bump_bytes(); if (before != (0 as i64)) { return 1; } if (after <= before) { return 2; } return 9; }`, 9},
 }
 
 // TestSelfHostHeapBumpBytesIR runs each case through the self-host CLI on

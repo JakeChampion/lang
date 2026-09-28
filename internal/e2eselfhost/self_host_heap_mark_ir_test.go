@@ -42,7 +42,9 @@ import (
 // reclaims each array to the freelist and the bump never advances. That is the
 // RC layer working, not the checkpoint. `__raw_alloc` bumps and nothing frees it,
 // so the growth is real and the rewind has something to give back: 125 KiB grown,
-// under 1 KiB residual after the release.
+// under 1 KiB residual after the release. Each array literal takes a runtime
+// element (the bump mark, 0 at the start of main): a literal of constants is a
+// static box, so it would neither seed the cursor nor be an allocation to compare.
 //
 // wasm is deliberately still refused, and now refuses UP FRONT with E066 from the
 // capability layer (#6705) naming the targets that do provide `arena`, rather
@@ -65,7 +67,7 @@ var heapMarkCases = []struct {
 	// the bump ~125 KiB; after the release the residual is under 1 KiB, and the
 	// pre-mark allocation is still intact.
 	{"heap-mark-reclaims", `function main(): i32 {
-    var seed: i32[] = [1, 2, 3];
+    var seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
     var m: i64 = __heap_mark();
     var before: i64 = __heap_bump_bytes();
     var i: i32 = 0;
@@ -81,7 +83,7 @@ var heapMarkCases = []struct {
 	// The arena is reusable after a release: a second window bumps from the
 	// rewound cursor rather than from where the first one ended.
 	{"heap-mark-reuse-after-release", `function main(): i32 {
-    var seed: i32[] = [1, 2, 3];
+    var seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
     var m: i64 = __heap_mark();
     var before: i64 = __heap_bump_bytes();
     var i: i32 = 0;
@@ -100,9 +102,9 @@ var heapMarkCases = []struct {
 	// stray release would hand out the arena base. The allocation after it must
 	// still be sound and distinct from the pre-existing one.
 	{"heap-mark-zero-release-noop", `function main(): i32 {
-    var keep: i32[] = [7, 8, 9];
+    var keep: i32[] = [(__heap_bump_bytes() as i32) + 7, 8, 9];
     __heap_release_to(0i64);
-    var fresh: i32[] = [1, 2, 3];
+    var fresh: i32[] = [keep[0] - 6, 2, 3];
     if (keep[0] != 7) { return 96; }
     if (fresh[0] != 1) { return 95; }
     if (keep[2] != 9) { return 94; }

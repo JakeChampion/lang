@@ -5597,16 +5597,17 @@ pub struct ConstAggPack { state: EmitState, text: string }
 // into that text. A RECORD's block is `__fern_arr_box(nf+1)` laid out flat — its
 // shape pointer in word 0, the fields after it — and a CAPTURE-FREE function
 // value's (#9839) is the one-element ARRAY box `arr_make(1, 32)` builds, whose
-// word 0 is the LENGTH and whose sole element is the body's address. Shared by
-// both register backends and by each one's flat and register arms, so no copy
+// word 0 is the LENGTH and whose sole element is the body's address. An array
+// of scalars packs as `0|` and its elements, and its length is written into
+// word 0 where the block is emitted. Shared by both register backends and by each one's flat and register arms, so no copy
 // of it can drift from another.
 pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
     var body: string = ir.const_struct_fn_body(packed);
     if (body.len() > 0) {
         return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
     }
-    if (ir.const_struct_is_empty_array(packed)) { return ConstAggPack { state: s, text: "0|" }; }
-    var shp: ShapeRefOut = shape_ref(s, ir.const_struct_type(packed));
+    var shp: ShapeRefOut = ShapeRefOut { state: s, label: "0" };
+    if (!ir.const_struct_is_array(packed)) { shp = shape_ref(s, ir.const_struct_type(packed)); }
     var text: string = shp.label + "|";
     var vals: string[] = ir.const_struct_values(packed);
     var i: i32 = 0;
@@ -7110,11 +7111,11 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
-// A packed block's kind: 1 an empty array, which holds no address; 2 a record,
-// whose first word is its shape pointer; 3 a function value, a one-element
-// array whose element is the body's address.
+// A packed block's kind: 1 an array of scalars, which holds no address; 2 a
+// record, whose first word is its shape pointer; 3 a function value, a
+// one-element array whose element is the body's address.
 pub function const_agg_kind(packed: string): i32 {
-    if (packed == "0|") { return 1; }
+    if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') { return 1; }
     if (packed.len() > 2 && packed[0] == b'1' && packed[1] == b'|') { return 3; }
     return 2;
 }
@@ -7139,15 +7140,19 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
     var i: i32 = first;
     while (i < st.const_aggs.len()) {
         var e: string = st.const_aggs[i];
-        var empty: boolean = const_agg_kind(e) == 1;
+        var array: boolean = const_agg_kind(e) == 1;
         if (only != 0 && const_agg_kind(e) != only) { i = i + 1; continue; }
         var bar: i32 = 0;
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
         var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
-        // An empty array's capacity is 0, or a push would write into it.
+        // An array's word 0 is its length, and its capacity is that length, or
+        // a push would write into it.
         var cap: i32 = vals.len() + 1;
-        if (empty) { cap = 0; }
+        if (array) {
+            cap = vals.len();
+            shp = util.i32_to_string(vals.len());
+        }
         st = st.write("    .quad " + util.i32_to_string(cap) + "\n");   // cap @ data-16
         st = st.write("    .quad -1\n");                                            // rc  @ data-8 (immortal)
         st = st.write(const_agg_label(st, i) + ":\n");

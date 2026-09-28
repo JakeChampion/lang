@@ -2,11 +2,13 @@
 // the core modules the Fern wasm backend emits for the wasi:cli/run
 // world directly in a browser.
 //
-// The playground's "Run (wasm)" button compiles source to a raw
-// preview-1 core command module (fernCompileCoreWasm → an exported
-// `_start` + `memory`, classic `wasi_snapshot_preview1` imports) and
-// hands the bytes here. Because we own the emitter we know the exact,
-// small import surface the modules reach for — stdout via fd_write,
+// The playground runs two kinds of module through it: the self-host
+// compiler itself (web/playground.wasm, a command module that reads a
+// program on stdin and writes its output to stdout), and the programs
+// that compiler emits for the "Run (wasm)" button — raw preview-1 core
+// command modules (an exported `_start` + `memory`, classic
+// `wasi_snapshot_preview1` imports). Because we own the emitter we
+// know the exact, small import surface the modules reach for — stdio,
 // process exit, and the clock / random helpers — so a hand-written
 // host is ~a screen of code with no jco, no Component Model
 // transpile, no CDN, and no Node `fs` dependency (which is what broke
@@ -28,16 +30,23 @@ class ExitSignal {
 // runCoreWasm instantiates a preview-1 core module and runs its
 // `_start`, returning the captured stdout / stderr and the exit code.
 //
-// `opts.stdin` is the guest's standard input, read once and then at
-// EOF; `opts.args` is its full argv, argv[0] included, the way a
-// process receives one. Both default to empty. A guest that wants
+// `module` is the module's bytes, or a compiled WebAssembly.Module for
+// a module run many times (the compiler is compiled once at boot and
+// instantiated afresh per run, so nothing one run leaves behind reaches
+// the next). `opts.stdin` is the guest's standard input, read once and
+// then at EOF; `opts.args` is its full argv, argv[0] included, the way
+// a process receives one. Both default to empty. A guest that wants
 // neither never calls fd_read or args_get, so passing nothing keeps
 // the old behaviour exactly.
+//
+// stdout comes back twice: `stdout` decoded as text, and `stdoutBytes`
+// as written, for a guest whose output is a binary — a compiler
+// writing a wasm module. stderr is text.
 //
 // The exit code is the guest's own: the emitted `_start` ends in
 // proc_exit(main()), so a program that returns 20 reports 20 without
 // having to call exit() itself.
-export async function runCoreWasm(bytes, opts = {}) {
+export async function runCoreWasm(module, opts = {}) {
   const stdoutChunks = [];
   const stderrChunks = [];
   let exitCode = 0;
@@ -55,8 +64,10 @@ export async function runCoreWasm(bytes, opts = {}) {
   const bytesAt = (ptr, len) => new Uint8Array(memory.buffer, ptr, len);
 
   // fd_write: gather the iovec array (pairs of i32 ptr,len) and append
-  // the decoded text to stdout (fd 1) or stderr (fd 2). Writes the
-  // total byte count back to nwrittenPtr and reports success.
+  // the bytes to stdout (fd 1) or stderr (fd 2). Copied out: the guest
+  // may grow its memory later, which detaches the view the bytes were
+  // read through. Writes the total byte count back to nwrittenPtr and
+  // reports success.
   function fdWrite(fd, iovsPtr, iovsCount, nwrittenPtr) {
     const dv = view();
     const sink = fd === 2 ? stderrChunks : stdoutChunks;
@@ -64,7 +75,7 @@ export async function runCoreWasm(bytes, opts = {}) {
     for (let i = 0; i < iovsCount; i++) {
       const base = dv.getUint32(iovsPtr + i * 8, true);
       const len = dv.getUint32(iovsPtr + i * 8 + 4, true);
-      if (len > 0) sink.push(decoder.decode(bytesAt(base, len)));
+      if (len > 0) sink.push(bytesAt(base, len).slice());
       written += len;
     }
     dv.setUint32(nwrittenPtr, written, true);
@@ -171,9 +182,11 @@ export async function runCoreWasm(bytes, opts = {}) {
     },
   });
 
-  const { instance } = await WebAssembly.instantiate(bytes, {
-    wasi_snapshot_preview1: wasiNamespace,
-  });
+  const imports = { wasi_snapshot_preview1: wasiNamespace };
+  const instance =
+    module instanceof WebAssembly.Module
+      ? await WebAssembly.instantiate(module, imports)
+      : (await WebAssembly.instantiate(module, imports)).instance;
 
   memory = instance.exports.memory;
   if (!memory) throw new Error("module has no exported `memory`");
@@ -192,9 +205,23 @@ export async function runCoreWasm(bytes, opts = {}) {
     }
   }
 
+  const stdoutBytes = concatChunks(stdoutChunks);
   return {
-    stdout: stdoutChunks.join(""),
-    stderr: stderrChunks.join(""),
+    stdout: decoder.decode(stdoutBytes),
+    stdoutBytes,
+    stderr: decoder.decode(concatChunks(stderrChunks)),
     exit: exitCode,
   };
+}
+
+function concatChunks(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
 }

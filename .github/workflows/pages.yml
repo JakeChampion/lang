@@ -30,6 +30,8 @@ on:
     branches: [main]
     paths:
       - "cmd/fern-wasm/**"
+      # The self-host compiler is the playground's compiler.
+      - "examples/self_host/**"
       - "cmd/ferndoc/**"
       - "web/**"
       - "site/**"

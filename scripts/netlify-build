@@ -5,7 +5,10 @@
 # Mirrors the four build steps in .github/workflows/pages.yml, which is the
 # canonical recipe for a publishable bundle:
 #
-#   1. Compile the playground's wasm from ./cmd/fern-wasm.
+#   1. Compile the playground's two wasm bundles: the self-host compiler
+#      (examples/self_host/playground_run.fern, built by bin/fern-selfhost)
+#      and the Go toolchain's language server + wasi:http half
+#      (./cmd/fern-wasm).
 #   2. Stage web/ under site/public/playground/ so Astro serves it at
 #      /playground/ alongside the docs.
 #   3. Run cmd/ferndoc to emit the generated stdlib reference pages.
@@ -15,7 +18,7 @@
 # source tree alone during a deploy:
 #
 #   - The wasm is compiled straight into the staging directory rather than to
-#     web/fern.wasm and copied across.
+#     web/playground.wasm + web/fern.wasm and copied across.
 #   - web/build.sh also refreshes the *tracked* web/wasm_exec.js from GOROOT,
 #     as a developer convenience. A deploy has no business rewriting a tracked
 #     file, so the shim is written into the staging directory only. It still
@@ -41,6 +44,12 @@ echo "==> node $(node --version)"
 echo "==> compiling playground wasm"
 rm -rf "$stage"
 mkdir -p "$stage"
+# The self-host compiler builds the compiler the page runs. `make selfhost-cli`
+# is the native toolchain building it; the pinned `make bootstrap` needs no Go
+# at all, but the deploy image has Go and no network policy for the pin.
+make selfhost-cli
+bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
+  -o "$stage/playground.wasm" "$PWD/examples/self_host/playground_run.fern" "$PWD/internal/stdlib"
 GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" \
   -o "$stage/fern.wasm" ./cmd/fern-wasm
 

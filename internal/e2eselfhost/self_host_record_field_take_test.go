@@ -83,7 +83,9 @@ function main(): i32 {
 // The fields are taken after a loop and read across later blocks, where the
 // flow from before the take keeps the record live: the record's drop must
 // still come, past the slots the takes emptied. Built with the leak census.
+// `id` keeps each array literal off the static data a constant one is.
 const recordFieldTakeAcrossProg = `struct Pair { a: i32[], b: i32[] }
+@noinline function id(x: i32): i32 { return x; }
 @noinline
 function left(own p: Pair, x: i32): Pair {
     var a: i32[] = p.a;
@@ -91,7 +93,7 @@ function left(own p: Pair, x: i32): Pair {
     return Pair { a: a.with(0, x), b: b };
 }
 function main(): i32 {
-    var p: Pair = Pair { a: [1, 2], b: [5, 6] };
+    var p: Pair = Pair { a: [id(1), 2], b: [id(5), 6] };
     var i: i32 = 0;
     while (i < 20) { p = left(p, i); i = i + 1; }
     var a: i32[] = p.a;
