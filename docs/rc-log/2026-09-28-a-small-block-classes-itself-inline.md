@@ -13,9 +13,9 @@ the argument.
 
 The callers now make the compare themselves and call only for a larger
 block. That is `capw_class` in `asm_ir`, used by `__fern_alloc` and
-`freelist_push`, and both arm64 sites. `__fern_capw` no longer tests for the
-small case, because nothing reaches it with one. Wasm's `$__fern_capw` is
-unchanged.
+`freelist_push`, and both arm64 sites. `__fern_capw` keeps its own test, so
+it stays correct for any count a future caller passes. Wasm's `$__fern_capw`
+is unchanged.
 
 ## Measured
 

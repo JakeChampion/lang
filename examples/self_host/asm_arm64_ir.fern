@@ -5469,18 +5469,19 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .text\n");
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
-    // capacity __fern_alloc bumps the block at. The class is the word count
-    // itself up to 256 words (2 KiB), which every caller tests for inline, so
-    // this is called only past that: native's 3-significant-bit capacities, so
-    // a buffer that grows a little at a time finds the block it just freed
-    // rather than a new class per step. Clamped below 65536, where the large
-    // tier takes over. Preserves
+    // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
+    // which the callers test for inline before calling, then native's
+    // 3-significant-bit capacities, so a buffer that grows a little at a time
+    // finds the block it just freed rather than a new class per step. Clamped
+    // below 65536, where the large tier takes over. Preserves
     // every register but x30, which `bl` set.
     s = s.write(".globl __fern_capw\n");
     s = s.write("__fern_capw:\n");
     s = s.write("    stp x9, x10, [sp, #-32]!\n");
     s = s.write("    str x11, [sp, #16]\n");
     s = s.write("    ldr x9, [sp, #32]\n");
+    s = s.write("    cmp x9, #256\n");
+    s = s.write("    b.ls .Lcapw_ret\n");
     s = s.write("    clz x10, x9\n");
     s = s.write("    mov x11, #61\n");
     s = s.write("    sub x10, x11, x10\n");            // msb - 2
@@ -5496,6 +5497,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #65535\n");
     s = s.write(".Lcapw_store:\n");
     s = s.write("    str x9, [sp, #32]\n");
+    s = s.write(".Lcapw_ret:\n");
     s = s.write("    ldr x11, [sp, #16]\n");
     s = s.write("    ldp x9, x10, [sp], #32\n");
     s = s.write("    ret\n");

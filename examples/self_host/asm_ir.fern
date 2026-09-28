@@ -2487,18 +2487,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
-    // capacity __fern_alloc bumps the block at. The class is the word count
-    // itself up to 256 words (2 KiB), which every caller tests for inline, so
-    // this is called only past that: native's 3-significant-bit capacities, so
-    // a buffer that grows a little at a time finds the block it just freed
-    // rather than a new class per step. Clamped below 65536, where the large
-    // tier takes over. Preserves
+    // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
+    // which the callers test for inline before calling, then native's
+    // 3-significant-bit capacities, so a buffer that grows a little at a time
+    // finds the block it just freed rather than a new class per step. Clamped
+    // below 65536, where the large tier takes over. Preserves
     // every register.
     s = s.write("__fern_capw:\n");
     s = s.write("    pushq %rax\n");
     s = s.write("    pushq %rcx\n");
     s = s.write("    pushq %rdx\n");
     s = s.write("    movq 32(%rsp), %rax\n");
+    s = s.write("    cmpq $256, %rax\n");
+    s = s.write("    jbe .Lcapw_ret\n");
     s = s.write("    bsrq %rax, %rcx\n");
     s = s.write("    subl $2, %ecx\n");
     s = s.write("    movl $1, %edx\n");
@@ -2511,6 +2512,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movl $65535, %eax\n");
     s = s.write(".Lcapw_store:\n");
     s = s.write("    movq %rax, 32(%rsp)\n");
+    s = s.write(".Lcapw_ret:\n");
     s = s.write("    popq %rdx\n");
     s = s.write("    popq %rcx\n");
     s = s.write("    popq %rax\n");
