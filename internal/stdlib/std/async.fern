@@ -115,6 +115,13 @@ function __real_reactor(d: RealDriver): i32 {
     return r;
 }
 
+// `.handle()` — the driver's reactor as the opaque handle a `Platform`
+// carries (`handle`), made on first use like `watch` makes it; negative
+// when the target has no reactor.
+pub function (d: RealDriver) handle(): i32 {
+    return __real_reactor(d);
+}
+
 impl Driver for RealDriver {
     function poll_ready(self: Self, toks: i32[], timeout_ms: i32): i32 {
         return poll(toks, timeout_ms);

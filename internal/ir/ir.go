@@ -3865,6 +3865,22 @@ func findTrmcFuncs(prog *ast.Program, info *checker.Info, ptrW int, pairForm map
 	return trmc, consumeSafe
 }
 
+// freshResultBuiltin reports a builtin whose result is a fresh allocation
+// aliasing none of its arguments: a byte buffer from scalar arguments
+// (`__alloc_u8`, `random_bytes`, `tcp_recv`), a copy of the bytes it was
+// handed (`string_from_bytes_unchecked` copies into an inline value or a fresh
+// rc 1 buffer, `slice_unchecked` copies out of its source), or an empty map.
+// exprNoParamEscape and taintedReachesSlot both read it: a parameter's bytes
+// handed to one do not reach the result, so `body_string` (`return
+// string_from_bytes_unchecked(r.body.data)`) escapes nothing.
+func freshResultBuiltin(name string) bool {
+	switch name {
+	case "map_new", "__alloc_u8", "random_bytes", "tcp_recv", "string_from_bytes_unchecked", "slice_unchecked":
+		return true
+	}
+	return false
+}
+
 // exprRefsTainted reports whether any tainted name appears anywhere in e.
 func exprRefsTainted(e ast.Expr, tainted map[string]bool) bool {
 	found := false
@@ -3964,6 +3980,9 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 			(id.Name == "__method_Array_set" || id.Name == "__method_Array_push") {
 			return taintedReachesSlot(x.Args[0], slot, tainted, info, variantPayloads, escapes) ||
 				taintedReachesSlot(x.Args[len(x.Args)-1], at.Elem, tainted, info, variantPayloads, escapes)
+		}
+		if freshResultBuiltin(id.Name) {
+			return false
 		}
 		// User function / method: a tainted argument reaches the result only if
 		// the callee itself escapes that argument position, and only if the
@@ -4531,50 +4550,13 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 			}
 			return true
 		}
-		// `map_new(cap)` constructs a FRESH empty map: its handle and bucket
-		// buffer are newly allocated and its arguments are scalars (the cap
-		// hint plus the injected keyKind/valKind tags), so no parameter heap
-		// can flow through the result. Admitting it here is what lets a
-		// cow-threaded map builder (`var m = map_new(8); m = m.insert(..);
-		// return m;`) prove its return fresh (#4357's map-intermediate leak) —
-		// without it the builtin (absent from q) rejected the init and the
-		// local never entered freshLocals.
-		if id.Name == "map_new" {
-			return true
-		}
-		// `__alloc_u8(n)` and its siblings hand back a fresh rc=1 byte
-		// buffer from scalar arguments alone, so no parameter heap can flow
-		// through the result — the same verdict rhsTainted's arm gives them.
-		// Without it `bytes()` (`var out = __alloc_u8(n); …; return out;`)
-		// could not prove its return fresh, and every caller's binding of a
-		// byte copy stayed permanently taint-ineligible (#8403).
-		if id.Name == "__alloc_u8" || id.Name == "random_bytes" || id.Name == "tcp_recv" {
-			return true
-		}
-		// `string_from_bytes_unchecked(buf)` always COPIES — into an
-		// inline-tagged register value at <= 7 bytes, into a fresh rc1 heap
-		// buffer above — so the result aliases neither `buf` nor anything
-		// reachable from it. Same provenance-free-fresh rule as the string
-		// concat / slice arms above, just spelled as a builtin. (This is the
-		// copy #5931's allocator untaint rests on: it is what makes the input
-		// buffer dead at the return.)
-		//
-		// Admitting it is what lets the int-to-string family prove fresh at all.
-		// `core/int.int_to_string` / `__int_to_string_u64` / `int_to_string_radix`
-		// all END in this call, so without it every one of them was rejected here,
-		// and with them every wrapper above them — `to_string`, `to_hex`,
-		// `to_binary`. That verdict propagates: ownedCallResultType refuses to
-		// reclaim a `__`-prefixed method result unless the callee is proven
-		// fresh-returning, so `x.to_binary()` handed to another call could not be
-		// stashed and dec'd, and leaked (#5942).
-		if id.Name == "string_from_bytes_unchecked" {
-			return true
-		}
-		// `slice_unchecked(s, a, b)` copies bytes OUT of `s` into a
-		// fresh string (the __str_slice contract), so the result
-		// aliases none of its arguments — the SliceExpr string arm
-		// above, spelled as a builtin.
-		if id.Name == "slice_unchecked" {
+		// A fresh-result builtin allocates its result and copies whatever
+		// bytes it was handed, so no parameter heap flows through it. This
+		// is what lets a map builder (`var m = map_new(8); …; return m;`),
+		// `bytes()` (`var out = __alloc_u8(n); …; return out;`) and the
+		// int-to-string family (every one ends in
+		// `string_from_bytes_unchecked`) prove their returns fresh.
+		if freshResultBuiltin(id.Name) {
 			return true
 		}
 		// `xs.append(v)` returns the receiver's OWN buffer (the rc==1 in-place
@@ -16304,14 +16286,20 @@ func (b *builder) callBody(n *ast.Call) error {
 	// a builtin is absent from it; a builtin position is admitted only by
 	// copyingBuiltinArg — the bytes are copied out and the result, a scalar
 	// or a fresh box, cannot alias the argument — and every other builtin
-	// keeps its prior safe-leak. The local / pair-form / map_new /
-	// retain-sink exclusions carry over from the call-level gate unchanged.
+	// keeps its prior safe-leak. The local / map_new / retain-sink
+	// exclusions carry over from the call-level gate unchanged. A pair-form
+	// callee is admitted: the credit is about its body, where a returned
+	// `Some(p)` takes the same transfer inc (emitPairFormPayloadRetain) a
+	// boxed return does, and the drop this admission ends in is the
+	// unguarded one, net-zero on the operand stack whether the call left a
+	// box or a (tag, payload) pair there. Without it a fresh buffer handed
+	// to a parser returning `Option[Request]` was owned by nobody.
 	countedArgTemp := func(ai int) bool {
 		if ast.RcFreeEnabled && calleeIsLocal {
 			return b.indirectArgCounted(ai)
 		}
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
-			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
+			id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
 		}
 		// A builtin that copies the argument out with a result that cannot

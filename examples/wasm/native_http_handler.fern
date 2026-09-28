@@ -23,8 +23,8 @@
 // The second parameter is the handler's capability bag: the host
 // effects it may reach, as methods (std/platform). An access log
 // line is `plat.log`, not a bare `eprint` — an effect the caller
-// hands over can be swapped for one that records, and `fern
-// -lint`'s `ambient-capability` rule reports reaching around it.
+// hands over can be swapped for one that records, and reaching
+// around the bag is refused at check time (E080).
 //
 // HttpRequest / HttpResponse struct types live in std/http; the
 // auto-synthesised `main()` calls into std/tcp.

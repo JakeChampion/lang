@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**65 of 83** codes are pinned by a conformance case. The table
+**65 of 84** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -124,6 +124,7 @@ language does not have. It is deleted.
 | `E077` | invalid named argument | `diag_e077` |
 | `E078` | an `@try` enum does not have the shape `?` requires | — |
 | `E079` | `?` inside a `defer` / `errdefer` action | `diag_e079` |
+| `E080` | a handler reaches a host effect around its `Platform` bag | — |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
@@ -131,11 +132,13 @@ language does not have. It is deleted.
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
 
-## The 18 unpinned codes
+## The 19 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are
 fragments that need a surrounding program the example does not supply,
 or they need a multi-module or capability-manifest setup a single
-`main.fern` cannot express (`E066`, `E070`). They are the remaining
-work, not a decision.
+`main.fern` cannot express (`E066`, `E070`). `E080` is reported by the
+drivers rather than the checker, so the self-host rejection gate, which
+reads the checker alone, cannot pin it. They are the remaining work, not a
+decision.

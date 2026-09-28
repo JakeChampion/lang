@@ -1,0 +1,120 @@
+import "std/test";
+import "std/http";
+import "std/string";
+
+// examples/tests/http_request_bytes_test.fern — the byte-based request
+// parser (#5714): `http_parse_request_bytes` reads the request as it came
+// off the wire, and `http_parse_request` is the same parse over text. The
+// two must agree on every request, well-formed or not, and nothing the
+// parse keeps may be a view into the wire, so the buffer is free to be
+// reused.
+
+function wire_post(): string {
+    return "POST /echo HTTP/1.1\r\nHost: example.test\r\nX-Request-Id: 42\r\nContent-Length: 5\r\n\r\nhello";
+}
+
+function test_bytes_parse_keeps_the_request(): test.TestOutcome {
+    match (http.http_parse_request_bytes(wire_post().bytes())) {
+        Some(req) => {
+            if (req.method != "POST") { return test.fail("method: " + req.method); }
+            if (req.path != "/echo") { return test.fail("path: " + req.path); }
+            if (req.headers.len() != 3) { return test.fail("headers: " + req.headers.len().to_string()); }
+            if (req.body_string() != "hello") { return test.fail("body: " + req.body_string()); }
+            return test.assert_is_some_eq_string(req.headers.get("x-request-id"), "42");
+        },
+        None => { return test.fail("parse failed on a well-formed request"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_text_and_bytes_agree(): test.TestOutcome {
+    var wire: string = wire_post();
+    match (http.http_parse_request(wire)) {
+        Some(a) => {
+            match (http.http_parse_request_bytes(wire.bytes())) {
+                Some(b) => {
+                    if (a.method != b.method || a.path != b.path) { return test.fail("request line differs"); }
+                    if (a.headers.len() != b.headers.len()) { return test.fail("header count differs"); }
+                    return test.assert_eq(a.body_string(), b.body_string());
+                },
+                None => { return test.fail("bytes parse failed"); }
+            }
+        },
+        None => { return test.fail("text parse failed"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_bare_request_has_no_headers(): test.TestOutcome {
+    match (http.http_parse_request_bytes("GET / HTTP/1.1\r\n\r\n".bytes())) {
+        Some(req) => {
+            if (req.headers.len() != 0) { return test.fail("headers on a bare request"); }
+            return test.assert_eq(req.body_len(), 0);
+        },
+        None => { return test.fail("bare request refused"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_header_without_colon_is_skipped(): test.TestOutcome {
+    match (http.http_parse_request_bytes("GET / HTTP/1.1\r\nnocolon\r\nHost: h\r\n\r\n".bytes())) {
+        Some(req) => { return test.assert_eq(req.headers.len(), 1); },
+        None => { return test.fail("a colon-less header line refused the request"); }
+    }
+    return test.fail("unreachable");
+}
+
+// Every refusal the parser makes, on both entries.
+function refused(wire: string): boolean {
+    var text: boolean = true;
+    match (http.http_parse_request(wire)) {
+        Some(_) => { text = false; },
+        None => { }
+    }
+    var bytes: boolean = true;
+    match (http.http_parse_request_bytes(wire.bytes())) {
+        Some(_) => { bytes = false; },
+        None => { }
+    }
+    return text && bytes;
+}
+
+function test_refusals_agree(): test.TestOutcome {
+    if (!refused("GET/HTTP/1.1\r\n\r\n")) { return test.fail("request line without a space accepted"); }
+    if (!refused("GET /\r\n\r\n")) { return test.fail("request line without a version accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n")) { return test.fail("Transfer-Encoding accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")) { return test.fail("duplicate Content-Length accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nContent-Length: 12a\r\n\r\n")) { return test.fail("non-numeric Content-Length accepted"); }
+    if (!refused("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhello")) { return test.fail("a body shorter than declared accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nHost: h")) { return test.fail("an unterminated header block accepted"); }
+    return test.pass();
+}
+
+function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
+    var wire: u8[] = wire_post().bytes();
+    match (http.http_parse_request_bytes(wire)) {
+        Some(req) => {
+            // Overwrite the wire buffer after the parse: the request must
+            // not see it. A counted alias would be copied on write and pass
+            // here too, so what this pins is that no field is an uncounted
+            // view (a `str`, a slice) into the wire.
+            var i: i32 = 0;
+            while (i < wire.len()) { wire = wire.with(i, 120 as u8); i = i + 1; }
+            if (req.path != "/echo") { return test.fail("the path aliased the wire buffer"); }
+            return test.assert_eq(req.body_string(), "hello");
+        },
+        None => { return test.fail("parse failed"); }
+    }
+    return test.fail("unreachable");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("HTTP request bytes");
+    r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
+    r = r.it("text and bytes agree", test_text_and_bytes_agree);
+    r = r.it("bare request has no headers", test_bare_request_has_no_headers);
+    r = r.it("header without colon is skipped", test_header_without_colon_is_skipped);
+    r = r.it("refusals agree", test_refusals_agree);
+    r = r.it("parse holds no view into the wire", test_parse_holds_no_view_into_the_wire);
+    return r.finish();
+}

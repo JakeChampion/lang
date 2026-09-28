@@ -24,8 +24,8 @@
 //      response, and the wait's timeout is the earliest one due.
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (headers must fit in
-//      8 KiB, the body in 1 MiB, http_parse_request's caps).
-//   3. http_parse_request — return None ⇒ keep reading, or on EOF close
+//      8 KiB, the body in 1 MiB, the parser's caps).
+//   3. http_parse_request_bytes — return None ⇒ keep reading, or on EOF close
 //      the socket without a response (HTTP/1.1 §10 explicitly allows
 //      server-side reset on malformed input).
 //   4. handler(req) returns the HttpResponse.
@@ -224,7 +224,7 @@ function __recv_scratch(): u8[] {
 // kernel has not taken yet ("" while the request is being read), and the
 // monotonic time its deadline falls due (the read deadline, then the
 // same span again for the write).
-struct __Conns { fds: i32[], bufs: string[], pending: string[], deadlines: i64[] }
+struct __Conns { fds: i32[], bufs: u8[][], pending: string[], deadlines: i64[] }
 
 function __conns_index(c: __Conns, fd: i32): i32 {
     var i: i32 = 0;
@@ -236,12 +236,13 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 }
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(""), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline) };
+    var empty: u8[] = [];
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline) };
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
     var fds: i32[] = [];
-    var bufs: string[] = [];
+    var bufs: u8[][] = [];
     var pending: string[] = [];
     var deadlines: i64[] = [];
     var i: i32 = 0;
@@ -299,7 +300,7 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // error, or the size cap) and `request` is the complete request when
 // there is one.
 function __serve_read(c: __Conns, at: i32, scratch: u8[]): (__Conns, boolean, Option[HttpRequest]) {
-    var buf: string = c.bufs[at];
+    var buf: u8[] = c.bufs[at];
     while (true) {
         var n: i32 = tcp_recv_into(c.fds[at], scratch);
         if (n == 0 - __eagain()) {
@@ -308,18 +309,14 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[]): (__Conns, boolean, Op
         if (n <= 0) {
             return (c, true, None);
         }
-        // The one remaining wire-bytes-to-string bridge: the request
-        // buffer is text-typed only because `http_parse_request` and
-        // `HttpRequest.body` still are. Retired when the HTTP message
-        // layer goes byte-based (#5714).
-        buf = buf + string_from_bytes_unchecked(scratch.take(n));
+        buf = buf.concat(scratch.take(n));
         // Hard cap to keep slow / hostile clients from pinning
         // unbounded memory. Headers must fit in the first 8 KiB; body
-        // capped at 1 MiB. Matches http_parse_request's internal caps.
+        // capped at 1 MiB. Matches the parser's internal caps.
         if (buf.len() > 8192 + 1048576) {
             return (c, true, None);
         }
-        match (http.http_parse_request(buf)) {
+        match (http.http_parse_request_bytes(buf)) {
             Some(parsed) => { return (c, true, Some(parsed)); },
             None => {
                 // Still partial, or definitively malformed: more bytes
@@ -360,11 +357,15 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns 
 }
 
 // __host_platform — the bag the accept loops hand every handler: the host
-// mode, and a sink nothing writes to. Recording is a MockPlatform's job; it
-// builds a bag over its own cell (std/mock_platform). Built once per loop
-// rather than per request, since no request can change it.
-function __host_platform(): Platform {
-    return Platform { version: 1, mode: 0, sink: cell_new("") };
+// mode, a sink nothing writes to, and the worker's reactor as its handle,
+// 0 where the target has none, as a bag from `platform_new` carries.
+// Recording is a MockPlatform's job; it builds a bag over its own cell
+// (std/mock_platform). Built once per loop rather than per request, since
+// no request can change it.
+function __host_platform(reactor: i32): Platform {
+    var handle: i32 = reactor;
+    if (handle < 0) { handle = 0; }
+    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: handle };
 }
 
 // __serve_loop — the HTTP/1.1 reactor loop factored out of `tcp_serve`
@@ -378,10 +379,10 @@ function __host_platform(): Platform {
 // -errno like a failed bind. `recv_deadline` bounds each connection's
 // request read (see `tcp_serve_deadline`).
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
-    var plat: Platform = __host_platform();
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {
@@ -431,10 +432,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // request sees the value the previous one returned.
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
     var st: S = init;
-    var plat: Platform = __host_platform();
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
     var scratch: u8[] = __recv_scratch();
     while (true) {

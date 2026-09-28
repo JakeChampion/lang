@@ -4391,7 +4391,7 @@ function __port_from_env(name: string, def: i32): i32 { return def; }
 func TestPlatformConstructorNotSynthesisedOverUserDefinition(t *testing.T) {
 	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
-function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new("") }; }
+function __fern_platform_new(): Platform { return Platform { version: 7, mode: 0, sink: cell_new(""), handle: 0 }; }
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
 }`)
@@ -7732,6 +7732,41 @@ function main(): i32 {
 			t.Fatalf("Map[i32, i32] and Map[string, i32] must still conflict, got %v", err)
 		}
 	})
+}
+
+// An empty array literal binds no type parameter: a later argument or the
+// destination does, and the literal is checked against that (#10499).
+func TestEmptyArrayArgumentLeavesTypeParameterOpen(t *testing.T) {
+	for _, tc := range []struct{ name, src, wantErr string }{
+		{"later argument pins it", `function fold[T](x: i32, own acc: T, f: (i32, own T) => T): T { return f(x, acc); }
+function add(x: i32, own acc: string[]): string[] { return acc.append("a"); }
+function main(): i32 {
+    var r: string[] = fold(1, [], add);
+    return r.len();
+}`, ""},
+		{"destination pins it", `function id[T](own x: T): T { return x; }
+function main(): i32 {
+    var r: i32[] = id([]);
+    return r.len();
+}`, ""},
+		{"nothing pins it", `function first[T](own x: T, n: i32): i32 { return n; }
+function main(): i32 { return first([], 3); }`, "could not infer type parameter T for first"},
+		{"pinned to a scalar", `function pair[T](own a: T, own b: T): T { return b; }
+function main(): i32 { return pair([], 3); }`, "argument 1: expected i32, got []"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, tc.src)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want accepted, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
 }
 
 // A cast around a generic call whose type parameter an ARGUMENT already

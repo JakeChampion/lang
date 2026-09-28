@@ -9,12 +9,12 @@ import (
 )
 
 // A map whose key is a string, a 32-bit integer or a boolean, and whose value
-// is a 32-bit integer or a boolean, runs on core/map's hash table under the
-// typed lowering (ssarc.routed_map, #9608). These cases pin what the routing
-// has to keep: the whole Map surface, copy-on-write under an alias, negative
-// keys (which cross into core/map's usize slot and must be equal slots however
-// they were computed), u32 values past 2^31, boolean columns, and a string key
-// column's units — on every target, with every allocation returned.
+// is one of those or a box, runs on core/map's hash table under the typed
+// lowering (ssarc.routed_map, #9608). These cases pin what the routing has to
+// keep: the whole Map surface, copy-on-write under an alias, negative keys
+// (which cross into core/map's usize slot and must be equal slots however they
+// were computed), u32 values past 2^31, boolean columns, and the units a string
+// or box column holds — on every target, with every allocation returned.
 
 // routedMapSurfaceSrc exercises every routed op: construction, insert with and
 // without an alias, get / get_or / has, without, keys / values, the cursor,
@@ -209,6 +209,69 @@ function main(): i32 {
 }
 `
 
+// routedMapBoxValuesSrc: array, record and enum value columns hold one unit of
+// each box. core/map retains a box on every read and on a copy, and the
+// lowering releases the box an overwrite supersedes, a delete removes and the
+// last drop still holds, the last through the type's own release.
+const routedMapBoxValuesSrc = `import "core/map";
+import "std/i32";
+
+struct Rec { name: string, n: i32 }
+enum Shape { Circle(i32), Label(string), Empty }
+
+function build(n: i32): Map[string, i32[]] {
+    var m: Map[string, i32[]] = Map {};
+    var i: i32 = 0;
+    while (i < n) { m = m.insert("k" + i.to_string(), [i, i * 2, i * 3]); i = i + 1; }
+    return m;
+}
+
+function shape_n(s: Shape): i32 {
+    match (s) { Circle(r) => { return r; }, Label(t) => { return t.len(); }, Empty => { return 0; } }
+}
+
+function main(): i32 {
+    var m: Map[string, i32[]] = build(200);
+    m = m.insert("k7", [70, 71]);
+    var alias: Map[string, i32[]] = m;
+    alias = alias.insert("k8", [1, 2, 3, 4, 5]);
+    var out: string = m.get_or("k7", []).len().to_string() + " " + alias.get_or("k8", []).len().to_string() + " " + m.get_or("k8", []).len().to_string();
+    out = out + " " + m.get_or("zz", [9, 9, 9, 9]).len().to_string();
+    match (m.get("k9")) { Some(v) => { out = out + " " + v[2].to_string(); }, None => { out = out + " none"; } }
+    var r: (Map[string, i32[]], boolean) = m.without("k10");
+    var m2: Map[string, i32[]] = r.0;
+    out = out + " " + r.1.to_string() + " " + m.has("k10").to_string() + " " + m2.has("k10").to_string();
+    var total: i32 = 0;
+    for (k, v) in m2 { total = total + k.len() + v.len() + v[0]; }
+    var vs: i32[][] = m2.values();
+    out = out + " " + total.to_string() + " " + vs.len().to_string() + " " + vs[3][1].to_string();
+
+    var recs: Map[i32, Rec] = Map {};
+    var j: i32 = 0;
+    while (j < 50) { recs = recs.insert(j % 10, Rec { name: "n" + j.to_string(), n: j }); j = j + 1; }
+    var r2: (Map[i32, Rec], boolean) = recs.without(3);
+    recs = r2.0;
+    var hold: Map[i32, Rec] = recs;
+    recs = recs.insert(4, Rec { name: "four" + "!", n: 4 });
+    out = out + " " + recs.get_or(4, Rec { name: "", n: 0 }).name + " " + hold.get_or(4, Rec { name: "", n: 0 }).name + " " + recs.len().to_string();
+    for (k, v) in recs { total = total + v.n + v.name.len(); }
+
+    var shapes: Map[string, Shape] = Map {};
+    shapes = shapes.insert("a", Circle(3));
+    shapes = shapes.insert("b", Label("hello" + "!"));
+    shapes = shapes.insert("c", Empty);
+    shapes = shapes.insert("b", Label("bye"));
+    var sn: i32 = 0;
+    for (k, v) in shapes { sn = sn + shape_n(v); }
+    for v in shapes.values() { sn = sn + shape_n(v); }
+    out = out + " " + sn.to_string() + " " + total.to_string();
+    var e: Map[string, i32[]] = m.cleared();
+    out = out + " " + e.len().to_string();
+    print(out);
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -228,6 +291,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"cow", routedMapCowSrc, "14 1000 true false 100 100 99"},
 		{"u32_bool", routedMapU32BoolSrc, "true true 2 12"},
 		{"string_values", routedMapStringValuesSrc, "overwritten aliasonly v24 missed v27 true true false 2254 299 n44 9 0"},
+		{"box_values", routedMapBoxValuesSrc, "2 5 3 4 27 true true false 21236 199 6 four! n44 9 12 21627 0"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {

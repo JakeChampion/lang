@@ -14,7 +14,8 @@ const stdPlatformProg = `
 import "std/platform" as platform;
 function main(): i32 {
     var plat: Platform = platform.platform_new();
-    if (plat.version != 1) { return 1; }
+    if (plat.version != 2) { return 1; }
+    if (plat.handle != 0) { return 6; }
     plat.log("std/platform capability check");
 
     // Wall clock: some time after 2020-09-13, which is the last moment

@@ -3843,6 +3843,25 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_request_bytes_test.fern` pins the byte-based request
+// parser (#5714): `http_parse_request_bytes` and the text entry agree on
+// well-formed and refused requests, a bare request and a colon-less header
+// line parse as before, and what the parse keeps is copied out of the wire
+// buffer rather than aliasing it.
+func TestRunnerHttpRequestBytesExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_request_bytes_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 6", "# fail 0", "1..6"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_request_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpRequestHeaders`.
 // Fourth migration in the runner-adoption effort.
