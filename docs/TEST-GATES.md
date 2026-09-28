@@ -275,6 +275,10 @@ the production self-host compiler. They verify every HTTP response, require
 the compiler to produce every reachable declaration through semantic lowering,
 and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
 and native Darwin run the same fixture; QEMU is permitted for correctness.
+`TestHTTPHandlerCensus`, `TestArm64DarwinHTTPHandlerCensus` and
+`TestWasmHTTPHandlerCensus` are the Go compiler's twins over the same fixture
+(x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
+wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected
