@@ -7,12 +7,12 @@
 // No prelude: callers now `import "std/http";` explicitly
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
-// Scope: HTTP/1.1 only, Content-Length-delimited bodies, no
-// chunked transfer encoding, no persistent connections (every
-// response advertises `Connection: close`), max 8 KiB headers,
-// max 1 MiB body. Sufficient for CLI tools and edge handlers;
-// the rest (keep-alive, TE chunked, TLS) waits on a
-// richer lang shape.
+// Scope: HTTP/1.1 and HTTP/1.0, Content-Length-delimited bodies, no
+// chunked transfer encoding, max 8 KiB headers, max 1 MiB body.
+// Persistent connections are the serve loop's: `http_parse_request_framed`
+// says how many bytes a request occupied and whether the connection
+// outlives it, and `http_serialize_response_conn` writes the `Connection`
+// the loop decided. No chunked TE, no TLS.
 
 import "core/int";
 import "core/map";
@@ -247,7 +247,11 @@ pub function http_header_value(block: string, key: string): Option[string] {
     // of edge-case rules — no drift between "look a header up on a
     // request" and "look one up on a raw block".
     var bs: u8[] = block.bytes();
-    return __parse_header_bytes(bs, 0, bs.len()).get(key);
+    match (__parse_header_bytes(bs, 0, bs.len())) {
+        Some(h) => { return h.get(key); },
+        None => { return None; }
+    }
+    return None;
 }
 
 // __find_crlf is the index of the first CRLF at or after `from` and before
@@ -299,10 +303,15 @@ function __bytes_string(buf: u8[], from: i32, end: i32): string {
 // per §3.2.4 (a value is a token after the colon, with optional
 // surrounding whitespace).
 //
+// Whitespace between a name and its colon refuses the whole block
+// (`None`), as RFC 9112 §5.1 requires of a server: dropping the line
+// instead would lose a `Content-Length : 5` and leave its body bytes
+// in the buffer for a pipelined parse to read as the next request.
+//
 // Doesn't handle line folding (obs-fold per §3.2.4) — folding
 // was deprecated by RFC 7230 and is treated as malformed
 // (continuation lines get skipped via the colon check).
-function __parse_header_bytes(buf: u8[], from: i32, end: i32): HeaderMap {
+function __parse_header_bytes(buf: u8[], from: i32, end: i32): Option[HeaderMap] {
     var h: HeaderMap = headers.header_map_new();
     var at: i32 = from;
     while (at < end) {
@@ -310,13 +319,15 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32): HeaderMap {
         if (e < 0) { e = end; }
         var col: i32 = __find_byte(buf, at, e, 58 as u8);
         if (col > at) {
+            var last: u8 = buf[col - 1];
+            if (last == (32 as u8) || last == (9 as u8)) { return None; }
             var name: string = __bytes_string(buf, at, col);
             var value: string = __bytes_string(buf, col + 1, e).trim().to_owned();
             h = h.append(name, value);
         }
         at = e + 2;
     }
-    return h;
+    return Some(h);
 }
 
 // Derive the request body length from the *parsed* HeaderMap
@@ -392,12 +403,39 @@ function __http_content_length(h: HeaderMap): Option[i32] {
 // path, each header's name and value, the body — so the wire
 // buffer is the connection's to reuse once this returns.
 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
+    match (http_parse_request_framed(buf)) {
+        Some(f) => { return Some(f.request); },
+        None => { return None; }
+    }
+    return None;
+}
+
+// HttpFramed — a parsed request with its framing: `len` is the bytes it
+// occupies at the head of the buffer, so a serve loop can drop them and
+// look for the next pipelined request, and `keep_alive` is whether the
+// connection persists after its response (RFC 9112 §9.3: HTTP/1.1 unless
+// the request says `Connection: close`; HTTP/1.0 only when it says
+// `Connection: keep-alive`).
+pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
+
+// `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
+// framing a persistent connection needs. Same acceptance rules, same
+// `None` for an incomplete or refused request.
+pub function http_parse_request_framed(buf: u8[]): Option[HttpFramed] {
+    return http_parse_request_framed_from(buf, 0);
+}
+
+// `http_parse_request_framed_from(buf, from)` — the same parse over
+// buf[from, len): the request behind the ones a serve loop has already
+// answered, without copying the rest of the buffer forward. `len` counts
+// from `from`.
+pub function http_parse_request_framed_from(buf: u8[], from: i32): Option[HttpFramed] {
     var n: i32 = buf.len();
-    if (n > 8192 + 1048576) {
+    if (n - from > 8192 + 1048576) {
         return None;
     }
     var headers_end: i32 = -1;
-    var i: i32 = 0;
+    var i: i32 = from;
     while (i + 3 < n) {
         if (buf[i] == (13 as u8) && buf[i + 1] == (10 as u8) && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8)) {
             headers_end = i;
@@ -408,11 +446,11 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     if (headers_end < 0) {
         return None;
     }
-    if (headers_end > 8192) {
+    if (headers_end - from > 8192) {
         return None;
     }
-    var headers_len: i32 = headers_end + 4;
-    var first_crlf: i32 = __find_crlf(buf, 0, n);
+    var headers_len: i32 = headers_end + 4 - from;
+    var first_crlf: i32 = __find_crlf(buf, from, n);
     // Parse the header block into a HeaderMap *first*, then derive
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
@@ -426,7 +464,11 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     if (hdr_start > headers_end) {
         hdr_start = headers_end;
     }
-    var req_headers: HeaderMap = __parse_header_bytes(buf, hdr_start, headers_end);
+    var req_headers: HeaderMap = headers.header_map_new();
+    match (__parse_header_bytes(buf, hdr_start, headers_end)) {
+        Some(h) => { req_headers = h; },
+        None => { return None; }
+    }
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
         Some(cl) => { content_length = cl; },
@@ -439,12 +481,12 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     if (content_length > 1048576) {
         return None;
     }
-    if (headers_len + content_length > n) {
+    if (from + headers_len + content_length > n) {
         // Caller hasn't read the full body yet.
         return None;
     }
     // The request line: the method, a space, the path, a space, the rest.
-    var sp1: i32 = __find_byte(buf, 0, first_crlf, 32 as u8);
+    var sp1: i32 = __find_byte(buf, from, first_crlf, 32 as u8);
     if (sp1 < 0) {
         return None;
     }
@@ -452,12 +494,38 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     if (sp2 < 0) {
         return None;
     }
-    return Some(HttpRequest {
-        method: __bytes_string(buf, 0, sp1),
+    var keep_alive: boolean = __persists(buf, sp2 + 1, first_crlf, req_headers);
+    var request: HttpRequest = HttpRequest {
+        method: __bytes_string(buf, from, sp1),
         path: __bytes_string(buf, sp1 + 1, sp2),
-        body: stream.stream_from_bytes(__bytes_range(buf, headers_len, headers_len + content_length)),
+        body: stream.stream_from_bytes(__bytes_range(buf, from + headers_len, from + headers_len + content_length)),
         headers: req_headers,
-    });
+    };
+    return Some(HttpFramed { request: request, len: headers_len + content_length, keep_alive: keep_alive });
+}
+
+// __persists(buf, from, end, h) — whether the connection outlives this
+// request: the version is buf[from, end), and a `Connection` header
+// carrying `close` ends an HTTP/1.1 connection where one carrying
+// `keep-alive` extends an HTTP/1.0 one. The header is a comma-separated
+// token list, and only a whole token counts: `x-close` neither closes
+// nor keeps. A version that is neither `HTTP/1.1` nor `HTTP/1.0` is
+// answered and closed; nothing here negotiates one.
+function __persists(buf: u8[], from: i32, end: i32, h: HeaderMap): boolean {
+    var version: string = __bytes_string(buf, from, end);
+    if (version != "HTTP/1.1" && version != "HTTP/1.0") { return false; }
+    var close: boolean = false;
+    var keep: boolean = false;
+    for v in h.get_all("connection") {
+        for tok in v.split(",") {
+            var t: string = tok.trim().to_lower();
+            if (t == "close") { close = true; }
+            if (t == "keep-alive") { keep = true; }
+        }
+    }
+    if (close) { return false; }
+    if (version == "HTTP/1.0") { return keep; }
+    return true;
 }
 
 // `http_parse_request(buf)` — the same parse over a request held as
@@ -483,12 +551,22 @@ function __http_reason(code: i32): string {
 }
 
 // `http_serialize_response(resp)` builds the wire-format
-// response from an HttpResponse. Always advertises
-// `Connection: close` so the client's `read()` returns the
-// EOF that tells it the response is complete after the
-// caller's `tcp_send` finishes the write. No keep-alive, no
-// chunked TE.
+// response from an HttpResponse, advertising `Connection: close`
+// so the client's `read()` returns the EOF that tells it the
+// response is complete after the caller's `tcp_send` finishes the
+// write. No chunked TE.
 pub function http_serialize_response(resp: HttpResponse): string {
+    return http_serialize_response_conn(resp, false);
+}
+
+// `http_serialize_response_conn(resp, keep_alive)` — the response as
+// a serve loop sends it: `Connection: keep-alive` when the connection
+// persists for the next request, `Connection: close` when this
+// response ends it. Every response carries the header, so an HTTP/1.0
+// client that asked to keep the connection learns that it was kept.
+pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
+    var connection: string = "Connection: close\r\n";
+    if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
         + " " + __http_reason(resp.status) + "\r\n";
     // User-supplied headers first; skip `content-length` and
@@ -505,7 +583,7 @@ pub function http_serialize_response(resp: HttpResponse): string {
         i = i + 1;
     }
     hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"
-        + "Connection: close\r\n"
+        + connection
         + "\r\n";
     return status_line + hdr_block + resp.body_string();
 }

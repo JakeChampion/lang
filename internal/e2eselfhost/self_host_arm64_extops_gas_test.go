@@ -496,6 +496,7 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"uadalp v23.2d, v9.4s", 0x6ea06937},
 		{"saddlp v3.4h, v4.8b", 0x0e202883},
 		{"sadalp v5.1d, v6.2s", 0x0ea068c5},
+		{"saddlp v7.2s, v8.4h", 0x0e602907},
 
 		{"pmull v0.8h, v1.8b, v2.8b", 0x0e22e020},
 		{"pmull2 v0.8h, v1.16b, v2.16b", 0x4e22e020},

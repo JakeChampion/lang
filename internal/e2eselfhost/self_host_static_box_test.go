@@ -114,6 +114,58 @@ struct U { x: u32 }
     while (i < 100) { t = t + rebuild(i); i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
+@noinline function lookup(k: i32): i32 {
+    var below: i32[] = [6, 11, 0 - 12];
+    for e in below { if (k == e) { return 1; } }
+    return 0;
+}
+@noinline function table(): i32[] { return [4, 5, 6]; }
+function seven(): i32 { return 7; }
+@noinline function spliced(): i32[] { return [seven(), 8]; }
+@noinline function flags(): boolean[] { return [true, false, true]; }
+@noinline function names(): string[] { return ["a", "b"]; }
+@noinline function lookup_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + lookup(i) + lookup(0 - i); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function pushed_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var xs: i32[] = table().append(i); t = t + xs.len() + xs[0]; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function set_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var xs: i32[] = table().with(0, 100); t = t + xs[0] + table()[0]; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function flag_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { var fs: boolean[] = flags(); if (fs[0] && !fs[1]) { t = t + fs.len(); } i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function spliced_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + spliced()[0]; i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function name_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { t = t + names().len(); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
 function print_int(n: i32): i32 {
     if (n > 9) { print_int(n / 10); }
     putchar(48 + n % 10);
@@ -129,6 +181,12 @@ function main(): i32 {
     print_int(leaf_rounds()); print("");
     print_int(later_rounds()); print("");
     print_int(unsigned_rounds()); print("");
+    print_int(lookup_rounds()); print("");
+    print_int(pushed_rounds()); print("");
+    print_int(set_rounds()); print("");
+    print_int(flag_rounds()); print("");
+    print_int(name_rounds()); print("");
+    print_int(spliced_rounds()); print("");
     return 0;
 }
 `
@@ -136,10 +194,84 @@ function main(): i32 {
 func TestSelfHostStaticBoxes(t *testing.T) {
 	// Before static boxes the first three lines ended 100, 200 and 100, and
 	// leaf_rounds ended 200.
-	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800300\n301200100\n"
+	want := "500000\n3300000\n2000000\n10100100\n4950100\n5450100\n4950100\n800300\n301200100\n3000\n800100\n10400100\n300000\n200100\n700000\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",
-			"leaf", "later", "leaf_rounds", "later_rounds", "u_small", "u_big", "unsigned_rounds"},
+			"leaf", "later", "leaf_rounds", "later_rounds", "u_small", "u_big", "unsigned_rounds",
+			"lookup", "table", "flags", "names", "lookup_rounds", "pushed_rounds", "set_rounds", "flag_rounds", "name_rounds",
+			"seven", "spliced", "spliced_rounds"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+}
+
+// A literal whose storage the body hands to the raw floor is built fresh
+// rather than placed: the floor writes through a data pointer with no count,
+// so a shared box would carry the write into every evaluation of an equal
+// literal. `bytes_rounds` overwrites a `u8[]` literal's length through its data
+// pointer each round and reads it before and after. `poke_len` does the same
+// to an `i32[]` literal with `__store_i32`, and `fresh_len`, which never
+// touches the floor, must still read its own equal literals' lengths.
+// `shorten_lit` and `raw_ptr_len` reach the floor on an equal literal through
+// `__arr_set_len` and `__raw_arr_ptr`; if either were placed, `fresh_len` would
+// read something other than 33. `shorten` calls `__arr_set_len` on a heap
+// buffer, which lends it, so its body is produced. Wasm is left out: it has no
+// emit arm for the raw byte store.
+const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
+    var b: u8[] = __alloc_u8(4);
+    __arr_set_len(b, n);
+    return b.len();
+}
+@noinline function poke_len(): i32 {
+    var a: i32[] = [7, 8, 9];
+    __store_i32(a as usize, 99);
+    return a.len();
+}
+@noinline function shorten_lit(): i32 {
+    var a: u8[] = [7u8, 8u8, 9u8];
+    __arr_set_len(a, 2);
+    return a.len();
+}
+@noinline function raw_ptr_len(): i32 {
+    var a: i32[] = [7, 8, 9];
+    __store_i32(__raw_arr_ptr(a), 99);
+    return a.len();
+}
+@noinline function fresh_len(): i32 {
+    var v: i32[] = [7, 8, 9];
+    var w: u8[] = [7u8, 8u8, 9u8];
+    return v.len() * 10 + w.len();
+}
+@noinline function bytes_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var b: u8[] = [104u8, 105u8, 106u8];
+        t = t + b.len();
+        __store_u8(b as usize, 1);
+        t = t + b.len();
+        i = i + 1;
+    }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(bytes_rounds()); print("");
+    print_int(shorten(2)); print("");
+    print_int(poke_len()); print("");
+    print_int(shorten_lit()); print("");
+    print_int(raw_ptr_len()); print("");
+    print_int(fresh_len()); print("");
+    return 0;
+}
+`
+
+func TestSelfHostRawReachedLiteralIsFresh(t *testing.T) {
+	want := "400100\n2\n99\n2\n99\n33\n"
+	runSemanticProgram(t, "rawliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "poke_len", "shorten_lit", "raw_ptr_len", "fresh_len"},
+		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want})
 }
