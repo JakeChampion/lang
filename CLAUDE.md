@@ -227,17 +227,19 @@ posted comment cannot be edited; only a follow-up can correct it.
    (`FERN_STRICT_IR=1`), not a silent fall-through. There is no AST fallback left
    to widen the subset *against* — a construct that does not lower is now a plain
    bug report. Record: `docs/SELFHOST-AST-RETIREMENT.md`.
-2. **Port the native Perceus implementation to the self-hosted compiler** —
-   inc/dec insertion, borrow inference, drop specialisation, reuse analysis — so
-   the self-host matches native's memory management. **Reuse is substantially
-   complete**; the RECLAIM side is where the work remains. Current state, the
-   live leak list, and the traps this area sets:
-   `docs/rc-log/` (newest file) — its §9 predecessor in
-   `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before 2026-08-20 — and
-   `docs/SELFHOST-PERCEUS-REUSE.md`.
+2. **DONE by its criterion (2026-09-28) — the native Perceus implementation
+   ported to the self-hosted compiler.** `make distcheck` is green: the
+   self-built compiler recompiles the compiler at 5.7 GB and reproduces itself
+   byte for byte, in CI on both Linux hosts (`docs/BOOTSTRAP.md`). Leaks the
+   AST lowering (`FERN_SEM_IR=`) still has are closed as bug fixes; the live
+   list and the traps this area sets: `docs/rc-log/` (newest file) — its §9
+   predecessor in `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before
+   2026-08-20 — and `docs/SELFHOST-PERCEUS-REUSE.md`.
+3. **Retire the native backends.** The prerequisites, and which are open, are
+   `docs/NATIVE-CONVERGENCE.md §3a` and `docs/NATIVE-FREEZE.md`.
 
 When a PR merges with no more specific instruction, the default next task is the
-next increment toward goal 2.
+next open prerequisite of goal 3, or the next self-host leak in `docs/rc-log/`.
 
 **The self-host compiler is becoming the default, so its output wins performance
 ties.** A change that makes self-host-built code faster and native-built code
@@ -249,16 +251,14 @@ every caller gains on both backends instead of one caller gaining on one.
 have repeatedly lagged reality — #4451 / #4363 / #4346 all described work that
 was already done. Check the code, not the issue.
 
-**Native convergence policy** — reference on any native-touching work.
-`docs/NATIVE-CONVERGENCE.md` governs how `internal/` (native) and the self-host
-compiler converge rather than drift forever: once goal 2 reaches parity and the
-freeze preconditions go green, `internal/` accepts only bugfixes, oracle needs,
-and what the self-host sources require to bootstrap (the "Go 1.4 rule"). Until
-the freeze fires, treat every new native-only feature as a debt entry, not a free
-win, and prefer landing new surface self-host-first where the fixpoint allows.
-Reference #4451 from any issue/PR adding native-only surface (`internal/ir`,
-`internal/interp`, the codegen backends) or touching the differential/parity
-suites, so the debt stays visible in one place.
+**Native is frozen (2026-09-28, `docs/NATIVE-FREEZE.md`)** — reference on any
+native-touching work. `docs/NATIVE-CONVERGENCE.md` is the policy: `internal/`
+accepts only bugfixes, oracle needs, and what the self-host sources require to
+bootstrap (the "Go 1.4 rule"). New language surface lands self-host-first. A
+native-only feature that still lands is an exception to argue for on #4451,
+and any issue/PR adding native-only surface (`internal/ir`, `internal/interp`,
+the codegen backends) or touching the differential/parity suites references
+#4451, so the debt stays visible in one place.
 
 ## Engineering bar (non-negotiable)
 

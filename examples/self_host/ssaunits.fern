@@ -42,7 +42,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], analysis: ssasem.Analysis }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -188,7 +188,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], analysis: ssasem.refused_analysis(why) }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why) }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -619,10 +619,21 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
     return out;
 }
 
-// Per record or variant construction whose every field is a narrow scalar
-// constant: "|" and its field words, which is a static box's whole content;
-// "" for any other value. A static box's rc is immortal, so its releases and
-// uniqueness tests leave it alone.
+// Per value, the byte length of the string literal it is, or -1.
+function text_lens(f: ssasem.Func): i32[] {
+    var out: i32[] = [];
+    while (out.len() < f.graph.nvals) { out = out.append(0 - 1); }
+    for b in f.graph.blocks {
+        for ins in b.insts { if (ins.kind_tag == 5 && ins.result >= 0) { out = out.with(ins.result, ins.str.len()); } }
+    }
+    return out;
+}
+
+// Per record, variant or array construction whose every field or element is a
+// narrow scalar constant: "|" and its words, which is a static box's whole
+// content; "" for any other value. An empty array literal is one whatever its
+// element type. A static box's rc is immortal, so its releases and uniqueness
+// tests leave it alone.
 function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -645,15 +656,53 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
             if (words != "") { out = out.with(ins.result, words); }
         }
     }
+    for v in raw_reached(f, defs) { out = out.with(v, ""); }
     return out;
 }
 
-// The declared fields a record or boxed-variant construction fills, or none
-// with a -1 sentinel when it is neither. A closure's environment is a record
-// only to the lowering, so it is not one here.
+// The values whose storage this body hands to the raw floor: an array cast to
+// its data pointer, or given to `__arr_set_len` or `__raw_arr_ptr`, traced back
+// through copies and phis. The floor writes that storage without a count, so a
+// literal reaching it is built fresh rather than shared.
+function raw_reached(f: ssasem.Func, defs: ssa.SInst[]): i32[] {
+    var work: i32[] = [];
+    for b in f.graph.blocks {
+        for ins in b.insts {
+            if (ins.args.len() == 0) { continue; }
+            var raw: boolean = ins.kind_tag == ssasem.cast() && is_array(f.values[ins.args[0]]);
+            raw = raw || (ins.kind_tag == ssasem.call() && (ins.str == "__arr_set_len" || ins.str == "__raw_arr_ptr"));
+            if (raw) { work = work.append(ins.args[0]); }
+        }
+    }
+    var seen: boolean[] = bits(f.graph.nvals);
+    var out: i32[] = [];
+    var at: i32 = 0;
+    while (at < work.len()) {
+        var v: i32 = work[at];
+        at = at + 1;
+        if (v < 0 || v >= seen.len() || seen[v]) { continue; }
+        seen = seen.with(v, true);
+        out = out.append(v);
+        var d: ssa.SInst = defs[v];
+        if (d.kind_tag == 7 || d.kind_tag == 8) { for a in d.args { work = work.append(a); } }
+    }
+    return out;
+}
+
+// The declared fields a record or boxed-variant construction fills, one per
+// element for an array literal, or none with a -1 sentinel for anything else.
+// A closure's environment is a record only to the lowering, so it is not one
+// here.
 function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
     var none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
     var t: typeinfo.Type = f.values[ins.result];
+    if (ins.kind_tag == ssasem.array_new()) {
+        if let typeinfo.TypeArray(a) = t {
+            var elems: semrecords.Field[] = [];
+            while (elems.len() < ins.args.len()) { elems = elems.append(semrecords.Field { name: "", ty: a.elem }); }
+            return elems;
+        }
+    }
     if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
         var at: i32 = semrecords.find(f.records, t);
         if (at >= 0) { return f.records[at].fields; }
@@ -669,10 +718,16 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
 
 // A field's static word, or "" when the value is not a constant this can
 // place. A u32 literal carries its text rather than an immediate, as
-// `ssarc.constant` reads it.
+// `ssarc.constant` reads it. A copy reads through to what it copies, which is
+// how a spliced accessor's constant arrives.
 function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     if (!narrow_scalar(t)) { return ""; }
     var d: ssa.SInst = defs[v];
+    var hops: i32 = 0;
+    while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
+        d = defs[d.args[0]];
+        hops = hops + 1;
+    }
     if (d.kind_tag == 1 && d.str != "") { return small_decimal(d.str); }
     if (d.kind_tag == 1 || d.kind_tag == 2) { return util.i32_to_string(d.imm); }
     if (d.str != "-" || !ssasem.is_i32(t)) { return ""; }
@@ -1308,7 +1363,7 @@ function is_array(t: typeinfo.Type): boolean {
     return false;
 }
 
-function occurrences(xs: i32[], v: i32): i32 {
+pub function occurrences(xs: i32[], v: i32): i32 {
     var n: i32 = 0;
     for x in xs { if (x == v) { n = n + 1; } }
     return n;
@@ -1492,7 +1547,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var literal: boolean[] = literals(f);
     why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), analysis: semantic };
+    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic };
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {

@@ -623,8 +623,12 @@ func RcClassifiedRuntimeNames() []string {
 // came to be missing: the thunk `rc_insert.go` synthesises per closure
 // ends with an unconditional `__fern_closure_drop(arg0)`, so it
 // releases argument 0 exactly like every other member here.
+//
+// `__sem_release_` is the self-host typed lowering's whole-value release;
+// native never emits it, and it is listed so the two sets stay equal.
 var generatedDropPrefixes = []string{
 	"__closure_drop_",
+	"__sem_release_",
 	"__drop_struct_flat_",
 	"__drop_struct_",
 	"__drop_enum_",

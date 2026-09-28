@@ -1152,3 +1152,12 @@ pub function append_all[T](into: T[], more: T[]): T[] {
     while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
     return into;
 }
+
+// to_u8 narrows each element to a byte, for a binary the emitters build as an
+// i32[] of 0..255 and write through a string.
+pub function to_u8(b: i32[]): u8[] {
+    var o: u8[] = [];
+    var i: i32 = 0;
+    while (i < b.len()) { o = o.append(b[i] as u8); i = i + 1; }
+    return o;
+}

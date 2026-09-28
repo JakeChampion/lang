@@ -1,0 +1,47 @@
+// examples/self_host/emitforms.fern — the output forms the CLI (fern.fern) and
+// the playground driver (playground_run.fern) produce the same way.
+//
+// The wasi:cli/run component framing chooses a wrapper from the program's WASI
+// usage; a playground must build the same component the CLI writes, so the
+// choice is made once.
+
+import "./ircore";
+import "./parser";
+import "./wasm_ir";
+import "./watbin";
+
+// COMPONENT_REFUSED is what a caller prints when wasm_component returns no
+// bytes: the program uses WASI imports the component wrapper does not frame.
+pub const COMPONENT_REFUSED: string = "fern: -target wasm32-wasi: program uses WASI imports not yet supported by the component wrapper (no-I/O, stdout, and filesystem are wrapped so far); -emit core-module emits the bare module instead\n";
+
+// wasm_component is the wasi:cli/run component for `full`, framed from the
+// program's WASI usage: no-I/O (component_full), stdout/exit
+// (component_full_io), or filesystem read / write / read+write over stdout
+// (component_full_io_fs / _fs_write / _fs_rw), and the single-category and
+// fs-paired combinations wasm_ir.component_shape admits. A program using WASI
+// the wrapper does not frame yet returns no bytes, so the caller can refuse
+// rather than emit a broken component.
+pub function wasm_component(full: parser.Module, sub: ircore.Sub): i32[] {
+    var shape: i32 = wasm_ir.component_shape(full);
+    if (shape < 0) { return []; }
+    if (shape == 0) {
+        return watbin.component_full(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub)));
+    }
+    var core: i32[] = watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub));
+    if (shape == 1) { return watbin.component_full_io(core); }
+    if (shape == 2) { return watbin.component_full_io_fs(core); }
+    if (shape == 3) { return watbin.component_full_io_fs_write(core); }
+    if (shape == 4) { return watbin.component_full_io_fs_rw(core); }
+    if (shape == 5) { return watbin.component_full_io_random(core); }
+    if (shape == 6) { return watbin.component_full_io_env(core); }
+    if (shape == 7) { return watbin.component_full_io_args(core); }
+    if (shape == 8) { return watbin.component_full_io_clock(core); }
+    if (shape == 9) { return watbin.component_full_io_clock_mono(core); }
+    if (shape == 10) { return watbin.component_full_io_fs_read_env(core); }
+    if (shape == 11) { return watbin.component_full_io_fs_rw_env(core); }
+    if (shape == 12) { return watbin.component_full_io_random_write(core); }
+    if (shape == 13) { return watbin.component_full_io_eprint(core); }
+    if (shape == 14) { return watbin.component_full_io_exit(core); }
+    if (shape == 15) { return watbin.component_full_io_fs_args_read(core); }
+    return watbin.component_full_io_fs_rw_args(core);
+}

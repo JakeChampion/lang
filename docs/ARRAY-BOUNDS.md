@@ -20,6 +20,14 @@ the bounds check — the checker rejects it first with `E056`. This
 document showed `xs[7] = 9` until `spec/semantics.md` required an
 example that runs.
 
+The check reads the length the array records. The raw memory floor
+(`__store_i32` and its siblings through `xs as usize`) writes without
+checks, and a store over that length word moves the bound with it. Code
+that uses the floor takes on keeping the length true. An array literal of
+constant scalars can be one box shared by every equal literal in the
+program, so a floor write to a literal that another function built reaches
+all of them. A literal the same function hands to the floor is built fresh.
+
 This is the same "no silent corruption" stance as the rest of the
 language. Reading uninitialised adjacent memory (what an unchecked
 index does) is never a defined result, so the access is checked and

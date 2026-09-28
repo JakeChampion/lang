@@ -2241,6 +2241,14 @@ function value_type_name(v: Value): string {
     }
 }
 
+// has_receiver_method reports whether some `(r: recv_type) name(...)` is declared.
+function has_receiver_method(funcs: parser.FuncDecl[], recv_type: string, name: string): boolean {
+    for fd in funcs {
+        if (fd.name == name && fd.receiver_name.len() > 0 && fd.receiver_type == recv_type) { return true; }
+    }
+    return false;
+}
+
 // dyn_method_name resolves the method a call NAMES to the definition the
 // receiver's declared type MEANS. Two traits providing one method for one type
 // leave only the first claimant holding the bare name, so a `dyn` receiver whose
@@ -2421,10 +2429,15 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
     if (recv_type.len() == 0) {
         return v_err("method `" + name + "`: receiver has no type name to dispatch on");
     }
+    // A byte is an int at runtime: `s[i]` and `b as u8` both evaluate to a
+    // VInt, so a `(b: u8)` method is reachable from an i32-named receiver when
+    // no i32 method claims the name.
+    var byte_recv: boolean = recv_type == "i32" && !has_receiver_method(funcs, "i32", name);
     var i: i32 = 0;
     while (i < funcs.len()) {
         var fd: parser.FuncDecl = funcs[i];
         var rt_match: boolean = fd.receiver_type == recv_type;
+        if (!rt_match && byte_recv && fd.receiver_type == "u8") { rt_match = true; }
         // Union-receiver methods: a method declared on a union
         // (`function (sh: Shape) area()`) matches when recv's
         // struct type_name is in the union's variant list.

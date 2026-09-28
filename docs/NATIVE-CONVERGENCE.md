@@ -1,9 +1,8 @@
 # Native convergence: freeze native as the stage-0 bootstrap + oracle
 
-**Status:** POLICY ADOPTED, freeze DEFERRED behind explicit preconditions
-(decided 2026-07-03).
-**Freeze-eligibility review:** when every precondition below is green
-(tracked, not date-driven).
+**Status:** FROZEN as of 2026-09-28 — every precondition below is green;
+`NATIVE-FREEZE.md` records the gate state on that day. (Policy adopted
+2026-07-03 with the freeze deferred behind the preconditions.)
 **Owner:** compiler / self-host.
 
 ## The question
@@ -119,16 +118,20 @@ what it actually needs, because "goal 2 is nearly done" does not imply
 1. **A bootstrap that does not need them.** ~~`make selfhost-cli` builds the
    self-host compiler with `./bin/fern` — the native backends. There is no
    checked-in stage0 snapshot and no `make bootstrap` / `make distcheck`.~~
-   **Built (#6644), half green:** `make bootstrap` takes a pinned earlier
+   **Closed on Linux (2026-09-28):** `make bootstrap` takes a pinned earlier
    compiler (`bootstrap/stage0.lock`, a release asset per host, sha256-pinned),
    compiles the current compiler with it, smoke-tests the result and installs it
    — no Go, no native backend on the path, proven by a CI job with no Go setup.
-   What is NOT closed: the pin itself is still built by native, because the
-   self-built compiler cannot compile the compiler — `make distcheck` (stage1
-   recompiling itself, byte-identical) dies at 12 GB on a 16 GB host where the
-   native-built compiler needs 4 GB. That is goal 2's RECLAIM gap measured as a
-   bootstrap, and the first green `distcheck` is what makes a refresh Go-free.
-   `docs/BOOTSTRAP.md`.
+   `make distcheck` then has that compiler recompile the compiler, and the
+   result do it once more: stage2 and stage3 are byte-identical, at 5.7 GB peak
+   on a 16 GB host, in the same CI job. The publish job pins that self-built
+   fixed point on both Linux hosts, so the pin a refresh leaves behind is a
+   self-built binary; the first pin published this way still has one
+   native-built generation in its ancestry (stage2 is stage1's output, and
+   stage1 is the native candidate's), the one after it none. What is NOT
+   closed: arm64-darwin, whose stage2
+   exhausts the arena compiling the compiler (#8479), so its pin is still the
+   native-built candidate. `docs/BOOTSTRAP.md`.
 2. **Every target self-contained on the self-host side.** ~~As of this
    writing `-target x86-64-linux` stops at GAS text and needs an external
    assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
@@ -136,14 +139,27 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    + `elf.fern`, so both Linux targets produce a finished binary with
    nothing on `$PATH`. `-target x86-64-linux -emit asm` is the escape hatch that still
    emits text.
-3. **A decision on the oracle.** `BOOTSTRAP-RESEARCH.md §1` recommends
+3. **A decision on the oracle.** ~~`BOOTSTRAP-RESEARCH.md §1` recommends
    *two-implementations-forever* precisely so the fuzz-diff oracle keeps two
-   witnesses; that directly contradicts deleting the native backends. The
-   contradiction between these two docs is unresolved and needs a call
-   before any deletion PR makes sense.
-4. **The non-compiler consumers.** `internal/wasm/playground` and
+   witnesses; that directly contradicts deleting the native backends.~~
+   **Decided 2026-09-28: the native backends are not witnesses, and they go
+   with the next step after the freeze.** The oracle is `internal/interp`
+   (§3), which the differential suites anchor on and which stays. `BOOTSTRAP-RESEARCH.md §1`'s
+   recommendation is superseded for the backends and holds for the
+   interpreter. A gate that compares self-host codegen output against native
+   codegen output (byte-identical emit comparisons, the native half of the
+   leak and alloc-count matrices) therefore goes with the backends or is
+   re-anchored on the interpreter; that is scope for the deletion PRs, not a
+   reason to keep a backend.
+4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
-   need the self-host compiler compiled to wasm instead. **Measured 2026-09-01
+   need the self-host compiler compiled to wasm instead.~~ **Moved
+   2026-09-28:** the playground compiles, checks, interprets, shows assembly
+   and builds cli/run components on `web/playground.wasm`, the self-host
+   compiler built by itself (`PLAYGROUND-SELFHOST-WASM.md`, top). What is
+   still on the Go toolchain is the language server (#6641) and the
+   wasi:http world (#6636), which the self-host compiler does not emit for at
+   all; `cmd/fern-wasm` and `internal/wasm/playground` now carry only those. **Measured 2026-09-01
    (#6643) — `docs/PLAYGROUND-SELFHOST-WASM.md`:** this is not size- or
    memory-bound. The self-host compiler already runs *as* wasm — a stdin-driven
    wasm-emitting driver is 2.3 MB (614 KB gzipped) against the playground
@@ -175,8 +191,8 @@ one from the tree and runs in CI on every push. An audit on 2026-08-02 found
 this list, the tracker (#4451) and `SELFHOST-PERCEUS-REUSE.md` all carrying
 stale claims, and all three stale in the same direction — more pessimistic than
 the code. Prose does not re-check itself. Precondition 1 is the only one the
-gate cannot cheaply measure — `make distcheck` is its criterion and needs ~14 GB
-and minutes — so the gate reads it off the CI wiring and otherwise prints
+gate cannot cheaply measure — `make distcheck` is its criterion and needs ~6 GB
+and ten minutes — so the gate reads it off the CI wiring and otherwise prints
 UNVERIFIABLE rather than guessing.
 
 1. Roadmap **goal 2** complete — the Perceus port (inc/dec, borrow inference,
@@ -184,17 +200,22 @@ UNVERIFIABLE rather than guessing.
    **Criterion: `make distcheck` green.** Every other precondition got a
    mechanical definition and went green; this one said "at parity" and left the
    rest to prose, so the gate can only ever print UNVERIFIABLE no matter how
-   much work lands. `distcheck` is the measurement that fits: stage1 compiling
-   `fern.fern` byte-identically is the whole compiler's own source, the one
+   much work lands. `distcheck` is the measurement that fits: the self-built
+   compiler compiling `fern.fern` byte-identically (stage2 == stage3) is the
+   whole compiler's own source, the one
    configuration nothing else gates — the per-module fixpoint compiles it eight
-   units per process, and §2's suites oracle behaviour, not reclaim. It fails
-   today on memory alone (`docs/BOOTSTRAP.md`), which is exactly the RECLAIM
-   gap goal 2 is about, and it is already §3a's precondition 1 for retiring the
-   backends, so the two stop being argued separately.
+   units per process, and §2's suites oracle behaviour, not reclaim. It is
+   also §3a's precondition 1 for retiring the backends, so the two stop being
+   argued separately. **GREEN as of 2026-09-28**: the self-built compiler
+   recompiles the compiler at 5.7 GB peak on a 16 GB host and reproduces
+   itself byte for byte (stage2 == stage3), and the check runs in CI on both
+   Linux hosts (`docs/BOOTSTRAP.md`). On 2026-09-02 the same step was
+   OOM-killed at 13.9 GB, which was the RECLAIM gap goal 2 was about.
 
    The generated leak matrix is necessary but not sufficient: it reached
-   150/150 `clean clean` on both ISAs while `distcheck` still OOMs, because it
-   covers the shapes someone enumerated rather than the compiler's own code.
+   150/150 `clean clean` on both ISAs while `distcheck` was still OOM-killed,
+   because it covers the shapes someone enumerated rather than the compiler's
+   own code.
 2. #3451 / #3457 complete (the bootstrap-budget / bundle prerequisites).
    **GREEN as of 2026-08-02.** #3457 is closed: all three legacy AST→asm
    emitters are deleted — `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern`
@@ -221,7 +242,8 @@ UNVERIFIABLE rather than guessing.
    pinned by `TestSelfHostMutableScalarCaptureInterp`, which oracles every case
    against the native interpreter, plus a row in the cross-validation corpus.
 
-None are date-driven; the freeze fires when the last one goes green.
+None were date-driven; the last one went green on 2026-09-28 and the freeze
+is in force (`NATIVE-FREEZE.md`).
 
 ## What a freeze does NOT change
 
@@ -232,18 +254,15 @@ None are date-driven; the freeze fires when the last one goes green.
   conservative on purpose; a self-host-only feature is allowed to be
   un-bootstrappable by native as long as it is not on the bootstrap path.
 
-## Maintenance contract while the freeze is DEFERRED
+## Maintenance contract now the freeze is in force
 
-So the policy doesn't rot into ambient drift before it fires:
-
-- Every new native language feature is a **debt entry**, not a free win: it
-  widens the self-host mirroring surface and pushes precondition 1 further out.
-  Prefer landing new surface self-host-first even now, where the fixpoint
-  allows it.
+- `internal/` accepts bugfixes, oracle needs, and what the self-host sources
+  require to bootstrap (§1). A new native-only feature is an exception to
+  argue for on #4451, not a free win: it widens the surface the self-host
+  must mirror. New language surface lands self-host-first.
 - Keep the three differential suites green in CI (they already run).
-- When a precondition goes green, update its row here AND the check in
-  `tools/freeze_gate.sh`, so the derivable half stays derivable. When the last
-  one does, open `NATIVE-FREEZE.md` recording the freeze date and the final
-  gate state, and start rejecting new non-bootstrap surface in `internal/`.
-- New checker rules land self-host-side too and shrink the six-code table;
-  don't grow `selfHostImplementedCodes`, shrink toward deleting it.
+- `tools/freeze_gate.sh` keeps running in CI so a precondition that regresses
+  fails a PR rather than a future audit. When one does, amend its row here
+  and the check together.
+- New checker rules land self-host-side; `selfHostImplementedCodes` stays
+  deleted.

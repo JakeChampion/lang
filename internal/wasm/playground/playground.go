@@ -1,18 +1,14 @@
-// Package playground compiles Fern source straight to a Component
-// Model binary in-process, for callers that have no filesystem and
-// can't shell out to the `fern` CLI — chiefly cmd/fern-wasm, which
-// runs inside the browser.
+// Package playground compiles a Fern wasi:http handler straight to a
+// Component Model binary, or to the core module behind it, in-process, for
+// callers that have no filesystem and can't shell out to the `fern` CLI —
+// chiefly cmd/fern-wasm, which runs inside the browser.
 //
-// It mirrors the two component-producing CLI targets in
-// cmd/fern/main.go:
-//
-//	world "wasm32-wasi"      → a wasi:cli/run component (runnable as-is)
-//	world "wasm32-wasi-http" → a wasi:http/incoming-handler@0.2.0 component
-//
-// The compose logic intentionally tracks cmd/fern's
-// buildPreview2Component / the wasi-http branch; if the
-// ForceMemorySection recompile rules change there, change them here
-// too.
+// It mirrors cmd/fern's `-target wasm32-wasi-http` path. The cli/run world
+// is not here: the playground compiles it with the self-host compiler
+// (examples/self_host/playground_run.fern), which does not yet emit for
+// wasi-http (docs/PLAYGROUND-SELFHOST-WASM.md). The compose logic
+// intentionally tracks the wasi-http branch of cmd/fern; if the
+// ForceMemorySection recompile rules change there, change them here too.
 package playground
 
 import (
@@ -30,58 +26,16 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
-// CompileComponent compiles src to a Component Model binary for the
-// given world ("wasm32-wasi" or "wasm32-wasi-http") and returns the component
-// bytes. Front-end errors (parse / check) come back formatted the
-// same way the playground's other panes show them.
-func CompileComponent(src, world string) ([]byte, error) {
-	switch world {
-	case "wasm32-wasi":
-		prog, info, err := frontEnd(src, "wasm32-wasi")
-		if err != nil {
-			return nil, err
-		}
-		return cliRunComponent(prog, info)
-	case "wasm32-wasi-http":
-		prog, info, err := frontEnd(src, "wasm32-wasi-http")
-		if err != nil {
-			return nil, err
-		}
-		return httpHandlerComponent(prog, info)
-	default:
-		return nil, fmt.Errorf("unknown world %q (want \"wasm\" or \"wasi-http\")", world)
-	}
-}
-
-// CompileCoreWasm compiles src to a raw preview-1 core WebAssembly
-// command module — the same shape `fern -target wasm32-wasi -emit core-module` emits,
-// with a synthesised `_start` entry that calls `main` and an
-// exported linear `memory`. Unlike CompileComponent it produces a
-// plain core module (Component Model layer 0x0000), which a browser
-// can `WebAssembly.instantiate` directly against a small preview-1
-// WASI shim — no jco / canonical-ABI transpile step in between. The
-// playground's "Run (wasm)" button uses this to execute the actual
-// compiled backend in-page, distinct from the AST interpreter that
-// "Run" drives.
-//
-// Preview2WASI is deliberately left off: the classic
-// wasi_snapshot_preview1 import names (fd_write, proc_exit,
-// random_get, clock_time_get, args_*) are what the JS shim
-// implements.
-//
-// ExitWithMainResult is what makes the page's exit line agree with
-// the interpreter's: preview-1 proc_exit carries the whole status,
-// so `main` returning 20 reports 20 rather than the 0 a dropped
-// result leaves behind.
-func CompileCoreWasm(src string) ([]byte, error) {
-	prog, info, err := frontEnd(src, "wasm32-wasi")
+// CompileHttpComponent compiles src to a wasi:http/incoming-handler@0.2.0
+// component and returns the component bytes. Front-end errors (parse /
+// check) come back formatted the same way the playground's other panes show
+// them.
+func CompileHttpComponent(src string) ([]byte, error) {
+	prog, info, err := frontEnd(src, "wasm32-wasi-http")
 	if err != nil {
 		return nil, err
 	}
-	return wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		ExitWithMainResult: true,
-		ForceMemorySection: true,
-	})
+	return httpHandlerComponent(prog, info)
 }
 
 // CompileHttpHandlerCore compiles a Fern `handle(req: HttpRequest,
@@ -140,44 +94,6 @@ func frontEnd(src, target string) (*ast.Program, *checker.Info, error) {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
 	return prog, info, nil
-}
-
-// cliRunComponent mirrors cmd/fern's `-target wasm32-wasi` path: build a
-// preview-2 core module, classify its imports, and compose the
-// wasi:cli/run component. Import families that allocate through
-// cabi_realloc (stdin / files / args / env) or write through caller
-// retptrs (sockets) need the memory section forced, so they trigger
-// a rebuild before composing.
-func cliRunComponent(prog *ast.Program, info *checker.Info) ([]byte, error) {
-	bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		Preview2WASI: true,
-		SynthCliRun:  true,
-	})
-	if err != nil {
-		return nil, err
-	}
-	req, unsupported := component.ClassifyCore(bin)
-	if len(unsupported) > 0 {
-		return nil, fmt.Errorf("can't compose a program that imports %s yet — remove the source that pulls them in", strings.Join(unsupported, ", "))
-	}
-	if component.RequestEmpty(req) {
-		return component.BuildWasiCliRunComponent(bin, "_lang_run"), nil
-	}
-	b := bin
-	if req.Tcp || req.Udp ||
-		req.Stdin || req.Args || req.Env ||
-		req.File.Any() {
-		rb, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-			ForceMemorySection: true,
-			Preview2WASI:       true,
-			SynthCliRun:        true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		b = rb
-	}
-	return component.Compose(b, req, "_lang_run"), nil
 }
 
 // httpHandlerComponent mirrors cmd/fern's `-target wasi-http` path:

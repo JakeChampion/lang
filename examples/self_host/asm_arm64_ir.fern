@@ -640,33 +640,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
-        // 32-bit accumulator that wraps.
-        //
-        // SCALAR (§3.4 step 1). The NEON sequence this wants is uaddlp into
-        // uadalp; the native arm64 emitter runs it (#9139), and carrying it
-        // here needs those encodings in arm64_native.fern first, which
-        // §3.3a's rule puts before the vector body rather than after.
-        //
-        // ldrb zero-extends, which is the whole of the sign question: a byte
-        // is unsigned and 0xff contributes 255. `add w7, w7, w4` writes the
-        // low 32 bits and zeroes the top of x7, so the wrap is the register
-        // width and the stored value is already the i32 the op promises.
-        //
-        // x5 is the cursor POINTER, x6 the end, x7 the running sum.
-        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var sb_loop: string = slo.name;
-        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-        var sb_done: string = slo2.name;
-        s = slo2.state;
+        // 32-bit accumulator that wraps. A call to the NEON helper, emitted
+        // once under the "sum_bytes" need; the sum is sign-extended into the
+        // slot, since a wrapped sum is a negative i32.
+        s = s.need("sum_bytes");
         s = s.write("    ldr x0, [sp], #16\n");
-        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-        s = s.write("    mov x7, #0\n");
-        s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
-        s = s.write(sb_loop + ":\n");
-        s = s.write("    cmp x5, x6\n    b.ge " + sb_done + "\n");
-        s = s.write("    ldrb w4, [x5]\n    add w7, w7, w4\n");
-        s = s.write("    add x5, x5, #1\n    b " + sb_loop + "\n");
-        s = s.write(sb_done + ":\n    str x7, [sp, #-16]!\n");
+        s = s.write("    bl __fern_sum_bytes\n");
+        s = s.write("    sxtw x0, w0\n    str x0, [sp, #-16]!\n");
         return s;
     }
     if (o.kind_tag == 309) {  // crc32_cksum
@@ -1436,6 +1416,24 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// ssa_str_eq answers unequal lengths inline, the answer to almost every
+// comparison a compiler makes, and calls the helper's register entry only for
+// equal ones, its operands moved into x0 / x9 as the entry reads them.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_str_eq();
+    s = ssa_read(reg_of, ins.args[0], "x4", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "x4");
+    s = ssa_read(reg_of, ins.args[1], "x5", s);
+    var b: string = ssa_src(reg_of, ins.args[1], "x5");
+    var n: string = util.i32_to_string(ins.result);
+    s = s.write("    ldr x6, [" + a + ", #8]\n    ldr x7, [" + b + ", #8]\n    cmp x6, x7\n    b.ne " + lp + "streqn" + n + "\n");
+    s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
+    s = s.write("    bl __fn___fern_str_eq.r\n    b " + lp + "streqd" + n + "\n");
+    s = s.write(lp + "streqn" + n + ":\n    mov x0, #0\n" + lp + "streqd" + n + ":\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
@@ -1749,6 +1747,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49 && ins.str == "str_eq") { return ssa_str_eq(ins, reg_of, lp, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
@@ -3561,7 +3560,7 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
 // The regions are walked rather than tabulated: string boxes are a fixed 24-byte
 // stride, a record constant's block carries its own length in the `cap` word
 // the walk strides by, and a function value's block is a fixed 32 bytes. An
-// empty array holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
+// array of scalars holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
 // reloc_wanted decides, for BOTH the relocation loop and the data it walks,
@@ -5316,12 +5315,17 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
 // freelist_push emits the push of the block at `ptr` onto the small-tier
 // freelist. `words` holds the block's logical size and comes out as its class,
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
-// the block at. `base` and `tmp` are scratch. x30 is saved around the call,
-// since several of these sites sit in helpers that return through it.
+// the block at; up to 256 words that is the count itself, so only a larger
+// block makes the call. `base` and `tmp` are scratch. x30 is saved around the
+// call, since several of these sites sit in helpers that return through it.
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmp " + words + ", #256\n");
+    s = s.write("    b.ls " + l.name + "\n");
     s = s.write("    stp " + words + ", x30, [sp, #-16]!\n");
     s = s.write("    bl __fern_capw\n");
     s = s.write("    ldp " + words + ", x30, [sp], #16\n");
+    s = s.write(l.name + ":\n");
     s = s.write("    adrp " + base + ", __fern_freelist\n");
     s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
     s = s.write("    ldr " + tmp + ", [" + base + ", " + words + ", lsl #3]\n");
@@ -5462,9 +5466,10 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
     // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
-    // then native's 3-significant-bit capacities, so a buffer that grows a
-    // little at a time finds the block it just freed rather than a new class
-    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // which the callers test for inline before calling, then native's
+    // 3-significant-bit capacities, so a buffer that grows a little at a time
+    // finds the block it just freed rather than a new class per step. Clamped
+    // below 65536, where the large tier takes over. Preserves
     // every register but x30, which `bl` set.
     s = s.write(".globl __fern_capw\n");
     s = s.write("__fern_capw:\n");
@@ -5510,9 +5515,13 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    b.hs .Lalloc_large\n");
     // The small tier bumps a block at its class's capacity, so any freed block
     // of the class satisfies any request that rounds to it. x30 is in the frame.
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmp x3, #256\n");
+    s = s.write("    b.ls " + l.name + "\n");
     s = s.write("    str x3, [sp, #-16]!\n");
     s = s.write("    bl __fern_capw\n");
     s = s.write("    ldr x3, [sp], #16\n");
+    s = s.write(l.name + ":\n");
     s = s.write("    lsl x0, x3, #3\n");              // capacity bytes, for the bump
     s = s.write("    adrp x1, __fern_freelist\n");
     s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
@@ -8243,6 +8252,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("crc32_cksum")) {
         s = emit_rt_crc32_cksum(s);
     }
+    if (s.has_need("sum_bytes")) {
+        s = emit_rt_sum_bytes(s);
+    }
 
     // Command-line args. Mirror of asm.fern.
     if (s.has_need("args")) {
@@ -8875,6 +8887,45 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // asmcore.rt_src_str_lines, emitted (need-gated) in the migrated-helpers
     // section below. The single shared body serves both arm64 AST + IR; its deps
     // are declared by mark_str_lines / runtime_need_deps.
+    return s;
+}
+
+// __fern_sum_bytes(box) -> i32, the arm64 mirror of the x86-64 helper and of
+// native's: uaddlp pairs a 16-byte block into eight halfwords and uadalp adds
+// those pairwise into four word lanes, so the lanes wrap only with the sum
+// itself; addv folds them once. The scalar tail takes the last 0..15 bytes.
+// x0 is the string BOX: [data@0, len@8].
+function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .global __fern_sum_bytes\n");
+    s = s.write("    .type __fern_sum_bytes, %function\n");
+    s = s.write("__fern_sum_bytes:\n");
+    s = s.write("    ldr x6, [x0, #8]\n");
+    s = s.write("    ldr x8, [x0]\n");
+    s = s.write("    add x9, x8, x6\n");
+    s = s.write("    mov w0, #0\n");
+    s = s.write("    movi v2.4s, #0\n");
+    s = s.write(".Lsum_bytes_vec:\n");
+    s = s.write("    sub x10, x9, x8\n");
+    s = s.write("    cmp x10, #16\n");
+    s = s.write("    b.lt .Lsum_bytes_fold\n");
+    s = s.write("    ld1 {v0.16b}, [x8]\n");
+    s = s.write("    uaddlp v1.8h, v0.16b\n");
+    s = s.write("    uadalp v2.4s, v1.8h\n");
+    s = s.write("    add x8, x8, #16\n");
+    s = s.write("    b .Lsum_bytes_vec\n");
+    s = s.write(".Lsum_bytes_fold:\n");
+    s = s.write("    addv s0, v2.4s\n");
+    s = s.write("    fmov w0, s0\n");
+    s = s.write(".Lsum_bytes_tail:\n");
+    s = s.write("    cmp x8, x9\n");
+    s = s.write("    b.hs .Lsum_bytes_ret\n");
+    s = s.write("    ldrb w10, [x8]\n");
+    s = s.write("    add w0, w0, w10\n");
+    s = s.write("    add x8, x8, #1\n");
+    s = s.write("    b .Lsum_bytes_tail\n");
+    s = s.write(".Lsum_bytes_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
     return s;
 }
 

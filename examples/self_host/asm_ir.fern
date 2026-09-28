@@ -686,14 +686,25 @@ function map_free_column_walk(s: asmcore.EmitState, col_off: i32, rel_at: i32, l
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
 // the block at; `tmp` is scratch, and %r8 is clobbered.
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
-    s = s.write("    pushq " + words + "\n");
-    s = s.write("    call __fern_capw\n");
-    s = s.write("    popq " + words + "\n");
+    s = capw_class(s, words);
     s = s.write("    leaq __fern_freelist(%rip), %r8\n");
     s = s.write("    movq (%r8," + words + ",8), " + tmp + "\n");
     s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
     s = s.write("    movq " + ptr + ", (%r8," + words + ",8)\n");
     return s;
+}
+
+// capw_class turns the word count in `words` into its size class. Up to 256
+// words the class is the count itself, so only a larger block pays for the
+// call.
+function capw_class(s: asmcore.EmitState, words: string): asmcore.EmitState {
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmpq $256, " + words + "\n");
+    s = s.write("    jbe " + l.name + "\n");
+    s = s.write("    pushq " + words + "\n");
+    s = s.write("    call __fern_capw\n");
+    s = s.write("    popq " + words + "\n");
+    return s.write(l.name + ":\n");
 }
 
 // buf_block_free emits the inline release of one BARE byte block — the string
@@ -1337,6 +1348,50 @@ function fc_pio2_reduce(prefix: string): string {
         + "    mulsd %xmm3, %xmm1\n    subsd %xmm1, %xmm0\n"
         + "    andq $3, %rax\n"
         + ".L" + prefix + "_red:\n";
+}
+
+// __fern_sum_bytes(box) -> i32: every byte of the string added into a 32-bit
+// sum that wraps, the kernel native's emitSumBytesRuntime runs. psadbw against
+// a zero register sums each 8-byte half of a 16-byte block into a 64-bit lane
+// and paddq keeps both lanes, so no lane can wrap before the string ends; the
+// fold adds them once and `movd` keeps the low 32 bits. The scalar tail takes
+// the last 0..15 bytes, and the whole of a string shorter than a block.
+// %rdi is the string BOX: [data@0, len@8].
+function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .text\n");
+    s = s.write("    .globl __fern_sum_bytes\n");
+    s = s.write("    .type __fern_sum_bytes, @function\n");
+    s = s.write("__fern_sum_bytes:\n");
+    s = s.write("    movq 8(%rdi), %rcx\n");
+    s = s.write("    movq (%rdi), %rdi\n");
+    s = s.write("    leaq (%rdi,%rcx), %r9\n");
+    s = s.write("    pxor %xmm2, %xmm2\n");
+    s = s.write("    pxor %xmm3, %xmm3\n");
+    s = s.write(".Lsum_bytes_vec:\n");
+    s = s.write("    movq %r9, %rax\n");
+    s = s.write("    subq %rdi, %rax\n");
+    s = s.write("    cmpq $16, %rax\n");
+    s = s.write("    jl .Lsum_bytes_fold\n");
+    s = s.write("    movdqu (%rdi), %xmm0\n");
+    s = s.write("    psadbw %xmm3, %xmm0\n");
+    s = s.write("    paddq %xmm0, %xmm2\n");
+    s = s.write("    addq $16, %rdi\n");
+    s = s.write("    jmp .Lsum_bytes_vec\n");
+    s = s.write(".Lsum_bytes_fold:\n");
+    s = s.write("    pshufd $0xee, %xmm2, %xmm1\n");
+    s = s.write("    paddq %xmm1, %xmm2\n");
+    s = s.write("    movd %xmm2, %eax\n");
+    s = s.write(".Lsum_bytes_tail:\n");
+    s = s.write("    cmpq %r9, %rdi\n");
+    s = s.write("    jae .Lsum_bytes_ret\n");
+    s = s.write("    movzbl (%rdi), %r8d\n");
+    s = s.write("    addl %r8d, %eax\n");
+    s = s.write("    addq $1, %rdi\n");
+    s = s.write("    jmp .Lsum_bytes_tail\n");
+    s = s.write(".Lsum_bytes_ret:\n");
+    s = s.write("    ret\n");
+    s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
+    return s;
 }
 
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
@@ -2209,9 +2264,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jae .Lalloc_large\n");
     // The small tier bumps a block at its class's capacity, so any freed block
     // of the class satisfies any request that rounds to it.
-    s = s.write("    pushq %rcx\n");
-    s = s.write("    call __fern_capw\n");
-    s = s.write("    popq %rcx\n");
+    s = capw_class(s, "%rcx");
     s = s.write("    leaq 0(,%rcx,8), %rdi\n");
     s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
     s = s.write("    movq (%rdx,%rcx,8), %rax\n");
@@ -2479,9 +2532,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
     // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
-    // then native's 3-significant-bit capacities, so a buffer that grows a
-    // little at a time finds the block it just freed rather than a new class
-    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // which the callers test for inline before calling, then native's
+    // 3-significant-bit capacities, so a buffer that grows a little at a time
+    // finds the block it just freed rather than a new class per step. Clamped
+    // below 65536, where the large tier takes over. Preserves
     // every register.
     s = s.write("__fern_capw:\n");
     s = s.write("    pushq %rax\n");
@@ -5377,34 +5431,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
-        // 32-bit accumulator that wraps.
-        //
-        // SCALAR (§3.4 step 1). The SSE2 sequence this wants is psadbw
-        // against a zeroed register plus paddq, both already inside the
-        // declared Haswell baseline; the ordering rule puts the scalar
-        // lowering in every backend before any of them is vectorised.
-        //
-        // movzbl is the whole of the sign question: a byte is unsigned, so
-        // 0xff contributes 255. The accumulate is `addl`, which writes the
-        // low 32 bits and zeroes the top, so the wrap is the register width
-        // and the pushed value is already the i32 the op promises.
-        //
-        // One operand, not two: the cursor is an INDEX in %rdx and the sum
-        // lives in %r10, so the body stays inside the registers this backend
-        // has free.
-        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var sb_loop: string = slo.name;
-        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-        var sb_done: string = slo2.name;
-        s = slo2.state;
-        s = s.write("    popq %rax\n");
-        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
-        s = s.write(sb_loop + ":\n");
-        s = s.write("    cmpq %r8, %rdx\n    jge " + sb_done + "\n");
-        s = s.write("    movzbl (%rax,%rdx), %r9d\n    addl %r9d, %r10d\n");
-        s = s.write("    addq $1, %rdx\n    jmp " + sb_loop + "\n");
-        s = s.write(sb_done + ":\n    pushq %r10\n");
+        // 32-bit accumulator that wraps. A call to the SSE2 helper, emitted
+        // once under the "sum_bytes" need; the sum is sign-extended into the
+        // slot, since a wrapped sum is a negative i32.
+        s = s.need("sum_bytes");
+        s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+        s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
         return s;
     }
     if (o.kind_tag == 309) {  // crc32_cksum
@@ -6145,6 +6177,27 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
+// ssa_str_eq answers unequal lengths inline, the answer to almost every
+// comparison a compiler makes, and calls the helper's register entry only for
+// equal ones. %rdx and %rcx are never homes, so the operands pass through them
+// on the way to %rax / %rsi whichever of those they already occupy.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_str_eq();
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+    s = ssa_read(reg_of, ins.args[1], "%rcx", s);
+    var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+    var n: string = util.i32_to_string(ins.result);
+    s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
+    s = s.write("    movq " + a + ", %rdx\n");
+    if (b != "%rcx") { s = s.write("    movq " + b + ", %rcx\n"); }
+    s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+    s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
+    s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
@@ -6673,6 +6726,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49 && ins.str == "str_eq") { return ssa_str_eq(ins, reg_of, lp, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
@@ -9419,6 +9473,9 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // `call __fern_crc32_cksum` with no definition anywhere in the link.
     if (s.has_need("crc32_cksum")) {
         s = emit_rt_crc32_cksum(s);
+    }
+    if (s.has_need("sum_bytes")) {
+        s = emit_rt_sum_bytes(s);
     }
     // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
     // calls, plus the leakcheck counters and exit-time report. Deliberately NOT

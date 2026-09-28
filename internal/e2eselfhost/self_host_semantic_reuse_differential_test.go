@@ -305,6 +305,79 @@ function main(): i32 {
 	// this. The suite could not express it before: the point is not that the
 	// pairing declines but that it must never be OFFERED, which is what
 	// `noPair` says.
+	// An update of a unique record leaves the fields it carries over in its
+	// box: `tag` is taken from the slot it is stored back to, so it is neither
+	// nulled nor released, and only `names`, which the update replaces, is.
+	{"update-keeps-fields", `struct Acc { names: string[], tag: string, n: i32 }
+function add(own a: Acc, s: string): Acc {
+    a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
+    return a;
+}
+function main(): i32 {
+    var a: Acc = Acc { names: [], tag: "t", n: 0 };
+    var i: i32 = 0;
+    while (i < 6) { a = add(a, "x"); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.n * 10 + a.names.len() + a.tag.len();
+}`, 67, 1, 1, 3, 9, false, false},
+
+	// The same update over a base another binding still holds: the donor is
+	// shared at its first kept read, so the kept fields are retained, the
+	// construction allocates, and `keep` still reads the fields it had. The
+	// second update's base is unique again and builds in place.
+	{"update-keeps-shared-base", `struct Acc { names: string[], tag: string, n: i32 }
+function add(own a: Acc, s: string): Acc {
+    a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
+    return a;
+}
+function main(): i32 {
+    var a: Acc = Acc { names: ["p"], tag: "t", n: 0 };
+    var keep: Acc = a;
+    a = add(a, "x");
+    a = add(a, "y");
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.names.len() * 10 + keep.names.len() + keep.tag.len() + a.tag.len() + keep.n;
+}`, 33, 1, 1, 5, 6, false, false},
+
+	// A field carried over into its own slot AND copied into another. The two
+	// are distinct reads of slot 0: the carried-over one is kept in place, and
+	// the copy, placed at slot 1, is not a read of its own slot, so it takes
+	// its unit as before.
+	{"update-duplicate-operand", `struct P { a: i32[], b: i32[], n: i32 }
+function dup(own p: P): P { p = P { ...p, b: p.a, n: p.n + 1 }; return p; }
+function run(k: i32): i32 {
+    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { p = dup(p); i = i + 1; }
+    return p.n * 10 + p.a.len() + p.b.len();
+}
+function main(): i32 {
+    var r: i32 = run(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r;
+}`, 44, 1, 0, 3, 7, false, false},
+
+	// One local named in two field positions is ONE operand value appearing
+	// twice. The donor's slot holds one unit and the construction needs two,
+	// so the field is not kept and both positions take their unit as before.
+	{"update-local-in-two-slots", `struct P { a: i32[], b: i32[], n: i32 }
+function twice(own p: P): P {
+    var x: i32[] = p.a;
+    p = P { ...p, a: x, b: x, n: p.n + 1 };
+    return p;
+}
+function run(k: i32): i32 {
+    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { p = twice(p); i = i + 1; }
+    return p.n * 10 + p.a.len() + p.b.len();
+}
+function main(): i32 {
+    var r: i32 = run(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r;
+}`, 44, 1, 0, 3, 7, false, false},
+
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {
     var v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
@@ -390,6 +463,12 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 		return a
 	}
 
+	// An update that keeps its carried-over fields in place releases only the
+	// field it replaces at the reuse, so the record's children-drop helper is
+	// called by the program's final drop alone; before, the update's reuse
+	// called it too.
+	keptDropCalls := map[string]int{"update-keeps-fields": 1}
+
 	for _, tc := range semanticReuseCases {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
@@ -398,6 +477,11 @@ func TestSelfHostSemanticReuseDifferentialX86_64(t *testing.T) {
 			// refuses anywhere is lowered whole by the AST path.
 			if !strings.Contains(report, "declarations") || strings.Contains(report, "the AST lowering stands") {
 				t.Fatalf("%s: module did not produce whole on the typed path, so the counts below would measure the AST lowering:\n%s", tc.name, report)
+			}
+			if want, ok := keptDropCalls[tc.name]; ok {
+				if got := strings.Count(asmOn, "call __fn___sem_drop_Acc"); got != want {
+					t.Errorf("%s: %d calls to the children-drop helper, want %d — the update's reuse released the fields it keeps", tc.name, got, want)
+				}
 			}
 			asmOff, _ := emit(t, proj, tc.src, "off", "FERN_SELFHOST_NO_REUSE=1")
 			asmAST, _ := emit(t, proj, tc.src, "ast", "FERN_SEM_IR=")

@@ -1994,8 +1994,9 @@ the table. The 6,865 MB #9365 measured on `lexer.fern` is gone with the
 mixing: that figure was a mixed module, and no body is mixed now. Read the
 last two rows together: the compiler this path builds runs the whole tree in
 **a twelfth of the memory** the AST-lowered one does, at the same speed. That
-is the goal-2 gap (`make distcheck` OOM-killed at 13.9 GB, `docs/BOOTSTRAP.md`)
-closed from the other side — not by porting the AST lowering's ownership
+is the goal-2 gap (`make distcheck`, OOM-killed at 13.9 GB until it reached a
+byte-identical stage3 at 5.7 GB on 2026-09-28, `docs/BOOTSTRAP.md`) closed
+from the other side — not by porting the AST lowering's ownership
 analysis, but by the lowering that replaces it.
 
 What the substitution still costs is the BUILD: the semantic self-build ran
@@ -2208,7 +2209,7 @@ What is left, in order:
 
 ### What deleting the AST lowering touches, 2026-09-26
 
-**The drivers.** The CLI is the one driver that builds a substitution from
+**The drivers.** The CLI and the playground driver build a substitution from
 the typed path, through `semlower.target_substitution`. The other drivers fall
 into four groups:
 
@@ -2217,7 +2218,7 @@ into four groups:
   rest). Those entry points pass `ircore.no_sub()`, so these compiles take the
   AST lowering whatever the environment says. The drivers are `asm_ir_run`,
   `asm_run`, `asm_load_run`, `asm_modload_run`, `wasm_ir_run`, `wasm_run`,
-  `wasm_runio_run`, `wasm_modload_run` and `playground_run`. The per-module and
+  `wasm_runio_run` and `wasm_modload_run`. The per-module and
   modload whole-compiler fixpoints build the compiler through the load and
   modload drivers, and `asm_modload_run` also calls `irlower.lower_module`
   directly for its provided-symbol check. The plan below says which of
@@ -2245,8 +2246,7 @@ lowering's own output goes with the lowering.
 `ir_const_numeric_run` rewrites the constants in the substitution it is given,
 so it needs a typed-path substitution rather than threading.
 `wasm_units_probe`'s lowering (`lower_all_for_view` / `lower_all_for_base`)
-gains a substitution parameter. `playground_run` ships as a wasm module, so
-the typed path has to build for `wasm32-wasi` inside it.
+gains a substitution parameter.
 
 **`irlower.fern`.** About 44,600 of its 80,000 lines are reachable only from
 `lower_func`, `lower_func_for` and `lower_module`. That covers `LowerState`
