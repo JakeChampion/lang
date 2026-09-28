@@ -1803,7 +1803,11 @@ pub function op_const_closure(body: string): Op {
 // tests nothing, so a literal whose storage it reaches is not placed
 // (ssaunits.raw_reached).
 pub function op_const_array(values: string): Op { return op_const_struct("&arr", 0, values); }
-pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr"; }
+// A constant u8 literal the typed lowering packs (ir.packed): the register
+// backends lay it out a byte an element, and wasm as the array it also is.
+pub function op_const_bytes(values: string): Op { return op_const_struct("&bytes", 0, values); }
+pub function const_struct_is_bytes(packed: string): boolean { return const_struct_type(packed) == "&bytes"; }
+pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr" || const_struct_is_bytes(packed); }
 
 // const_struct_fn_body names the body a const_closure box holds, or "" for an
 // ordinary record constant. The one reader of the sentinel, so the three

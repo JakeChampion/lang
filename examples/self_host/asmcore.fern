@@ -5672,7 +5672,8 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
         return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
     }
     var shp: ShapeRefOut = ShapeRefOut { state: s, label: "0" };
-    if (!ir.const_struct_is_array(packed)) { shp = shape_ref(s, ir.const_struct_type(packed)); }
+    if (ir.const_struct_is_bytes(packed)) { shp = ShapeRefOut { state: s, label: "8" }; }
+    else if (!ir.const_struct_is_array(packed)) { shp = shape_ref(s, ir.const_struct_type(packed)); }
     var text: string = shp.label + "|";
     var vals: string[] = ir.const_struct_values(packed);
     var i: i32 = 0;
@@ -7189,10 +7190,12 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
-// A packed block's kind: 1 an array of scalars, which holds no address; 2 a
-// record, whose first word is its shape pointer; 3 a function value, a
-// one-element array whose element is the body's address.
+// A packed block's kind: 1 an array of scalars, which holds no address (a
+// packed byte array among them, marked `8|`); 2 a record, whose first word is
+// its shape pointer; 3 a function value, a one-element array whose element is
+// the body's address.
 pub function const_agg_kind(packed: string): i32 {
+    if (packed.len() >= 2 && packed[0] == b'8' && packed[1] == b'|') { return 1; }
     if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') { return 1; }
     if (packed.len() > 2 && packed[0] == b'1' && packed[1] == b'|') { return 3; }
     return 2;
@@ -7224,6 +7227,11 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
         var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
+        if (shp == "8") {
+            st = emit_const_bytes_block(st, i, vals);
+            i = i + 1;
+            continue;
+        }
         // An array's word 0 is its length, and its capacity is that length, or
         // a push would write into it.
         var cap: i32 = vals.len() + 1;
@@ -7243,6 +7251,26 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
         i = i + 1;
     }
     return st;
+}
+
+// A packed byte constant: its length word, then its bytes padded to whole
+// words, with the capacity in those words as a packed box's is.
+function emit_const_bytes_block(st: EmitState, i: i32, vals: string[]): EmitState {
+    st = st.write("    .quad " + util.i32_to_string((vals.len() + 7) / 8) + "\n");
+    st = st.write("    .quad -1\n");
+    st = st.write(const_agg_label(st, i) + ":\n");
+    st = st.write("    .quad " + util.i32_to_string(vals.len()) + "\n");
+    if (vals.len() > 0) {
+        var line: string = "    .byte ";
+        var vi: i32 = 0;
+        while (vi < vals.len()) {
+            if (vi > 0) { line = line + ", "; }
+            line = line + vals[vi];
+            vi = vi + 1;
+        }
+        st = st.write(line + "\n");
+    }
+    return st.write("    .balign 8\n");
 }
 
 // ShapeRefOut carries the updated state + the label a shape pointer leaqs.

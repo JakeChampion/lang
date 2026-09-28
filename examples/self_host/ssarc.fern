@@ -2635,6 +2635,7 @@ function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 function static_box(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irlower.LowerResult {
     for a in ins.args { r = emit(r, ir.op_drop()); }
     var values: string = slice_unchecked(words, 1, words.len()) + "";
+    if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) { return emit(r, ir.op_const_bytes(values)); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_const_array(values)); }
     var name: string = ins.str;
     if (ins.kind_tag == ssasem.record_new()) { name = record_name(f.values[ins.result]); }
