@@ -83,7 +83,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 273
+const KeepAliveCycle = 274
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -97,9 +97,12 @@ const KeepAliveCycle = 273
 // requests whose handlers together outlast that deadline, all of which
 // must be answered; a pipelined request answered to a peer that has
 // reset the connection, whose failed write must close it before the
-// request behind it is answered; and an HTTP/1.0 keep-alive request
-// followed by an HTTP/1.1 one on the same connection. Every response is
-// checked, and every close the server owes is read as EOF.
+// request behind it is answered; a request with a malformed one pipelined
+// behind it, answered and then closed with no response to the second; a
+// request of 101 header fields, refused before any handler sees it; and
+// an HTTP/1.0 keep-alive request followed by an HTTP/1.1 one on the same
+// connection. Every response is checked, and every close the server owes
+// is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -254,6 +257,34 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatal(err)
 		}
 		conn.Close()
+		// A request with a malformed one pipelined behind it (a bare LF ends
+		// its request line): the first is answered, then the connection is
+		// closed with no response to the second, since a parser with no
+		// lenient mode refuses it (RFC 9112 §2.2) rather than read on.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /o HTTP/1.1\r\nHost: localhost\r\n\r\nGET /bare HTTP/1.1\nHost: localhost\r\n\r\n")
+		read(conn, r, "before a malformed request", "keep-alive")
+		started = time.Now()
+		eof(conn, r, "after a malformed request")
+		// The read deadline is 300 ms, so a close this soon is the parse's,
+		// not the deadline's: the loop does not hold a malformed connection
+		// open waiting for bytes that could never complete it.
+		if waited := time.Since(started); waited > 250*time.Millisecond {
+			t.Fatalf("a malformed request was closed after %v, by the read deadline rather than the parse", waited)
+		}
+		// 101 header fields, one past the cap: refused before any handler
+		// sees the request, so the connection closes with no response.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		pipeline.Reset()
+		pipeline.WriteString("GET /many HTTP/1.1\r\nHost: localhost\r\n")
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(&pipeline, "X-%d: %d\r\n", i, i)
+		}
+		pipeline.WriteString("\r\n")
+		write(conn, pipeline.String())
+		eof(conn, r, "a request with 101 header fields")
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()

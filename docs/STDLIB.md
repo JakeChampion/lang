@@ -1054,8 +1054,10 @@ serializer.
   handler reads (the method, the path, each header, the body), so the wire
   buffer is the connection's to reuse; `http_parse_request(buf: string)` is
   the same parse over text, one copy dearer.
-  `http_parse_request_framed(buf: u8[]): Option[HttpFramed]` is the parse a
-  persistent connection needs: `HttpFramed { request, len, keep_alive }`
+  `http_parse_request_framed(buf: u8[]): HttpFraming` is the parse a
+  persistent connection needs, answering `Framed(HttpFramed)`,
+  `Incomplete` (keep reading) or `Malformed` (close the connection):
+  `HttpFramed { request, len, keep_alive }`
   says how many bytes the request occupied at the head of the buffer (so
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
@@ -1065,9 +1067,14 @@ serializer.
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
   offset instead of copying the buffer forward, with `len` counted from
-  `from`. Whitespace between a header name and its colon refuses the
-  request (RFC 9112 §5.1), since dropping the line would strand a body
-  for the next parse.
+  `from`. There is no lenient mode: a header line without a colon or
+  with an empty name, whitespace before the colon (RFC 9112 §5.1),
+  obs-fold (§5.2), a bare CR or LF (§2.2), `Transfer-Encoding`, a
+  duplicate, non-numeric or overflowing `Content-Length` (§6.3), a request
+  line over 8 KiB, a header block over 32 KiB or 100 fields, or a body
+  over 1 MiB is malformed, and a request past a cap is malformed as soon
+  as the cap is passed, before its end has arrived; `http_header_bytes_cap()`
+  and `http_body_cap()` name the caps for the serve loop's buffer.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
   `close` as the serve loop decided.
@@ -1172,7 +1179,8 @@ loop and `std/fetch` the client.
   to it; only an empty buffer waits under the idle span; and a
   connection with a complete request still to answer is not waiting at
   all, so no deadline closes it. A write the kernel refuses closes the
-  connection.
+  connection, and so does a malformed request, at once and without a
+  response, whether it arrived first or behind an answered one.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
   keep_alive_requests }` (`serve_options()` is 128, one listener per

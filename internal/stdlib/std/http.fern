@@ -8,7 +8,10 @@
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
 // Scope: HTTP/1.1 and HTTP/1.0, Content-Length-delimited bodies, no
-// chunked transfer encoding, max 8 KiB headers, max 1 MiB body.
+// chunked transfer encoding; a request line of at most 8 KiB, a header
+// block of at most 32 KiB and 100 fields, a body of at most 1 MiB, and
+// no lenient mode: a malformed request is refused (RFC 9112 §2.2, §5,
+// §6.3), never repaired.
 // Persistent connections are the serve loop's: `http_parse_request_framed`
 // says how many bytes a request occupied and whether the connection
 // outlives it, and `http_serialize_response_conn` writes the `Connection`
@@ -291,43 +294,89 @@ function __bytes_string(buf: u8[], from: i32, end: i32): string {
     return string_from_bytes_unchecked(__bytes_range(buf, from, end));
 }
 
+// The parser's caps (RFC 9112 §2.3 leaves them to the server): a request
+// line of at most 8 KiB, a header block, request line included, of at
+// most 32 KiB and 100 fields, and a body of at most 1 MiB. A request past
+// any of them is malformed, refused before a handler sees any of it.
+function __request_line_cap(): i32 { return 8192; }
+pub function http_header_bytes_cap(): i32 { return 32768; }
+function __header_count_cap(): i32 { return 100; }
+pub function http_body_cap(): i32 { return 1048576; }
+
+function __is_blank(b: u8): boolean {
+    return b == (32 as u8) || b == (9 as u8);
+}
+
 // `__parse_header_bytes(buf, from, end)` — the CRLF-separated header
-// lines in buf[from, end) as a HeaderMap: everything from the request
-// line's CRLF up to the empty separator line.
-//
-// Lines without a colon are skipped (HTTP/1.1 §3.2 allows
-// recipients to reject malformed headers; we silently drop
-// them rather than reject the whole request — matches what
-// most permissive parsers do). Names are case-folded by
-// HeaderMap.append. Leading whitespace on values is trimmed
-// per §3.2.4 (a value is a token after the colon, with optional
-// surrounding whitespace).
-//
-// Whitespace between a name and its colon refuses the whole block
-// (`None`), as RFC 9112 §5.1 requires of a server: dropping the line
-// instead would lose a `Content-Length : 5` and leave its body bytes
-// in the buffer for a pipelined parse to read as the next request.
-//
-// Doesn't handle line folding (obs-fold per §3.2.4) — folding
-// was deprecated by RFC 7230 and is treated as malformed
-// (continuation lines get skipped via the colon check).
+// lines in buf[from, end) as a HeaderMap, or `None` when a line is
+// malformed (RFC 9112 §5, with no lenient mode): no colon, an empty
+// name, whitespace before the colon (a `Content-Length : 5` dropped
+// instead would strand its body for the next pipelined parse), a leading
+// SP or HTAB (obs-fold, §5.2), or more fields than the cap. Names are
+// case-folded by HeaderMap.append; a value loses the optional whitespace
+// around it (§5.5).
 function __parse_header_bytes(buf: u8[], from: i32, end: i32): Option[HeaderMap] {
     var h: HeaderMap = headers.header_map_new();
+    var count: i32 = 0;
     var at: i32 = from;
     while (at < end) {
         var e: i32 = __find_crlf(buf, at, end);
         if (e < 0) { e = end; }
         var col: i32 = __find_byte(buf, at, e, 58 as u8);
-        if (col > at) {
-            var last: u8 = buf[col - 1];
-            if (last == (32 as u8) || last == (9 as u8)) { return None; }
-            var name: string = __bytes_string(buf, at, col);
-            var value: string = __bytes_string(buf, col + 1, e).trim().to_owned();
-            h = h.append(name, value);
-        }
+        if (col <= at || __is_blank(buf[at]) || __is_blank(buf[col - 1])) { return None; }
+        count = count + 1;
+        if (count > __header_count_cap()) { return None; }
+        h = h.append(__bytes_string(buf, at, col), __bytes_string(buf, col + 1, e).trim().to_owned());
         at = e + 2;
     }
     return Some(h);
+}
+
+// `__crlf_terminated(buf, from, end)` — whether every LF in buf[from, end)
+// is preceded by CR and every CR whose next byte has arrived is followed
+// by LF. A bare CR or LF in a request line or header block is malformed
+// (RFC 9112 §2.2), not a line terminator and not a byte of a value, and
+// it is known as soon as it is read: a partial block is scanned too, so
+// only a CR at the very end of the buffer is still undecided.
+function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean {
+    var i: i32 = from;
+    while (i < end) {
+        if (buf[i] == (10 as u8)) { return false; }
+        if (buf[i] == (13 as u8)) {
+            if (i + 1 < buf.len() && buf[i + 1] != (10 as u8)) { return false; }
+            i = i + 1;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `__request_line_end(buf, from)` — where the request line's CRLF starts,
+// -1 while the buffer holds less than a line, or -2 once it holds more
+// than the cap without one. `__header_block_end` is the same for the
+// CRLF CRLF that ends the header block.
+function __request_line_end(buf: u8[], from: i32): i32 {
+    var limit: i32 = from + __request_line_cap() + 2;
+    var end: i32 = buf.len();
+    if (limit < end) { end = limit; }
+    var at: i32 = __find_crlf(buf, from, end);
+    if (at >= 0) { return at; }
+    if (buf.len() >= limit) { return -2; }
+    return -1;
+}
+
+function __header_block_end(buf: u8[], from: i32): i32 {
+    var limit: i32 = from + http_header_bytes_cap() + 4;
+    var n: i32 = buf.len();
+    var end: i32 = n;
+    if (limit < end) { end = limit; }
+    var i: i32 = from;
+    while (i + 3 < end) {
+        if (buf[i] == (13 as u8) && buf[i + 1] == (10 as u8) && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8)) { return i; }
+        i = i + 1;
+    }
+    if (n >= limit) { return -2; }
+    return -1;
 }
 
 // Derive the request body length from the *parsed* HeaderMap
@@ -394,18 +443,18 @@ function __http_content_length(h: HeaderMap): Option[i32] {
 // than blocking, so callers driving the read loop keep reading
 // until the parse succeeds (or a hard cap fires).
 //
-// Caps: headers must fit in the first 8 KiB, body capped at
-// 1 MiB. Both surface as None so the caller can close the
-// socket without a response (HTTP/1.1 §10 allows server-
-// side reset on malformed input).
+// A malformed request and a partial one both surface as None here;
+// `http_parse_request_framed` tells them apart for a loop that must
+// close on the first and keep reading on the second.
 //
 // What the request keeps are owned copies — the method, the
 // path, each header's name and value, the body — so the wire
 // buffer is the connection's to reuse once this returns.
 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     match (http_parse_request_framed(buf)) {
-        Some(f) => { return Some(f.request); },
-        None => { return None; }
+        Framed(f) => { return Some(f.request); },
+        Incomplete => { return None; },
+        Malformed => { return None; }
     }
     return None;
 }
@@ -418,10 +467,16 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
 // `Connection: keep-alive`).
 pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
 
+// HttpFraming — what a buffer holds at an offset: a complete request with
+// its framing, less than one (the loop keeps reading), or a malformed one,
+// which the loop answers by closing the connection: there is no lenient
+// mode (RFC 9112 §2.2, §5.1, §5.2, §6.3), and a request past a cap is
+// malformed as soon as the cap is passed, before its end has arrived.
+pub enum HttpFraming { Framed(HttpFramed), Incomplete, Malformed }
+
 // `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
-// framing a persistent connection needs. Same acceptance rules, same
-// `None` for an incomplete or refused request.
-pub function http_parse_request_framed(buf: u8[]): Option[HttpFramed] {
+// framing a persistent connection needs, and the three-way answer.
+pub function http_parse_request_framed(buf: u8[]): HttpFraming {
     return http_parse_request_framed_from(buf, 0);
 }
 
@@ -429,28 +484,23 @@ pub function http_parse_request_framed(buf: u8[]): Option[HttpFramed] {
 // buf[from, len): the request behind the ones a serve loop has already
 // answered, without copying the rest of the buffer forward. `len` counts
 // from `from`.
-pub function http_parse_request_framed_from(buf: u8[], from: i32): Option[HttpFramed] {
+pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     var n: i32 = buf.len();
-    if (n - from > 8192 + 1048576) {
-        return None;
+    var first_crlf: i32 = __request_line_end(buf, from);
+    if (first_crlf == -2) { return Malformed; }
+    var headers_end: i32 = __header_block_end(buf, from);
+    if (headers_end == -2) { return Malformed; }
+    // What is buffered of the header block, whether or not its end has
+    // arrived: the bytes before `from` are answered requests, and the
+    // bytes after the block are a body, which may hold anything.
+    var scanned: i32 = headers_end;
+    if (scanned < 0) {
+        scanned = from + http_header_bytes_cap() + 4;
+        if (n < scanned) { scanned = n; }
     }
-    var headers_end: i32 = -1;
-    var i: i32 = from;
-    while (i + 3 < n) {
-        if (buf[i] == (13 as u8) && buf[i + 1] == (10 as u8) && buf[i + 2] == (13 as u8) && buf[i + 3] == (10 as u8)) {
-            headers_end = i;
-            i = n;
-        }
-        i = i + 1;
-    }
-    if (headers_end < 0) {
-        return None;
-    }
-    if (headers_end - from > 8192) {
-        return None;
-    }
+    if (!__crlf_terminated(buf, from, scanned)) { return Malformed; }
+    if (first_crlf < 0 || headers_end < 0) { return Incomplete; }
     var headers_len: i32 = headers_end + 4 - from;
-    var first_crlf: i32 = __find_crlf(buf, from, n);
     // Parse the header block into a HeaderMap *first*, then derive
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
@@ -467,33 +517,20 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): Option[HttpFr
     var req_headers: HeaderMap = headers.header_map_new();
     match (__parse_header_bytes(buf, hdr_start, headers_end)) {
         Some(h) => { req_headers = h; },
-        None => { return None; }
+        None => { return Malformed; }
     }
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
         Some(cl) => { content_length = cl; },
-        None => {
-            // Smuggling-shaped or malformed framing (duplicate CL,
-            // Transfer-Encoding, non-numeric value) → reject.
-            return None;
-        }
+        None => { return Malformed; }
     }
-    if (content_length > 1048576) {
-        return None;
-    }
-    if (from + headers_len + content_length > n) {
-        // Caller hasn't read the full body yet.
-        return None;
-    }
+    if (content_length > http_body_cap()) { return Malformed; }
+    if (from + headers_len + content_length > n) { return Incomplete; }
     // The request line: the method, a space, the path, a space, the rest.
     var sp1: i32 = __find_byte(buf, from, first_crlf, 32 as u8);
-    if (sp1 < 0) {
-        return None;
-    }
+    if (sp1 < 0) { return Malformed; }
     var sp2: i32 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
-    if (sp2 < 0) {
-        return None;
-    }
+    if (sp2 < 0) { return Malformed; }
     var keep_alive: boolean = __persists(buf, sp2 + 1, first_crlf, req_headers);
     var request: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
@@ -501,7 +538,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): Option[HttpFr
         body: stream.stream_from_bytes(__bytes_range(buf, from + headers_len, from + headers_len + content_length)),
         headers: req_headers,
     };
-    return Some(HttpFramed { request: request, len: headers_len + content_length, keep_alive: keep_alive });
+    return Framed(HttpFramed { request: request, len: headers_len + content_length, keep_alive: keep_alive });
 }
 
 // __persists(buf, from, end, h) — whether the connection outlives this

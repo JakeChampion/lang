@@ -56,10 +56,35 @@ function test_bare_request_has_no_headers(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
-function test_header_without_colon_is_skipped(): test.TestOutcome {
-    match (http.http_parse_request_bytes("GET / HTTP/1.1\r\nnocolon\r\nHost: h\r\n\r\n".bytes())) {
-        Some(req) => { return test.assert_eq(req.headers.len(), 1); },
-        None => { return test.fail("a colon-less header line refused the request"); }
+// A header block with `n` fields, each `X-i: i`.
+function fields(n: i32): string {
+    var block: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        block = block + "X-" + i.to_string() + ": " + i.to_string() + "\r\n";
+        i = i + 1;
+    }
+    return block;
+}
+
+function repeat(s: string, n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) {
+        out = out + s;
+        i = i + 1;
+    }
+    return out;
+}
+
+function test_caps_admit_what_fits(): test.TestOutcome {
+    match (http.http_parse_request_bytes(("GET / HTTP/1.1\r\n" + fields(100) + "\r\n").bytes())) {
+        Some(req) => { if (req.headers.len() != 100) { return test.fail("100 fields kept as " + req.headers.len().to_string()); } },
+        None => { return test.fail("100 header fields refused"); }
+    }
+    match (http.http_parse_request_bytes(("GET /" + repeat("a", 8192 - 14) + " HTTP/1.1\r\n\r\n").bytes())) {
+        Some(req) => { return test.assert_eq(req.path.len(), 8192 - 13); },
+        None => { return test.fail("an 8 KiB request line refused"); }
     }
     return test.fail("unreachable");
 }
@@ -88,6 +113,43 @@ function test_refusals_agree(): test.TestOutcome {
     if (!refused("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhello")) { return test.fail("a body shorter than declared accepted"); }
     if (!refused("GET / HTTP/1.1\r\nHost: h")) { return test.fail("an unterminated header block accepted"); }
     if (!refused("POST / HTTP/1.1\r\nContent-Length : 5\r\n\r\nhello")) { return test.fail("whitespace before a header's colon accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nnocolon\r\nHost: h\r\n\r\n")) { return test.fail("a header line without a colon accepted"); }
+    if (!refused("GET / HTTP/1.1\r\n: h\r\n\r\n")) { return test.fail("an empty header name accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX: a\r\n b\r\n\r\n")) { return test.fail("obs-fold accepted"); }
+    if (!refused("GET / HTTP/1.1\r\n\tX: a\r\n\r\n")) { return test.fail("a header line starting with HTAB accepted"); }
+    if (!refused("GET / HTTP/1.1\nHost: h\r\n\r\n")) { return test.fail("a bare LF ending the request line accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nHost: h\nX: y\r\n\r\n")) { return test.fail("a bare LF in the header block accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX: a\rb\r\n\r\n")) { return test.fail("a bare CR in a value accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nHost: h\r\n\rX\r\n\r\n")) { return test.fail("CR LF CR X accepted"); }
+    if (!refused("GET / HTTP/1.1\r\n" + fields(101) + "\r\n")) { return test.fail("101 header fields accepted"); }
+    if (!refused("GET /" + repeat("a", 8192) + " HTTP/1.1\r\n\r\n")) { return test.fail("a request line over 8 KiB accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX: " + repeat("v", 32768) + "\r\n\r\n")) { return test.fail("a header block over 32 KiB accepted"); }
+    return test.pass();
+}
+
+// The framed parse tells a partial request from a malformed one: a loop
+// keeps reading on the first and closes on the second, and a request past
+// a cap is malformed as soon as the cap is passed.
+function framing_of(wire: string): i32 {
+    match (http.http_parse_request_framed(wire.bytes())) {
+        http.Framed(_) => { return 2; },
+        http.Incomplete => { return 1; },
+        http.Malformed => { return 0; }
+    }
+    return -1;
+}
+
+function test_framing_tells_incomplete_from_malformed(): test.TestOutcome {
+    if (framing_of("GET / HTTP/1.1\r\nHost: h") != 1) { return test.fail("an unterminated header block is not incomplete"); }
+    if (framing_of("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhello") != 1) { return test.fail("a short body is not incomplete"); }
+    if (framing_of("GET / HTTP/1.1\r\nHost: h\r\n\r\n") != 2) { return test.fail("a complete request is not framed"); }
+    if (framing_of("GET / HTTP/1.1\nHost: h") != 0) { return test.fail("a bare LF is not malformed before the block ends"); }
+    if (framing_of("GET / HTTP/1.1\r\nX: a\rb") != 0) { return test.fail("a bare CR is not malformed before the block ends"); }
+    if (framing_of("GET / HTTP/1.1\r") != 1) { return test.fail("a CR at the end of the buffer is not incomplete"); }
+    if (framing_of("GET /" + repeat("a", 8192)) != 0) { return test.fail("a request line past the cap is not malformed before its end"); }
+    if (framing_of("GET / HTTP/1.1\r\nX: " + repeat("v", 32768)) != 0) { return test.fail("a header block past the cap is not malformed before its end"); }
+    if (framing_of("GET / HTTP/1.1\r\n" + fields(101)) != 1) { return test.fail("101 unterminated fields are not incomplete"); }
+    if (framing_of("GET / HTTP/1.1\r\n" + fields(101) + "\r\n") != 0) { return test.fail("101 fields are not malformed"); }
     return test.pass();
 }
 
@@ -95,7 +157,12 @@ function test_refusals_agree(): test.TestOutcome {
 // request occupies, and whether the connection outlives it (RFC 9112
 // §9.3).
 function framed(wire: string): Option[http.HttpFramed] {
-    return http.http_parse_request_framed(wire.bytes());
+    match (http.http_parse_request_framed(wire.bytes())) {
+        http.Framed(f) => { return Some(f); },
+        http.Incomplete => { return None; },
+        http.Malformed => { return None; }
+    }
+    return None;
 }
 
 function test_framed_length_covers_headers_and_body(): test.TestOutcome {
@@ -113,12 +180,13 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
     var wire: string = wire_post() + "GET /next HTTP/1.1\r\n\r\n";
     match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len())) {
-        Some(f) => {
+        http.Framed(f) => {
             if (f.request.path != "/next") { return test.fail("the request behind the offset was not the one parsed: " + f.request.path); }
             if (f.request.body_len() != 0) { return test.fail("a body from the request in front"); }
             return test.assert_eq(f.len, wire.len() - wire_post().len());
         },
-        None => { return test.fail("parse failed"); }
+        http.Incomplete => { return test.fail("incomplete"); },
+        http.Malformed => { return test.fail("malformed"); }
     }
     return test.fail("unreachable");
 }
@@ -191,8 +259,9 @@ function main(): i32 {
     r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
     r = r.it("text and bytes agree", test_text_and_bytes_agree);
     r = r.it("bare request has no headers", test_bare_request_has_no_headers);
-    r = r.it("header without colon is skipped", test_header_without_colon_is_skipped);
+    r = r.it("caps admit what fits", test_caps_admit_what_fits);
     r = r.it("refusals agree", test_refusals_agree);
+    r = r.it("framing tells incomplete from malformed", test_framing_tells_incomplete_from_malformed);
     r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
     r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
     r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);

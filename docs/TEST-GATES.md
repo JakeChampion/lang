@@ -299,8 +299,11 @@ Platform bag) together outlast that deadline, all of which must be
 answered (the deadline bounds the wait for the peer, not the handlers);
 a pipelined request answered to a peer that has reset the connection,
 whose failed write must close it before the request behind it is answered
-(the handler reports that request on stderr, which fails the run); and an
-HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+(the handler reports that request on stderr, which fails the run); a
+request with a malformed one pipelined behind it (a bare LF ends its
+request line), answered and then closed with no response to the second;
+a request of 101 header fields, closed with no response; and an HTTP/1.0
+keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is

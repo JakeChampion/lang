@@ -23,11 +23,11 @@
 //      slow-loris guard: a connection past it is closed without a
 //      response, and the wait's timeout is the earliest one due.
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
-//      appending to the connection's request bytes (headers must fit in
-//      8 KiB, the body in 1 MiB, the parser's caps).
-//   3. http_parse_request_framed — return None ⇒ keep reading, or on EOF close
-//      the socket without a response (HTTP/1.1 §10 explicitly allows
-//      server-side reset on malformed input).
+//      appending to the connection's request bytes (at most the parser's
+//      header and body caps unread).
+//   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, close);
+//      Malformed ⇒ close the socket without a response (HTTP/1.1 §10
+//      explicitly allows server-side reset on malformed input).
 //   4. handler(req) returns the HttpResponse.
 //   5. http_serialize_response_conn → tcp_send; what the kernel does not
 //      take stays with the connection, watched for writability until it
@@ -350,11 +350,11 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (
             return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
         buf = buf.concat(scratch.take(n));
-        // A connection holds at most the parser's largest request (8 KiB
-        // of headers, 1 MiB of body) unread; past that the peer is
-        // treated as finished: what is complete is answered, then the
-        // connection is closed.
-        if (buf.len() > 8192 + 1048576) {
+        // A connection holds at most the parser's largest request (its
+        // header and body caps) unread; past that the peer is treated as
+        // finished: what is complete is answered, then the connection is
+        // closed.
+        if (buf.len() > http.http_header_bytes_cap() + http.http_body_cap()) {
             return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
     }
@@ -379,8 +379,9 @@ function __bytes_from(buf: u8[], from: i32): u8[] {
 // already answered.
 function __has_request(c: __Conns, at: i32): boolean {
     match (http.http_parse_request_framed_from(c.bufs[at], c.offs[at])) {
-        Some(_) => { return true; },
-        None => { return false; }
+        http.Framed(_) => { return true; },
+        http.Incomplete => { return false; },
+        http.Malformed => { return false; }
     }
     return false;
 }
@@ -427,14 +428,19 @@ function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
     return __Conns { ...c, deadlines: c.deadlines.with(at, monotonic_ns() + span.as_nanos()) };
 }
 
-// __serve_ready(c, at, opts) — a persisting connection whose response has
-// gone out whole: `(conns, more)`, `more` when a complete request is
-// buffered, for the loop to answer now; a connection with a request to
-// answer is not waiting on the peer, so its deadline is left alone.
-// Otherwise it waits under `__serve_next`'s deadline.
-function __serve_ready(c: __Conns, at: i32, opts: ServeOptions): (__Conns, boolean) {
-    if (__has_request(c, at)) { return (c, true); }
-    return (__serve_next(c, at, opts), false);
+// __serve_ready(drv, c, at, opts) — a persisting connection whose
+// response has gone out whole: `(conns, more)`, `more` when a complete
+// request is buffered, for the loop to answer now; a connection with a
+// request to answer is not waiting on the peer, so its deadline is left
+// alone. Less than a request waits under `__serve_next`'s deadline, and
+// a malformed one closes the connection now: no bytes could complete it.
+function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, boolean) {
+    match (http.http_parse_request_framed_from(c.bufs[at], c.offs[at])) {
+        http.Framed(_) => { return (c, true); },
+        http.Incomplete => { return (__serve_next(c, at, opts), false); },
+        http.Malformed => { return (__serve_close(drv, c, at), false); }
+    }
+    return (c, false);
 }
 
 // __serve_respond(drv, c, at, wire, opts, answered) — the response sent
@@ -455,7 +461,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: str
         Whole => { }
     }
     if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
-    var ready: (__Conns, boolean) = __serve_ready(c, at, opts);
+    var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts);
     c = ready.0;
     if (!ready.1) { return (c, false); }
     if (answered >= __pipeline_burst()) {
@@ -481,7 +487,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
     }
     if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
     if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
-    var ready: (__Conns, boolean) = __serve_ready(__Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+    var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
     if (!ready.1) { return (ready.0, -1, false); }
     return (ready.0, at, false);
 }
@@ -630,7 +636,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             var count: i32 = 0;
             while (more) {
                 match (http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at])) {
-                    Some(f) => {
+                    http.Framed(f) => {
                         var took: (__Conns, boolean) = __serve_took(conns, at, f, opts, ev.2);
                         conns = took.0;
                         count = count + 1;
@@ -639,7 +645,11 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         conns = answered.0;
                         more = answered.1;
                     },
-                    None => { more = false; }
+                    http.Incomplete => { more = false; },
+                    http.Malformed => {
+                        conns = __serve_close(drv, conns, at);
+                        more = false;
+                    }
                 }
             }
             conns = __serve_finish(drv, conns, fd, ev.2);
@@ -683,7 +693,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
             var count: i32 = 0;
             while (more) {
                 match (http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at])) {
-                    Some(f) => {
+                    http.Framed(f) => {
                         var took: (__Conns, boolean) = __serve_took(conns, at, f, opts, ev.2);
                         conns = took.0;
                         count = count + 1;
@@ -693,7 +703,11 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         conns = answered.0;
                         more = answered.1;
                     },
-                    None => { more = false; }
+                    http.Incomplete => { more = false; },
+                    http.Malformed => {
+                        conns = __serve_close(drv, conns, at);
+                        more = false;
+                    }
                 }
             }
             conns = __serve_finish(drv, conns, fd, ev.2);
