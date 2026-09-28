@@ -105,9 +105,14 @@ self-host's output wins performance ties; here it is not a tie.
 
 The self-host build of the baseline also allocates 7 more times per request
 than the native build (93.4 against 86.4) for the same source and the same
-answers. That is a divergence in what the two compilers' lowerings
-allocate, not in what the program does; it is filed as #10532 rather than
-explained here.
+answers. `FERN_RC_TRACE` on both builds attributes it to
+`http_serialize_response`: its `hdr_block = hdr_block + name + ": " + value
++ "\r\n"` chains are fifteen `+` per response, and native grows the
+uniquely-held accumulator in place through `__fern_str_append` (#5637),
+allocating about eight, while the self-host lowers every `+` to a fresh
+`__fern_str_concat` box. The `str_self_append_chain` row of
+`testdata/selfhost-alloc-count-matrix.txt` pins the pair (native 4 blocks
+per round, self-host 8); the port is #10532.
 
 ### What this sets
 
