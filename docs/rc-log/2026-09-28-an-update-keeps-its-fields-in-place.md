@@ -51,11 +51,24 @@ compiling `checker.fern` to a binary, under callgrind:
 The new stage 2's output for `checker.fern` is byte-identical to the new stage
 1's.
 
-`TestSelfHostSemanticReuseDifferentialX86_64` gains three cases:
+`TestSelfHostSemanticReuseDifferentialX86_64` gains four cases:
 - a unique update loop, where the kept path is witnessed by the
   children-drop helper's call count;
 - a base shared with another binding;
-- a field copied into two slots, which must not be kept.
+- a carried-over field also copied into a second slot: the carried-over read
+  is kept, the copy is not;
+- one local named in two field positions, which must not be kept. With the
+  single-occurrence guard loosened it over-releases and exits 99. Its fields
+  are `i32[]` built from a parameter: a string built from literals folds to
+  static data, which is never counted, so a case built on one cannot see a
+  count go wrong.
+
+The rc verifier models keep sites too. `irverifyrc.read_keep_site` pairs
+`keep_release`'s select on the token with `keep_token`'s earlier select, so a
+keep is checked for its uniqueness gate and for releasing the donor on the
+decline arm. That release is `__sem_release_<T>`, now in the verifier's
+release set (and in `internal/ir/rcsigs.go`, which the set is pinned to).
+`irverify_run` checks 218 to 220 cover the clean, ungated and leaking shapes.
 
 ## Trap
 
