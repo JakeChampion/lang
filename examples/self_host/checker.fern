@@ -4027,6 +4027,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
         if (lm.params.len() == 0 && vlocal.len() > 0) {
           return vb_store_type(lm.body, vlocal, s);
         }
+        if (lm.params.len() == 0 && lm.origin == parser.ORIGIN_BLOCK) {
+          return value_block_tail_type(lm.body, s);
+        }
       },
       _ => {}
     }
@@ -18701,6 +18704,28 @@ pub function bare_return(e: ast.Expr): boolean {
   return parser.is_unit_expr(e);
 }
 
+// value_block_tail_type is the type of a `{ …; tail }` block: its final
+// `return`, checked with the leading statements bound. An earlier `return`
+// leaves the enclosing function, so it says nothing about the block. A bare
+// literal tail stays unknown: it adapts to whatever receives the block.
+function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
+  if (body.len() == 0) { return t_unknown("empty value block"); }
+  if let ast.StmtReturn(r) = body[body.len() - 1] {
+    if (bare_return(r.value) || int_literal_tree(r.value)) { return t_unknown("value block tail"); }
+    var bs: Scope = s;
+    var i: i32 = 0;
+    while (i < body.len() - 1) {
+      bs = bind_stmt(body[i], bs);
+      i = i + 1;
+    }
+    var t: typeinfo.Type = check_expr(r.value, bs);
+    if let typeinfo.TypeFloat(f) = t { if (f.polymorphic) { return t_unknown("value block tail"); } }
+    if (!names_whole_type(t, bs)) { return t_unknown("value block tail"); }
+    return t;
+  }
+  return t_unknown("value block tail");
+}
+
 // The first `return` carrying a value, looked for through the branches, arms
 // and loops of a body, with the scope at that statement; the `;` sentinel when
 // there is none. It is what an unannotated lambda's result is read from, and
@@ -19626,6 +19651,7 @@ function type_to_irtag(t: typeinfo.Type): string {
       }
       return out + ")";
     },
+    typeinfo.TypeDyn(_) => { return typeinfo.spelling(t); },
     _ => {
       return "";
     }
