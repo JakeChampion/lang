@@ -21367,23 +21367,63 @@ function ret_enum_param_handback(e: ast.Expr, s: LowerState): boolean {
 }
 
 // ret_closure_uncounted: a function returning a closure hands the caller a
-// counted box, and `e` names one this frame holds no count for — a borrowed
-// fn parameter, a closure local the exit sweep does not release, a struct's
-// fn field or a closure-array element — so the return retains it.
+// counted box, so the return retains `e` unless this frame provably holds its
+// count — a fresh or call-returned box (closure_value_is_counted,
+// closure_method_call), an `own` fn parameter, a closure local the exit sweep
+// leaves to the caller, or a value local every arm fills with an owned box
+// ("CLOVAL:", owned_closure_value_locals). Anything else is a borrow, however
+// it is spelled; a missed owner leaks.
 function ret_closure_uncounted(e: ast.Expr, s: LowerState, moved: i32[]): boolean {
     if (s.frame.cur_ret != "fn") { return false; }
+    if (closure_value_is_counted(e, s.frame.sigs.closure_fns) || closure_method_call(e, s)) { return false; }
     if let ast.ExprIdent(id) = e {
         var slot: i32 = s.slot_of(id.name);
-        if (slot < 0 || !s.is_closure_local(id.name)) { return false; }
+        if (slot < 0 || !s.is_closure_local(id.name)) { return !reclaim_has(s.frame.reclaimable_names, "CLOVAL:", id.name); }
         if (slot < s.frame.n_params) { return !s.is_own_param(id.name); }
         return !slot_list_has(moved, slot) || !arr_slot_shallow_release_ok(s, slot);
     }
-    if let ast.ExprFieldAccess(fa) = e {
-        var oty: string = expr_struct_type(fa.obj, s);
-        return oty.len() > 0 && decl_field_type(s.frame.structs, oty, fa.field) == "fn";
+    return true;
+}
+
+// closure_method_call: `e` is `x.m(…)` where `m` is a method of x's struct type
+// declared to return a closure, so its own return hands back a counted box.
+function closure_method_call(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rty: string = expr_struct_type(fa.obj, s);
+            return rty.len() > 0 && util.index_of_str(s.frame.sigs.closure_fns, "METHCLO:" + rty + "." + fa.field) >= 0;
+        }
     }
-    if let ast.ExprIndex(ix) = e { return expr_is_closure_array(ix.array, s); }
     return false;
+}
+
+// CloValScan: the value locals an arm stores into, and those one store left
+// without a proven count.
+struct CloValScan { cloret: string[], stored: string[], unowned: string[] }
+
+// owned_closure_value_locals credits "CLOVAL:<name>" to each value local of a
+// closure-returning function (IfChain.value_local) whose every arm stores a
+// counted box (closure_value_is_counted), so returning it hands that count on.
+function owned_closure_value_locals(fn: parser.FuncDecl, cloret: string[], acc: string[]): string[] {
+    if (fn.ret_type != "fn") { return acc; }
+    var sc: CloValScan = CloValScan { cloret: cloret, stored: [], unowned: [] };
+    for st in fn.body { sc = astwalk.fold_stmt_spine(st, sc, cloval_scan_stmt); }
+    var out: string[] = acc;
+    for name in sc.stored {
+        if (util.index_of_str(sc.unowned, name) < 0) { out = out.append("CLOVAL:" + name); }
+    }
+    return out;
+}
+
+function cloval_scan_stmt(st: ast.Stmt, own sc: CloValScan): CloValScan {
+    if let ast.StmtAssign(a) = st {
+        if (is_arm_value_store(a)) {
+            var stored: string[] = push_str_unique(sc.stored, a.target);
+            if (closure_value_is_counted(a.value, sc.cloret)) { return CloValScan { ...sc, stored: stored }; }
+            return CloValScan { ...sc, stored: stored, unowned: push_str_unique(sc.unowned, a.target) };
+        }
+    }
+    return sc;
 }
 
 // handback_param_name: `p` for a bare `p` or a field read `p.f`, else "".
@@ -31791,8 +31831,8 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
             //
             // Both credits are required because between them they say every
             // position of this tuple releases: "TUPE:" that the element walk is
-            // emitted at all, "TUPSW:" that no STRING position of it is left
-            // unproven (vacuously true of a tuple with no string position, whose
+            // emitted at all, "TUPSW:" that no STRING or CLOSURE position of it
+            // is left unproven (vacuously true of a tuple with neither, whose
             // array positions release whichever writer filled them).
             //
             // The credits are BINDING-SITE keyed and an assignment carries no
@@ -61952,6 +61992,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var fn_moves_all: MlOut = rc_ml_extend_loops(fn, structs, fn_moves_top);
     var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns, sg.closure_fns);
     reclaim = enum_ret_alias_rows(fn, structs, sg.return_fresh_struct_ret_fns, reclaim);
+    reclaim = owned_closure_value_locals(fn, sg.closure_fns, reclaim);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -66904,9 +66945,12 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     // Every function value is an env box, so a function declared to return one
     // returns a box whatever its return statements spell (#10076). Without a
     // declared return, only a trailing `return <capturing lambda>` says so.
+    // A method is listed under its bare name and, as "METHCLO:<recv>.<name>",
+    // under the receiver type that resolves a call to it (closure_method_call).
     for fn in funcs {
         if (fn.ret_type == "fn") {
             out = out.append(fn.name);
+            if (fn.receiver_type.len() > 0) { out = out.append("METHCLO:" + fn.receiver_type + "." + fn.name); }
         } else if (fn.body.len() > 0) {
             match (fn.body[fn.body.len() - 1]) {
                 ast.StmtReturn(r) => {
@@ -82249,7 +82293,7 @@ while (tprc < out.len()) {
         tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
     }
     // The writer agreement applies here too: it is what decides whether a
-    // STRING position's release is emitted at all, and the assign-form
+    // STRING or CLOSURE position's release is emitted at all, and the assign-form
     // interlock in body_unsafe_for_tup_alias may only forgive an element whose
     // release it can count on.
     if (out[tprc].len() > 8 && slice_unchecked(out[tprc], 0, 8) == "TUPOWNW:") {
