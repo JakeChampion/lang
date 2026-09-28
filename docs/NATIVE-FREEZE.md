@@ -79,12 +79,11 @@ above is the first run of it.
    Open on arm64-darwin: stage2 exhausts the 16 GiB arena compiling the
    compiler (#8479), so that host's pin is still built by native.
 2. **Every target self-contained on the self-host side** — closed.
-3. **The oracle decision** — open, and a project call rather than code:
-   `BOOTSTRAP-RESEARCH.md §1` recommends two implementations forever so the
-   fuzz-diff oracle keeps two witnesses, which contradicts deleting the native
-   backends. `internal/interp` is the oracle the differentials anchor on, and
-   §3 keeps it; whether the native *backends* are also a witness worth keeping
-   is the question to settle before any deletion PR.
+3. **The oracle decision** — made on 2026-09-28: the native backends are
+   deleted and are not witnesses. `internal/interp` is the oracle the
+   differentials anchor on, and §3 keeps it. Gates that compare self-host
+   codegen against native codegen go with the backends or are re-anchored on
+   the interpreter, in the deletion PRs.
 4. **The non-compiler consumers** — open. The browser playground
    (`internal/wasm/playground`, `cmd/fern-wasm`) is built on native codegen; a
    self-host driver that compiles, checks and interprets exists and runs
