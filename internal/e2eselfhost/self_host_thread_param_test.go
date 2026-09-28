@@ -10,6 +10,28 @@ import "testing"
 
 const threadInst = "struct Inst { name: string, depth: i32 }\n"
 
+const threadHolder = threadInst + "struct Holder { x: Inst }\n"
+
+const threadInstMain = `function main(): i32 {
+    var pending: Inst[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
+    var t: i32 = 0;
+    for p in pending { t = t + p.depth + p.name.len(); }
+    return (t + pending.len()) % 100;
+}
+`
+
+const threadStrMain = `function main(): i32 {
+    var pending: string[] = [];
+    var fd: i32 = 0;
+    while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
+    var t: i32 = 0;
+    for p in pending { t = t + p.len(); }
+    return (t + pending.len()) % 100;
+}
+`
+
 var threadParamRows = []leakRow{
 	{"struct_arr", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (n % 4 == 0) { return acc.append(Inst { name: "w" + "", depth: n }); }
@@ -21,7 +43,7 @@ function main(): i32 {
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, true},
+`, true, [2]int64{}},
 	{"string_arr", `import "std/i32";
 function walk(n: i32, acc: string[]): string[] {
     if (n % 4 == 0) { return acc.append(n.to_string()); }
@@ -33,7 +55,7 @@ function main(): i32 {
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len() % 256;
 }
-`, true},
+`, true, [2]int64{}},
 	// Enough appends to outgrow the buffer, read after the loop.
 	{"grow", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (n % 3 == 0) { return acc; }
@@ -47,7 +69,7 @@ function main(): i32 {
     for p in pending { t = t + p.depth + p.name.len(); }
     return t % 100;
 }
-`, true},
+`, true, [2]int64{}},
 	// A local alias rebuilt through threaders, a recursive threader, and a
 	// literal seed.
 	{"alias_recursive", threadInst + `function rec(n: i32, acc: Inst[]): Inst[] {
@@ -72,7 +94,7 @@ function main(): i32 {
     for p in pending { t = t + p.depth; }
     return (t + pending.len()) % 100;
 }
-`, true},
+`, true, [2]int64{}},
 	{"string_arr_alias", `import "std/i32";
 function step(n: i32, acc: string[]): string[] {
     if (n % 3 == 0) { return acc; }
@@ -92,7 +114,7 @@ function main(): i32 {
     for p in pending { t = t + p.len(); }
     return (t + pending.len()) % 100;
 }
-`, true},
+`, true, [2]int64{}},
 	// The element walk that also drops each element's array field.
 	{"array_field_elem", `struct Node { name: string, kids: i32[] }
 function walk(n: i32, acc: Node[]): Node[] {
@@ -105,13 +127,13 @@ function main(): i32 {
     while (fd < 12) { pending = walk(fd, pending); fd = fd + 1; }
     return pending.len();
 }
-`, true},
-	// Appended elements whose string fields come from an existing element and
-	// from a caller's string: each must be counted, not shared.
+`, true, [2]int64{}},
+	// Appended elements whose string field comes from a caller's string and
+	// whose scalar comes from an existing element: the string must be counted,
+	// not shared.
 	{"shared_fields", threadInst + `function walk(n: i32, tag: string, acc: Inst[]): Inst[] {
     if (n % 4 == 0 && acc.len() > 0) {
-        var e: Inst = acc[0];
-        return acc.append(Inst { name: e.name, depth: n }).append(Inst { name: acc[acc.len() - 1].name, depth: 1 }).append(Inst { name: tag, depth: 2 });
+        return acc.append(Inst { name: tag, depth: acc[0].depth + acc[acc.len() - 1].depth + n });
     }
     if (n % 4 == 0) { return acc.append(Inst { name: "w" + "", depth: n }); }
     return acc;
@@ -125,9 +147,28 @@ function main(): i32 {
     for p in pending { t = t + p.name.len() + p.depth; }
     return (t + tag.len()) % 100;
 }
-`, true},
-	// The callee keeps the array in a struct, so it threads nothing and the
-	// caller keeps the shallow release.
+`, true, [2]int64{}},
+	// A parameter named like a strict-fresh producer: the call reaches the
+	// caller's closure, so walk threads nothing.
+	{"producer_shadowed", threadInst + `function mk(n: i32): Inst { return Inst { name: "m" + "", depth: n }; }
+function walk(n: i32, mk: (i32) => Inst, acc: Inst[]): Inst[] {
+    return acc.append(mk(n));
+}
+function main(): i32 {
+    var keep: Inst = Inst { name: "k" + "", depth: 3 };
+    var f: (i32) => Inst = (d: i32) => keep;
+    var pending: Inst[] = [];
+    var fd: i32 = 0;
+    while (fd < 4) { pending = walk(fd, f, pending); fd = fd + 1; }
+    var t: i32 = keep.depth + keep.name.len();
+    for p in pending { t = t + p.depth + p.name.len(); }
+    return (t + pending.len() + mk(1).depth) % 256;
+}
+`, true, [2]int64{}},
+	// The refused rows below hold the AST census to the shallow fallback: each
+	// may leak, and must never free an element early.
+	//
+	// The callee keeps the array in a struct, so it threads nothing.
 	{"callee_keeps", threadInst + `struct Holder { xs: Inst[] }
 function walk(n: i32, acc: Inst[], h: Holder): Holder {
     if (n % 4 == 0) { return Holder { xs: acc.append(Inst { name: "w" + "", depth: n }) }; }
@@ -145,8 +186,8 @@ function main(): i32 {
     for p in pending { t = t + p.depth; }
     return (t + pending.len()) % 256;
 }
-`, false},
-	// The caller keeps the superseded array, so the credit is refused.
+`, false, [2]int64{42, 0}},
+	// The caller keeps the superseded array.
 	{"caller_keeps", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
     if (n % 4 == 0) { return acc.append(Inst { name: "w" + "", depth: n }); }
     return acc;
@@ -161,7 +202,73 @@ function main(): i32 {
     for p in pending { t = t + p.depth; }
     return (t + pending.len() + old.len()) % 256;
 }
-`, false},
+`, false, [2]int64{8, 5}},
+	// The callee hands an element to a keeping sink: a struct field, a
+	// holder built by another function, another array, a loop variable kept
+	// past its iteration, or an element's string field.
+	{"elem_struct_field", threadHolder + `function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { var h: Holder = Holder { x: acc[0] }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, false, [2]int64{26, 14}},
+	{"elem_holder", threadHolder + `function hold(e: Inst): Holder { return Holder { x: e }; }
+function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { var h: Holder = hold(acc[0]); return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, false, [2]int64{26, 14}},
+	{"elem_other_array", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
+    var ys: Inst[] = [];
+    if (acc.len() > 0) { ys = ys.append(acc[0]); }
+    return acc.append(Inst { name: "w" + "", depth: n + ys.len() });
+}
+` + threadInstMain, false, [2]int64{27, 15}},
+	{"elem_loop_var", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
+    var ys: Inst[] = [];
+    for p in acc { ys = ys.append(p); }
+    return acc.append(Inst { name: "w" + "", depth: n + ys.len() });
+}
+` + threadInstMain, false, [2]int64{37, 25}},
+	{"elem_field_payload", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { return acc.append(Inst { name: acc[0].name, depth: n }); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, false, [2]int64{25, 13}},
+	// An existing element handed back a second time.
+	{"elem_returned", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { return acc.append(acc[acc.len() - 1]); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, false, [2]int64{14, 13}},
+	{"string_elem_struct_field", `import "std/i32";
+struct Hs { s: string }
+function walk(n: i32, acc: string[]): string[] {
+    if (acc.len() > 0) { var h: Hs = Hs { s: acc[0] }; return acc.append(h.s + "x"); }
+    return acc.append("w" + "");
+}
+` + threadStrMain, false, [2]int64{25, 14}},
+	{"string_elem_other_array", `import "std/i32";
+function walk(n: i32, acc: string[]): string[] {
+    var ys: string[] = [];
+    if (acc.len() > 0) { ys = ys.append(acc[0]); }
+    return acc.append("w" + ys.len().to_string());
+}
+` + threadStrMain, false, [2]int64{51, 39}},
+	// A loop variable rebinding the threaded name returns another array's row.
+	{"loop_var_shadows", threadInst + `function walk(qs: Inst[][], acc: Inst[]): Inst[] {
+    for acc in qs { if (acc.len() > 1) { return acc; } }
+    return acc;
+}
+function main(): i32 {
+    var rows: Inst[][] = [[Inst { name: "a" + "", depth: 1 }, Inst { name: "b" + "", depth: 2 }]];
+    var pending: Inst[] = [];
+    pending = walk(rows, pending);
+    var t: i32 = 0;
+    for p in pending { t = t + p.depth + p.name.len(); }
+    for r in rows { t = t + r.len(); }
+    return (t + pending.len()) % 256;
+}
+`, false, [2]int64{5, 3}},
 }
 
 func TestSelfHostThreadParamX86_64(t *testing.T) {

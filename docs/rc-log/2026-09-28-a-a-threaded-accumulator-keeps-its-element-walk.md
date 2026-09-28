@@ -33,14 +33,21 @@ and whose every return is one of these:
 - a local alias of k rebuilt only in those ways;
 - a call to another threader with such a value at its threaded position.
 
-Anywhere else, k and its aliases are read only as a borrow. The registry is a
-greatest fixpoint, so a recursive threader holds by induction on the calls
+Anywhere else, k, its aliases and their elements are read only as a borrow,
+judged by the element gate of k's class (`strarr_expr_unsafe` for
+`string[]`; `arrstruct_elem_esc_expr` and `arrstruct_row_escapes` for a struct
+array). The caller releases every element at exit, so an element the body
+binds, stores, appends elsewhere, keeps past a loop iteration or extracts a
+field from refuses the threader, even where that store is counted today. A
+loop variable or match binding that rebinds a threaded name refuses it too, as
+does a producer call through a name a local or parameter shadows. The registry
+is a greatest fixpoint, so a recursive threader holds by induction on the calls
 that return.
 
 Caller side:
 
 - The three credits' gates admit `name = g(.., name, ..)` through a threader
-  (`thread_rebind`, `strarr_thread_rebind`).
+  (`thread_rebind`) when no other argument fails the class's element gate.
 - An empty seed rebound that way is an append-built candidate ("A|").
 - The ARRSTRUCT element-payload walk reads the threaded argument as handed
   back rather than escaping.
@@ -62,12 +69,32 @@ syntax, which the AST no longer lowers.
 | `alias_recursive` (alias + recursion + literal seed) | 52 / 31 | 52 / 52 |
 | `string_arr_alias` | 121 / 81 | 121 / 121 |
 | `array_field_elem` (`Node { kids: i32[] }`) | 14 / 2 | 14 / 14 |
-| `shared_fields` (appended elements' strings come from existing ones) | 11 / 4 | 11 / 11 |
+| `shared_fields` (a caller's string, an existing element's scalar) | 7 / 4 | 7 / 7 |
 
-`callee_keeps` (the callee stores the array in a struct) and `caller_keeps`
-(the caller keeps the superseded array) are refused, and their counts do not
-move. All rows are clean under `FERN_SANITIZE=1`, and the mixed legs
-(`FERN_SEM_IR_SKIP=main` / `=walk`) leak without faulting.
+Refused rows keep the shallow fallback, and their AST census is pinned to it.
+Each pin is the row's census on main before this change:
+
+| shape | allocs / frees |
+|---|---|
+| `callee_keeps` (the callee stores the array in a struct) | 42 / 0 |
+| `caller_keeps` (the caller keeps the superseded array) | 8 / 5 |
+| `elem_struct_field` (`Holder { x: acc[0] }`) | 26 / 14 |
+| `elem_holder` (`hold(acc[0])` builds a holder) | 26 / 14 |
+| `elem_other_array` (`ys = ys.append(acc[0])`) | 27 / 15 |
+| `elem_loop_var` (`for p in acc { ys = ys.append(p); }`) | 37 / 25 |
+| `elem_field_payload` (`Inst { name: acc[0].name, .. }` appended) | 25 / 13 |
+| `elem_returned` (`acc.append(acc[acc.len() - 1])`) | 14 / 13 |
+| `string_elem_struct_field` (`Hs { s: acc[0] }`) | 25 / 14 |
+| `string_elem_other_array` (`ys = ys.append(acc[0])`) | 51 / 39 |
+| `loop_var_shadows` (`for acc in qs { .. return acc; }`) | 5 / 3 |
+
+Before the element gate, the first six element rows threaded and balanced:
+every store they make is counted on this tree. The gate refuses them anyway,
+because the credit's soundness would otherwise rest on that. `producer_shadowed`
+(a parameter named like a strict-fresh producer) and `loop_var_shadows` were
+already refused by another gate, so they pin the refusal rather than tell the
+two shadow checks apart. All rows are clean under `FERN_SANITIZE=1`, and the
+mixed legs (`FERN_SEM_IR_SKIP=main` / `=walk`) leak without faulting.
 `TestSelfHostThreadParam{X86_64,Arm64,Wasm,MixedX86_64}`.
 
 ## Not covered

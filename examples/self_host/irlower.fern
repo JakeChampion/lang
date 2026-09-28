@@ -41370,21 +41370,6 @@ function strarr_rebind_is_fresh(e: ast.Expr, name: string, borrowable: string[],
     return false;
 }
 
-// strarr_thread_rebind: `name = g(.., name, ..)` through a threader (#10420),
-// every other argument free of an element hazard on `name`.
-function strarr_thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
-    var k: i32 = thread_rebind_pos(e, name, rows);
-    if (k < 0) { return false; }
-    if let ast.ExprCall(c) = e {
-        var i: i32 = 0;
-        while (i < c.args.len()) {
-            if (i != k && strarr_expr_unsafe(c.args[i], name, borrowable)) { return false; }
-            i = i + 1;
-        }
-    }
-    return true;
-}
-
 function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[]): boolean {
     var no_alias: string[] = [];
     var no_sfld: string[] = [];
@@ -41473,7 +41458,7 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 // nothing with what the slot holds. Unlike the two self-rebinds
                 // above it is not a call shape, so it is tested after the match.
                 if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
-                if (strarr_thread_rebind(a.value, name, borrowable, strarr_producers)) { return false; }
+                if (thread_rebind(a.value, name, borrowable, strarr_producers, true)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             // The assign form of the struct-literal field share above: the
@@ -51025,7 +51010,7 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (structarr_self_append_elem(a.value, name, fresh_ret) || thread_rebind(a.value, name, borrowable, fresh_ret)) { return false; }
+                if (structarr_self_append_elem(a.value, name, fresh_ret) || thread_rebind(a.value, name, borrowable, fresh_ret, false)) { return false; }
                 return !struct_arr_producer_rebind(a.value, name, borrowable, fresh_ret, "STRUCTARRF:");
             }
             return expr_unsafe_for(a.value, name, borrowable, []);
@@ -51117,9 +51102,11 @@ function name_rebound_by_producer(stmts: ast.Stmt[], name: string, rows: string[
 // A THREADER hands back its parameter k grown only by fresh elements (#10420):
 // every return is `k`, `k.append(e)` with `e` an element the array may own, a
 // local alias of k rebuilt only that way, or a call to another threader holding
-// such a value at its threaded position, and k is otherwise read only as a
-// borrow. `acc = walk(n, acc)` then leaves acc holding its own elements plus
-// fresh ones held nowhere else, so a credited acc keeps its exit element walk.
+// such a value at its threaded position, and k and its elements are otherwise
+// read only as a borrow — the element gate of k's class, since the caller's
+// walk releases every element this body could have handed out. `acc =
+// walk(n, acc)` then leaves acc holding its own elements plus fresh ones held
+// nowhere else, so a credited acc keeps its exit element walk.
 // The rebind store stays shallow: the result carries the old elements uncounted.
 // Registered "THREAD<k>:<name>" in the return_fresh_struct_ret_fns list, for a
 // free function whose `string[]` or struct-array return type is k's type.
@@ -51161,19 +51148,34 @@ function thread_rebind_pos(e: ast.Expr, name: string, rows: string[]): i32 {
     return 0 - 1;
 }
 
-// thread_rebind: `name = g(.., name, ..)` through a threader, with every other
-// argument reading `name` at most as a borrow.
-function thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
+// thread_rebind: `name = g(.., name, ..)` through a threader, with no other
+// argument reading `name` or an element of it other than as a borrow — by the
+// `string[]` element gate when `strs`, else the struct-array one.
+function thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[], strs: boolean): boolean {
     var k: i32 = thread_rebind_pos(e, name, rows);
     if (k < 0) { return false; }
     if let ast.ExprCall(c) = e {
         var i: i32 = 0;
         while (i < c.args.len()) {
-            if (i != k && expr_unsafe_for(c.args[i], name, borrowable, [])) { return false; }
+            if (i != k && thread_arg_unsafe(c.args[i], name, borrowable, strs)) { return false; }
             i = i + 1;
         }
     }
     return true;
+}
+
+// thread_arg_unsafe: one other argument of a threader rebind. A struct
+// element's field extraction is left to the ARRSTRUCT credit's own payload walk.
+function thread_arg_unsafe(x: ast.Expr, name: string, borrowable: string[], strs: boolean): boolean {
+    if (strs) { return strarr_expr_unsafe(x, name, borrowable); }
+    return structarr_elem_unsafe(x, name, "", struct_tab_empty(), [], borrowable);
+}
+
+// structarr_elem_unsafe: `e` reads the struct array `name` or one of its
+// elements other than as a borrow. A non-scalar field extraction is judged only
+// when `sty` names the element struct.
+function structarr_elem_unsafe(e: ast.Expr, name: string, sty: string, structs: StructTab, sfok: string[], borrowable: string[]): boolean {
+    return expr_unsafe_for(e, name, borrowable, []) || arrstruct_elem_esc_expr(e, name, sty, structs, [], borrowable, sfok, []);
 }
 
 function threader_rebind_visit(st: ast.Stmt, own sc: ProducerRebindScan): ProducerRebindScan {
@@ -51200,7 +51202,11 @@ struct ThreadScan { names: string[], elem: string, rows: string[], shadow: strin
 
 // thread_elem_fresh: an element the threaded array may own outright — a fresh
 // string, or a fresh struct literal or strict-fresh struct producer's result.
+// A producer a local or parameter shadows is the local's value.
 function thread_elem_fresh(e: ast.Expr, sc: ThreadScan): boolean {
+    if let ast.ExprCall(c) = e {
+        if (util.index_of_str(sc.shadow, ident_name_or_empty(c.callee)) >= 0) { return false; }
+    }
     if (sc.elem == "string") { return strarr_value_is_fresh(e, sc.str_fresh); }
     if (is_fresh_struct_init(e, sc.structs, sc.sfok)) { return true; }
     if let ast.ExprCall(c) = e {
@@ -51209,8 +51215,16 @@ function thread_elem_fresh(e: ast.Expr, sc: ThreadScan): boolean {
     return false;
 }
 
+// thread_expr_unsafe: `e` reads a threaded name or one of its elements other
+// than as a borrow, by the element gate of the array's class. No move sites
+// and no borrowable parameters are consulted: both only widen what the gates
+// admit.
 function thread_expr_unsafe(e: ast.Expr, sc: ThreadScan): boolean {
-    for n in sc.names { if (expr_unsafe_for(e, n, [], [])) { return true; } }
+    for n in sc.names {
+        if (sc.elem == "string") {
+            if (expr_unsafe_for(e, n, [], []) || strarr_expr_unsafe(e, n, [])) { return true; }
+        } else if (structarr_elem_unsafe(e, n, sc.elem, sc.structs, sc.sfok, [])) { return true; }
+    }
     return false;
 }
 
@@ -51286,16 +51300,19 @@ function thread_stmt_ok(st: ast.Stmt, sc: ThreadScan): boolean {
         ast.StmtReturn(r) => { return thread_expr_ok(r.value, sc); },
         ast.StmtIf(f) => { return thread_if_ok(f, sc); },
         ast.StmtWhile(w) => { return thread_block_ok(w.cond, w.body, sc); },
-        ast.StmtFor(fo) => { return thread_for_ok(fo, sc); },
-        ast.StmtMatch(m) => { return thread_match_ok(m, sc); },
+        ast.StmtFor(fo) => { return !thread_shadowed(st, sc) && thread_for_ok(st, fo, sc); },
+        ast.StmtMatch(m) => { return !thread_shadowed(st, sc) && thread_match_ok(m, sc); },
         ast.StmtDefer(d) => { return thread_stmt_ok(d.action, sc); },
-        _ => { return !thread_stmt_unsafe(st, sc); }
+        ast.StmtExpr(x) => { return !thread_expr_unsafe(x.value, sc); },
+        _ => { return true; }
     }
     return false;
 }
 
-function thread_stmt_unsafe(st: ast.Stmt, sc: ThreadScan): boolean {
-    for n in sc.names { if (stmt_unsafe_for(st, n, [], [])) { return true; } }
+// thread_shadowed: a loop variable or match binding of `st` rebinds a threaded
+// name, so the reads under it are of another value.
+function thread_shadowed(st: ast.Stmt, sc: ThreadScan): boolean {
+    for b in astwalk.binders_of(st, []) { if (util.index_of_str(sc.names, b) >= 0) { return true; } }
     return false;
 }
 
@@ -51309,9 +51326,16 @@ function thread_block_ok(cond: ast.Expr, body: ast.Stmt[], sc: ThreadScan): bool
     return !thread_expr_unsafe(cond, sc) && thread_body_ok(body, sc);
 }
 
-// thread_for_ok: `for x in name` borrows each element for the iteration.
-function thread_for_ok(fo: ast.StmtFor, sc: ThreadScan): boolean {
-    if (ident_name_or_empty(fo.iter).len() == 0 && thread_expr_unsafe(fo.iter, sc)) { return false; }
+// thread_for_ok: `for x in name` borrows each element for the iteration, on
+// the loop-variable confinement of the array's class.
+function thread_for_ok(st: ast.Stmt, fo: ast.StmtFor, sc: ThreadScan): boolean {
+    var it: string = ident_name_or_empty(fo.iter);
+    if (it.len() == 0 && thread_expr_unsafe(fo.iter, sc)) { return false; }
+    if (util.index_of_str(sc.names, it) >= 0) {
+        if (sc.elem == "string") {
+            if (body_unsafe_for(fo.body, fo.var_name, [], [])) { return false; }
+        } else if (arrstruct_row_escapes([st], it, sc.elem, sc.structs, [])) { return false; }
+    }
     return thread_body_ok(fo.body, sc);
 }
 
@@ -55156,7 +55180,7 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok) || thread_rebind(a.value, name, borrowable, producers)) { return false; }
+                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok) || thread_rebind(a.value, name, borrowable, producers, false)) { return false; }
                 return !struct_arr_producer_rebind(a.value, name, borrowable, producers, "ARRSTRUCTF:");
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
