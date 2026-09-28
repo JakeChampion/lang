@@ -1179,8 +1179,9 @@ loop and `std/fetch` the client.
   to it; only an empty buffer waits under the idle span; and a
   connection with a complete request still to answer is not waiting at
   all, so no deadline closes it. A write the kernel refuses closes the
-  connection, and so does a malformed request, at once and without a
-  response, whether it arrived first or behind an answered one.
+  connection, and so does a malformed request: without a response when
+  it arrived first, and behind an answered one whose response then says
+  `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
   keep_alive_requests }` (`serve_options()` is 128, one listener per

@@ -98,7 +98,8 @@ const KeepAliveCycle = 274
 // must be answered; a pipelined request answered to a peer that has
 // reset the connection, whose failed write must close it before the
 // request behind it is answered; a request with a malformed one pipelined
-// behind it, answered and then closed with no response to the second; a
+// behind it, answered with close and then closed with no response to the
+// second; a
 // request of 101 header fields, refused before any handler sees it; and
 // an HTTP/1.0 keep-alive request followed by an HTTP/1.1 one on the same
 // connection. Every response is checked, and every close the server owes
@@ -258,21 +259,17 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		conn.Close()
 		// A request with a malformed one pipelined behind it (a bare LF ends
-		// its request line): the first is answered, then the connection is
-		// closed with no response to the second, since a parser with no
-		// lenient mode refuses it (RFC 9112 §2.2) rather than read on.
+		// its request line): a parser with no lenient mode refuses the
+		// second (RFC 9112 §2.2) rather than read on, so the first's
+		// response says close, since the close follows it, and no response
+		// follows for the second. The header is what pins that the loop saw
+		// the malformed tail when it answered, rather than leaving it to
+		// the read deadline.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "GET /o HTTP/1.1\r\nHost: localhost\r\n\r\nGET /bare HTTP/1.1\nHost: localhost\r\n\r\n")
-		read(conn, r, "before a malformed request", "keep-alive")
-		started = time.Now()
+		read(conn, r, "before a malformed request", "close")
 		eof(conn, r, "after a malformed request")
-		// The read deadline is 300 ms, so a close this soon is the parse's,
-		// not the deadline's: the loop does not hold a malformed connection
-		// open waiting for bytes that could never complete it.
-		if waited := time.Since(started); waited > 250*time.Millisecond {
-			t.Fatalf("a malformed request was closed after %v, by the read deadline rather than the parse", waited)
-		}
 		// 101 header fields, one past the cap: refused before any handler
 		// sees the request, so the connection closes with no response.
 		conn = dial()

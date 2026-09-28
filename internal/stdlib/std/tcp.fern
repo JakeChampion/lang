@@ -375,12 +375,16 @@ function __bytes_from(buf: u8[], from: i32): u8[] {
     return out;
 }
 
-// __has_request(c, at) — whether a complete request follows the bytes
-// already answered.
-function __has_request(c: __Conns, at: i32): boolean {
+// __tail_persists(c, at, eof) — whether the connection outlives the
+// response being decided, given the bytes behind the answered request: a
+// malformed tail ends it, so the response says `close` and the close
+// follows it; once the peer has finished sending, only another complete
+// request keeps it open, so the last response on a half-closed connection
+// says `close` too.
+function __tail_persists(c: __Conns, at: i32, eof: boolean): boolean {
     match (http.http_parse_request_framed_from(c.bufs[at], c.offs[at])) {
         http.Framed(_) => { return true; },
-        http.Incomplete => { return false; },
+        http.Incomplete => { return !eof; },
         http.Malformed => { return false; }
     }
     return false;
@@ -389,15 +393,13 @@ function __has_request(c: __Conns, at: i32): boolean {
 // __serve_took(c, at, f, opts, eof) — the request behind the answered
 // bytes consumed: the offset moved past it, the served count up, and
 // whether the connection persists after this response decided (the
-// request's own say, the per-connection request cap, and, once the peer
-// has finished sending, whether another complete request is still
-// buffered: the last response on a half-closed connection says `close`,
-// since the close follows it): `(conns, keep_alive)`.
+// request's own say, the per-connection request cap, and what the bytes
+// behind it hold, per `__tail_persists`): `(conns, keep_alive)`.
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOptions, eof: boolean): (__Conns, boolean) {
     var served: i32 = c.served[at] + 1;
     var keep: boolean = f.keep_alive && served < opts.keep_alive_requests;
     c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false) };
-    if (keep && eof) { keep = __has_request(c, at); }
+    if (keep) { keep = __tail_persists(c, at, eof); }
     return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep);
 }
 
