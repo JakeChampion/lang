@@ -68,6 +68,25 @@ function main(): i32 {
 			want: 42,
 		},
 		{
+			// An empty literal at a `T[]` parameter takes its element type
+			// from whichever argument binds T, before or after it.
+			name: "empty array at an element-typed parameter",
+			src: `function zip[T](a: T[], b: T[]): T[] {
+    var out: T[] = a;
+    for x in b { out = out.append(x); }
+    return out;
+}
+function main(): i32 { return zip([], [1, 2, 3]).len() + zip([1, 2], []).len(); }`,
+			want: 5,
+		},
+		{
+			// At a `[T]` view parameter it is lent as a view like any array.
+			name: "empty array at a view parameter",
+			src: `function head2[T](xs: [T], ys: T[]): i32 { return xs.len() + ys.len(); }
+function main(): i32 { return head2([], [7, 8]); }`,
+			want: 2,
+		},
+		{
 			name: "filter then count via len",
 			src: `function filter_arr[T](xs: T[], keep: (T) => boolean): T[] {
     var out: T[] = [];
