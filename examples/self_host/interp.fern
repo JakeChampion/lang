@@ -101,9 +101,15 @@ pub struct VErr { msg: string }
 // for the scalar cases the language allows. Cell's own element-type restriction
 // (E057: scalars and strings, no composites, for the same cycle reason) lines up
 // with E049's, which is why this needs two scalar-shaped variants rather than a
-// single Cell[Value].
+// single Cell[Value]. A program's own cells are VCell below.
 pub struct VCellI { c: Cell[i32] }
 pub struct VCellF { c: Cell[f64] }
+
+// VCell is a program's own `cell_new(v)`: a first-class value the program
+// reads with `.get()` and writes with `.set(v)`, distinct from the capture
+// cells above, which `lookup` reads through. `kind` names which host cell
+// holds the value, one per element type E057 admits.
+pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs: Cell[string] }
 
 // VTry is the `expr?` early-return in flight. `?` on a None / Err unwinds to
 // the enclosing function's return, which a value-returning eval_unary cannot
@@ -122,7 +128,7 @@ pub struct VTry { box: Value }
 // frame pinned to a concrete type. It carries no payload; only call_method
 // reads it, to pick the associated FuncDecl.
 pub struct VType { name: string }
-pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VErr | VTry | VType;
+pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VArr | VTuple | VFunc | VMap | VStruct | VCellI | VCellF | VCell | VErr | VTry | VType;
 
 function v_int(n: i32): Value { return VInt { v: n }; }
 function v_type(n: string): Value { return VType { name: n }; }
@@ -535,7 +541,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
 // untyped, so a static type — which `dyn Trait` dispatch needs and no runtime
 // value carries — can only enter through the annotation a binding was made
 // under; this is the slot the checker's Scope holds a Type in.
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[] }
+pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[] }
 
 // new_env seeds a declaration-free scope: the bare-statement driver
 // (eval_program) has no module around it, so the only declarations in reach are
@@ -547,14 +553,15 @@ function new_env(): Env {
     var fs: parser.FuncDecl[] = [];
     var al: parser.TypeAlias[] = [];
     var no_structs: parser.StructDecl[] = [];
-    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs) };
+    var no_argv: string[] = [];
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), argv: no_argv };
 }
 
-function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
+function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[], argv: string[]): Env {
     var ns: string[] = [];
     var vs: Value[] = [];
     var ts: string[] = [];
-    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd };
+    return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, argv: argv };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -920,6 +927,99 @@ function cell_for(v: Value): Value {
         VBool(bb) => { if (bb.v) { return VCellI { c: cell_new(1) }; } return VCellI { c: cell_new(0) }; },
         VFloat(f) => { return VCellF { c: cell_new(f.v) }; },
         _ => { return v; }
+    }
+}
+
+// cell_value builds the program's cell over `v`, or an error for an element
+// type E057 does not admit.
+function cell_value(v: Value): Value {
+    var c: VCell = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new("") };
+    match (v) {
+        VInt(n) => { c.ci.set(n.v); return VCell { ...c, kind: "i32" }; },
+        VBool(bb) => { if (bb.v) { c.ci.set(1); } return VCell { ...c, kind: "bool" }; },
+        VInt64(_) => { c.cl.set(vint_as_i64(v)); return VCell { ...c, kind: "i64" }; },
+        VFloat(f) => { c.cf.set(f.v); return VCell { ...c, kind: "f64" }; },
+        VString(sv) => { c.cs.set(sv.v); return VCell { ...c, kind: "string" }; },
+        _ => { return v_err("cell_new: a cell holds a scalar or a string"); }
+    }
+}
+
+// cell_method answers `c.get()` and `c.set(v)` on a program's cell.
+function cell_method(c: VCell, name: string, args: Value[]): Value {
+    if (name == "get") {
+        if (args.len() != 0) { return v_err("Cell.get takes no arguments"); }
+        if (c.kind == "i32") { return v_int(c.ci.get()); }
+        if (c.kind == "bool") { return v_bool(c.ci.get() != 0); }
+        if (c.kind == "i64") { return box_i64(c.cl.get()); }
+        if (c.kind == "f64") { return VFloat { v: c.cf.get() }; }
+        return v_string(c.cs.get());
+    }
+    if (name == "set") {
+        if (args.len() != 1) { return v_err("Cell.set takes exactly 1 argument"); }
+        var v: Value = args[0];
+        if (c.kind == "i32" && is_i32_arg(v)) { c.ci.set(vint_bits(v)); return v_void(); }
+        if (c.kind == "bool") {
+            match (v) {
+                VBool(bb) => { if (bb.v) { c.ci.set(1); } else { c.ci.set(0); } return v_void(); },
+                _ => {}
+            }
+        }
+        if (c.kind == "i64" && is_int_like(v)) { c.cl.set(vint_as_i64(v)); return v_void(); }
+        if (c.kind == "f64" && is_float_like(v)) { c.cf.set(vfloat_as_f64(v)); return v_void(); }
+        if (c.kind == "string") {
+            match (v) {
+                VString(sv) => { c.cs.set(sv.v); return v_void(); },
+                _ => {}
+            }
+        }
+        return v_err("Cell.set: the value is not a " + c.kind);
+    }
+    return v_err("undefined method `" + name + "` on `Cell`");
+}
+
+// reader_method reads the program's stdin through the host's: `read_chunk(n)`
+// answers Result[string, IoError], `read_line()` Option[string], and `close()`
+// leaves the descriptor to the host, which owns it.
+function reader_method(rs: VStruct, name: string, args: Value[]): Value {
+    var fd: i32 = 0 - 1;
+    var fi: i32 = 0;
+    while (fi < rs.field_names.len()) {
+        if (rs.field_names[fi] == "fd") { fd = vint_bits(rs.field_values[fi]); }
+        fi = fi + 1;
+    }
+    if (fd != 0) { return v_err("Reader." + name + ": only stdin is readable here"); }
+    if (name == "close") { return v_void(); }
+    var r: Reader = stdin();
+    if (name == "read_line") {
+        if (args.len() != 0) { return v_err("Reader.read_line takes no arguments"); }
+        return option_string_value(r.read_line());
+    }
+    if (args.len() != 1 || !is_i32_arg(args[0])) { return v_err("Reader.read_chunk takes one integer argument"); }
+    match (r.read_chunk(vint_bits(args[0]))) {
+        Ok(chunk) => { return v_variant("Ok", [v_string(chunk)]); },
+        Err(e) => { return v_variant("Err", [io_error_value(e)]); }
+    }
+}
+
+function option_string_value(o: Option[string]): Value {
+    match (o) {
+        Some(line) => { return v_variant("Some", [v_string(line)]); },
+        None => { var none: Value[] = []; return v_variant("None", none); }
+    }
+}
+
+// io_error_value is the program's view of a host IoError: the same variant,
+// its payloads carried over.
+function io_error_value(e: IoError): Value {
+    var none: Value[] = [];
+    match (e) {
+        NotFound(p) => { return v_variant("NotFound", [v_string(p)]); },
+        PermissionDenied(p) => { return v_variant("PermissionDenied", [v_string(p)]); },
+        AlreadyExists(p) => { return v_variant("AlreadyExists", [v_string(p)]); },
+        InvalidUtf8(p) => { return v_variant("InvalidUtf8", [v_string(p)]); },
+        Interrupted => { return v_variant("Interrupted", none); },
+        Unsupported => { return v_variant("Unsupported", none); },
+        Other(p, m) => { return v_variant("Other", [v_string(p), v_string(m)]); }
     }
 }
 
@@ -1510,19 +1610,17 @@ function resolve_ident_value(name: string, env: Env): Value {
     var idv: Value = env.lookup(name);
     // A bare identifier with no local binding may name a
     // `const`: the parser desugars `const N = expr;` into a
-    // zero-arg function `N()`, and the native compiler lowers a
-    // bare `N` reference to a call. Mirror that here — if no
-    // local binding exists but a zero-arg, non-method function
-    // of this name does, evaluate it as a nullary call. Regular
-    // zero-arg functions referenced bare are a checker error
-    // (E002) upstream, so on valid programs this only fires for
-    // consts.
+    // zero-arg function `N()` marked is_const, and the native
+    // compiler lowers a bare `N` reference to a call. Mirror that
+    // here. The marker is what tells a const from a zero-arg
+    // function named as a value (`r.it("case", test_case)`): the
+    // latter is a function value below, not a call.
     if (is_err(idv)) {
         var ci: i32 = 0;
         while (ci < env.funcs.len()) {
-            if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0) {
+            if (env.funcs[ci].name == name && env.funcs[ci].receiver_name.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
                 var no_args: Value[] = [];
-                return call_func(name, no_args, env.funcs, env.aliases, env.type_decls);
+                return call_func(name, no_args, env.funcs, env.aliases, env.type_decls, env.argv);
             }
             ci = ci + 1;
         }
@@ -1537,11 +1635,8 @@ function resolve_ident_value(name: string, env: Env): Value {
         }
         // A top-level function named as a VALUE rather than called —
         // `[inc, dbl]`, or passing `inc` to a higher-order function
-        // (#6611). Last of the three, which is what keeps consts
-        // working: a const IS a zero-arg function, so the scan above
-        // must claim it first and call it. A genuine zero-arg function
-        // therefore cannot be named as a value here, which costs
-        // nothing — doing so is E002 upstream.
+        // (#6611). Last of the three: a const is claimed by the scan
+        // above, and a variant by the one before this.
         var vfi: i32 = 0;
         while (vfi < env.funcs.len()) {
             var vfd: parser.FuncDecl = env.funcs[vfi];
@@ -1796,12 +1891,12 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     }
     if (is_variant) { return v_variant(variant_name, arg_vals); }
     if (is_method) {
-        return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls);
+        return call_method(recv, name, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
     }
     if (is_closure) {
-        return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls);
+        return call_closure(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
     }
-    return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls);
+    return call_func(name, arg_vals, env.funcs, env.aliases, env.type_decls, env.argv);
 }
 
 function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
@@ -2097,7 +2192,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], enums: parser.EnumDecl[
 // captured names + values seed the body's env so free idents in
 // the lambda body resolve against the enclosing function's
 // scope. Args bind on top in declaration order.
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
     var fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [] };
     match (cv) {
         VFunc(v) => { fv = v; },
@@ -2106,7 +2201,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     if (args.len() != fv.params.len()) {
         return v_err("arity mismatch calling closure");
     }
-    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls };
+    var env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, argv: argv };
     var j: i32 = 0;
     while (j < fv.params.len()) {
         env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -2143,12 +2238,12 @@ function assoc_index(funcs: parser.FuncDecl[], type_name: string, name: string):
 // impl type (`Self` was rewritten to it at parse time), so coercing the result
 // to it gives `i64.zero()` a 64-bit zero rather than the i32 its `return 0`
 // body literally evaluates to.
-function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
     var ai: i32 = assoc_index(funcs, type_name, name);
     if (ai < 0) { return v_err("undefined associated function `" + name + "` on `" + type_name + "`"); }
     var fd: parser.FuncDecl = funcs[ai];
     if (args.len() != fd.params.len()) { return v_err("arity mismatch calling `" + type_name + "." + name + "`"); }
-    var env: Env = new_module_env(funcs, aliases, type_decls);
+    var env: Env = new_module_env(funcs, aliases, type_decls, argv);
     var j: i32 = 0;
     while (j < fd.params.len()) {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
@@ -2261,11 +2356,17 @@ function dyn_method_name(name: string, decl_ty: string, recv: Value, funcs: pars
     return parser.dyn_provider_name(funcs, value_type_name(recv), traits, name);
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
     // `i32.zero()` / `T.zero()` — the receiver is a TYPE, not a value, so no
     // value-receiver method can match and only the associated table applies.
     match (recv) {
-        VType(tv) => { return call_assoc(tv.name, name, args, funcs, aliases, type_decls); },
+        VType(tv) => { return call_assoc(tv.name, name, args, funcs, aliases, type_decls, argv); },
+        VCell(uc) => { return cell_method(uc, name, args); },
+        VStruct(rs) => {
+            if (rs.type_name == "Reader" && (name == "read_chunk" || name == "read_line" || name == "close")) {
+                return reader_method(rs, name, args);
+            }
+        },
         _ => {}
     }
     // Built-in VMap methods are dispatched ahead of the user
@@ -2418,7 +2519,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             var ti: i32 = util.digits_to_i32(name);
             if (ti >= 0 && ti < tv.elements.len()) {
                 match (tv.elements[ti]) {
-                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases, type_decls); },
+                    VFunc(_) => { return call_closure(tv.elements[ti], args, funcs, aliases, type_decls, argv); },
                     _ => {}
                 }
             }
@@ -2454,7 +2555,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling method `" + name + "`");
             }
-            var env: Env = new_module_env(funcs, aliases, type_decls);
+            var env: Env = new_module_env(funcs, aliases, type_decls, argv);
             env = bind_tyargs(env, fd, true, recv, args);
             // No declared type on the receiver: an array receiver is always the
             // abstract `T[]`, whose element spelling would self-pin an empty
@@ -2490,7 +2591,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
                     conv_args = conv_args.append(args[aj]);
                     aj = aj + 1;
                 }
-                return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls);
+                return call_func(funcs[ai].name, conv_args, funcs, aliases, type_decls, argv);
             }
             ai = ai + 1;
         }
@@ -2510,7 +2611,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             while (fi < sv2.field_names.len()) {
                 if (sv2.field_names[fi] == name) {
                     match (sv2.field_values[fi]) {
-                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls); },
+                        VFunc(_) => { return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls, argv); },
                         _ => {}
                     }
                 }
@@ -2681,7 +2782,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
     return call_buf_read(name, h, args);
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], argv: string[]): Value {
     // The string-taking I/O trio, matching internal/interp's builtinPrint /
     // builtinWrite / builtinEprint: print and eprint append a newline, write
     // does not, and eprint goes to stderr. The interpreter is itself a Fern
@@ -3054,6 +3155,32 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     // The float reinterpret quartet — `std/float`'s formatter takes a
     // number apart through these, so every f-string on an f64 reaches them.
+    // The host-facing trio a CLI program reaches first: its argv, its stdin
+    // as a Reader, and a line of it. Each is the same builtin one level up,
+    // as print is; the Reader is fd 0 by construction, which is the only
+    // descriptor a program running here can have opened.
+    if (name == "args") {
+        if (args.len() != 0) { return v_err("args takes no arguments"); }
+        var av: Value[] = [];
+        var ai: i32 = 0;
+        while (ai < argv.len()) {
+            av = av.append(v_string(argv[ai]));
+            ai = ai + 1;
+        }
+        return v_arr_of(av, "string");
+    }
+    if (name == "stdin") {
+        if (args.len() != 0) { return v_err("stdin takes no arguments"); }
+        return v_struct("Reader", ["fd"], [v_int(0)]);
+    }
+    if (name == "read_line") {
+        if (args.len() != 0) { return v_err("read_line takes no arguments"); }
+        return option_string_value(read_line());
+    }
+    if (name == "cell_new") {
+        if (args.len() != 1) { return v_err("cell_new takes exactly 1 argument"); }
+        return cell_value(args[0]);
+    }
     if (name == "f64_bits") {
         if (args.len() != 1 || !is_float_like(args[0])) { return v_err("f64_bits: expected 1 float arg"); }
         return box_i64(f64_bits(vfloat_as_f64(args[0])));
@@ -3080,7 +3207,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             if (args.len() != fd.params.len()) {
                 return v_err("arity mismatch calling `" + name + "`");
             }
-            var env: Env = new_module_env(funcs, aliases, type_decls);
+            var env: Env = new_module_env(funcs, aliases, type_decls, argv);
             var no_recv: Value = v_absent();
             env = bind_tyargs(env, fd, false, no_recv, args);
             var j: i32 = 0;
@@ -3221,6 +3348,7 @@ function value_eq(a: Value, b: Value): boolean {
         // inventing an equality for a binding-site artifact.
         VCellI(_) => { return false; },
         VCellF(_) => { return false; },
+        VCell(_) => { return false; },
         // Neither bottom compares equal — a diagnostic and a `?` unwind are
         // both abrupt, and an abrupt value never reaches an ordinary operand
         // position (is_err short-circuits ahead of every comparison).
@@ -3641,7 +3769,16 @@ function eval_program(prog: ast.Stmt[]): Value {
 // functions. If `main` exists, call it with no args. Otherwise
 // fall back to running the top-level stmts in a fresh env that
 // still has access to the function table.
+// eval_module runs a module whose program sees `-` as its argv, the spelling
+// the stdin-fed drivers give a program that arrived on stdin.
 pub function eval_module(raw_mod: parser.Module): Value {
+    var dash: string[] = ["-"];
+    return eval_module_argv(raw_mod, dash);
+}
+
+// eval_module_argv runs a module; `argv` is what the program's `args()`
+// answers, its own path first as the CLI gives a compiled program.
+pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
     // Lower `for i in LOW..HIGH` range-loops (iter = the synthetic `__range`
     // call) to counting while-loops up front — the interpreter's StmtFor only
     // iterates arrays, so an undesugared `__range` iter would mis-evaluate.
@@ -3661,11 +3798,11 @@ pub function eval_module(raw_mod: parser.Module): Value {
     while (i < mod.funcs.len()) {
         if (mod.funcs[i].name == "main") {
             var empty_args: Value[] = [];
-            return call_func("main", empty_args, mod.funcs, all_aliases, all_variants);
+            return call_func("main", empty_args, mod.funcs, all_aliases, all_variants, argv);
         }
         i = i + 1;
     }
-    var env: Env = new_module_env(mod.funcs, all_aliases, all_variants);
+    var env: Env = new_module_env(mod.funcs, all_aliases, all_variants, argv);
     var mreassigned: string[] = body_assign_names(mod.top_stmts, []);
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
