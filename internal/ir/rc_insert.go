@@ -309,8 +309,40 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if t, ok := b.freshVariantConstructionType(x); ok {
 			return t, true
 		}
+	case *ast.IfExpr:
+		return b.countedConditionalType(x, []ast.Expr{x.Then, x.Else})
+	case *ast.MatchExpr:
+		arms := make([]ast.Expr, len(x.Arms))
+		for i, arm := range x.Arms {
+			arms[i] = arm.Body
+		}
+		return b.countedConditionalType(x, arms)
 	}
 	return nil, false
+}
+
+// countedConditionalType reports an if- or match-expression whose value is an
+// owned reference whichever arm runs: emitCountedYield retains every arm that
+// yields an alias, so each remaining arm has to be owned by construction.
+func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr) (ast.Type, bool) {
+	t := b.exprType(e)
+	if !b.retainsOnAlias(t) {
+		return nil, false
+	}
+	for _, arm := range arms {
+		if needsRcIncOnAlias(arm, b) {
+			continue
+		}
+		v := blockValue(arm)
+		if _, ok := b.freshOwnedRcTempType(v); ok {
+			continue
+		}
+		if _, ok := b.ownedCallResultType(v); ok {
+			continue
+		}
+		return nil, false
+	}
+	return t, true
 }
 
 // mapMutatorResultFresh reports whether an `insert` / `cleared` result is a
@@ -1957,13 +1989,15 @@ func (b *builder) emitPreciseDrop(name string) {
 // (inc only fresh-owned bare idents) existed solely to avoid touching
 // view strings and is no longer needed.
 func (b *builder) emitAliasInc(e ast.Expr) {
-	e = blockValue(e)
+	// DynCoercions is keyed by the node the checker coerced, which for a
+	// value block is the block itself, so look it up before unwrapping.
 	if b.info != nil && b.info.DynCoercions != nil {
 		if dc, ok := b.info.DynCoercions[e]; ok {
 			b.emitDynConcreteInc(dc)
 			return
 		}
 	}
+	e = blockValue(e)
 	if _, isDyn := b.exprType(e).(ast.DynTraitType); isDyn {
 		b.emitDynRetain()
 		return
