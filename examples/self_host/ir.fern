@@ -319,8 +319,9 @@ pub function op_ptr_width(): Op { return op0("ptr_width"); }
 // `arr_set` pops [base, idx, val]; `arr_len` / `arr_rc` pop [base] → len / rc.
 // `arr_make`'s `width` is the element slot width: 32 for i32 / wasm32-pointer
 // elements (4-byte wasm stride) or 64 for f64 elements (8-byte wasm stride,
-// f64.load/store). The register backends already use 8-byte slots regardless,
-// so width only steers the wasm backend; `arr_get` / `arr_set` carry the same
+// f64.load/store), or 8 for a packed u8 (ir.packed), the one width the register
+// backends read: they give every other element an 8-byte slot. wasm treats 8
+// as its 4-byte slot; `arr_get` / `arr_set` carry the same
 // element width so they select the matching load/store on wasm.
 pub function op_arr_make(n: i32, width: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
@@ -383,8 +384,16 @@ pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
 pub function op_arr_push_owned_i64(): Op { return op0("arr_push_owned_i64"); }
 pub function op_arr_push_owned_f64(): Op { return op0("arr_push_owned_f64"); }
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
-// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin), every slot zero.
+// __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin), every slot zero;
+// packed (ir.packed), n zero bytes via __fern_alloc_bytes.
 pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
+// packed marks a byte-array op as reading or producing a u8[] laid out a byte
+// an element, the layout the register backends give an array whose element
+// ops the typed lowering emits (width 8). Only that lowering marks an op; the
+// AST lowering's u8[] keeps its 8-byte slots, and wasm reads the mark as its
+// narrow 4-byte slot.
+pub function packed(o: Op): Op { return Op { ...o, width: 8 }; }
+pub function is_packed(o: Op): boolean { return o.width == 8; }
 // `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
 // via __fern_string_from_bytes (the `string_from_bytes_unchecked(arr)` builtin).
 pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
@@ -446,6 +455,9 @@ pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
 // else 0. Strings are NOT reference-counted (they leak, matching asm.fern's AST
 // path — fine for short-lived CLI / edge programs), so no RC ops accompany them.
 pub function op_str_len(): Op { return op0("str_len"); }
+// `str_data` pops [str] → the address of its bytes: slot 0 of the register
+// backends' box, and the block plus 4 on wasm.
+pub function op_str_data(): Op { return op0("str_data"); }
 pub function op_str_concat(): Op { return op0("str_concat"); }
 pub function op_str_eq(): Op { return op0("str_eq"); }
 // `str_cmp` pops [a, b] → a signed i32: <0 if a<b, 0 if equal, >0 if a>b
@@ -482,8 +494,9 @@ pub function op_str_slice_frame(base: i32): Op {
 // payloads via __fern_arr_slice. Bounds-checked at construction (#5419):
 // traps unless 0 <= start <= end <= len.
 // `arr_slice`'s `width` is the element width (32 for i32 / wasm32-pointer
-// elements, 64 for f64): the wasm backend selects the 4-byte or 8-byte copy
-// helper. The register backends copy 8-byte slots regardless and ignore it.
+// elements, 64 for f64, 8 for a packed u8): the wasm backend selects the
+// 4-byte or 8-byte copy helper, the register backends the byte copy for 8 and
+// the 8-byte slot copy otherwise.
 pub function op_arr_slice(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" }; }
 
 
@@ -1094,7 +1107,8 @@ pub function op_arr_push_shared_bytes(): Op { return op0("arr_push_shared_bytes"
 // section) — the seed it returns is not what a self-host-compiled program's
 // maps hash with. Seeding the self-host map runtime is separate work.
 pub function op_map_hash_seed(): Op { return op0("map_hash_seed"); }
-// `str_bytes` pops [str] → a fresh u8[] (one i32 slot per byte). Backs both
+// `str_bytes` pops [str] → a fresh u8[] (one slot per byte, or packed under
+// ir.packed). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
 // array (correct, just not zero-copy; mirrors the AST path).
@@ -1792,7 +1806,11 @@ pub function op_const_closure(body: string): Op {
 // tests nothing, so a literal whose storage it reaches is not placed
 // (ssaunits.raw_reached).
 pub function op_const_array(values: string): Op { return op_const_struct("&arr", 0, values); }
-pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr"; }
+// A constant u8 literal the typed lowering packs (ir.packed): the register
+// backends lay it out a byte an element, and wasm as the array it also is.
+pub function op_const_bytes(values: string): Op { return op_const_struct("&bytes", 0, values); }
+pub function const_struct_is_bytes(packed: string): boolean { return const_struct_type(packed) == "&bytes"; }
+pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr" || const_struct_is_bytes(packed); }
 
 // const_struct_fn_body names the body a const_closure box holds, or "" for an
 // ordinary record constant. The one reader of the sentinel, so the three
@@ -2394,6 +2412,7 @@ function kind_id_len8_r(name: string): i32 {
 
 function kind_id_len8_s(name: string): i32 {
     if (name == "str_trim") { return 109; }
+    if (name == "str_data") { return 345; }
     if (name == "sleep_ms") { return 181; }
     if (name == "sleep_ns") { return 266; }
     if (name == "syscall3") { return 204; }
@@ -2932,6 +2951,7 @@ function kind_name_4(id: i32): string {
     if (id == 342) { return "reactor_ctl"; }
     if (id == 343) { return "reactor_wait"; }
     if (id == 344) { return "tcp_recv_into"; }
+    if (id == 345) { return "str_data"; }
     if (id == 202) { return "writer_write"; }
     if (id == 203) { return "open_file"; }
     if (id == 306) { return "buf_push_u64"; }
@@ -3136,7 +3156,7 @@ function pops1_mem(t: i32): boolean {
         || t == 76 || t == 77                                            // alloc, alloc_u8
         || t == 81 || t == 205 || t == 224                               // raw_alloc, raw_scratch, raw_arr_box
         || t == 90 || t == 91                                            // arr_len, arr_rc
-        || t == 97 || t == 103 || t == 104                               // str_len, str_from_bytes, str_bytes
+        || t == 97 || t == 103 || t == 104 || t == 345                   // str_len, str_from_bytes, str_bytes, str_data
         || t == 253                                                      // sum_bytes
         || t == 106 || t == 107 || t == 109                              // str_to_upper/lower, str_trim
         || t == 113                                                      // str_lines

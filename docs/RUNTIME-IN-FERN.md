@@ -423,8 +423,8 @@ then 0); a heap string, which is every string on the SSA backends, is
 answered from where it is. The stack backends emit both as inline arms on
 their SSO seams (`emitStrBytes`, and the two-word `emitStrBytes2W` on
 arm64), the SSA backends as leaf helpers, wasm as bodies over its
-`(data, len)` pair, and the self-host lowers them onto `__raw_data` and the
-length slot of its box. `tcp_send` sends a heap string from where it is;
+`(data, len)` pair, and the self-host lowers them onto the `str_data` op and
+the length slot of its box. `tcp_send` sends a heap string from where it is;
 only an inline one borrows sixteen bytes for the call.
 The x86-64 stack backend records a raw syscall whose number is a literal
 (`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
@@ -1045,11 +1045,10 @@ recorded here as blocked on the **direction** of the string bridge — a plain
 only runs the other way — with the choice framed as adding a `__raw_data` op
 versus copying the payload byte-by-byte on every call.
 
-**Neither was needed.** A string value already IS its box pointer, and the data
-word is slot 0 of that box, so `__raw_data(s)` lowers to `raw_load_ptr(s, 0)` —
-an op the floor has had since the beginning. It is a lowering entry and a
-checker type, no new op, no kind id, no sweep-list or golden change. `tcp_send`
-copies nothing. It now calls `sendto` through `__syscall6`, passing a null
+**Neither was needed.** A string value already IS its box pointer, so
+`__raw_data(s)` lowers to `str_data`, the address of the string's bytes: slot 0
+of the box on the register backends, and the block plus 4 on wasm, where a
+string is its length followed by its bytes. `tcp_send` copies nothing. It now calls `sendto` through `__syscall6`, passing a null
 destination for the connected socket and `MSG_NOSIGNAL` (16384 on Linux,
 524288 on Darwin). This returns `-EPIPE` when the write half is closed,
 including an empty send, without changing the process's signal disposition.
@@ -1113,8 +1112,8 @@ inversion of the decision it was meant to inform. Read all three bodies.
 **Do not treat a primitive's reach as the reason it was added.** `tcp_send` sat
 blocked for the whole migration on a missing `__raw_data`, with the recorded
 choice being "add the op or copy the payload". Neither applied: a string value
-already IS its box pointer, so `__raw_data` is `raw_load_ptr(s, 0)` — an op that
-had been in the floor from the start, introduced for array slots. `__raw_array`
+already IS its box pointer, so on the register backends `__raw_data` is a load
+of slot 0, which `raw_load_ptr` had addressed from the start for array slots. `__raw_array`
 had even established the identical type-only bridge one type over. Before
 concluding the floor cannot express something, check what the existing
 primitives can address, not what they were named for.

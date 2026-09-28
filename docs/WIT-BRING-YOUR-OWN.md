@@ -1554,9 +1554,17 @@ produces a response:
        response handle) remains possible but is now lower-value, since the Fern
        helper already gives the clean call site.
 
-> **Note on the embedded HTTP path:** `-target wasm32-wasi-http`
-> (`emitIncomingHandlerExport` / `compose_http.go` / `wasi_http.go`) is still the
-> live CLI feature and is **not** dead code — the bring-your-own path above is
-> currently test-only. A future consolidation could migrate `-target wasm32-wasi-http`
-> onto the generic world-driven composer once the body/header marshalling and a
-> `pub resource` HTTP lib exist; until then both coexist.
+> **The self-host's `-target wasm32-wasi-http` IS this path** (2026-09-28,
+> #6636). `std/wasi_http` is the handler entry written in Fern over `@import`
+> externs — the request read through `Option[string]`, a string-arm variant,
+> `(string, string)[]` and `Result[u8[], i32]` results, the response written
+> through externs taking string parameters beside a `Result` result, every
+> handle a plain `i32` dropped explicitly — and the compiler appends the
+> `@export` that binds it to the program's `handle`. The core is composed by
+> `wit_compose.compose_http` against the embedded proxy world
+> (`wit_proxy_world.fern`): the world-driven composer with `[resource-drop]`
+> lowerings and the incoming-handler export tail. Native's `-target
+> wasm32-wasi-http` (`emitIncomingHandlerExport` / `compose_http.go` /
+> `wasi_http.go`) emits the entry as wasm instructions instead;
+> `TestSelfHostWasiHttpTargetMatchesNative` holds the two to the same
+> responses, and the native wrapper goes with the native backends.
