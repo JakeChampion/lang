@@ -308,31 +308,15 @@ const tcpRecordConnecting = 4
 //
 // Locals (params 0 = host_be, 1 = port):
 //
-//	2: $box   8 bytes: the length word 4, then the four octets
-//	3: $rec   the answer
+//	2: $box   the fixed box's data pointer (wasi_addr.go)
 func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	var body []byte
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, idxs["__fern_alloc"])
-	body = inst.InstLocalSet(body, 2)
+	body = emitIpBox(body, 2, ipBoxAddr, 0)
 	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 4)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Store(body, 2, 4)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, idxs["__fern_tcp_connect_with"])
-	body = inst.InstLocalSet(body, 3)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 8)
-	body = inst.InstCall(body, idxs["__free"])
-	body = inst.InstLocalGet(body, 3)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
 }
 
 // buildTcpConnectWithBody assembles __fern_tcp_connect_with.
@@ -389,7 +373,6 @@ func buildTcpConnectWithBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitIpFlatFree(body, idxs, 7)
 	body = emitErrnoNegReturnReclaim(body, 4, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4].
@@ -405,7 +388,6 @@ func buildTcpConnectWithBody(idxs map[string]uint32) []byte {
 	body = emitIpFlatWords(body, 7)
 	body = inst.InstLocalGet(body, 4) // retptr
 	body = inst.InstCall(body, startConnect)
-	body = emitIpFlatFree(body, idxs, 7)
 	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -1023,7 +1005,6 @@ func buildTcpListenWithBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, retptr)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitIpFlatFree(body, idxs, flat)
 	body = emitErrnoNegReturnReclaim(body, retptr, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, retptr)
@@ -1037,7 +1018,6 @@ func buildTcpListenWithBody(idxs map[string]uint32) []byte {
 	body = emitIpFlatWords(body, flat)
 	body = inst.InstLocalGet(body, retptr)
 	body = inst.InstCall(body, startBind)
-	body = emitIpFlatFree(body, idxs, flat)
 	body = checkErr(body)
 
 	body = inst.InstLocalGet(body, sock)

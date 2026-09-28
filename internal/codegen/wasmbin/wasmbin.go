@@ -392,7 +392,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	//	84..87    preview-2 stdout-handle cache
 	//	88..91    preview-2 stderr-handle init flag
 	//	92..95    preview-2 stderr-handle cache
-	//	96..255   reserved
+	//	96..143   socket address flattening (ipFlatAddr, wasi_addr.go)
+	//	144..159  two 4-byte u8[] boxes for packed IPv4 addresses (ipBoxAddr)
+	//	160..255  reserved
 	//	256..1023 freelist heads (freelistHeadsAddr)
 	//	1024..    closure pair cells (8 bytes each, closuresBase)
 	//	          then the string pool (stringStart), then the heap
