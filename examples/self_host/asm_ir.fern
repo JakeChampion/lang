@@ -6166,6 +6166,27 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
+// ssa_str_eq answers unequal lengths inline, the answer to almost every
+// comparison a compiler makes, and calls the helper's register entry only for
+// equal ones. %rdx and %rcx are never homes, so the operands pass through them
+// on the way to %rax / %rsi whichever of those they already occupy.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_str_eq();
+    s = ssa_read(reg_of, ins.args[0], "%r11", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "%r11");
+    s = ssa_read(reg_of, ins.args[1], "%rcx", s);
+    var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
+    var n: string = util.i32_to_string(ins.result);
+    s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
+    s = s.write("    movq " + a + ", %rdx\n");
+    if (b != "%rcx") { s = s.write("    movq " + b + ", %rcx\n"); }
+    s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+    s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
+    s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
+    return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
@@ -6694,6 +6715,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49 && ins.str == "str_eq") { return ssa_str_eq(ins, reg_of, lp, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
