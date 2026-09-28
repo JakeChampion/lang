@@ -43742,8 +43742,9 @@ function vb_scope_stmt(stmts: ast.Stmt[]): ast.Stmt {
 // expressions `st` itself owns. A nested one is reached through its parent's
 // body, and a real lambda is a function of its own.
 function vb_bodies_of(st: ast.Stmt): ast.Stmt[][] {
-    var none: ast.Stmt[][] = [];
-    return astwalk.fold_stmt_own_pruned(st, none, vb_body_at, outside_lambdas);
+    var bodies: ast.Stmt[][] = [];
+    bodies = astwalk.fold_stmt_own_pruned(st, bodies, vb_body_at, outside_lambdas);
+    return bodies;
 }
 
 function vb_body_at(e: ast.Expr, own acc: ast.Stmt[][]): ast.Stmt[][] {
