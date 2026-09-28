@@ -73,25 +73,24 @@ function leaf(f: ssasem.Func): boolean {
     // The splice gives the entry one predecessor, the caller's block.
     if (f.graph.blocks[f.graph.entry].preds.len() > 0) { return false; }
     if (!scalar(f.result) && !scalar_tuple(f.result)) { return false; }
-    var params: boolean[] = [];
-    for t in f.values { params = params.append(false); }
-    for b in f.graph.blocks { for ins in b.insts { if (ins.kind_tag == 6) { params = params.with(ins.result, true); } } }
-    var v: i32 = 0;
-    while (v < f.values.len()) {
-        var t: typeinfo.Type = f.values[v];
-        if (!scalar(t) && !scalar_tuple(t) && !(params[v] && record(t))) { return false; }
-        v = v + 1;
+    var records: i32 = 0;
+    for t in f.values {
+        if (record(t)) { records = records + 1; } else if (!scalar(t) && !scalar_tuple(t)) { return false; }
     }
+    // Each param defines its own value, so equal counts mean every record is a param.
+    var record_params: i32 = 0;
     var n: i32 = 0;
     for b in f.graph.blocks {
         if (b.term.kind_tag < 1 || b.term.kind_tag > 3) { return false; }
         for ins in b.insts {
             if (!leaf_kind(ins.kind_tag)) { return false; }
-            if (ins.kind_tag == ssasem.record_get() && !(params[ins.args[0]] && scalar(f.values[ins.result]))) { return false; }
-            if (ins.kind_tag != 6) { n = n + 1; }
+            if (ins.kind_tag == ssasem.record_get() && !scalar(f.values[ins.result])) { return false; }
+            if (ins.kind_tag == 6) {
+                if (record(f.values[ins.result])) { record_params = record_params + 1; }
+            } else { n = n + 1; }
         }
     }
-    return n <= max_leaf_insts();
+    return records == record_params && n <= max_leaf_insts();
 }
 
 // The leaf a call instruction names, as an index into `funcs`, or -1.
