@@ -11336,14 +11336,6 @@ function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string
     return util.str_join_chunks(parts);
 }
 
-// emit_wasm_enum_arr_elems_drop_body returns the WAT for
-// $__enum_arr_elems_drop_<E>(buf) -> buf — the enum-array sibling of the
-// struct element walk above: per uniquely-owned element, dispatch on the type
-// id at box@0 (the same $__tid_<V> global variant_is compares) and dec the
-// matched variant's leak-safe-array payload fields (offset (k+1)*8) via the
-// rc-guarded $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type
-// derivation) keeps every other payload kind out. Frees neither the element
-// boxes nor the buffer — the caller's arr_dec_ptr still does that.
 // emit_wasm_enum_drop_body returns the WAT for $__enum_drop_<E>(box) -> box: the
 // live variant's rc payloads of ONE enum box, sole-ownership gated, leaving the
 // box itself to the caller's dec (#8567). The wasm sibling of asm_ir's
@@ -11371,6 +11363,15 @@ pub function emit_wasm_enum_drop_body(e: string, structs: irlower.StructTab): st
     return o;
 }
 
+// emit_wasm_enum_arr_elems_drop_body returns the WAT for
+// $__enum_arr_elems_drop_<E>(buf) -> buf — the enum-array sibling of the
+// struct element walk above: per uniquely-owned element, dispatch on the type
+// id at box@0 (the same $__tid_<V> global variant_is compares) and dec the
+// matched variant's enum_walk_payload_field payloads (offset (k+1)*8) — a
+// leak-safe array's buffer or a closure's env box — via the rc-guarded
+// $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type derivation)
+// keeps every other payload kind out. Frees neither the element boxes nor the
+// buffer — the caller's arr_dec_ptr still does that.
 pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.StructTab): string {
     var o: string = "  (func $__enum_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
     o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";

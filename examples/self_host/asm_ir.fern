@@ -8598,7 +8598,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
         } else if (op.kind == "elems_drop_enum") {
             // The ENUM-array sibling: shape-dispatch each element and dec its
-            // leak-safe-array payloads before the box decs below.
+            // enum_walk_payload_field payloads before the box decs below.
             var easan: string = asmcore.sanitize_label(op.ty);
             s = s.need("enum_arr_elems_drop:" + op.ty);
             s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
@@ -8746,11 +8746,13 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
 // body — the enum-array sibling of the struct element walk above: for each
 // uniquely-owned element, dispatch on the variant SHAPE pointer (box@0, the
 // same interned .S label struct_make writes and variant_is compares) and dec
-// the matched variant's leak-safe-array payload fields ((k+1)*8) via the
-// rc-guarded __fern_arr_dec. Admission (enum_arr_elems_walk_ok, checked at
-// the call site) keeps every other payload kind out, so each dec is balanced
-// by the ctor's counting: a fresh literal payload is sole-owned (freed), a
-// bare-ident payload was dup'd at construction (dec'd back). The element and
+// the matched variant's enum_walk_payload_field payloads ((k+1)*8) — a
+// leak-safe array's buffer or a closure's env box — via the rc-guarded
+// __fern_arr_dec. Admission (enum_arr_elems_walk_ok, checked at the call site)
+// keeps every other payload kind out, so each dec is balanced by the ctor's
+// counting: a fresh literal payload is sole-owned (freed), a bare-ident array
+// payload was dup'd at construction (dec'd back), and a closure payload holds
+// the count count_closure_payload gave it. The element and
 // buffer boxes themselves are still freed by the caller's existing walk.
 // %rbx=buffer, %r12=index, %r13=element survive the calls (callees clobber
 // only rax/rcx/rdx/rsi/rdi/r8).

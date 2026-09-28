@@ -11686,11 +11686,11 @@ function lower_variant_ctor_args(args: ast.Expr[], decl_idx: i32, selfrebind: st
 
 // count_closure_payload: the box of an admitted (enum_all_variants_rc_droppable)
 // enum holds a count on its closure payload, which the enum release gives back.
-// A counted value (closure_value_is_counted)
+// A counted value (closure_value_is_counted, closure_method_call)
 // brings one; a closure local the construction moves hands over the one its
 // scope-exit release would have given back; anything else is retained.
 function count_closure_payload(arg: ast.Expr, s: LowerState): LowerState {
-    if (closure_value_is_counted(arg, s.frame.sigs.closure_fns)) { return s; }
+    if (closure_value_is_counted(arg, s.frame.sigs.closure_fns) || closure_method_call(arg, s)) { return s; }
     if let ast.ExprIdent(id) = arg {
         var slot: i32 = s.slot_of(id.name);
         if (slot >= 0 && s.moves_local_at(id.name, id.line, id.col) && arr_slot_shallow_release_ok(s, slot)) {
@@ -31450,10 +31450,10 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
             var callee_unsafe: boolean = false;
             var callee_name: string = "";
             match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    callee_name = cid.name;   // free call: record callee for the borrow check below
-                    if (cid.name == name) { callee_unsafe = true; }   // a value used AS the callee escapes (preserve prior behaviour)
-                },
+                // A bare callee is a free function or a function value; calling
+                // a function value reads its env box and keeps nothing, so
+                // `name(args)` borrows `name`.
+                ast.ExprIdent(cid) => { callee_name = cid.name; },
                 ast.ExprFieldAccess(fa) => {
                     match (fa.obj) {
                         ast.ExprIdent(_) => {
@@ -34652,7 +34652,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
             if (rcenfrees.vidxs[rej] < i && i <= rcenfrees.idxs[rej]) {
                 var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
                 if (reslot2 >= st.frame.n_params && !slot_credit_at(st, reslot2, "TYPEDENUM:")) {
-                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.frame.structs))));
+                    st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.frame.structs, st.frame.sigs.borrowable_params))));
                 }
             }
             rej = rej + 1;
@@ -34835,7 +34835,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 // see the RCENUMS sweep's note.
                 if (rslot2 >= st.frame.n_params && !slot_list_has(st.frame.moved_elided, rslot2)
                     && !slot_credit_at(st, rslot2, "TYPEDENUM:")) {
-                    st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.frame.structs), true);
+                    st = emit_enum_variant_drops_gated(st, rslot2, rcenfrees.enums[ref2], match_moved_rc_payloads(stmts[i], st.frame.structs, st.frame.sigs.borrowable_params), true);
                 }
             }
             ref2 = ref2 + 1;
@@ -47486,20 +47486,20 @@ function enum_walk_payload_field(ft: string): boolean {
 // uncounted and keeps the enum outside the walk.
 pub function enum_arr_elems_walk_ok(structs: StructTab, ename: string): boolean {
     if (!decl_is_enum(structs, ename)) { return false; }
-    var any_arr: boolean = false;
+    var any_walked: boolean = false;
     for sd in structs.decls {
         if (sd.enum_owner == ename) {
             var n: i32 = decl_field_count(structs, sd.name);
             var fi: i32 = 0;
             while (fi < n) {
                 var ft: string = decl_field_type_at(structs, sd.name, fi);
-                if (enum_walk_payload_field(ft)) { any_arr = true; }
+                if (enum_walk_payload_field(ft)) { any_walked = true; }
                 else if (!is_scalar_type_name(ft)) { return false; }
                 fi = fi + 1;
             }
         }
     }
-    return any_arr;
+    return any_walked;
 }
 
 // enum_arr_release_walk_ok: the enum-array element release may run for E —
@@ -47792,17 +47792,20 @@ function binding_escapes_arm(arm: ast.MatchArm, name: string, borrowable: string
 // escapes.
 function payload_binding_escapes_arm(arm: ast.MatchArm, name: string, ft: string): boolean {
     if (ft != "fn") { return binding_escapes_arm(arm, name, no_names()); }
-    return clo_binding_other_uses(arm, name, false) > 0;
+    return clo_binding_other_uses(arm, name, false, no_names()) > 0;
 }
 
 // clo_binding_other_uses: the mentions of closure binding `name` in `arm` that
-// are neither a direct call `name(args)` nor, when `returns` is set, a bare
-// `return name` — which retains the box (ret_closure_uncounted). A capture by a
-// lambda counts.
-function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean): i32 {
+// are neither a direct call `name(args)`, nor a bare `name` argument at a
+// position `borrowable` says the callee only reads, nor, when `returns` is set,
+// a bare `return name` — which retains the box (ret_closure_uncounted). A
+// capture by a lambda counts.
+function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolean, borrowable: string[]): i32 {
     function at_expr(e: ast.Expr, own n: i32): i32 {
         if let ast.ExprCall(c) = e {
-            if (ident_name_or_empty(c.callee) == name) { return n + 1; }
+            var cn: string = ident_name_or_empty(c.callee);
+            if (cn == name) { return n + 1; }
+            return n + borrowed_arg_count(c, cn, name, borrowable);
         }
         return n;
     }
@@ -47820,6 +47823,19 @@ function clo_binding_other_uses(arm: ast.MatchArm, name: string, returns: boolea
         borrows = astwalk.fold_expr_pruned(arm.guard, borrows, at_expr, astwalk.not_lambda);
     }
     return mentions - borrows;
+}
+
+// borrowed_arg_count: the bare `name` arguments of call `c`, to the free
+// function `cn`, at positions `borrowable` marks as only read.
+function borrowed_arg_count(c: ast.ExprCall, cn: string, name: string, borrowable: string[]): i32 {
+    var n: i32 = 0;
+    if (cn.len() == 0) { return n; }
+    var ai: i32 = 0;
+    while (ai < c.args.len()) {
+        if (ident_name_or_empty(c.args[ai]) == name && param_is_borrowable(borrowable, cn, ai)) { n = n + 1; }
+        ai = ai + 1;
+    }
+    return n;
 }
 
 // binding_escapes_arm_scrut is binding_escapes_arm with the MATCH-SCRUTINEE
@@ -47881,9 +47897,10 @@ function store_out_takes_counted_claim(structs: StructTab, ft: string): boolean 
 //
 // An array payload stored to an outer local or handed to a call keeps its dec: the
 // store's own retain means the dec lands on that claim, and skipping strands it.
-// So does a closure payload whose only escape is a bare return, which retains it.
-function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs: StructTab): boolean {
-    if (ft == "fn") { return clo_binding_other_uses(arm, name, true) > 0; }
+// So does a closure payload whose only escapes are a bare return, which retains
+// it, and arguments at borrowable positions.
+function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs: StructTab, borrowable: string[]): boolean {
+    if (ft == "fn") { return clo_binding_other_uses(arm, name, true, borrowable) > 0; }
     if (!store_out_takes_counted_claim(structs, ft)) { return true; }
     return binding_returns_from_arm(arm.body, name);
 }
@@ -47909,7 +47926,7 @@ function moved_skip_applies(arm: ast.MatchArm, name: string, ft: string, structs
 // therefore REJECTS any candidate that mixes a non-empty moved set with a
 // guarded arm (match_has_guarded_arm); by emission time a non-empty moved set
 // implies every arm is unguarded, so exactly the escaping arm ran.
-function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
+function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab, borrowable: string[]): string[] {
     var moved: string[] = [];
     match (st) {
         ast.StmtMatch(m) => {
@@ -47928,7 +47945,7 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                             var ft0: string = decl_field_type_at(structs, vname, 0);
                             if (enum_field_rc_droppable(structs, ft0)) {
                                 if (payload_binding_escapes_arm(arm, pv.binding, ft0)
-                                        && moved_skip_applies(arm, pv.binding, ft0, structs)) { moved = moved.append(vname + "#0"); }
+                                        && moved_skip_applies(arm, pv.binding, ft0, structs, borrowable)) { moved = moved.append(vname + "#0"); }
                             }
                         }
                         var eb: i32 = 0;
@@ -47938,7 +47955,7 @@ function match_moved_rc_payloads(st: ast.Stmt, structs: StructTab): string[] {
                                 var ftk: string = decl_field_type_at(structs, vname, eb + 1);
                                 if (enum_field_rc_droppable(structs, ftk)) {
                                     if (payload_binding_escapes_arm(arm, ebn, ftk)
-                                            && moved_skip_applies(arm, ebn, ftk, structs)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
+                                            && moved_skip_applies(arm, ebn, ftk, structs, borrowable)) { moved = moved.append(vname + "#" + util.i32_to_string(eb + 1)); }
                                 }
                             }
                             eb = eb + 1;
@@ -48032,7 +48049,7 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], reassigned: string[], s
                         // arm that did not move the payload, making the skip a
                         // per-call leak — such mixes fall back to the exit sweep.
                         var guarded_move: boolean = match_has_guarded_arm(body[match_idx])
-                            && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
+                            && match_moved_rc_payloads(body[match_idx], structs, borrowable).len() > 0;
                         if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
                             vidxs = vidxs.append(vi);
@@ -62480,7 +62497,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
             if (rcenumfrees.vidxs[rej] < j && j <= rcenumfrees.idxs[rej] && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
                 var reslot2: i32 = s.slot_of(rcenumfrees.names[rej]);
                 if (reslot2 >= s.frame.n_params) {
-                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.frame.structs))));
+                    s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.frame.structs, s.frame.sigs.borrowable_params))));
                 }
             }
             rej = rej + 1;
@@ -62809,7 +62826,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
                 if (rxslot >= s.frame.n_params && !slot_list_has(s.frame.moved_elided, rxslot)) {
                     // Skip the dec of payload fields whose arm binding escaped —
                     // ownership moved to the escapee (#4400).
-                    s = emit_enum_variant_drops_gated(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.frame.structs), true);
+                    s = emit_enum_variant_drops_gated(s, rxslot, rcenumfrees.enums[rei], match_moved_rc_payloads(fn.body[j], s.frame.structs, s.frame.sigs.borrowable_params), true);
                 }
             }
             rei = rei + 1;

@@ -25,7 +25,7 @@ was built.
   env box, the same arm a scalar-array payload takes.
 - **Construction.** `lower_variant_ctor_args` makes the variant hold a count on
   its closure, through `count_closure_payload`, for an admitted enum only:
-  - a counted value (a lambda, a `__mkclo$` box, or a closure-returning call) brings its own count;
+  - a counted value (a lambda, a `__mkclo$` box, or a call to a closure-returning function or struct method) brings its own count;
   - a closure local moved there hands over its sweep's count (`note_moved_elided`);
   - anything else is retained: a surviving local, a parameter, a top-level function.
 
@@ -45,6 +45,14 @@ was built.
   that path leaks, and nothing frees early. `param_match_binding_escapes`
   takes the same reading through `payload_type_at`, so a parameter matched and
   only called through stays borrowable, and its caller releases what it lent.
+- **Closure arguments.** The escape walker (`expr_unsafe_for_vb`) reads a call
+  through a value, `f(args)`, as a borrow of `f`, so a function that only calls
+  its closure parameter has that position in the borrowable registry. A closure
+  binding passed at such a position, `apply2(f, n)`, keeps the post-match dec
+  (`borrowed_arg_count`). Before, it skipped the dec and leaked the closure.
+- **Method calls.** `count_closure_payload` reads #10566's
+  `closure_method_call`, so a payload built by `b.maker()` is not retained on
+  top of the count the method's return already carries.
 
 ## Measured (`FERN_LEAKCHECK=1`, AST lowering, allocs / frees)
 
@@ -54,11 +62,14 @@ was built.
 | `returned`: enums returned from functions, lent and matched | 93 / 50 | 93 / 93 |
 | `struct_field`: enum in a struct field, loop rebind | 140 / 100 | 140 / 140 |
 | `outlives`: the closure outlives the variant (guard) | 70 / 10 | 70 / 70 |
+| `array`: an enum array read only by `len()` | 70 / 10 | 70 / 70 |
+| `arg_borrow`: a binding passed to a function that only calls it | 30 / 0 | 30 / 30 |
+| `method`: payloads built by a closure-returning method | 50 / 10 | 50 / 50 |
 | #9841's probe | 29 / 1 | 29 / 2 |
 
 x86-64 and wasm agree on every row, and arm64 matches in the test. The
 `FERN_SANITIZE=1` x86-64 builds are silent. `TestSelfHostClosureVariantPayload{X86_64,Arm64,Wasm}`
-holds the four programs to the interpreter's answer with a balanced census,
+holds the seven programs to the interpreter's answer with a balanced census,
 under both lowerings.
 
 ## Not covered

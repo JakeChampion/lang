@@ -110,6 +110,51 @@ function round(i: i32): i32 {
 }
 ` + closureVariantMain
 
+// An enum array whose elements hold closure payloads, read only by len(), so
+// __enum_arr_elems_drop_E releases each payload with the array.
+const closureVariantArraySrc = `enum E { A(i32, (i32) => i32), B }
+function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
+function round(i: i32): i32 {
+    var g: (i32) => i32 = (x: i32): i32 => x * 2;
+    var es: E[] = [A(i, mk(i)), B, A(i + 1, (x: i32): i32 => x - i), A(2, g)];
+    return es.len() + g(i);
+}
+` + closureVariantMain
+
+// An arm binding handed to a function that only calls it is lent, so the
+// release after the match still gives back the variant's count.
+const closureVariantArgBorrowSrc = `enum E { A(i32, (i32) => i32), B }
+function mk(k: i32): (i32) => i32 { return (x: i32): i32 => x + k; }
+function apply2(f: (i32) => i32, n: i32): i32 { return f(f(n)); }
+function round(i: i32): i32 {
+    var a: i32 = 0;
+    var v: E = A(i, mk(i));
+    match (v) { A(n, f) => { a = a + apply2(f, n); }, B => { a = a + 1; } }
+    var keep: (i32) => i32 = (x: i32): i32 => x * 3;
+    var w: E = A(i, keep);
+    match (w) { A(n, f) => { a = a + apply2(f, n) + f(1); }, B => { a = a + 1; } }
+    return a + keep(2);
+}
+` + closureVariantMain
+
+// A payload built by a method that returns a closure: the method's return is
+// counted, so the construction does not retain it a second time.
+const closureVariantMethodSrc = `enum E { A(i32, (i32) => i32), B }
+struct Maker { k: i32 }
+function (b: Maker) maker(): (i32) => i32 {
+    var k: i32 = b.k;
+    return (x: i32): i32 => x + k;
+}
+function round(i: i32): i32 {
+    var a: i32 = 0;
+    var b: Maker = Maker { k: i };
+    var v: E = A(i, b.maker());
+    match (v) { A(n, f) => { a = a + f(n); }, B => { a = a + 1; } }
+    var unused: E = A(1, b.maker());
+    return a;
+}
+` + closureVariantMain
+
 const closureVariantMain = `function main(): i32 {
     var t: i32 = 0;
     var r: i32 = 0;
@@ -129,6 +174,9 @@ var closureVariantPayloadCases = []struct {
 	{"returned", closureVariantReturnedSrc, 24},
 	{"struct_field", closureVariantStructFieldSrc, 81},
 	{"outlives", closureVariantOutlivesSrc, 94},
+	{"array", closureVariantArraySrc, 33},
+	{"arg_borrow", closureVariantArgBorrowSrc, 48},
+	{"method", closureVariantMethodSrc, 90},
 }
 
 func TestSelfHostClosureVariantPayloadX86_64(t *testing.T) {
