@@ -201,6 +201,41 @@ function round(i: i32): i32 {
 }
 ` + closureCallEnumMain
 
+// Each closure body binds a fresh enum to a local and returns the local,
+// which hands its count over ("ERETOWN:") rather than retaining it.
+const closureCallEnumFreshLocalSrc = `enum S { Done(i32), Next(i32, string) }
+function mk(n: i32): S {
+    if (n <= 0) { return Done(n); }
+    return Next(n, "ab" + "c");
+}
+function run(s: S, g: (i32) => S): i32 {
+    match (s) {
+        Done(v) => { return v; },
+        Next(w, t) => { return t.len() + run(g(w), g); }
+    }
+    return -1;
+}
+function walk(n: i32, g: (i32) => S): i32 {
+    var cur: S = g(n);
+    var acc: i32 = 0;
+    var guard: i32 = 0;
+    while (guard < 100) {
+        match (cur) {
+            Done(v) => { return acc + v; },
+            Next(w, t) => { acc = acc + t.len(); cur = g(w); }
+        }
+        guard = guard + 1;
+    }
+    return -1;
+}
+function round(i: i32): i32 {
+    var k: i32 = i % 3;
+    var g: (i32) => S = (x: i32): S => { var e: S = mk(x - 1); return e; };
+    var c: (i32) => S = (x: i32): S => { var e: S = mk(x - 1 - k); return e; };
+    return run(mk(4), g) + walk(4, g) + walk(3, c) + run(g(3), c);
+}
+` + closureCallEnumMain
+
 const closureCallEnumMain = `function main(): i32 {
     var t: i32 = 0;
     var r: i32 = 0;
@@ -225,6 +260,7 @@ var closureCallEnumCases = []struct {
 	{"array", closureCallEnumArraySrc, 48, [2]int64{}},
 	{"closure", closureCallEnumClosureSrc, 22, [2]int64{}},
 	{"shared", closureCallEnumSharedSrc, 86, [2]int64{30, 20}},
+	{"fresh_local", closureCallEnumFreshLocalSrc, 85, [2]int64{}},
 }
 
 func TestSelfHostClosureCallEnumX86_64(t *testing.T) {

@@ -45917,9 +45917,11 @@ function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab,
 }
 
 // closure_body_name: `name` is a body the lift hoists for a function value — a
-// named function's or lambda's trampoline (`$wrap`) or a capturing lambda
-// (`$clo`) — which a call through the value's box reaches.
+// named function's or lambda's trampoline (`$wrap`), a capturing lambda
+// (`$clo`), or a no-capture lambda passed as an argument (`__lam_`) — which a
+// call through the value reaches.
 pub function closure_body_name(name: string): boolean {
+    if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__lam_") { return true; }
     return util.contains(name, "$wrap") || util.contains(name, "$clo");
 }
 
@@ -45984,7 +45986,7 @@ function strict_closure_enum_rows(funcs: parser.FuncDecl[], structs: StructTab, 
 function closure_body_nonstrict(funcs: parser.FuncDecl[], structs: StructTab, e: string, str_fresh: string[], fwd: string[]): boolean {
     for fn in funcs {
         if (closure_body_name(fn.name) && fn.ret_type == e
-                && body_has_nonqualifying_rcenum_return(fn.body, structs, e, str_fresh, fwd)) { return true; }
+                && body_has_nonqualifying_rcenum_return(fn.body, fn.body, structs, e, str_fresh, fwd)) { return true; }
     }
     return false;
 }
@@ -63964,7 +63966,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
         else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
                 && body_has_return(fn.body)
-                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt, str_fresh, [])) {
+                && !body_has_nonqualifying_rcenum_return(fn.body, fn.body, structs, rt, str_fresh, [])) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
@@ -64410,24 +64412,39 @@ function rcenum_ctor_payload_strings_fresh(e: ast.Expr, structs: StructTab): boo
 // opt_fresh_ret_fns_of, so it is complete before this proof runs.
 //
 // `fwd` names free functions a return may forward to instead: each returns a
-// fresh chain of `owner` on its own, so a direct call to one qualifies.
-function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[], fwd: string[]): boolean {
+// fresh chain of `owner` on its own, so a direct call to one qualifies. A local
+// shadowing one is a closure value of the same result, whose own bodies these
+// verdicts inspect, so the name lookup needs no shadow guard.
+function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], body: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[], fwd: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (util.index_of_str(fwd, direct_call_callee_name(r.value)) < 0) {
-                    if (fresh_rcpayload_enum_init(r.value, structs, str_fresh, [], false) != owner) { return true; }
-                    if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
+                var rv: ast.Expr = rcenum_ret_value(r.value, body);
+                if (util.index_of_str(fwd, direct_call_callee_name(rv)) < 0) {
+                    if (fresh_rcpayload_enum_init(rv, structs, str_fresh, [], false) != owner) { return true; }
+                    if (!rcenum_ctor_payload_strings_fresh(rv, structs)) { return true; }
                 }
             },
-            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner, str_fresh, fwd) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner, str_fresh, fwd)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner, str_fresh, fwd)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner, str_fresh, fwd)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner, str_fresh, fwd)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, body, structs, owner, str_fresh, fwd) || body_has_nonqualifying_rcenum_return(f.else_body, body, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, body, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, body, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, body, structs, owner, str_fresh, fwd)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
     return false;
+}
+
+// rcenum_ret_value: a returned local declared once in `body`, never reassigned
+// and used only by bare returns stands for its initialiser; anything else is
+// itself.
+function rcenum_ret_value(e: ast.Expr, body: ast.Stmt[]): ast.Expr {
+    var n: string = ident_name_or_empty(e);
+    if (n.len() == 0 || local_decl_count(body, n) != 1) { return e; }
+    if (util.index_of_str(body_assign_targets(body), n) >= 0 || body_unsafe_for_allow_bare_ret(body, n, [])) { return e; }
+    var init: ast.Expr = cap_local_init(body, n);
+    if let ast.ExprUnknown(_) = init { return e; }
+    return init;
 }
 
 // collect_try_str_binding_names: string LOCALS bound from a `?` over an
