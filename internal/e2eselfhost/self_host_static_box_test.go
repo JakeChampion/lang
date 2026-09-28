@@ -203,3 +203,38 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 			"seven", "spliced", "spliced_rounds"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
 }
+
+// A `u8[]` literal stays a fresh box: the raw floor writes a byte buffer
+// through its data pointer, which no count guards, so a static one would
+// carry the write into every later evaluation. Each round reads the length
+// before and after overwriting its low byte. Wasm's AST lowering, which
+// the driver runs over every body, does not take the raw store.
+const byteLiteralProgram = `@noinline function bytes_rounds(): i32 {
+    var before: i64 = __heap_alloc_count();
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var b: u8[] = [104u8, 105u8, 106u8];
+        t = t + b.len();
+        __store_u8(b as usize, 1);
+        t = t + b.len();
+        i = i + 1;
+    }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(bytes_rounds()); print("");
+    return 0;
+}
+`
+
+func TestSelfHostByteLiteralIsFresh(t *testing.T) {
+	want := "400100\n"
+	runSemanticProgram(t, "byteliteral", byteLiteralProgram, []string{"bytes_rounds"},
+		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want})
+}

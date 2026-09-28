@@ -666,8 +666,12 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
 function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
     var none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
     var t: typeinfo.Type = f.values[ins.result];
+    // A `u8[]` is the raw floor's byte buffer: `__arr_set_len` and a store
+    // through its data pointer write it in place without a count, so its
+    // literal stays a fresh box.
     if (ins.kind_tag == ssasem.array_new()) {
         if let typeinfo.TypeArray(a) = t {
+            if (ssasem.is_u8(a.elem)) { return none; }
             var elems: semrecords.Field[] = [];
             while (elems.len() < ins.args.len()) { elems = elems.append(semrecords.Field { name: "", ty: a.elem }); }
             return elems;

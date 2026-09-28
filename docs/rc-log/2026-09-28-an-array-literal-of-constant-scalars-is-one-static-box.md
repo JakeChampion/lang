@@ -6,10 +6,18 @@ Part of #8920.
 
 `ssaunits.plan`'s `constants` now covers array literals as well as records
 and variants. A literal whose every element is a narrow scalar constant
-(`i32`, `u32`, `u8`, `char`, `boolean`) is one static box. So is the empty
+(`i32`, `u32`, `char`, `boolean`) is one static box. So is the empty
 literal, whatever its element type, which replaces `ssarc`'s special case for
 `[]`. `ir.op_const_array` generalises `op_const_empty_array`, and
 `const_struct_is_array` replaces `const_struct_is_empty_array`.
+
+A `u8[]` literal is never placed, empty or not. `u8[]` is the raw floor's byte
+buffer, which `__arr_set_len` and a store through its data pointer
+(`b as usize` with `__store_u8`) write in place. Neither path tests a count,
+so a static one would carry the write into every later evaluation of the
+literal. `TestSelfHostByteLiteralIsFresh` reads the length before and after
+such a store in each round. It answers 400 with a fresh box, and 202 when
+the literal is placed.
 
 An element that is a copy of a constant also counts. A spliced accessor such
 as `function seven(): i32 { return 7; }` arrives as one (#10521), so records

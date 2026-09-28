@@ -1787,7 +1787,7 @@ pub function op_const_closure(body: string): Op {
 // comma-separated elements. Its length and capacity are both the element count
 // under the immortal rc, so a push onto it finds no room and grows into a
 // fresh box, and an element write fails the uniqueness test and copies.
-pub function op_const_array(n: i32, values: string): Op { return op_const_struct("&arr", n, values); }
+pub function op_const_array(values: string): Op { return op_const_struct("&arr", 0, values); }
 pub function const_struct_is_array(packed: string): boolean { return const_struct_type(packed) == "&arr"; }
 
 // const_struct_fn_body names the body a const_closure box holds, or "" for an
