@@ -21,6 +21,7 @@ pub function layout_member(): i32 { return 2; }
 pub function layout_option(): i32 { return 3; }
 
 pub function find(records: Record[], ty: typeinfo.Type): i32 {
+    if let typeinfo.TypeStruct(s) = ty { return find_struct(records, s.name, ty); }
     var i: i32 = 0;
     while (i < records.len()) {
         if (semtypes.equal(records[i].ty, ty)) { return i; }
@@ -30,9 +31,34 @@ pub function find(records: Record[], ty: typeinfo.Type): i32 {
 }
 
 pub function find_enum(enums: Enum[], ty: typeinfo.Type): i32 {
+    if let typeinfo.TypeUnion(u) = ty { return find_union(enums, u.name, ty); }
     var i: i32 = 0;
     while (i < enums.len()) {
         if (semtypes.equal(enums[i].ty, ty)) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Only a struct of the same name can equal a struct type, so the name is
+// compared before the full type: the scan and the first match are find's own.
+function find_struct(records: Record[], name: string, ty: typeinfo.Type): i32 {
+    var i: i32 = 0;
+    while (i < records.len()) {
+        if let typeinfo.TypeStruct(r) = records[i].ty {
+            if (r.name == name && semtypes.equal(records[i].ty, ty)) { return i; }
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+function find_union(enums: Enum[], name: string, ty: typeinfo.Type): i32 {
+    var i: i32 = 0;
+    while (i < enums.len()) {
+        if let typeinfo.TypeUnion(e) = enums[i].ty {
+            if (e.name == name && semtypes.equal(enums[i].ty, ty)) { return i; }
+        }
         i = i + 1;
     }
     return 0 - 1;
