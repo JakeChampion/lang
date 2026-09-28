@@ -10405,6 +10405,18 @@ function lower_address_widened(e: ast.Expr, s: LowerState): LowerState {
     return pw.emit(ir.op_int_extend_ptr());
 }
 
+// lower_narrow_widened lowers a value of 32 bits or fewer through lower_expr,
+// which wraps it at its own width, and extends it to 64 bits. The extension's
+// signedness is the SOURCE's (internal/ir keys it on `srcInt.IsSigned()`): a
+// u32 or u8 zero-extends and an i32 sign-extends, so `u32 as i64` keeps
+// 4294967295 positive and `i32 as u64` turns -1 into 0xFFFF_FFFF_FFFF_FFFF.
+function lower_narrow_widened(e: ast.Expr, s: LowerState): LowerState {
+    if (expr_is_usize(e, s)) { return lower_address_widened(e, s); }
+    var nw: LowerState = lower_expr(e, s);
+    if (!nw.ok) { return nw; }
+    return nw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
+}
+
 // syscall_arity is the argument count a `__syscallN` intrinsic takes, or -1.
 function syscall_arity(name: string): i32 {
     if (name == "__syscall3") { return 3; }
@@ -10691,7 +10703,7 @@ pub function expr_is_u64(e: ast.Expr, s: LowerState): boolean {
 // expr_subword_kind returns the sub-32-bit integer kind ("u8")
 // an expression evaluates to, or "". It mirrors expr_is_u32 for the
 // sub-word domain: a sub-word-tracked local/param, a sub-word array element
-// read, an `as u8` cast, or an arithmetic/bitwise/
+// read, field or tuple element, an `as u8` cast, or an arithmetic/bitwise/
 // shift combination of sub-word operands (a shift follows the LEFT operand;
 // other binaries take whichever side is sub-word). Comparisons yield a plain
 // i32 bool. Drives the post-arithmetic width wrap in the binary lowering.
@@ -10732,9 +10744,15 @@ pub function expr_subword_kind(e: ast.Expr, s: LowerState): string {
             if (n.suffix == "u8") { return "u8"; }
             return "";
         },
+        ast.ExprFieldAccess(fa) => {
+            if (fa_type_tag(fa, s) == "u8") { return "u8"; }
+            return "";
+        },
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return ""; }
             if (b.op == "<<" || b.op == ">>") { return expr_subword_kind(b.left, s); }
+            // A u32 operand makes the result a u32 (`s32 + (b + c)`).
+            if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return ""; }
             var lk: string = expr_subword_kind(b.left, s);
             if (lk != "") { return lk; }
             return expr_subword_kind(b.right, s);
@@ -11115,15 +11133,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // An i32-width scalar leaf consumed in an i64 context — `s64 + i`, a
             // mixed-width param/local, or a for-range loop var accumulated into an
             // i64 — widens to i64 instead of bailing the module.
-            // lower_expr pushes the i32 value; op_int_extend widens it (zero-extend
-            // for u32, sign-extend for a signed i32 / subword). Because the
-            // ExprBinary arm recurses through lower_i64, this also lifts the i32
-            // leaves of nested sub-expressions (`s64 + (i + 1)`) for free.
-            if (sl >= 0 && s.is_i32_scalar_slot(sl)) {
-                var iw: LowerState = lower_expr(e, s);
-                if (!iw.ok) { return iw; }
-                return iw.emit(ir.op_int_extend(s.is_u32_slot(sl)));
-            }
+            if (sl >= 0 && s.is_i32_scalar_slot(sl)) { return lower_narrow_widened(e, s); }
             // A `const B: i64` read. A const desugars to a zero-arg accessor
             // function (parser: `const NAME: T = E;` → `function NAME(): T`), so
             // the bare ident is a CALL returning i64 — which infer_expr_width
@@ -11184,14 +11194,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (infer_expr_width(u.operand, s) == 64) {
                     return lower_i64(u.operand, s);
                 }
-                if (expr_is_usize(u.operand, s)) { return lower_address_widened(u.operand, s); }
-                var sw: LowerState = lower_expr(u.operand, s);
-                if (!sw.ok) { return sw; }
-                // The extension's signedness is the SOURCE's, not the
-                // destination's (internal/ir keys it on `srcInt.IsSigned()`):
-                // `u32 as i64` zero-extends, so 4294967295 stays positive, and
-                // `i32 as u64` sign-extends, so -1 becomes 0xFFFF_FFFF_FFFF_FFFF.
-                return sw.emit(ir.op_int_extend(expr_is_u32(u.operand, s) || expr_subword_kind(u.operand, s) != ""));
+                return lower_narrow_widened(u.operand, s);
             }
             // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
             // read, so the unwrapped value is a true i64 here (the `var x: i64 =
@@ -11201,19 +11204,16 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             return s.fail();
         },
         ast.ExprBinary(b) => {
+            // Comparisons aren't i64 values (they yield an i32 bool).
+            if (is_cmp_kind(map_binop(b.op))) { return s.fail(); }
+            // A binary of 32-bit-or-narrower operands is a narrow value, and
+            // lower_expr wraps it at its own width (u32_wrap, the sub-word
+            // int_cast, the i32 sign-extend). Recursing here would compute it at
+            // 64 bits and skip that wrap: `s64 + b * 2u8` with `b = 200` read 400.
+            if (infer_expr_width(e, s) != 64) { return lower_narrow_widened(e, s); }
             // Saturating arithmetic (#5542) carries its own width-aware
-            // lowering (clamped, not wrapped) at every width. When its OPERANDS
-            // are 32-bit-or-narrower it produces a 32-bit value, so an i64
-            // context — e.g. `(p +| q) == 4294967295`, whose literal is an i64
-            // and drags the whole compare to width 64 — has to widen it, the
-            // same way the ExprIdent arm below widens a narrow local. Without
-            // that the wasm module fails to validate (i32 where i64 expected).
-            if (is_sat_op(b.op)) {
-                var satw: LowerState = lower_sat_binary(b, e, s);
-                if (!satw.ok) { return satw; }
-                if (infer_expr_width(e, s) == 64) { return satw; }
-                return satw.emit(ir.op_int_extend(expr_is_u32(e, s) || expr_subword_kind(e, s) != ""));
-            }
+            // lowering (clamped, not wrapped) at every width.
+            if (is_sat_op(b.op)) { return lower_sat_binary(b, e, s); }
             // A composite operator overload (#2706) whose method returns i64 /
             // u64 is an i64 VALUE: the desugar to `a.<m>(b)` lives in
             // lower_expr, and that call pushes a full-width result. Without
@@ -11227,13 +11227,11 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 && decl_is_struct(s.frame.structs, expr_struct_type(b.left, s))) {
                 return lower_expr(e, s);
             }
-            var kind: string = map_binop(b.op);
-            if (kind == "") { return s.fail(); }
-            // Comparisons aren't i64 values (they yield an i32 bool). i64
-            // division/remainder ARE lowered (width 64): x86 drops the i32
+            // i64 division/remainder ARE lowered (width 64): x86 drops the i32
             // movslq truncation, arm64's sdiv is already 64-bit, wasm calls the
             // $__fern_idiv64 / $__fern_irem64 non-trapping helpers.
-            if (is_cmp_kind(kind)) { return s.fail(); }
+            var kind: string = map_binop(b.op);
+            if (kind == "") { return s.fail(); }
             var l: LowerState = lower_i64(b.left, s);
             if (!l.ok) { return l; }
             var r: LowerState = lower_i64(b.right, l);
@@ -11357,19 +11355,9 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 },
                 _ => {}
             }
-            // An i32-returning call consumed in an i64 context (`s64 + g()`): lower
-            // the i32 result (lower_expr, the normal call path) and sign-extend to
-            // i64 instead of bailing the module to AST. The checker forbids i64 +
-            // f64/string/u32 and rejects binding a bare i32 call to an i64 (it needs
-            // an explicit `as i64`), so a call reaching this point in a valid program
-            // — width 32, not i64-returning, not the 0-arg if/match IIFE handled
-            // above — necessarily returns a signed i32. infer_expr_width gates the
-            // widen; expr_is_u32 (false for calls) leaves it sign-extended.
-            if (infer_expr_width(e, s) == 32) {
-                var cw: LowerState = lower_expr(e, s);
-                if (!cw.ok) { return cw; }
-                return cw.emit(ir.op_int_extend(expr_is_u32(e, s)));
-            }
+            // A 32-bit call consumed in an i64 context (`s64 + g()`) widens
+            // instead of bailing the module.
+            if (infer_expr_width(e, s) == 32) { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         ast.ExprFieldAccess(fa) => {
@@ -11385,13 +11373,8 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     if (!ts.ok) { return ts; }
                     return ts.emit(ir.op_tuple_get_w(tn, 64, true));
                 }
-                // An i32 tuple element `t.N` consumed in an i64 context: read the
-                // i32 element (lower_expr) and widen instead of bailing to AST.
-                if (tnt == "i32" || tnt == "u32") {
-                    var tw: LowerState = lower_expr(e, s);
-                    if (!tw.ok) { return tw; }
-                    return tw.emit(ir.op_int_extend(tnt == "u32"));
-                }
+                // A 32-bit tuple element `t.N` consumed in an i64 context widens.
+                if (tnt == "i32" || tnt == "u32") { return lower_narrow_widened(e, s); }
                 return s.fail();
             }
             var fty: string = expr_struct_type(fa.obj, s);
@@ -11403,16 +11386,10 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (!fs.ok) { return fs; }
                 return fs.emit(ir.op_struct_get_i64(fidx));
             }
-            // An i32 struct field `p.x` consumed in an i64 context (`s64 + p.x`):
-            // read the i32 field (lower_expr) and sign/zero-extend to i64 instead
-            // of bailing the module to AST. The checker forbids i64 + u32, so a
-            // plain i32 field here is signed; the u32 flag stays defensive.
+            // A 32-bit struct field `p.x` consumed in an i64 context (`s64 + p.x`)
+            // widens.
             var ffty: string = decl_field_type(s.frame.structs, fty, fa.field);
-            if (ffty == "i32" || ffty == "u32") {
-                var fw: LowerState = lower_expr(e, s);
-                if (!fw.ok) { return fw; }
-                return fw.emit(ir.op_int_extend(ffty == "u32"));
-            }
+            if (ffty == "i32" || ffty == "u32") { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         ast.ExprIndex(ix) => {
@@ -11430,16 +11407,9 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (ix.unchecked) { return bs.emit(ir.op_arr_get_i64_nc()); }
                 return bs.emit(ir.op_arr_get_i64());
             }
-            // An i32-element array indexed in an i64 context (`s64 + a[i]`, a
-            // numeric reduction): lower the i32 element via lower_expr (arr_get)
-            // and widen to i64 instead of bailing the module to AST. The checker
-            // forbids i64 + u32, so a plain i32[] element here is signed;
-            // expr_is_u32 still selects zero-extend for the defensive u32[] case.
-            if (arr_index_is_i32_scalar(ix.array, s)) {
-                var ws: LowerState = lower_expr(e, s);
-                if (!ws.ok) { return ws; }
-                return ws.emit(ir.op_int_extend(expr_is_u32(e, s)));
-            }
+            // A 32-bit array element in an i64 context (`s64 + a[i]`, a numeric
+            // reduction) widens.
+            if (arr_index_is_i32_scalar(ix.array, s)) { return lower_narrow_widened(e, s); }
             return s.fail();
         },
         _ => { return s.fail(); }
