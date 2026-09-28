@@ -4724,17 +4724,19 @@ function memory_contracts(): ssasem.Contract[] {
 }
 
 // One peek and one poke per width. A load answers the width its name carries;
-// a store takes the address and the value and gives nothing back.
+// a store takes the address and the value and gives nothing back. The string
+// `__str_bytes` reads and the buffer `__arr_set_len` shortens are lent.
 function load_store_contracts(): ssasem.Contract[] {
     var v: i32 = ssaunits.value_mode();
+    var b: i32 = ssaunits.borrow_mode();
     return [
         ssasem.Contract { name: "__load_u8", params: [t_usize()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
         ssasem.Contract { name: "__load_ptr", params: [t_usize()], modes: [v], result: t_usize() },
         ssasem.Contract { name: "__store_u8", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
-        ssasem.Contract { name: "__str_bytes", params: [t_string(), t_usize()], modes: [v, v], result: t_usize() },
-        ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__str_bytes", params: [t_string(), t_usize()], modes: [b, v], result: t_usize() },
+        ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [b, v], result: t_void() },
         ssasem.Contract { name: "__store_i32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__store_i64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__store_ptr", params: [t_usize(), t_usize()], modes: [v, v], result: t_void() }

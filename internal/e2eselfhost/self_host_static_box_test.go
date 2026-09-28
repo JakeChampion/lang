@@ -207,9 +207,22 @@ func TestSelfHostStaticBoxes(t *testing.T) {
 // A `u8[]` literal stays a fresh box: the raw floor writes a byte buffer
 // through its data pointer, which no count guards, so a static one would
 // carry the write into every later evaluation. Each round reads the length
-// before and after overwriting its low byte. Wasm's AST lowering, which
-// the driver runs over every body, does not take the raw store.
-const byteLiteralProgram = `@noinline function bytes_rounds(): i32 {
+// before and after overwriting its low byte. The byte floor's two
+// reference-taking intrinsics lend their argument, so a body calling them is
+// produced: `shorten` and `first_byte`. Wasm's AST lowering, which the driver
+// runs over every body, does not take the raw store.
+const byteLiteralProgram = `@noinline function shorten(n: i32): i32 {
+    var b: u8[] = __alloc_u8(4);
+    __arr_set_len(b, n);
+    return b.len();
+}
+@noinline function first_byte(s: string): i32 {
+    var scratch: usize = __alloc(16);
+    var c: i32 = __load_u8(__str_bytes(s, scratch));
+    __free(scratch, 16);
+    return c;
+}
+@noinline function bytes_rounds(): i32 {
     var before: i64 = __heap_alloc_count();
     var t: i32 = 0;
     var i: i32 = 0;
@@ -229,12 +242,14 @@ function print_int(n: i32): i32 {
 }
 function main(): i32 {
     print_int(bytes_rounds()); print("");
+    print_int(shorten(2)); print("");
+    print_int(first_byte("hi")); print("");
     return 0;
 }
 `
 
 func TestSelfHostByteLiteralIsFresh(t *testing.T) {
-	want := "400100\n"
-	runSemanticProgram(t, "byteliteral", byteLiteralProgram, []string{"bytes_rounds"},
+	want := "400100\n2\n104\n"
+	runSemanticProgram(t, "byteliteral", byteLiteralProgram, []string{"bytes_rounds", "shorten", "first_byte"},
 		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want})
 }
