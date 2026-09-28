@@ -14,11 +14,11 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
-`npm test` shells out to `playwright test`, which (per
-[`playwright.config.ts`](playwright.config.ts)) runs
-`./web/build.sh` to refresh the wasm bundle, starts a local
-`python3 -m http.server` on port 8742, and walks the spec files in
-this directory.
+`npm test` runs `./web/build.sh` to refresh the wasm bundle, then
+`playwright test`, which (per [`playwright.config.ts`](playwright.config.ts))
+starts a local `python3 -m http.server` on port 8742 and walks the spec
+files in this directory. `npx playwright test` alone serves whatever
+bundle `web/` already holds.
 
 ## What's covered
 

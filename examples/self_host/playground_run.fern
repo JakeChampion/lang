@@ -45,6 +45,7 @@ import "./treeshake";
 import "./util";
 import "./wasm_ir";
 import "./watbin";
+import "./wit_compose";
 import "std/io";
 
 // main wraps `run` in the shared rc-over-release guard — see
@@ -219,11 +220,11 @@ function run(): i32 {
         }
         ai = ai + 1;
     }
-    if (!(target == "wasm32-wasi" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
-        eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi x86-64-linux)\n");
+    if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
+        eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)\n");
         return 2;
     }
-    if (target == "wasm32-wasi") {
+    if (platforms.for_target(target).isa == "wasm32") {
         if (form.len() == 0) { form = "wat"; }
         if (!(form == "wat" || form == "core-module" || form == "component")) {
             eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)\n");
@@ -234,7 +235,9 @@ function run(): i32 {
         return 2;
     }
     var src: string = io.read_all_stdin();
-    var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+    var missing_handle: string = emitforms.http_entry_missing(entry, target);
+    if (missing_handle.len() > 0) { eprint(missing_handle); return 1; }
 
     // The entry came from stdin, so it has no directory. With a sealed overlay
     // that is inert: nothing below resolve_module ever sees the empty root.
@@ -277,14 +280,6 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
         eprint(util.format_diags_in(errs, files));
         return 1;
     }
-    if (target == "wasm32-wasi") {
-        var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
-        if (unsupported.len() > 0) {
-            eprint(wasm_ir.wasm_unsupported_message(unsupported));
-            return 1;
-        }
-    }
-
     // Tree-shaking is required here rather than an optimisation: the
     // overlay hands the loader every stdlib module the program's imports reach,
     // and without the shake the emitted module carries all of them. It runs on
@@ -296,6 +291,15 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     merged = constfold.fold_module(merged);
     merged = checker.annotate_module(merged);
     merged = treeshake.treeshake(merged);
+    // Judged on the shaken module, as the CLI's E066 pass is: a builtin only
+    // unreachable stdlib code names is not a refusal.
+    if (platforms.for_target(target).isa == "wasm32") {
+        var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
+        if (unsupported.len() > 0) {
+            eprint(wasm_ir.wasm_unsupported_message(unsupported));
+            return 1;
+        }
+    }
 
     var typed: parser.Module = parser.module_with_builtins_typed(merged);
     var full: parser.Module = parser.erase_str_module(typed);
@@ -307,6 +311,21 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
         out = asm_arm64_ir.emit_module_or_error_sub(full, false, sub);
     } else if (target == "arm64-darwin") {
         out = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub));
+    } else if (target == "wasm32-wasi-http") {
+        if (form == "wat") {
+            out = emitforms.wasm_http_core(full, sub);
+        } else if (form == "core-module") {
+            var hwat: string = emitforms.wasm_http_core(full, sub);
+            if (hwat.len() == 0) { return 2; }
+            out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
+        } else {
+            var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
+            if (hc.bytes.len() == 0) {
+                if (hc.refused.len() > 0) { eprint(emitforms.http_refused(hc.refused)); }
+                return 2;
+            }
+            out = string_from_bytes_unchecked(util.to_u8(hc.bytes));
+        }
     } else if (form == "wat") {
         out = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
     } else if (form == "core-module") {

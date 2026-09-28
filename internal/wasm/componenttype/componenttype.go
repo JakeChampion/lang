@@ -1,6 +1,6 @@
 // Package componenttype embeds the precomputed `component-type`
-// custom-section payloads for the two production WIT worlds
-// (`fern` and `http`) and exposes a function that appends one
+// custom-section payloads for the production WIT worlds (`fern`,
+// `http` and `proxy`) and exposes a function that appends one
 // to a core wasm module — the same operation `wasm-tools
 // component embed -w <world>` performs.
 //
@@ -25,9 +25,12 @@ var fernPayload []byte
 //go:embed http.bin
 var httpPayload []byte
 
+//go:embed proxy.bin
+var proxyPayload []byte
+
 // Embed appends the `component-type` custom section for `world`
 // to `core` and returns the concatenated bytes. `world` must
-// be "fern" or "http"; any other value returns an error. `core`
+// be "fern", "http" or "proxy"; any other value returns an error. `core`
 // is not modified.
 //
 // Custom section wire format
@@ -78,8 +81,10 @@ func payloadFor(world string) ([]byte, error) {
 		return fernPayload, nil
 	case "http":
 		return httpPayload, nil
+	case "proxy":
+		return proxyPayload, nil
 	default:
-		return nil, fmt.Errorf("componenttype: unknown world %q (want \"fern\" or \"http\")", world)
+		return nil, fmt.Errorf("componenttype: unknown world %q (want \"fern\", \"http\" or \"proxy\")", world)
 	}
 }
 
