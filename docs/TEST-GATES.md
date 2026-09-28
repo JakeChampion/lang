@@ -209,7 +209,8 @@ rather than the loop.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
-adopting its buffer before the copy loop, #10486);
+adopting its buffer before the copy loop, #10486; the rest of that idiom
+in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
@@ -403,6 +404,30 @@ self-host compilation, including QEMU. `Arm64DarwinTCPLifecycleCensus`
 tests cover native Darwin with both compilers. These tests measure primitive
 ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
 or native throughput. The Wasm lifecycle census is a separate gate.
+
+## Runtime bodies adopting a raw block before their last read of it
+
+`TestSelfHostRawOwnerAfterLastRead` compiles one program with the
+production self-host driver for x86-64 and arm64 under `FERN_LEAKCHECK`
+and requires every answer plus a balanced count. The runtime bodies in
+`asmcore.fern` give a `__raw_alloc` block back by binding a string over it
+that nothing reads, and the semantic lowering releases such an owner at
+its own step, so a body that bound it before its last raw read of the
+block read memory the freelist had handed out again (#10486). The program
+picks the sizes so the released block is the one the next allocation
+pops: `remove_dir_all` over a directory whose one child has a name of 1
+to 20 bytes (its child path shared the path buffer's class, and the final
+rmdir named the child, so the directory stayed behind), `read_file_bytes`
+at every length from 1 to 80, the `NotFound` path of `read_file`,
+`open_reader` and `remove_file` at every length from 1 to 40, `cpu_count`
+and `getgroups`. The fs reclaim gates
+(`TestSelfHostFsPathBufferReclaimX86_64`,
+`TestSelfHostFsErrorPathBufferReclaimX86_64`) run the same leaves through
+the `asm_ir_run` driver, whose AST lowering releases at scope exit and
+reads a param passed to any call as escaping: a body has to hold on both,
+which is why `__fern_path_copy` indexes its owner rather than taking its
+pointer. Blind to a body whose late read has no observable answer at the
+sizes chosen, and to the wasm bodies, which are `wasm_ir.fern`'s own.
 
 ## Generated digest sources
 
