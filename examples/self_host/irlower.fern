@@ -14312,54 +14312,115 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // Value semantics for a receiver this push may not mutate: bracket it so
     // the grow helper's rc==1 in-place path cannot fire (append_copy_recv_slot).
     var apcs: i32 = append_copy_recv_slot(fa.obj, s);
-    var aps0: LowerState = s;
-    if (append_report_on()) { aps0 = report_expr_append(aps0, fa, c, apcs); }
-    if (apcs >= 0) { aps0 = emit_arr_share(aps0, apcs, "__fern_arr_share_inc"); }
-    if (expr_is_f64arr(fa.obj, s)) {
-        var apf: LowerState = lower_expr(fa.obj, aps0);
-        if (!apf.ok) { return apf; }
-        apf = lower_expr(c.args[0], apf);
-        if (!apf.ok) { return apf; }
-        apf = apf.emit(ir.op_arr_push_f64());
-        if (apcs >= 0) { apf = emit_arr_share(apf, apcs, "__fern_arr_share_dec"); }
-        return settle_owned_append_result(apf, fa.obj, apcs);
+    var aps: LowerState = s;
+    if (append_report_on()) { aps = report_expr_append(aps, fa, c, apcs); }
+    if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_inc"); }
+    var tmp_recv: i32 = 0 - 1;
+    if (append_result_counted(fa.obj, s)) {
+        tmp_recv = aps.locals.len();
+        aps = aps.add_local("$apt" + util.i32_to_string(tmp_recv));
     }
-    if (expr_is_i64arr(fa.obj, s) || (expr_is_arr_src(fa.obj, s) && expr_is_u64(fa.obj, s))) {
-        var ap8: LowerState = lower_expr(fa.obj, aps0);
-        if (!ap8.ok) { return ap8; }
-        ap8 = lower_i64(c.args[0], ap8);
-        if (!ap8.ok) { return ap8; }
-        ap8 = ap8.emit(ir.op_arr_push_i64());
-        if (apcs >= 0) { ap8 = emit_arr_share(ap8, apcs, "__fern_arr_share_dec"); }
-        return settle_owned_append_result(ap8, fa.obj, apcs);
+    aps = lower_expr(fa.obj, aps);
+    if (!aps.ok) { return aps; }
+    if (tmp_recv >= 0) {
+        aps = aps.emit(ir.op_store_local(tmp_recv));
+        aps = aps.emit(ir.op_load_local(tmp_recv));
     }
-    var aps: LowerState = lower_expr(fa.obj, aps0);
+    var kind: string = append_push_kind(fa.obj, s);
+    aps = lower_append_push(c.args[0], kind, aps);
     if (!aps.ok) { return aps; }
-    aps = lower_append_elem_value(c.args[0], aps);
-    if (!aps.ok) { return aps; }
-    aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
-    // An in-place push on a BORROWED param's buffer hands that same buffer out
-    // as a second reference — the caller's slot still holds the first — so the
-    // result is counted exactly as a bare `return p` is (the return-transfer
-    // retain). Guarded on identity: a grow or a shared-receiver copy hands back
-    // a fresh rc 1 buffer that already is the one reference. A declared `own`
-    // param is the callee's to give back uncounted, as in the bare return.
-    var iprs: i32 = borrowed_arr_param_slot(fa.obj, aps);
-    if (apcs < 0 && iprs >= 0) {
-        var ipscratch: string = "$ipa" + util.i32_to_string(aps.locals.len());
-        aps = aps.add_local(ipscratch);
-        var iptmp: i32 = aps.slot_of(ipscratch);
-        aps = aps.emit(ir.op_store_local(iptmp));
-        aps = aps.emit(ir.op_load_local(iptmp));
-        aps = aps.emit(ir.op_load_local(iprs));
-        aps = aps.emit(ir.op_bin("eq", 0, false));
-        aps = aps.emit(ir.op_if(0));
-        aps = aps.retain(iptmp, "append-inplace-borrowed");
-        aps = aps.emit(ir.op_end());
-        aps = aps.emit(ir.op_load_local(iptmp));
-    }
+    aps = release_superseded_append_recv(aps, tmp_recv);
+    if (apcs < 0) { aps = retain_inplace_borrowed_push(aps, fa.obj); }
     return settle_owned_append_result(aps, fa.obj, apcs);
+}
+
+// append_push_kind names the push an expression-position append takes on
+// `recv`: "f64" and "i64" for the 8-byte element strides, "" for the
+// pointer-width push every other element kind shares.
+function append_push_kind(recv: ast.Expr, s: LowerState): string {
+    if (expr_is_f64arr(recv, s)) { return "f64"; }
+    if (expr_is_i64arr(recv, s) || (expr_is_arr_src(recv, s) && expr_is_u64(recv, s))) { return "i64"; }
+    return "";
+}
+
+// lower_append_push lowers the pushed element and the width-matched arr_push
+// over the receiver already on the operand stack.
+function lower_append_push(val: ast.Expr, kind: string, s: LowerState): LowerState {
+    if (kind == "f64") {
+        var sf: LowerState = lower_expr(val, s);
+        if (!sf.ok) { return sf; }
+        return sf.emit(ir.op_arr_push_f64());
+    }
+    if (kind == "i64") {
+        var s8: LowerState = lower_i64(val, s);
+        if (!s8.ok) { return s8; }
+        return s8.emit(ir.op_arr_push_i64());
+    }
+    var st: LowerState = lower_append_elem_value(val, s);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_arr_push());
+}
+
+// retain_inplace_borrowed_push: an in-place push on a BORROWED param's buffer
+// hands that same buffer out as a second reference — the caller's slot still
+// holds the first — so the result is counted exactly as a bare `return p` is
+// (the return-transfer retain). Guarded on identity: a grow or a shared-receiver
+// copy hands back a fresh rc 1 buffer that already is the one reference. A
+// declared `own` param is the callee's to give back uncounted, as in the bare
+// return.
+function retain_inplace_borrowed_push(s: LowerState, recv: ast.Expr): LowerState {
+    var iprs: i32 = borrowed_arr_param_slot(recv, s);
+    if (iprs < 0) { return s; }
+    var iptmp: i32 = s.locals.len();
+    var st: LowerState = s.add_local("$ipa" + util.i32_to_string(iptmp));
+    st = st.emit(ir.op_store_local(iptmp));
+    st = st.emit(ir.op_load_local(iptmp));
+    st = st.emit(ir.op_load_local(iprs));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.retain(iptmp, "append-inplace-borrowed");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(iptmp));
+}
+
+// append_result_counted: `e` is an expression-position `.append` whose result
+// holds a count of its own that only its consumer releases — the copy of a
+// bracketed receiver, a push on a borrowed parameter (retained on identity by
+// retain_inplace_borrowed_push), or a push onto such a result. The
+// in-place result of an owned local or an `own` parameter is not one: it
+// carries the slot's own reference.
+pub function append_result_counted(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            if (fa.field != "append" || c.args.len() != 1 || arr_field_read(fa.obj, s)) { return false; }
+            if (!expr_is_arr_src(fa.obj, s) && !expr_is_strarr(fa.obj, s)
+                && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) { return false; }
+            return append_copy_recv_slot(fa.obj, s) >= 0 || append_result_counted(fa.obj, s)
+                || borrowed_arr_param_slot(fa.obj, s) >= 0;
+        }
+    }
+    return false;
+}
+
+// release_superseded_append_recv: the receiver parked in `tmp` was a counted
+// append result (append_result_counted). A push that moved its elements into
+// another buffer leaves that count with nothing to release it, so it is dropped
+// here; an in-place push hands the same count on in the result. The release is
+// the buffer-only __fern_rc_dec, as for a superseded rebind: the new buffer
+// holds the elements.
+function release_superseded_append_recv(s: LowerState, tmp: i32): LowerState {
+    if (tmp < 0) { return s; }
+    var res: i32 = s.locals.len();
+    var st: LowerState = s.add_local("$apr" + util.i32_to_string(res));
+    st = st.emit(ir.op_store_local(res));
+    st = st.emit(ir.op_load_local(res));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.release(tmp, "__fern_rc_dec", "superseded-append-temp");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(res));
 }
 
 // A consuming expression-position append transfers the result, but the push
@@ -21319,23 +21380,63 @@ function ret_enum_param_handback(e: ast.Expr, s: LowerState): boolean {
 }
 
 // ret_closure_uncounted: a function returning a closure hands the caller a
-// counted box, and `e` names one this frame holds no count for — a borrowed
-// fn parameter, a closure local the exit sweep does not release, a struct's
-// fn field or a closure-array element — so the return retains it.
+// counted box, so the return retains `e` unless this frame provably holds its
+// count — a fresh or call-returned box (closure_value_is_counted,
+// closure_method_call), an `own` fn parameter, a closure local the exit sweep
+// leaves to the caller, or a value local every arm fills with an owned box
+// ("CLOVAL:", owned_closure_value_locals). Anything else is a borrow, however
+// it is spelled; a missed owner leaks.
 function ret_closure_uncounted(e: ast.Expr, s: LowerState, moved: i32[]): boolean {
     if (s.frame.cur_ret != "fn") { return false; }
+    if (closure_value_is_counted(e, s.frame.sigs.closure_fns) || closure_method_call(e, s)) { return false; }
     if let ast.ExprIdent(id) = e {
         var slot: i32 = s.slot_of(id.name);
-        if (slot < 0 || !s.is_closure_local(id.name)) { return false; }
+        if (slot < 0 || !s.is_closure_local(id.name)) { return !reclaim_has(s.frame.reclaimable_names, "CLOVAL:", id.name); }
         if (slot < s.frame.n_params) { return !s.is_own_param(id.name); }
         return !slot_list_has(moved, slot) || !arr_slot_shallow_release_ok(s, slot);
     }
-    if let ast.ExprFieldAccess(fa) = e {
-        var oty: string = expr_struct_type(fa.obj, s);
-        return oty.len() > 0 && decl_field_type(s.frame.structs, oty, fa.field) == "fn";
+    return true;
+}
+
+// closure_method_call: `e` is `x.m(…)` where `m` is a method of x's struct type
+// declared to return a closure, so its own return hands back a counted box.
+function closure_method_call(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            var rty: string = expr_struct_type(fa.obj, s);
+            return rty.len() > 0 && util.index_of_str(s.frame.sigs.closure_fns, "METHCLO:" + rty + "." + fa.field) >= 0;
+        }
     }
-    if let ast.ExprIndex(ix) = e { return expr_is_closure_array(ix.array, s); }
     return false;
+}
+
+// CloValScan: the value locals an arm stores into, and those one store left
+// without a proven count.
+struct CloValScan { cloret: string[], stored: string[], unowned: string[] }
+
+// owned_closure_value_locals credits "CLOVAL:<name>" to each value local of a
+// closure-returning function (IfChain.value_local) whose every arm stores a
+// counted box (closure_value_is_counted), so returning it hands that count on.
+function owned_closure_value_locals(fn: parser.FuncDecl, cloret: string[], acc: string[]): string[] {
+    if (fn.ret_type != "fn") { return acc; }
+    var sc: CloValScan = CloValScan { cloret: cloret, stored: [], unowned: [] };
+    for st in fn.body { sc = astwalk.fold_stmt_spine(st, sc, cloval_scan_stmt); }
+    var out: string[] = acc;
+    for name in sc.stored {
+        if (util.index_of_str(sc.unowned, name) < 0) { out = out.append("CLOVAL:" + name); }
+    }
+    return out;
+}
+
+function cloval_scan_stmt(st: ast.Stmt, own sc: CloValScan): CloValScan {
+    if let ast.StmtAssign(a) = st {
+        if (is_arm_value_store(a)) {
+            var stored: string[] = push_str_unique(sc.stored, a.target);
+            if (closure_value_is_counted(a.value, sc.cloret)) { return CloValScan { ...sc, stored: stored }; }
+            return CloValScan { ...sc, stored: stored, unowned: push_str_unique(sc.unowned, a.target) };
+        }
+    }
+    return sc;
 }
 
 // handback_param_name: `p` for a bare `p` or a field read `p.f`, else "".
@@ -21362,7 +21463,7 @@ function settle_returned_append(e: ast.Expr, s: LowerState): LowerState {
         if let ast.ExprFieldAccess(fa) = c.callee {
             var slot: i32 = s.slot_of(ident_name_or_empty(fa.obj));
             if (fa.field != "append" || c.args.len() != 1 || slot < s.frame.n_params) { return s; }
-            if (!s.is_arr_slot(slot) || !arr_slot_shallow_release_ok(s, slot)) { return s; }
+            if (!s.is_arr_slot(slot) || !aliased_push_store_ok(s, slot)) { return s; }
             return emit_aliased_push_store(s, slot, false).emit(ir.op_load_local(slot));
         }
     }
@@ -21726,24 +21827,27 @@ function discard_struct_lit(own se: LowerState, s: LowerState, dse: ast.ExprStru
     return se;
 }
 
+// discard_fresh_struct releases the discarded result of a strict-fresh struct
+// producer: the box and, when its type routes one, its rc fields.
+function discard_fresh_struct(own se: LowerState, crt: string): LowerState {
+    if (crt.len() > 0 && struct_fields_reusable(se.frame.structs, crt) && struct_has_reclaim_array_field(se.frame.structs, crt)) {
+        var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
+        se = se.add_local(fcd);
+        var fcslot: i32 = se.slot_of(fcd);
+        se = se.emit(ir.op_store_local(fcslot));                          // stash box
+        se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
+        se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
+        se = se.emit(ir.op_drop());                                       // discard clobbered return
+        se = se.emit(ir.op_load_local(fcslot));                           // box again
+    }
+    return se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
+}
+
 // discard_free_call releases what a discarded call to the free function
 // `dcid` leaves this frame owning, by the registry that names its result.
 function discard_free_call(own se: LowerState, s: LowerState, es: ast.StmtExpr, dce: ast.ExprCall, dcid: ast.ExprIdent): LowerState {
     if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dcid.name) >= 0) {
-        var crt: string = s.struct_ret_type(dcid.name);
-        if (crt.len() > 0 && struct_fields_reusable(s.frame.structs, crt) && struct_has_reclaim_array_field(s.frame.structs, crt)) {
-            var fcd: string = "$fcdrop" + util.i32_to_string(se.locals.len());
-            se = se.add_local(fcd);
-            var fcslot: i32 = se.slot_of(fcd);
-            se = se.emit(ir.op_store_local(fcslot));                          // stash box
-            se = se.emit(ir.op_load_local(fcslot));                           // box (arg0)
-            se = se.release_tos("__struct_drop_" + crt, "discard-call-struct-deep");       // deep-drop rc fields
-            se = se.emit(ir.op_drop());                                       // discard clobbered return
-            se = se.emit(ir.op_load_local(fcslot));                           // box again
-            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");              // free the box
-        } else {
-            se = se.release_tos("__fern_rc_dec", "discard-call-struct-box");
-        }
+        se = discard_fresh_struct(se, s.struct_ret_type(dcid.name));
     } else if (util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dcid.name) >= 0) {
         // A discarded call to a COUNTED-return free function
         // outside the strict-fresh registry (a bare param handed
@@ -21899,13 +22003,17 @@ function discard_method_call(own se: LowerState, s: LowerState, dcfa: ast.ExprFi
         ast.ExprIdent(_) => { drty = expr_struct_type(dcfa.obj, s); },
         _ => {}
     }
+    if (drty == "" || decl_field_type(s.frame.structs, drty, dcfa.field) != "") { return se; }
+    var dkey: string = drty + "." + dcfa.field;
+    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, dkey) >= 0) {
+        return discard_fresh_struct(se, s.struct_ret_type(dkey));
+    }
     // A COUNTED-return METHOD (`b.id_or_make(0);`, cnt_struct_ret_fns)
     // takes the same shallow dec: its result is this frame's
     // count whichever path produced it.
-    if (drty != "" && decl_field_type(s.frame.structs, drty, dcfa.field) == ""
-        && (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + drty + "." + dcfa.field) >= 0
-            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + drty + "." + dcfa.field) >= 0
-            || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, drty + "." + dcfa.field) >= 0)) {
+    if (util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARR:" + dkey) >= 0
+            || util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "ARROWN:" + dkey) >= 0
+            || util.index_of_str(s.frame.sigs.cnt_struct_ret_fns, dkey) >= 0) {
         se = se.release_tos("__fern_rc_dec", "discard-field-arr-ret");
     }
     return se;
@@ -22839,14 +22947,14 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // store — the shallow emit_arr_store dec (were is_arr even set) would
     // free only the outer buffer and leak every inner per iteration.
     if (slot_is_reclaimable_arrarr(sb, slot)) {
-        return emit_arrarr_reclaim_store(sb, slot);
+        return emit_arrarr_reclaim_store(sb, slot, vt.alias_inc);
     }
     // Reclaimable closure-ARRAY LOOP-LOCAL (#4354): free the prior iteration's
     // element boxes with the buffer. The credit, not the is_closurearr flag,
     // routes it: an annotated empty literal grown by `.append` earns the flag
     // only at the append, which lowers after this bind.
     if (slot_is_reclaimable_cloarr(sb, slot)) {
-        return emit_arrarr_reclaim_store(sb, slot);
+        return emit_arrarr_reclaim_store(sb, slot, false);
     }
     // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
     // arr-of-arr rebind above — free the prior iteration's payload buffers +
@@ -25093,7 +25201,7 @@ function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32
 // arm counts them (#9209). An old buffer this frame held alone was outgrown,
 // its elements moved to the new one, and it is freed without the retain.
 function emit_aliased_push_store(se: LowerState, slot: i32, sole_owner: boolean): LowerState {
-    if (sole_owner || !arr_slot_shallow_release_ok(se, slot) || !slot_holds_counted_elems(se, slot)) {
+    if (sole_owner || !aliased_push_store_ok(se, slot) || !slot_holds_counted_elems(se, slot)) {
         return emit_arr_store(se, slot, false, aliased_push_releases_old(sole_owner, se, slot));
     }
     var scratch: string = "$rea" + util.i32_to_string(se.locals.len());
@@ -25117,6 +25225,18 @@ function emit_aliased_push_store(se: LowerState, slot: i32, sole_owner: boolean)
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
     return st.emit(ir.op_store_local(slot));
+}
+
+// aliased_push_store_ok: the slot's reference to a superseded buffer may be
+// given back with one dec once the copy's shared elements are retained —
+// arr_slot_shallow_release_ok's question, with a credited arr-of-arr admitted:
+// its rows are counted, so a shared old buffer's rows survive in the copy and a
+// sole-owned one's move to it.
+function aliased_push_store_ok(s: LowerState, slot: i32): boolean {
+    if (slot_is_reclaimable_arrarr(s, slot)) {
+        return !s.is_borrowed_arr_slot(slot) && !slot_list_has(s.frame.moved_elided, slot);
+    }
+    return arr_slot_shallow_release_ok(s, slot);
 }
 
 // slot_holds_counted_elems: the array in slot `i` stores rc-counted element
@@ -25726,6 +25846,10 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // exclusion either: the target IS an array here, which is what makes this
     // the branch the array classes below could not cover.
     if (slot_is_reclaimable_strarr(s, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
+    // A credited arr-of-arr reassigned from a member of its group (`h = g`,
+    // credit_arrarr_group): the superseded buffer may be the last reference to
+    // its rows.
+    if (slot_is_reclaimable_arrarr(s, slot)) { return emit_arrarr_reclaim_store(se, slot, reassign_inc); }
     // A credited struct array REBOUND from a producer (`ps = mk(n)`, #10360):
     // the rebuild shares nothing with the old array, so its element boxes go
     // with its buffer.
@@ -29714,11 +29838,22 @@ function emit_tup_elem_reclaim_store(se: LowerState, slot: i32, kinds: string): 
 // the live value. The arr-of-arr sibling of emit_str_reclaim_store; the
 // first binding sees old = the zero-initialised slot → the helper's null
 // guard no-ops.
-function emit_arrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+//
+// alias_inc: an aliasing bind (`var h = g`, `var p = r.grid`) retains the new
+// buffer, so the old reference is released even when it is the same buffer.
+function emit_arrarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean): LowerState {
     var scratch: string = "$aarea" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
+    if (alias_inc) {
+        st = st.retain(tmp, "arrarr-store-alias");
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, slot), 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_load_local(tmp));
+        return st.emit(ir.op_store_local(slot));
+    }
     st = st.emit(ir.op_load_local(slot));        // OLD value the slot holds
     st = st.emit(ir.op_load_local(tmp));         // new value
     st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
@@ -31709,8 +31844,8 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
             //
             // Both credits are required because between them they say every
             // position of this tuple releases: "TUPE:" that the element walk is
-            // emitted at all, "TUPSW:" that no STRING position of it is left
-            // unproven (vacuously true of a tuple with no string position, whose
+            // emitted at all, "TUPSW:" that no STRING or CLOSURE position of it
+            // is left unproven (vacuously true of a tuple with neither, whose
             // array positions release whichever writer filled them).
             //
             // The credits are BINDING-SITE keyed and an assignment carries no
@@ -31792,7 +31927,7 @@ function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
     return false;
 }
 
-// str_alias_reassign_target_sites: the binding SITES of string locals `t` that are
+// alias_reassign_target_sites: the binding SITES in `cands` of locals `t` that are
 // reassigned from `src` (`t = src`) and from nothing else uncounted. Handed to the
 // escape walker as extra alias_ok entries so the source's bare-ident use at that
 // assignment is read as the counted share it now is, and credited alongside it so
@@ -31800,9 +31935,8 @@ function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
 //
 // Every reassign of `t` must be a bare ident: a field or element read (`t = x.f`,
 // `t = xs[i]`) is a borrow of a container's memory that no retain covers, and a
-// fresh producer (`t = a + b`) is the consume-rebind that emit_str_reclaim_store
-// already owns and which deliberately takes no inc.
-function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: string[], body: ast.Stmt[], acc: string[]): string[] {
+// fresh producer (`t = a + b`) is a consume-rebind, which takes no inc.
+function alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -31811,7 +31945,7 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
                     ast.ExprIdent(rid) => {
                         if (rid.name == src && asg.target != src
                                 && str_all_reassigns_bare_ident(body, asg.target, false)) {
-                            var tsite: string = str_cand_site_of(cands, asg.target);
+                            var tsite: string = cand_site_named(cands, asg.target);
                             if (tsite.len() > 0) { a = push_str_unique(a, tsite); }
                         }
                     },
@@ -31819,14 +31953,14 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
                 }
             },
             ast.StmtIf(f) => {
-                a = str_alias_reassign_target_sites(f.then_body, src, cands, body, a);
-                a = str_alias_reassign_target_sites(f.else_body, src, cands, body, a);
+                a = alias_reassign_target_sites(f.then_body, src, cands, body, a);
+                a = alias_reassign_target_sites(f.else_body, src, cands, body, a);
             },
-            ast.StmtWhile(w) => { a = str_alias_reassign_target_sites(w.body, src, cands, body, a); },
-            ast.StmtFor(fo) => { a = str_alias_reassign_target_sites(fo.body, src, cands, body, a); },
+            ast.StmtWhile(w) => { a = alias_reassign_target_sites(w.body, src, cands, body, a); },
+            ast.StmtFor(fo) => { a = alias_reassign_target_sites(fo.body, src, cands, body, a); },
             ast.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { a = str_alias_reassign_target_sites(m.arms[ai].body, src, cands, body, a); ai = ai + 1; }
+                while (ai < m.arms.len()) { a = alias_reassign_target_sites(m.arms[ai].body, src, cands, body, a); ai = ai + 1; }
             },
             _ => {}
         }
@@ -31866,8 +32000,8 @@ function str_reassign_value_ok(v: ast.Expr, field_read: boolean): boolean {
     return false;
 }
 
-// str_cand_site_of: the binding-site key in `cands` for the variable `name`, or "".
-function str_cand_site_of(cands: string[], name: string): string {
+// cand_site_named: the binding-site key in `cands` for the variable `name`, or "".
+function cand_site_named(cands: string[], name: string): string {
     var i: i32 = 0;
     while (i < cands.len()) {
         if (reclaim_site_name(cands[i]) == name) { return cands[i]; }
@@ -31920,28 +32054,15 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // (the "ALIASSRC:" row), so a link reassigned only from the source keeps a
 // counted share and stays in the chain.
 function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[], counted_reassign: boolean): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0
-                && !(counted_reassign && reassigned_only_from(body, names[vi], src))) { return acc; }
-        if (body_unsafe_for_alias(body, names[vi], borrowable, recv_borrow, sites)) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0
+                && !(counted_reassign && reassigned_only_from(body, link, src))) { return acc; }
+        if (body_unsafe_for_alias(body, link, borrowable, recv_borrow, sites)) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -31996,27 +32117,14 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
 // All-or-nothing, for alias_chain_sites_of's reason: one buffer is shared by
 // every link, so a link that escapes taints every release in the set.
 function strarr_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], body: ast.Stmt[], acc: string[]): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
-        if (strarr_unsafe_for_alias(body, names[vi], borrowable, str_fresh, strarr_producers, sites, [])) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0) { return acc; }
+        if (strarr_unsafe_for_alias(body, link, borrowable, str_fresh, strarr_producers, sites, [])) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -32124,11 +32232,11 @@ function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, want_elem: boo
     return a;
 }
 
-// opt_alias_chain_closure is the transitive closure of bare-ident binds from
-// `src` — `src` -> `v` -> `u` -> … — walked RAW. Both Option questions need it
-// and must agree: which binds may share the credit, and whether any bind in the
-// chain was left unvetted (#7750).
-function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
+// alias_chain_closure is the transitive closure of bare-ident binds from `src` —
+// `src` -> `v` -> `u` -> … — walked RAW, as the binding-site keys of the links.
+// Every alias-chain credit vets this one set, so the question "which binds may
+// share the credit" and "was any bind left unvetted" cannot disagree (#7750).
+function alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
     var sites: string[] = [];
     var names: string[] = [src];
     var ni: i32 = 0;
@@ -32168,7 +32276,7 @@ function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
 // release, so N links mean N extra retains and N extra box decs — the same
 // arithmetic the single-link case rests on, with more owners.
 function opt_alias_bind_sites_of(body: ast.Stmt[], src: string): string[] {
-    var all: string[] = opt_alias_chain_closure(body, src);
+    var all: string[] = alias_chain_closure(body, src);
     if (all.len() == 0) { return []; }
     var reasg: string[] = body_assign_targets(body);
     var i: i32 = 0;
@@ -32213,28 +32321,15 @@ function credit_opt_alias_sites(body: ast.Stmt[], keys: string[], pfx: string, o
 // deep-drops the payload and a payload extracted from ANY link is invisible to
 // the plain walker.
 function rcenum_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], structs: StructTab, body: ast.Stmt[], acc: string[]): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
-        if (body_unsafe_for_enumfield_alias(body, names[vi], borrowable, structs, sites)) { return acc; }
-        if (enum_body_binds_rc_payload(body, names[vi], structs)) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0) { return acc; }
+        if (body_unsafe_for_enumfield_alias(body, link, borrowable, structs, sites)) { return acc; }
+        if (enum_body_binds_rc_payload(body, link, structs)) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -40024,18 +40119,23 @@ function name_is_param(params: ast.ParamDecl[], name: string): boolean {
     return false;
 }
 
+// local_struct_type_of: the type a local declared exactly once in `body` is
+// annotated with, or for an unannotated one (`var b = Big { … }`) the type its
+// literal names, under fresh_struct_lit_type_deep's single-type contract.
+function local_struct_type_of(body: ast.Stmt[], name: string, structs: StructTab): string {
+    if (local_decl_count(body, name) != 1) { return ""; }
+    var rt: string = util.base_type_name(body_local_decl_type(body, name));
+    if (rt.len() == 0) { rt = literal_struct_type_of(body, name, structs); }
+    return rt;
+}
+
 function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
     match (callee) {
         ast.ExprFieldAccess(mfa) => {
             match (mfa.obj) {
                 ast.ExprIdent(rid) => {
                     if (name_is_param(params, rid.name)) { return ""; }
-                    if (local_decl_count(body, rid.name) != 1) { return ""; }
-                    var rt: string = util.base_type_name(body_local_decl_type(body, rid.name));
-                    // An UNANNOTATED receiver (`var b = Big { … }`) has no
-                    // declared type to read; its literal names one, under
-                    // fresh_struct_lit_type_deep's own single-type contract.
-                    if (rt.len() == 0) { rt = literal_struct_type_of(body, rid.name, structs); }
+                    var rt: string = local_struct_type_of(body, rid.name, structs);
                     if (rt.len() == 0) { return ""; }
                     if (decl_field_type(structs, rt, mfa.field) != "") { return ""; }
                     return rt + "." + mfa.field;
@@ -43867,7 +43967,10 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // is a counted reference the walk's rc-guarded dec cannot free, and `for row
     // in g` is a transient borrow the loop outlives — only a body that lets the
     // loop var escape dangles. A `g[i][j]` / `g[i].len()` borrow binds nothing).
+    // A `var h = g` alias and a `var p = r.grid` field bind are counted owners
+    // too, and take the same release under the same gates (credit_arrarr_group).
     var aarrs: string[] = collect_fresh_arrarr_names(body, opt_fresh_ret, []);
+    aarrs = collect_arrarr_field_bind_sites(body, body, params, structs, aarrs);
     out = reclaimable_arrarr(aarrs, body, borrowable, opt_fresh_ret, out);
     // Fresh Option[<scalar-arr>][] locals (#4365): `var xs: Option[i32[]][] =
     // [Some([..]), None]` — credited "OPTAARR:" so slot_is_reclaimable_optaarr
@@ -45503,9 +45606,14 @@ function arrown_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab, 
     match (e) {
         // A forwarding call to a free function already admitted: its result is
         // the caller's on every path, so it is this function's caller's too.
+        // A free function's call to itself is owned by induction on the
+        // returns the rest of the walk checks.
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return util.index_of_str(acc, "ARROWN:" + cid.name) >= 0; },
+                ast.ExprIdent(cid) => {
+                    if (cid.name == fn.name && fn.receiver_type.len() == 0) { return true; }
+                    return util.index_of_str(acc, "ARROWN:" + cid.name) >= 0;
+                },
                 _ => { return false; }
             }
         },
@@ -51379,8 +51487,10 @@ function arrarr_lit_is_fresh(e: ast.Expr, stmts: ast.Stmt[], k: i32): boolean {
 // back unchanged, and every test below then fails it.
 //
 // A local row is admitted only when it is declared earlier in THIS statement
-// list from an array LITERAL, is mentioned nowhere between that declaration and
-// `k`, appears exactly once in `k`, and is never read afterwards. Together those
+// list from an array LITERAL, or from a local that resolves the same way at that
+// declaration (`var h = g` as g's last use), is mentioned nowhere between that
+// declaration and `k`, appears exactly once in `k`, and is never read
+// afterwards. Together those
 // say the arr-of-arr construction consumes the local, which is the invariant a
 // literal row gets for free: its buffer is born in the slot, so the deep reclaim
 // frees nothing anything else still reads.
@@ -51397,6 +51507,7 @@ function arrarr_row_effective(e: ast.Expr, stmts: ast.Stmt[], k: i32): ast.Expr 
                             decl = 0 - 1;
                             match (v.init) {
                                 ast.ExprArray(_) => { decl = j; },
+                                ast.ExprIdent(_) => { decl = j; },
                                 _ => {}
                             }
                         }
@@ -51413,7 +51524,7 @@ function arrarr_row_effective(e: ast.Expr, stmts: ast.Stmt[], k: i32): ast.Expr 
             }
             if (!rc_ml_last_use(stmts, id.name, k)) { return e; }
             match (stmts[decl]) {
-                ast.StmtVar(dv) => { return dv.init; },
+                ast.StmtVar(dv) => { return arrarr_row_effective(dv.init, stmts, decl); },
                 _ => { return e; }
             }
         },
@@ -51535,27 +51646,34 @@ function arrarr_row_store_strings_fresh(e: ast.Expr): boolean {
 // because the arr-of-arr class's own element hazard — a bound ROW pointer — is
 // checked separately by arrarr_row_escapes, which the credit applies alongside
 // this gate. The sanctioned form never descends into its own receiver, so
-// `g` appearing as the append receiver is not read as an escape.
-function arrarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg): boolean {
-    for stmt in stmts { if (stmt_arrarr_unsafe_for(stmt, name, borrowable, ofr)) { return true; } }
+// `g` appearing as the append receiver is not read as an escape. A `var v = g`
+// bind or a `v = g` / `g = v` assignment with `v` in `alias_ok` is a counted
+// share rather than an escape.
+function arrarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
+    for stmt in stmts { if (stmt_arrarr_unsafe_for(stmt, name, borrowable, ofr, alias_ok)) { return true; } }
     return false;
 }
-function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], ofr: SigReg): boolean {
+function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 if (arrarr_self_append_row(a.value, name, ofr) >= 0) { return false; }
+                // `name = h` from a member of the group retains, as a bind does.
+                match (a.value) {
+                    ast.ExprIdent(rid) => { return !alias_ok_holds_name(alias_ok, rid.name); },
+                    _ => {}
+                }
                 return true;   // any other reassignment of the candidate
             }
-            return expr_unsafe_for(a.value, name, borrowable, []);
+            return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok);
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return arrarr_unsafe_for(f.then_body, name, borrowable, ofr) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr);
+            return arrarr_unsafe_for(f.then_body, name, borrowable, ofr, alias_ok) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return arrarr_unsafe_for(w.body, name, borrowable, ofr);
+            return arrarr_unsafe_for(w.body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -51564,18 +51682,18 @@ function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return arrarr_unsafe_for(fo.body, name, borrowable, ofr);
+            return arrarr_unsafe_for(fo.body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (arrarr_unsafe_for(arm.body, name, borrowable, ofr)) { return true; }
+                if (arrarr_unsafe_for(arm.body, name, borrowable, ofr, alias_ok)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr); },
-        _ => { return stmt_unsafe_for(st, name, borrowable, []); }
+        ast.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr, alias_ok); },
+        _ => { return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok); }
     }
     return false;
 }
@@ -53243,7 +53361,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], fn_reassigned: string
 function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[], alias_ok: string[]): boolean {
     if (!plan_on) { return !body_unsafe_for_alias(stmts, name, [], [], alias_ok); }
     return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name)
-        && opt_alias_chain_closure(stmts, name).len() == alias_ok.len();
+        && alias_chain_closure(stmts, name).len() == alias_ok.len();
 }
 
 // unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
@@ -61912,6 +62030,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var fn_moves_all: MlOut = rc_ml_extend_loops(fn, structs, fn_moves_top);
     var reclaim: string[] = reclaimable_names_of(fn.body, asg_targets, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, fn_moves_all.sites, fn_moves_top.sites, sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret, sg.cnt_handback_params, sg.cnt_struct_ret_fns, sg.closure_fns);
     reclaim = enum_ret_alias_rows(fn, structs, sg.return_fresh_struct_ret_fns, reclaim);
+    reclaim = owned_closure_value_locals(fn, sg.closure_fns, reclaim);
     // A verified typed region owns its parent units until the exit sweep. Its
     // counted payload returns replace the old consuming-match transfer/drop.
     var enum_plan: enumcontract.Plan = enumcontract.analyze_calls(fn, structs.decls, sg.enum_regions);
@@ -66864,9 +66983,12 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
     // Every function value is an env box, so a function declared to return one
     // returns a box whatever its return statements spell (#10076). Without a
     // declared return, only a trailing `return <capturing lambda>` says so.
+    // A method is listed under its bare name and, as "METHCLO:<recv>.<name>",
+    // under the receiver type that resolves a call to it (closure_method_call).
     for fn in funcs {
         if (fn.ret_type == "fn") {
             out = out.append(fn.name);
+            if (fn.receiver_type.len() > 0) { out = out.append("METHCLO:" + fn.receiver_type + "." + fn.name); }
         } else if (fn.body.len() > 0) {
             match (fn.body[fn.body.len() - 1]) {
                 ast.StmtReturn(r) => {
@@ -67721,7 +67843,10 @@ pub function borrow_reg_bare_index(reg: string[]): string[] {
 //   - a bare `p` as a slot value of a struct / tuple / array literal — the
 //     construction incs it;
 //   - `p.len()`, the pure-read builtin receiver — reads, retains nothing;
-//   - `p` as argument i of a call whose parameter i is itself counted.
+//   - `p.append(v)` for a scalar-element array, whose result is a
+//     retained alias or a fresh copy (arr_param_counted_ok);
+//   - `p` as argument i of a call whose parameter i is itself counted;
+//   - `return p` in an "ARROWN:" member, where the return retains it.
 // EVERYTHING else disqualifies, including `return p` where the return does
 // not retain it, `x = p`, an element read and a non-counted call argument.
 // Positive evidence only.
@@ -67776,9 +67901,12 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             match (c.callee) {
                 ast.ExprIdent(cid) => { callee_name = cid.name; },
                 ast.ExprFieldAccess(fa) => {
-                    // `p.len()` — the pure-read builtin receiver. Any other
-                    // method may thread the receiver, so it is not credited.
-                    var recv_counted: boolean = fa.field == "len";
+                    // `p.len()` — the pure-read builtin receiver — and, at the
+                    // array tier, `p.append(v)` (arr_param_counted_ok). Any
+                    // other method may thread the receiver, so it is not
+                    // credited.
+                    var recv_counted: boolean = fa.field == "len"
+                        || (pfx == "ACNT:" && fa.field == "append" && c.args.len() == 1);
                     if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg, pfx, structs, sfok)) { return false; }
                     // `xs.append(p)` at the STRUCT or ENUM tier is a COUNTED
                     // store: every append retains a borrowed struct or enum
@@ -68002,7 +68130,7 @@ function enum_result_cannot_alias(ret: string, structs: StructTab): boolean {
     return is_scalar_type_name(ret) || decl_is_struct(structs, ret);
 }
 
-pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[], enum_members: string[]): string[] {
+pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[], enum_members: string[], arr_members: string[]): string[] {
     var reg: string[] = [];
     var n: i32 = funcs.len();
     var deps: CallDeps = call_deps_of(funcs, false, false);
@@ -68021,7 +68149,7 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
         while (fi < n) {
             var cnt: i32 = nent[fi];
             if (dirty[fi] == 1) {
-                var ents: string[] = param_counted_entries_of(funcs[fi], reg, structs, sfok, enum_members);
+                var ents: string[] = param_counted_entries_of(funcs[fi], reg, structs, sfok, enum_members, arr_members);
                 var same: boolean = ents.len() == cnt;
                 var k: i32 = 0;
                 while (same && k < cnt) { if (ents[k] != reg[ri + k]) { same = false; } k = k + 1; }
@@ -68043,9 +68171,32 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
     return reg;
 }
 
+// arr_param_counted_ok: the ARRAY tier's verdict for parameter `p`.
+// `result_ok` says the result cannot hand the argument back uncounted. An
+// "ARROWN:" member (`arr_hb`) may return a scalar-element `p` bare, which the
+// return retains. An append on `p` leaves its result a retained alias or a
+// copy of the elements, which holds pointer elements uncounted, so a
+// `string[]` may not be an append receiver.
+function arr_param_counted_ok(fn: parser.FuncDecl, p: ast.ParamDecl, result_ok: boolean, arr_hb: boolean, reg: string[], structs: StructTab, sfok: string[]): boolean {
+    var t: string = p.type_name;
+    var scalar: boolean = is_leaksafe_array_field(t);
+    if (p.own || (!scalar && t != "string[]")) { return false; }
+    var hb: boolean = arr_hb && scalar;
+    if (!result_ok && !hb) { return false; }
+    if (!scalar && fn_appends_to(fn, p.name)) { return false; }
+    return arrparam_uses_ok_stmts(fn.body, p.name, reg, "ACNT:", structs, sfok, hb);
+}
+
+// fn_appends_to: some `name.append(v)` or `name.set(i, v)` in `fn`'s body.
+function fn_appends_to(fn: parser.FuncDecl, name: string): boolean {
+    var recvs: string[] = [];
+    for st in fn.body { recvs = collect_append_recvs_stmt(st, recvs); }
+    return util.index_of_str(recvs, name) >= 0;
+}
+
 // param_counted_entries_of: one function's tier entries under the registry
 // `reg`, in the fixed tier order the list is built in.
-function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: StructTab, sfok: string[], enum_members: string[]): string[] {
+function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: StructTab, sfok: string[], enum_members: string[], arr_members: string[]): string[] {
     var ents: string[] = [];
     // ARRAY tier. The result must not BE the argument: the release
     // fires immediately after the call, so a callee handing `d` straight
@@ -68055,7 +68206,10 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     // — the callee's counted store and the caller's post-call dec net to
     // the one reference the returned struct owns. (The string tier's
     // str_result_cannot_alias reads it the same way, minus the routing
-    // requirement.) A `string[]`/array RESULT is refused by both halves.
+    // requirement.) An array RESULT is admitted only for an "ARROWN:"
+    // member (`arr_hb`): every return hands back a count of its own, so a
+    // bare `return p` is the retained handback and the caller's dec leaves
+    // the result its one reference.
     //
     // Candidacy spans SCALAR-element arrays and `string[]`. For a
     // pointer-element array the caller's release is a shallow arr_dec,
@@ -68065,6 +68219,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     // counted slot, and the construction-side retain for an ARRAY field
     // is not gated on slit_reclaim the way the string one is.
     var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
+    var arr_hb: boolean = fn.receiver_type.len() == 0 && util.index_of_str(arr_members, fn.name) >= 0;
     var aflags: string = "";
     var aany: boolean = false;
     var sflags: string = "";
@@ -68086,12 +68241,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     var ret_routes: boolean = struct_routes_field_reclaim_at(structs, sfok, fn.ret_type);
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
-        var aok: boolean = false;
-        if ((scalar_result || ret_routes)
-            && (is_leaksafe_array_field(fn.params[pj].type_name)
-                || fn.params[pj].type_name == "string[]")
-            && !fn.params[pj].own
-            && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ACNT:", structs, sfok, false)) { aok = true; }
+        var aok: boolean = arr_param_counted_ok(fn, fn.params[pj], scalar_result || ret_routes, arr_hb, reg, structs, sfok);
         if (aok) { aflags = aflags + "1"; aany = true; } else { aflags = aflags + "0"; }
         var sok: boolean = false;
         if (str_ok_result
@@ -69476,7 +69626,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
     // cannot disagree about a position and the walker needs no extra parameter.
     var rf: string[] = return_fresh_struct_ret_fns_of(funcs, structs, sfok);
     var enum_members: string[] = prefixed_names_of(rf, "ENUM:");
-    var pcnt: string[] = param_counted_of(funcs, structs, sfok, enum_members);
+    var pcnt: string[] = param_counted_of(funcs, structs, sfok, enum_members, prefixed_names_of(rf, "ARROWN:"));
     var breg: string[] = borrow_reg_with_counted(bparams, pcnt);
     var bbare: string[] = borrow_reg_bare_index(breg);
     // The #4873 / #8224 may-grow masks feed three registries — the '4' flag in
@@ -81190,7 +81340,7 @@ while (si < strs.len()) {
     // the escape walker reads the source's use there as the share it is, and
     // takes the "STR:" credit alongside — the same "granting both is what makes
     // inc and dec co-extensive" this block already states for the bind.
-    var sra: string[] = str_alias_reassign_target_sites(body, snm, str_cands, body, []);
+    var sra: string[] = alias_reassign_target_sites(body, snm, str_cands, body, []);
     var sal_all: string[] = sal;
     var sri: i32 = 0;
     while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
@@ -81269,7 +81419,7 @@ var li2: i32 = 0;
 while (li2 < lits.len()) {
     var lnm: string = reclaim_site_name(lits[li2]);
     var lal: string[] = alias_bind_sites_of(body, lnm, borrowable, recv_borrow, body, []);
-    var lra: string[] = str_alias_reassign_target_sites(body, lnm, str_cands, body, []);
+    var lra: string[] = alias_reassign_target_sites(body, lnm, str_cands, body, []);
     var lri: i32 = 0;
     while (lri < lra.len()) { lal = push_str_unique(lal, lra[lri]); lri = lri + 1; }
     if (util.index_of_str(strs, lits[li2]) < 0
@@ -81529,19 +81679,120 @@ while (aai < aarrs.len()) {
     // each rebind individually (only `g = g.append(<row literal>)` passes)
     // and is otherwise body_unsafe_for, so it subsumes both former checks.
     // The string[] class has worked this way since #4355.
-    if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
-        && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
-        && !arrarr_row_escapes_iter(body, reclaim_site_name(aan), borrowable)) {
-        out = out.append("ARRARR:" + aan);
-        // STRICT string-kind credit only when every inner element proved
-        // fresh (slot_is_reclaimable_arrarr consults this one when the
-        // slot's type-aware arrarr_elem says the inners hold strings).
-        if (util.index_of_str(aarrs, "S|" + aan) >= 0) { out = out.append("ARRARRS:" + aan); }
+    if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')) {
+        out = credit_arrarr_group(out, aan, aarrs, body, borrowable, opt_fresh_ret);
     }
     aai = aai + 1;
 }
 
     return out;
+}
+
+// credit_arrarr_group credits the candidate at `site` together with every local
+// sharing its buffer (#10416): the `var v = <it>` alias chain, and each other
+// candidate reassigned only from the group (`h = g`). All or nothing. Each bind
+// and each such assignment retains the outer buffer, so every member holds a
+// counted reference, and __fern_arrarr_free walks the rows only at rc 1:
+// whichever owner releases last frees them. The string-kind credit
+// (slot_is_reclaimable_arrarr consults it for string inners) needs every
+// candidate in the group strings-fresh.
+function credit_arrarr_group(out: string[], site: string, cands: string[], body: ast.Stmt[], borrowable: string[], ofr: SigReg): string[] {
+    var nm: string = reclaim_site_name(site);
+    var group: string[] = arrarr_group_sites(body, site, cands);
+    var strict: boolean = true;
+    var i: i32 = 0;
+    while (i < group.len()) {
+        if (arrarr_owner_unsafe(body, reclaim_site_name(group[i]), borrowable, ofr, group)) { return out; }
+        if (util.index_of_str(cands, group[i]) >= 0 && util.index_of_str(cands, "S|" + group[i]) < 0) { strict = false; }
+        i = i + 1;
+    }
+    var o: string[] = credit_alias_sites(out, "ARRARR:", group);
+    if (strict) { o = credit_alias_sites(o, "ARRARRS:", group); }
+    return o;
+}
+
+// arrarr_group_sites: `site`, the alias chain bound off it, and the candidates
+// in `cands` reassigned from any of those.
+function arrarr_group_sites(body: ast.Stmt[], site: string, cands: string[]): string[] {
+    var group: string[] = [site];
+    var links: string[] = alias_chain_closure(body, reclaim_site_name(site));
+    var i: i32 = 0;
+    while (i < links.len()) { group = push_str_unique(group, links[i]); i = i + 1; }
+    var n: i32 = group.len();
+    i = 0;
+    while (i < n) {
+        var tgts: string[] = alias_reassign_target_sites(body, reclaim_site_name(group[i]), cands, body, []);
+        var j: i32 = 0;
+        while (j < tgts.len()) { group = push_str_unique(group, tgts[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return group;
+}
+
+// arrarr_owner_unsafe: `name` may not take the arr-of-arr release — it escapes
+// (a share with a member of `alias_ok` excepted), or a row read from it does.
+function arrarr_owner_unsafe(body: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
+    return arrarr_unsafe_for(body, name, borrowable, ofr, alias_ok) || arrarr_row_escapes_iter(body, name, borrowable);
+}
+
+// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested scalar-array
+// struct field, `r` a parameter or a single-declaration local. The bind retains
+// the field's buffer and the rows in it are counted — __struct_drop_<T> walks
+// them — so `p` is one more counted owner and may take the arr-of-arr release
+// on the same terms as an alias.
+function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (is_scalar_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            ast.StmtIf(f) => {
+                a = collect_arrarr_field_bind_sites(f.then_body, body, params, structs, a);
+                a = collect_arrarr_field_bind_sites(f.else_body, body, params, structs, a);
+            },
+            ast.StmtWhile(w) => { a = collect_arrarr_field_bind_sites(w.body, body, params, structs, a); },
+            ast.StmtFor(fo) => { a = collect_arrarr_field_bind_sites(fo.body, body, params, structs, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_arrarr_field_bind_sites(arm.body, body, params, structs, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// arrarr_field_bind_type: the declared type of the struct field `v` binds, or
+// "" when its init is not a named field of a parameter or a local whose struct
+// type the body states once. An annotation is that type, and is read first
+// because resolving the holder walks the body.
+function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
+    if (v.type_name.len() > 0 && !is_scalar_rows_type(v.type_name)) { return ""; }
+    match (v.init) {
+        ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) { return ""; }
+            match (fa.obj) {
+                ast.ExprIdent(oid) => {
+                    var oty: string = param_struct_type_of(params, oid.name, structs);
+                    if (oty.len() == 0 && !name_is_param(params, oid.name)) { oty = local_struct_type_of(body, oid.name, structs); }
+                    if (oty.len() == 0) { return ""; }
+                    return decl_field_type(structs, oty, fa.field);
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// is_scalar_rows_type: `t` is an array of scalar arrays (`i32[][]`, `f64[][]`),
+// whose rows __fern_arrarr_free releases whole with one dec each.
+function is_scalar_rows_type(t: string): boolean {
+    if (t.len() < 5 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
+    return is_leaksafe_array_field(slice_unchecked(t, 0, t.len() - 2));
 }
 
 function reclaimable_optaarr(body: ast.Stmt[], borrowable: string[], oaas: string[], plan_fe: string[], plan_on: boolean, reassigned: string[], recv_borrow: string[], out: string[]): string[] {
@@ -82087,7 +82338,7 @@ while (tprc < out.len()) {
         tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
     }
     // The writer agreement applies here too: it is what decides whether a
-    // STRING position's release is emitted at all, and the assign-form
+    // STRING or CLOSURE position's release is emitted at all, and the assign-form
     // interlock in body_unsafe_for_tup_alias may only forgive an element whose
     // release it can count on.
     if (out[tprc].len() > 8 && slice_unchecked(out[tprc], 0, 8) == "TUPOWNW:") {

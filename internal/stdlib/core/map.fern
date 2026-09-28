@@ -1003,6 +1003,26 @@ pub function __map_string_column(m: usize, kvOffset: i32): usize {
     return __fern_rc_inc(out as usize);
 }
 
+// __map_box_column snapshots a column of counted boxes (valKind 4) into a
+// fresh array that owns one unit of each, built as a typed Fern array so it
+// takes this compiler's own array layout, unlike __map_ptr_column's
+// hand-written header.
+pub function __map_box_column(m: usize, kvOffset: i32): usize {
+    var buf: usize = __load_ptr(m);
+    var cap: i32 = __load_i32(buf);
+    var len_: i32 = __load_i32(buf + 4);
+    var entryStride: i32 = 2 * __ptr_width();
+    var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
+    var out: usize[] = [];
+    var i: i32 = 0;
+    while (i < len_) {
+        out = out.append(__fern_rc_inc(__load_ptr(entriesBase + i * entryStride + kvOffset)));
+        i = i + 1;
+    }
+    // The retain balances `out`'s exit drop, as in __map_string_column.
+    return __fern_rc_inc(out as usize);
+}
+
 // __map_drop_values frees the array-typed and boxed-cell value columns when
 // a Map is dropped at its LAST reference. The IR emits a call to this
 // just before __map_drop_impl, so it guards on the
@@ -1104,6 +1124,30 @@ pub function __map_drop_strcols_impl(m: usize): usize {
             var slot: usize = entriesBase + i * (2 * ptrW);
             if (keys) { __fern_str_dec(__load_ptr(slot) as string); }
             if (vals) { __fern_str_dec(__load_ptr(slot + ptrW) as string); }
+            i = i + 1;
+        }
+    }
+    return __map_drop_impl(m);
+}
+
+// __map_drop_boxes_impl is __map_drop_impl for a map whose value column holds
+// counted boxes (valKind 4), which core/map retains on every read and copy
+// but never releases: the last reference hands every live value to
+// `release`, and releases every live key of a string key column, before the
+// buffer and the handle go.
+pub function __map_drop_boxes_impl(m: usize, release: (usize) => usize): usize {
+    if (m == 0) { return m; }
+    if (__load_i32(m - 8) == 1) {
+        var buf: usize = __load_ptr(m);
+        var keys: boolean = __load_i32(buf + 8) == 1;
+        var len_: i32 = __load_i32(buf + 4);
+        var ptrW: i32 = __ptr_width();
+        var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
+        var i: i32 = 0;
+        while (i < len_) {
+            var slot: usize = entriesBase + i * (2 * ptrW);
+            if (keys) { __fern_str_dec(__load_ptr(slot) as string); }
+            release(__load_ptr(slot + ptrW));
             i = i + 1;
         }
     }
@@ -1528,6 +1572,11 @@ pub function __mapiter_key_impl(it: usize): usize {
 
 pub function __mapiter_value_impl(it: usize): usize {
     return __map_retain_val(__load_ptr(it), __load_ptr(__mapiter_entry_addr(it) + __ptr_width()));
+}
+
+// The value at the cursor with no retain: the caller borrows it from the map.
+pub function __mapiter_value_lent(it: usize): usize {
+    return __load_ptr(__mapiter_entry_addr(it) + __ptr_width());
 }
 
 pub function __mapiter_advance_impl(it: usize): void {
