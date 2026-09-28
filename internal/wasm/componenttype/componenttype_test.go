@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
@@ -69,7 +71,7 @@ func TestEmbedMatchesWasmTools(t *testing.T) {
 		t.Fatalf("read core: %v", err)
 	}
 
-	for _, world := range []string{"fern", "http"} {
+	for _, world := range []string{"fern", "http", "proxy"} {
 		t.Run(world, func(t *testing.T) {
 			expectedPath := filepath.Join(dir, world+".embedded.wasm")
 			if out, err := exec.Command("wasm-tools", "component", "embed",
@@ -121,5 +123,31 @@ func findWITDir() (string, error) {
 			return "", os.ErrNotExist
 		}
 		dir = parent
+	}
+}
+
+// TestProxyWorldFernPayload pins the self-host compiler's copy of the proxy
+// world (examples/self_host/wit_proxy_world.fern, a Fern string literal
+// spelled one \xNN escape per byte) to proxy.bin, so the two cannot drift
+// when the WIT is regenerated.
+func TestProxyWorldFernPayload(t *testing.T) {
+	want, err := componenttype.PayloadFor("proxy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "self_host", "wit_proxy_world.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, m := range regexp.MustCompile(`\\x([0-9a-f]{2})`).FindAllStringSubmatch(string(src), -1) {
+		b, err := strconv.ParseUint(m[1], 16, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, byte(b))
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("wit_proxy_world.fern carries %d bytes that differ from proxy.bin (%d bytes); regenerate it per doc.go", len(got), len(want))
 	}
 }

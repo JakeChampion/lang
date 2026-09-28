@@ -41,7 +41,7 @@ function leb128_mask25(): i32 {
 
 // leb_u32 appends the unsigned LEB128 encoding of `value` (interpreted as
 // a 32-bit unsigned integer) to `buf`.
-function leb_u32(buf: i32[], value: i32): i32[] {
+pub function leb_u32(buf: i32[], value: i32): i32[] {
     var v: i32 = value;
     var more: boolean = true;
     while (more) {
@@ -58,7 +58,7 @@ function leb_u32(buf: i32[], value: i32): i32[] {
 }
 
 // leb_i32 appends the signed LEB128 encoding of `value` to `buf`.
-function leb_i32(buf: i32[], value: i32): i32[] {
+pub function leb_i32(buf: i32[], value: i32): i32[] {
     var v: i32 = value;
     var more: boolean = true;
     while (more) {
@@ -236,7 +236,7 @@ function wat_parse(toks: WatTok[]): SExpr {
 // leb128.fern + this file + a driver (wasm_run doesn't resolve imports).
 
 // wcat appends every byte of `src` to `buf`.
-function wcat(buf: i32[], src: i32[]): i32[] {
+pub function wcat(buf: i32[], src: i32[]): i32[] {
     var i: i32 = 0;
     while (i < src.len()) {
         buf = buf.append(src[i]);
@@ -257,14 +257,14 @@ function wstr_bytes(buf: i32[], s: string): i32[] {
 }
 
 // wname appends a wasm `name`: LEB_u32(len) then the UTF-8 bytes.
-function wname(buf: i32[], s: string): i32[] {
+pub function wname(buf: i32[], s: string): i32[] {
     buf = leb_u32(buf, s.len());
     return wstr_bytes(buf, s);
 }
 
 // wsection wraps `contents` as a top-level section: the id byte, the
 // LEB_u32 byte length, then the contents.
-function wsection(id: i32, contents: i32[]): i32[] {
+pub function wsection(id: i32, contents: i32[]): i32[] {
     var o: i32[] = [];
     o = o.append(id);
     o = leb_u32(o, contents.len());
@@ -1088,19 +1088,22 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         }
         return out;
     }
+    // A local operand is a `$name` or, as the export wrappers write their
+    // unnamed params, a numeric index — the same two forms the flat encoder
+    // takes (flat_idx).
     if (op == "local.get") {
         out = out.append(32);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "local.set") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.append(33);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "local.tee") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.append(34);
-        return leb_u32(out, index_of_str(lnames, node.items[1].text));
+        return leb_u32(out, flat_idx(node.items[1].text, lnames));
     }
     if (op == "global.get") {
         out = out.append(35);
@@ -1776,10 +1779,78 @@ function emit_binary(mod: SExpr): i32[] {
     return out;
 }
 
+// func_sig spells a func node's signature, for comparing two imports.
+function func_sig(fn: SExpr): string {
+    var o: string = "";
+    var ps: string[] = func_param_types(fn);
+    var i: i32 = 0;
+    while (i < ps.len()) { o = o + ps[i] + ","; i = i + 1; }
+    o = o + "->";
+    var rs: string[] = func_result_types(fn);
+    i = 0;
+    while (i < rs.len()) { o = o + rs[i] + ","; i = i + 1; }
+    return o;
+}
+
+// rename_atoms returns `n` with every atom in `from` respelled as the
+// `to` at the same index.
+function rename_atoms(n: SExpr, from: string[], to: string[]): SExpr {
+    if (n.kind == 2) {
+        var k: i32 = index_of_str(from, n.text);
+        if (k >= 0) { return SExpr { kind: 2, text: to[k], items: [] }; }
+        return n;
+    }
+    if (n.kind != 0) { return n; }
+    var out: SExpr[] = [];
+    var i: i32 = 0;
+    while (i < n.items.len()) {
+        out = out.append(rename_atoms(n.items[i], from, to));
+        i = i + 1;
+    }
+    return SExpr { kind: 0, text: n.text, items: out };
+}
+
+// merge_duplicate_imports keeps one declaration of a function import the
+// module declares twice with the same type, renaming the later name's
+// references to the first. A core module may import the same host function
+// under two names; a component may not ("duplicate import name" from the
+// component step), and the emitter's runtime and an `@import` extern can each
+// name the same one — the stdout path and a wasi:io stream write both import
+// blocking-write-and-flush. Two declarations of different types are left as
+// they are: that conflict is the component step's to report.
+function merge_duplicate_imports(mod: SExpr): SExpr {
+    var keep: SExpr[] = [];
+    var seen_key: string[] = [];
+    var seen_name: string[] = [];
+    var from: string[] = [];
+    var to: string[] = [];
+    var i: i32 = 0;
+    while (i < mod.items.len()) {
+        var it: SExpr = mod.items[i];
+        if (node_head(it) == "import" && it.items.len() == 4 && node_head(it.items[3]) == "func") {
+            var fn: SExpr = func_node(it);
+            var key: string = it.items[1].text + "\n" + it.items[2].text + "\n" + func_sig(fn);
+            var k: i32 = index_of_str(seen_key, key);
+            if (k >= 0) {
+                from = from.append(func_name(fn));
+                to = to.append(seen_name[k]);
+                i = i + 1;
+                continue;
+            }
+            seen_key = seen_key.append(key);
+            seen_name = seen_name.append(func_name(fn));
+        }
+        keep = keep.append(it);
+        i = i + 1;
+    }
+    if (from.len() == 0) { return mod; }
+    return rename_atoms(SExpr { kind: mod.kind, text: mod.text, items: keep }, from, to);
+}
+
 // wat_to_binary is the public pipeline entry: WAT text -> wasm binary
 // bytes (an i32[] of 0..255). Used by the fern CLI's -target wasm32-wasi -emit core-module.
 pub function wat_to_binary(wat: string): i32[] {
-    return emit_binary(wat_parse(wat_tokenize(wat)));
+    return emit_binary(merge_duplicate_imports(wat_parse(wat_tokenize(wat))));
 }
 
 // === component framing (merged from wat_component.fern) ===
@@ -1800,7 +1871,7 @@ pub function wat_to_binary(wat: string): i32[] {
 // (wcat / wsection) but is otherwise import-free.
 
 // component_preamble: "\0asm" + component version (13) / layer (1).
-function component_preamble(): i32[] {
+pub function component_preamble(): i32[] {
     var o: i32[] = [];
     o = o.append(0);
     o = o.append(97);
@@ -1972,7 +2043,7 @@ function tb_fsrw_env_tail(): string { return "\x07\x24\x01\x42\x04\x01\x6f\x02\x
 function tb_fswrite_random_tail(): string { return "\x07\x1b\x01\x42\x02\x01\x40\x00\x00\x77\x04\x00\x0e\x67\x65\x74\x2d\x72\x61\x6e\x64\x6f\x6d\x2d\x75\x36\x34\x01\x00\x0a\x1d\x01\x00\x18\x77\x61\x73\x69\x3a\x72\x61\x6e\x64\x6f\x6d\x2f\x72\x61\x6e\x64\x6f\x6d\x40\x30\x2e\x32\x2e\x30\x05\x08"; }
 
 // blob_to_bytes unpacks an embedded byte-string into an i32[] buffer.
-function blob_to_bytes(s: string): i32[] {
+pub function blob_to_bytes(s: string): i32[] {
     var o: i32[] = [];
     var i: i32 = 0;
     while (i < s.len()) { o = o.append((s[i] as i32)); i = i + 1; }
@@ -2332,7 +2403,7 @@ function shim_tablefill_core(params: i32[], results: i32[]): i32[] {
 // suffix from the import list. The component section ids: 1 core-module,
 // 2 core-instance, 5 instance, 6 alias, 7 type, 8 canon, 11 export.
 
-function comp_core_module_section(mod: i32[]): i32[] {
+pub function comp_core_module_section(mod: i32[]): i32[] {
     return wsection(1, mod);
 }
 
@@ -2450,6 +2521,36 @@ function comp_export_one_instance(name: string, inst: i32): i32[] {
     return wsection(11, b);
 }
 
+// alias a type exported by a component instance -> top-level component type
+// (a resource surfaced out of an imported interface, for a canon resource.drop
+// or an own<> handle type).
+pub function comp_alias_inst_type(inst: i32, name: string): i32[] {
+    var b: i32[] = [1, 3, 0];
+    b = leb_u32(b, inst);
+    b = wname(b, name);
+    return wsection(6, b);
+}
+
+// component type own<rt>.
+function comp_type_own(rt: i32): i32[] {
+    var b: i32[] = [1, 105];
+    b = leb_u32(b, rt);
+    return wsection(7, b);
+}
+
+// component func type `handle: func(request: own_req, response-out: own_out)`
+// — wasi:http/incoming-handler's one export, no result.
+function comp_type_handle_func(own_req: i32, own_out: i32): i32[] {
+    var b: i32[] = [1, 64, 2];
+    b = wname(b, "request");
+    b = leb_u32(b, own_req);
+    b = wname(b, "response-out");
+    b = leb_u32(b, own_out);
+    b = b.append(1);
+    b = b.append(0);
+    return wsection(7, b);
+}
+
 // canon resource.drop: a core func that drops a handle of resourceT.
 function comp_canon_resource_drop(rt: i32): i32[] {
     var b: i32[] = [1, 3];
@@ -2495,7 +2596,15 @@ function suffix_group_find(order: string[], iface: string): i32 {
 //   imp_resourceT surfaced resource type index (kind 3)
 // n_type0 / n_inst0 are the component type / instance counts after Phase A;
 // user_mod is the user core module index; core_export is the lifted entry.
-function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+// SuffixWired is the composed suffix up to (not including) its export tail:
+// the sections so far and the index counters the tail continues from.
+struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_inst: i32 }
+
+// component_suffix_wired runs phases B..H of the suffix — the trampolines,
+// lowerings, the user module's instantiation and its memory / realloc /
+// table plumbing — leaving the export tail to the caller: component_suffix
+// lifts a wasi:cli/run entry, component_suffix_http an incoming-handler.
+function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
     var n: i32 = imp_iface.len();
     var o: i32[] = [];
     var none: i32[] = [];
@@ -2662,18 +2771,46 @@ function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32
         }
         i = i + 1;
     }
-    // finish (cli/run): lift core_export and export the run instance.
-    var run_core_f: i32 = n_corefunc;
-    o = wcat(o, comp_alias_core_func(user_inst, core_export));
-    n_corefunc = n_corefunc + 1;
+    return SuffixWired { o: o, n_cfunc: n_cfunc, n_corefunc: n_corefunc, n_inst: n_inst, user_inst: user_inst };
+}
+
+// component_suffix wires the imports and lifts `core_export` (the user
+// module's `() -> i32` run entry) as wasi:cli/run.
+pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string): i32[] {
+    var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
+    var o: i32[] = w.o;
+    var run_core_f: i32 = w.n_corefunc;
+    o = wcat(o, comp_alias_core_func(w.user_inst, core_export));
     o = wcat(o, comp_type_result_unit(n_type0));
-    var lifted: i32 = n_cfunc;
+    var lifted: i32 = w.n_cfunc;
     o = wcat(o, comp_canon_lift_noopts(run_core_f, n_type0 + 1));
-    n_cfunc = n_cfunc + 1;
-    var run_inst: i32 = n_inst;
+    var run_inst: i32 = w.n_inst;
     o = wcat(o, comp_instance_one_func("run", lifted));
-    n_inst = n_inst + 1;
     return wcat(o, comp_export_one_instance("wasi:cli/run@0.2.0", run_inst));
+}
+
+// component_suffix_http wires the imports and lifts the user module's core
+// export `wasi:http/incoming-handler@0.2.0#handle` — core signature
+// (i32, i32) -> (), the two owned resource handles — as the interface's
+// `handle: func(request: own<incoming-request>, response-out:
+// own<response-outparam>)`, exported as wasi:http/incoming-handler@0.2.0.
+// req_t / out_t are the component type indices of the two resources,
+// surfaced from the imported wasi:http/types instance ahead of the suffix
+// (comp_alias_inst_type); the own<> wrappers and the func type are types
+// n_type0 .. n_type0 + 2.
+pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_resourceT: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {
+    var w: SuffixWired = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_resourceT, n_inst0, user_mod);
+    var o: i32[] = w.o;
+    var handle_core_f: i32 = w.n_corefunc;
+    o = wcat(o, comp_alias_core_func(w.user_inst, "wasi:http/incoming-handler@0.2.0#handle"));
+    o = wcat(o, comp_type_own(req_t));
+    o = wcat(o, comp_type_own(out_t));
+    o = wcat(o, comp_type_handle_func(n_type0, n_type0 + 1));
+    var lifted: i32 = w.n_cfunc;
+    o = wcat(o, comp_canon_lift_noopts(handle_core_f, n_type0 + 2));
+    var handler_inst: i32 = w.n_inst;
+    o = wcat(o, comp_instance_one_func("handle", lifted));
+    return wcat(o, comp_export_one_instance("wasi:http/incoming-handler@0.2.0", handler_inst));
 }
 
 // blocking_write_name / write_sig: the one memory import every write-shape

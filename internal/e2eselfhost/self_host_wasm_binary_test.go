@@ -41,25 +41,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	// Build the assembler once: the encoder modules + a read_file driver.
-	var asmSrc strings.Builder
-	for _, name := range []string{"watbin.fern"} {
-		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		asmSrc.Write(b)
-		asmSrc.WriteByte('\n')
-	}
-	asmSrc.WriteString(withPrintInt(asmReadFileDriver))
-	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
-	if len(asmWat) == 0 {
-		t.Fatal("assembler emitter produced 0 bytes")
-	}
-	asmWatPath := filepath.Join(dir, "assembler.wat")
-	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
-		t.Fatalf("write assembler wat: %v", err)
-	}
+	asmWatPath := buildWatbinAssembler(t, gcc, runner, driverBin, dir)
 
 	// run executes a WAT/wasm module under wasmtime (preopening dir for the
 	// assembler's read_file), returning exit code + stdout.
@@ -281,11 +263,120 @@ var wantSIMDMnemonics = map[string][]string{
 // asmReadFileDriver is the assembler's entry point: read the target WAT
 // from the preopened dir, assemble it, and print the module bytes as
 // newline-separated decimals (the test reassembles them into a .wasm).
+// buildWatbinAssembler compiles the assembler — watbin.fern plus a driver
+// that reads target.wat from dir and prints the module's bytes — through the
+// self-host wasm emitter, and returns the assembler's WAT for wasmtime.
+func buildWatbinAssembler(t *testing.T, gcc string, runner []string, driverBin, dir string) string {
+	t.Helper()
+	var asmSrc strings.Builder
+	for _, name := range []string{"watbin.fern"} {
+		b, err := os.ReadFile(filepath.Join("../../examples/self_host", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		asmSrc.Write(b)
+		asmSrc.WriteByte('\n')
+	}
+	asmSrc.WriteString(withPrintInt(asmReadFileDriver))
+	asmWat := runCapture(t, gcc, runner, driverBin, []byte(asmSrc.String()))
+	if len(asmWat) == 0 {
+		t.Fatal("assembler emitter produced 0 bytes")
+	}
+	asmWatPath := filepath.Join(dir, "assembler.wat")
+	if err := os.WriteFile(asmWatPath, asmWat, 0o644); err != nil {
+		t.Fatalf("write assembler wat: %v", err)
+	}
+	return asmWatPath
+}
+
+// assembleWithWatbin runs the built assembler over dir/target.wat and writes
+// the module it prints to dir/<name>.wasm.
+func assembleWithWatbin(t *testing.T, wasmtime, asmWatPath, dir, name string) string {
+	t.Helper()
+	out, err := exec.Command(wasmtime, "run", "--dir", dir, asmWatPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run assembler: %v\n%s", err, out)
+	}
+	var bs []byte
+	for _, tok := range strings.Fields(string(out)) {
+		n, err := strconv.Atoi(tok)
+		if err != nil || n < 0 || n > 255 {
+			t.Fatalf("bad byte %q in assembler output", tok)
+		}
+		bs = append(bs, byte(n))
+	}
+	wasmPath := filepath.Join(dir, name+".wasm")
+	if err := os.WriteFile(wasmPath, bs, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return wasmPath
+}
+
+// TestSelfHostWasmBinaryComponentCoreShapes pins two things the assembler
+// meets in a core module bound for a component, neither of which the Fern
+// programs above produce: the same host function imported twice under two
+// names (the emitter's runtime and an @import extern both naming it), which
+// a component refuses as a duplicate import and the assembler merges into
+// one; and a `local.get` by number inside a folded expression, the export
+// wrappers' spelling, which the folded encoder used to resolve by name only.
+func TestSelfHostWasmBinaryComponentCoreShapes(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	asmWatPath := buildWatbinAssembler(t, gcc, runner, driverBin, dir)
+
+	const wat = `(module
+  (import "wasi_snapshot_preview1" "fd_write" (func $w1 (param i32 i32 i32 i32) (result i32)))
+  (import "wasi_snapshot_preview1" "fd_write" (func $w2 (param i32 i32 i32 i32) (result i32)))
+  (memory (export "memory") 1)
+  (func $twice (param i32) (result i32) (local i32)
+    (local.set 1 (i32.add (local.get 0) (local.get 0)))
+    (local.get 1))
+  (func $start
+    (drop (call $w2 (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 20)))
+    (drop (call $w1 (i32.const 1) (i32.const 8) (i32.const 1) (i32.const 20)))
+    (drop (call $twice (i32.const 3))))
+  (export "_start" (func $start))
+  (data (i32.const 8) "\10\00\00\00\03\00\00\00")
+  (data (i32.const 16) "ok\n"))
+`
+	if err := os.WriteFile(filepath.Join(dir, "target.wat"), []byte(wat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wasmPath := assembleWithWatbin(t, wasmtime, asmWatPath, dir, "shapes")
+	if out, err := exec.Command(wasmtools, "validate", wasmPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
+	}
+	text, err := exec.Command(wasmtools, "print", wasmPath).Output()
+	if err != nil {
+		t.Fatalf("wasm-tools print: %v", err)
+	}
+	if n := strings.Count(string(text), `(import "wasi_snapshot_preview1" "fd_write"`); n != 1 {
+		t.Errorf("the module declares fd_write %d times; the assembler should have merged the two into one", n)
+	}
+	out, err := exec.Command(wasmtime, "run", wasmPath).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v", err)
+	}
+	if string(out) != "ok\nok\n" {
+		t.Errorf("stdout = %q; want both writes through the merged import", out)
+	}
+}
+
 const asmReadFileDriver = `
 function main(): i32 {
     match (read_file("target.wat")) {
         Ok(wat) => {
-            var bytes: i32[] = emit_binary(wat_parse(wat_tokenize(wat)));
+            var bytes: i32[] = wat_to_binary(wat);
             var i: i32 = 0;
             while (i < bytes.len()) { print_int(bytes[i]); write("\n"); i = i + 1; }
             return 0;
