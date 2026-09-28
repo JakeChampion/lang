@@ -350,11 +350,12 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (
             return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
         buf = buf.concat(scratch.take(n));
-        // Hard cap to keep slow / hostile clients from pinning
-        // unbounded memory. Headers must fit in the first 8 KiB; body
-        // capped at 1 MiB. Matches the parser's internal caps.
+        // A connection holds at most the parser's largest request (8 KiB
+        // of headers, 1 MiB of body) unread; past that the peer is
+        // treated as finished: what is complete is answered, then the
+        // connection is closed.
         if (buf.len() > 8192 + 1048576) {
-            return (c, true);
+            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
         }
     }
     return (c, true);
@@ -414,50 +415,75 @@ function __pipeline_burst(): i32 {
     return 32;
 }
 
-// __serve_idle(c, at, opts) — an answered connection waiting for its next
-// request, with the keep-alive idle span to arrive in.
-function __serve_idle(c: __Conns, at: i32, opts: ServeOptions): __Conns {
-    return __Conns { ...c, deadlines: c.deadlines.with(at, monotonic_ns() + opts.keep_alive_idle.as_nanos()) };
+// __serve_next(c, at, opts) — an answered connection with nothing left
+// to answer, and the deadline it waits under: the idle span once its
+// buffer is empty, the read deadline while a partial request holds
+// bytes in it. The deadline bounds the wait for the peer, not the
+// handlers run before it, so a partial request's clock starts here
+// rather than at its first byte, which may have arrived a burst ago.
+function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
+    var span: Duration = opts.keep_alive_idle;
+    if (c.bufs[at].len() > c.offs[at]) { span = opts.recv_deadline; }
+    return __Conns { ...c, deadlines: c.deadlines.with(at, monotonic_ns() + span.as_nanos()) };
 }
 
-// __serve_next(c, at, opts) — an answered connection's deadline: the
-// idle span once its buffer is empty; while bytes remain (the next
-// pipelined request, or the start of one) the read deadline the first
-// of them armed stays, so a partial request cannot outlive the
-// slow-loris guard by arriving behind a complete one.
-function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
-    if (c.bufs[at].len() > c.offs[at]) { return c; }
-    return __serve_idle(c, at, opts);
+// __serve_ready(c, at, opts) — a persisting connection whose response has
+// gone out whole: `(conns, more)`, `more` when a complete request is
+// buffered, for the loop to answer now; a connection with a request to
+// answer is not waiting on the peer, so its deadline is left alone.
+// Otherwise it waits under `__serve_next`'s deadline.
+function __serve_ready(c: __Conns, at: i32, opts: ServeOptions): (__Conns, boolean) {
+    if (__has_request(c, at)) { return (c, true); }
+    return (__serve_next(c, at, opts), false);
 }
 
 // __serve_respond(drv, c, at, wire, opts, answered) — the response sent
 // and the connection's next state: `(conns, more)`, where `more` says
-// the connection persists with its bytes ready for the next request, so
-// the loop may answer a pipelined request now. A short write leaves the
-// rest pending, to be finished by a later wait (`__serve_drained`); a
-// finished write closes a connection that does not persist; and the
-// `answered`th response of one event ends the event's burst, leaving a
-// request still buffered as the connection's backlog.
+// the connection persists with its next request already buffered, so
+// the loop answers it now. A short write leaves the rest pending, to be
+// finished by a later wait (`__serve_drain`); a write the kernel refuses
+// closes the connection; a finished write closes a connection that does
+// not persist; and the `answered`th response of one event ends the
+// event's burst, leaving a request still buffered as the connection's
+// backlog.
 function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: string, opts: ServeOptions, answered: i32): (__Conns, boolean) {
-    var sent: (__Conns, boolean) = __serve_send(drv, c, at, wire, opts.recv_deadline);
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, wire, opts.recv_deadline);
     c = sent.0;
-    if (!sent.1) { return (c, false); }
+    match (sent.1) {
+        Partial => { return (c, false); },
+        Failed => { return (__serve_close(drv, c, at), false); },
+        Whole => { }
+    }
     if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
-    c = __serve_next(c, at, opts);
-    if (answered >= __pipeline_burst() && __has_request(c, at)) {
+    var ready: (__Conns, boolean) = __serve_ready(c, at, opts);
+    c = ready.0;
+    if (!ready.1) { return (c, false); }
+    if (answered >= __pipeline_burst()) {
         return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false);
     }
     return (c, true);
 }
 
-// __serve_drained(drv, c, at, opts) — a pending response the kernel has
-// now taken whole: `(conns, more)` as `__serve_respond` answers it, with
-// a persisting connection watched for reads again, or closed when the
-// reactor refuses to watch it.
-function __serve_drained[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, boolean) {
-    if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
-    if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), false); }
-    return (__serve_next(__Conns { ...c, pending: c.pending.with(at, "") }, at, opts), true);
+// __serve_drain(drv, c, at, opts) — a writable connection with a response
+// still pending: the rest written, and `(conns, at, false)` once it has
+// gone out whole on a persisting connection with a request buffered
+// behind it, watched for reads again; `(conns, -1, false)` while it is
+// still draining, when the connection waits for its next request, or
+// when it is closed (the write failed, the connection does not persist,
+// or the reactor refused to watch it again).
+function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, i32, boolean) {
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts.recv_deadline);
+    c = sent.0;
+    match (sent.1) {
+        Partial => { return (c, -1, false); },
+        Failed => { return (__serve_close(drv, c, at), -1, false); },
+        Whole => { }
+    }
+    if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
+    if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
+    var ready: (__Conns, boolean) = __serve_ready(__Conns { ...c, pending: c.pending.with(at, "") }, at, opts);
+    if (!ready.1) { return (ready.0, -1, false); }
+    return (ready.0, at, false);
 }
 
 // __serve_eof(drv, c, at) — the peer has finished sending: a response
@@ -477,15 +503,7 @@ function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions): (__Conns, i32, boolean) {
     var at: i32 = __conns_index(c, fd);
     if (at < 0) { return (c, -1, false); }
-    if (c.pending[at].len() > 0) {
-        var sent: (__Conns, boolean) = __serve_send(drv, c, at, c.pending[at], opts.recv_deadline);
-        c = sent.0;
-        if (!sent.1) { return (c, -1, false); }
-        var drained: (__Conns, boolean) = __serve_drained(drv, c, at, opts);
-        c = drained.0;
-        if (!drained.1) { return (c, -1, false); }
-        return (c, at, false);
-    }
+    if (c.pending[at].len() > 0) { return __serve_drain(drv, c, at, opts); }
     var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
     return (read.0, at, read.1);
 }
@@ -504,38 +522,59 @@ function __serve_finish[D: async.Driver](drv: D, c: __Conns, fd: i32, eof: boole
 }
 
 // __with_backlog(c, events) — the wait's events with one more for every
-// connection whose burst left a request buffered, so the loop answers it
-// on this pass without the peer having to send anything.
+// connection whose burst left a request buffered and that the wait did
+// not report itself, so the loop answers the backlog on this pass
+// without the peer having to send anything, and once per pass.
 function __with_backlog(c: __Conns, events: i32[]): i32[] {
+    var reported: i32 = events.len();
     var i: i32 = 0;
     while (i < c.fds.len()) {
-        if (c.backlog[i]) { events = events.append(c.fds[i]).append(0); }
+        if (c.backlog[i] && !__reported(events, reported, c.fds[i])) { events = events.append(c.fds[i]).append(0); }
         i = i + 1;
     }
     return events;
 }
 
+// __reported(events, n, fd) — whether `fd` is among the first `n` entries
+// of the wait's (fd, readiness) pairs.
+function __reported(events: i32[], n: i32, fd: i32): boolean {
+    var k: i32 = 0;
+    while (k + 1 < n) {
+        if (events[k] == fd) { return true; }
+        k = k + 2;
+    }
+    return false;
+}
+
+// __Sent — how far a write got: the kernel took it all, keeps the rest
+// as the connection's pending bytes, or refused it.
+enum __Sent { Whole, Partial, Failed }
+
 // __serve_send(drv, c, at, payload, deadline) — the response written to
-// the connection at `at`: `(conns, done)`, done when the kernel took it
-// all or refused it. A short write keeps the rest as the connection's
-// pending bytes, watches it for writability instead of reads and gives
-// it `deadline` to drain; the loop finishes the write on later waits.
-function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, deadline: Duration): (__Conns, boolean) {
+// the connection at `at`: `(conns, sent)`. A short write keeps the rest
+// as the connection's pending bytes, watches it for writability instead
+// of reads and gives it `deadline` to drain; the loop finishes the write
+// on later waits. A write the kernel refuses (the peer is gone) leaves
+// the connection to the caller to close.
+function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, deadline: Duration): (__Conns, __Sent) {
     var n: i32 = tcp_send(c.fds[at], payload);
-    if (n >= payload.len()) { return (c, true); }
-    if (n < 0 && n != 0 - __eagain()) { return (c, true); }
+    if (n >= payload.len()) { return (c, Whole); }
+    if (n < 0 && n != 0 - __eagain()) { return (c, Failed); }
     var rest: string = payload;
     if (n > 0) { rest = slice_unchecked(payload, n, payload.len()).to_owned(); }
     drv.watch(c.fds[at], 2);
-    return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, false);
+    return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, Partial);
 }
 
 // __serve_expire(drv, c, now) — every connection whose deadline is due
-// closed, without a response or with the rest of one unsent.
+// closed, without a response or with the rest of one unsent. A
+// connection whose backlog holds a request is not waiting on the peer:
+// its deadline is stale from the read that filled the backlog, and it
+// stays open for the next wait to answer it.
 function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns {
     var i: i32 = 0;
     while (i < c.fds.len()) {
-        if (c.deadlines[i] <= now) {
+        if (c.deadlines[i] <= now && !c.backlog[i]) {
             c = __serve_close(drv, c, i);
         } else {
             i = i + 1;

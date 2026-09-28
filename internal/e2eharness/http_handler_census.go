@@ -26,6 +26,11 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 		t.Fatal(err)
 	}
 	src := string(data)
+	const async = "import \"std/async\";"
+	if strings.Count(src, async) != 1 {
+		t.Fatal("std/tcp's imports changed; update its bounded census fixture")
+	}
+	src = strings.Replace(src, async, "import \"std/platform\";\n"+async, 1)
 	start := strings.Index(src, "function __serve_loop(")
 	if start < 0 {
 		t.Fatal("production accept loop not found")
@@ -47,32 +52,54 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	// sweep and the census unbalanced.
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("var completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
 	body = strings.Replace(body, answered, answered+"\n                        completed = completed + 1;", 1)
+	// A handler may not sleep around its Platform bag (E080), so the slow
+	// paths burn pure work: 15M steps is 24 ms on wasm, 52 ms on x86-64
+	// and 69 ms under qemu, so a burst of 32 outlasts the 300 ms read
+	// deadline everywhere; /gone burns five times that, the window in
+	// which the client resets the connection.
 	return src[:start] + body + src[end:] + `
+function census_burn(n: i32): i32 {
+    var x: i32 = 12345;
+    var i: i32 = 0;
+    while (i < n) {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        i = i + 1;
+    }
+    return x;
+}
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var work: i32 = 0;
+    if (req.path.starts_with("/slow")) { work = 15000000; }
+    if (req.path.starts_with("/gone")) { work = 75000000; }
+    if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
+    if (census_burn(work) == 0 - 1) { return http.http_response_ok("never"); }
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });
+    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });
 }
 `
 }
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 238
+const KeepAliveCycle = 273
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
-// one second: a pipeline of 200 requests on one connection, answered in
+// 300 ms: a pipeline of 200 requests on one connection, answered in
 // order across several waits and closed by the cap; HTTP/1.0 and
 // `Connection: close` requests that end theirs; a pipeline of 33 requests
 // whose peer half-closes behind them, one more than the loop's burst so
 // the last is answered from the backlog after the end of stream has been
 // read, and must say close; a complete request followed by the start of
-// another, whose connection the read deadline closes; and an HTTP/1.0
-// keep-alive request followed by an HTTP/1.1 one on the same connection.
-// Every response is checked, and every close the server owes is read as
-// EOF.
+// another, whose connection the read deadline closes; a pipeline of 33
+// requests whose handlers together outlast that deadline, all of which
+// must be answered; a pipelined request answered to a peer that has
+// reset the connection, whose failed write must close it before the
+// request behind it is answered; and an HTTP/1.0 keep-alive request
+// followed by an HTTP/1.1 one on the same connection. Every response is
+// checked, and every close the server owes is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -184,8 +211,8 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "half-closed pipeline, last", "close")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
-		// then closed by the one-second read deadline the partial request
-		// keeps, not left waiting under the idle span.
+		// then closed by the 300 ms read deadline the partial request waits
+		// under, not left waiting under the idle span.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		write(conn, "GET /j HTTP/1.1\r\nHost: localhost\r\n\r\nGET /k HT")
@@ -193,8 +220,40 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		started := time.Now()
 		eof(conn, r, "the partial request's deadline")
 		if waited := time.Since(started); waited > 4*time.Second {
-			t.Fatalf("the partial request was closed after %v, not by the one-second read deadline", waited)
+			t.Fatalf("the partial request was closed after %v, not by the 300 ms read deadline", waited)
 		}
+		// A pipeline of 33 requests whose handlers each burn tens of
+		// milliseconds: the event's burst of 32 alone outlasts the 300 ms
+		// read deadline their first byte armed, and the 33rd is answered
+		// from the backlog on the next wait, so all 33 answered proves a
+		// connection with a request still to answer is not closed by that
+		// deadline.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		pipeline.Reset()
+		for i := 0; i < 33; i++ {
+			fmt.Fprintf(&pipeline, "GET /slow%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
+		}
+		write(conn, pipeline.String())
+		for i := 0; i < 33; i++ {
+			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "keep-alive")
+		}
+		conn.Close()
+		// A request, a slow one and a third behind it in one write; the
+		// peer resets the connection once the first is answered, so the
+		// second response is written to a peer that is gone. That write
+		// fails, and the loop must close the connection rather than record
+		// the response as delivered and answer the third: the handler
+		// reports the third on stderr, which RunHTTPKeepAlive refuses.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /n HTTP/1.1\r\nHost: localhost\r\n\r\nGET /gone HTTP/1.1\r\nHost: localhost\r\n\r\nGET /behind-a-failed-write HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		read(conn, r, "before the reset", "keep-alive")
+		if err := conn.(*net.TCPConn).SetLinger(0); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		conn.Close()
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()
@@ -211,7 +270,18 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 // the client, over a loop bounded to a multiple of KeepAliveCycle.
 func RunHTTPKeepAlive(t *testing.T, command *exec.Cmd, rounds int) string {
 	t.Helper()
-	return runBoundedHTTPServer(t, command, func(addr string) { HTTPKeepAliveRequests(t, addr, rounds) })
+	return keepAliveOutput(t, runBoundedHTTPServer(t, command, func(addr string) { HTTPKeepAliveRequests(t, addr, rounds) }))
+}
+
+// keepAliveOutput is the server's output once it has been checked for the
+// request the fixture's handler must never see: the one pipelined behind
+// a response whose write the peer's reset refused.
+func keepAliveOutput(t *testing.T, out string) string {
+	t.Helper()
+	if strings.Contains(out, "answered /behind-a-failed-write") {
+		t.Fatalf("the loop answered a request behind a failed write instead of closing the connection:\n%s", out)
+	}
+	return out
 }
 
 func RunHTTPHandlerCensus(t *testing.T, command *exec.Cmd, rounds int) string {
@@ -293,7 +363,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -302,7 +372,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     var port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });
+    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)
@@ -317,7 +387,7 @@ func RunWasiHTTPHandlerCensus(t *testing.T, component string, rounds int) string
 // as the client.
 func RunWasiHTTPKeepAlive(t *testing.T, component string, rounds int) string {
 	t.Helper()
-	return runBoundedWasiHTTPServer(t, component, func(addr string) { HTTPKeepAliveRequests(t, addr, rounds) })
+	return keepAliveOutput(t, runBoundedWasiHTTPServer(t, component, func(addr string) { HTTPKeepAliveRequests(t, addr, rounds) }))
 }
 
 func runBoundedWasiHTTPServer(t *testing.T, component string, client func(addr string)) string {

@@ -1167,9 +1167,12 @@ loop and `std/fetch` the client.
   the other connections off the reactor), and every response names
   the outcome in its `Connection` header: once the peer's end of
   stream has been read, the last buffered request's response says
-  `close`, since the close follows it. A partial request behind a complete one keeps
-  the read deadline its first bytes armed; only an empty buffer waits
-  under the idle span.
+  `close`, since the close follows it. A partial request behind a
+  complete one waits under the read deadline, armed once the loop turns
+  to it; only an empty buffer waits under the idle span; and a
+  connection with a complete request still to answer is not waiting at
+  all, so no deadline closes it. A write the kernel refuses closes the
+  connection.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
   keep_alive_requests }` (`serve_options()` is 128, one listener per

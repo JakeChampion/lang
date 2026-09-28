@@ -9,12 +9,12 @@ import (
 )
 
 // Persistent connections on the production accept loop (#9854): the same
-// bounded loop as the census, driven by HTTPKeepAliveRequests, whose
-// requests are pipelined pairs on one connection, an HTTP/1.0 request
-// asking to keep it, the fourth request reaching the per-connection cap and
-// answered with `Connection: close`, and HTTP/1.0 and `Connection: close`
-// requests each ending theirs. Every response's `Connection` is checked,
-// every close the server owes is read as EOF, and the census must balance.
+// bounded loop as the census, driven by e2eharness.HTTPKeepAliveRequests,
+// whose doc comment lists the cases (pipelines beyond the burst and the
+// cap, a half-closed one, a partial request, handlers outlasting the read
+// deadline, a reset peer, the HTTP/1.0 and `Connection: close` forms).
+// Every response's `Connection` is checked, every close the server owes is
+// read as EOF, and the census must balance.
 func TestHTTPKeepAlive(t *testing.T) {
 	compiler := buildFernCLI(t)
 	for _, tc := range []struct{ target, backend string }{
