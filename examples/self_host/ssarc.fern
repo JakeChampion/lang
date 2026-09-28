@@ -3806,6 +3806,7 @@ pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
         ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
          "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
+    arrays = irlower.without_thread_rows_through(arrays, name);
     if let typeinfo.TypeTuple(tup) = f.result {
         tuples = tuples.append(name);
         var flags: string = tuple_flags(tup);

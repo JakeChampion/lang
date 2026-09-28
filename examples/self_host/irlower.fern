@@ -25659,11 +25659,10 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // replaces the slot's value rather than sharing one. No `target_is_arr`
     // exclusion either: the target IS an array here, which is what makes this
     // the branch the array classes below could not cover.
-    if (slot_is_reclaimable_strarr(s, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
-    // A credited struct array REBOUND from a producer (`ps = mk(n)`, #10360):
-    // the rebuild shares nothing with the old array, so its element boxes go
-    // with its buffer.
-    if (slot_is_reclaimable_struct_arr(s, slot)) { return emit_struct_arr_reclaim_store(se, slot); }
+    // A credited struct array REBOUND from a producer (`ps = mk(n)`, #10360)
+    // takes the same deep release. A threader's result (#10420) carries the old
+    // elements, so that rebind keeps the shallow store below.
+    if (arr_rebind_frees_elems(s, slot, a)) { return emit_arr_elem_reclaim_store(se, slot); }
     // A reclaimable REBOUND Option (`o = Some(..)`, credited "OPTARR:" /
     // "OPTARRARR:" / "OPTSTRUCT:" / "OPTTUP:"): free the superseded payload + option
     // box before storing the fresh one, at the depth that payload kind needs. This
@@ -41328,6 +41327,9 @@ function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string
             var nm: string = slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "";
             if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
         }
+        // A threader row rides along whole; no bare name can match it.
+        var thr: string = thread_row_name(fresh_ret[i]);
+        if (thr.len() > 0 && !body_declares_name(body, thr)) { out = push_str_unique(out, fresh_ret[i]); }
         i = i + 1;
     }
     return out;
@@ -41367,6 +41369,21 @@ function strarr_rebind_is_fresh(e: ast.Expr, name: string, borrowable: string[],
         _ => { return false; }
     }
     return false;
+}
+
+// strarr_thread_rebind: `name = g(.., name, ..)` through a threader (#10420),
+// every other argument free of an element hazard on `name`.
+function strarr_thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
+    var k: i32 = thread_rebind_pos(e, name, rows);
+    if (k < 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (i != k && strarr_expr_unsafe(c.args[i], name, borrowable)) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
 }
 
 function strarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], str_fresh: string[], strarr_producers: string[]): boolean {
@@ -41457,6 +41474,7 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 // nothing with what the slot holds. Unlike the two self-rebinds
                 // above it is not a call shape, so it is tested after the match.
                 if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
+                if (strarr_thread_rebind(a.value, name, borrowable, strarr_producers)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             // The assign form of the struct-literal field share above: the
@@ -43438,6 +43456,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
     var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites, sfok);
+    var producers: string[] = unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:");
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -43449,9 +43468,9 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
         if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
         if (!marker
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"))
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, producers)
             && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
-            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok)) {
+            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, producers)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -45721,6 +45740,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
     // Free functions only: the forwarding arm resolves a bare-ident callee, so a
     // method key could never be the thing it looks up.
     var fwd: string[] = fresh_struct_fwd_fixpoint(funcs, structs, arr_fresh, sfok);
+    out = util.append_all(out, thread_rows_of(funcs, structs, sfok, str_fresh, fwd));
     // "ENUM:<name>" — FREE functions whose every return hands the caller a
     // count (fresh_enum_fwd_fixpoint). The ExprStructLit enum arm hands such a
     // result over with no alias-inc, the same class as a ctor written at the
@@ -51003,7 +51023,7 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (structarr_self_append_elem(a.value, name, fresh_ret)) { return false; }
+                if (structarr_self_append_elem(a.value, name, fresh_ret) || thread_rebind(a.value, name, borrowable, fresh_ret)) { return false; }
                 return !struct_arr_producer_rebind(a.value, name, borrowable, fresh_ret, "STRUCTARRF:");
             }
             return expr_unsafe_for(a.value, name, borrowable, []);
@@ -51056,13 +51076,16 @@ function producer_call_row(e: ast.Expr, rows: string[], tag: string): boolean {
     return false;
 }
 
-// unshadowed_producer_rows: `rows` less the `tag` rows naming a function that a
-// local of `body` shadows — a call through that name reaches the local's value.
+// unshadowed_producer_rows: `rows` less the `tag` rows and the threader rows
+// naming a function that a local of `body` shadows — a call through that name
+// reaches the local's value.
 function unshadowed_producer_rows(rows: string[], body: ast.Stmt[], tag: string): string[] {
     var out: string[] = [];
     for row in rows {
         var shadowed: boolean = row.len() > tag.len() && slice_unchecked(row, 0, tag.len()) == tag
             && body_declares_name(body, slice_unchecked(row, tag.len(), row.len()) + "");
+        var thr: string = thread_row_name(row);
+        if (thr.len() > 0 && body_declares_name(body, thr)) { shadowed = true; }
         if (!shadowed) { out = out.append(row); }
     }
     return out;
@@ -51087,6 +51110,282 @@ function name_rebound_by_producer(stmts: ast.Stmt[], name: string, rows: string[
     var sc: ProducerRebindScan = ProducerRebindScan { name: name, rows: rows, tag: tag, found: false };
     for st in stmts { sc = astwalk.fold_stmt_spine(st, sc, producer_rebind_visit); }
     return sc.found;
+}
+
+// A THREADER hands back its parameter k grown only by fresh elements (#10420):
+// every return is `k`, `k.append(e)` with `e` an element the array may own, a
+// local alias of k rebuilt only that way, or a call to another threader holding
+// such a value at its threaded position, and k is otherwise read only as a
+// borrow. `acc = walk(n, acc)` then leaves acc holding its own elements plus
+// fresh ones held nowhere else, so a credited acc keeps its exit element walk.
+// The rebind store stays shallow: the result carries the old elements uncounted.
+// Registered "THREAD<k>:<name>" in the return_fresh_struct_ret_fns list, for a
+// free function whose `string[]` or struct-array return type is k's type.
+function thread_row(k: i32, name: string): string { return "THREAD" + util.i32_to_string(k) + ":" + name; }
+
+// thread_row_name: the function a "THREAD<k>:" row names, or "".
+function thread_row_name(row: string): string {
+    if (row.len() < 8 || slice_unchecked(row, 0, 6) != "THREAD") { return ""; }
+    var i: i32 = 6;
+    while (i < row.len() && row[i] >= b'0' && row[i] <= b'9') { i = i + 1; }
+    if (i == 6 || i >= row.len() || row[i] != b':') { return ""; }
+    return slice_unchecked(row, i + 1, row.len()) + "";
+}
+
+// without_thread_rows_through: `rows` with every threader row dropped when
+// `name` is a threader. The other rows were proved through its body, which a
+// produced callee no longer lowers from.
+pub function without_thread_rows_through(rows: string[], name: string): string[] {
+    var named: boolean = false;
+    for row in rows { if (thread_row_name(row) == name) { named = true; } }
+    if (!named) { return rows; }
+    var out: string[] = [];
+    for row in rows { if (thread_row_name(row) == "") { out = out.append(row); } }
+    return out;
+}
+
+// thread_rebind_pos: the argument index at which the direct call `e` hands the
+// bare ident `name` to a threader in `rows` at its threaded position, or -1.
+function thread_rebind_pos(e: ast.Expr, name: string, rows: string[]): i32 {
+    if let ast.ExprCall(c) = e {
+        var callee: string = ident_name_or_empty(c.callee);
+        if (callee.len() == 0) { return 0 - 1; }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) == name && util.index_of_str(rows, thread_row(i, callee)) >= 0) { return i; }
+            i = i + 1;
+        }
+    }
+    return 0 - 1;
+}
+
+// thread_rebind: `name = g(.., name, ..)` through a threader, with every other
+// argument reading `name` at most as a borrow.
+function thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
+    var k: i32 = thread_rebind_pos(e, name, rows);
+    if (k < 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (i != k && expr_unsafe_for(c.args[i], name, borrowable, [])) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+function threader_rebind_visit(st: ast.Stmt, own sc: ProducerRebindScan): ProducerRebindScan {
+    if let ast.StmtAssign(a) = st {
+        if (a.target == sc.name && thread_rebind_pos(a.value, sc.name, sc.rows) >= 0) {
+            return ProducerRebindScan { ...sc, found: true };
+        }
+    }
+    return sc;
+}
+
+// name_rebound_by_threader: some statement of `stmts` rebinds `name` through a
+// threader in `rows`.
+function name_rebound_by_threader(stmts: ast.Stmt[], name: string, rows: string[]): boolean {
+    var sc: ProducerRebindScan = ProducerRebindScan { name: name, rows: rows, tag: "", found: false };
+    for st in stmts { sc = astwalk.fold_stmt_spine(st, sc, threader_rebind_visit); }
+    return sc.found;
+}
+
+// ThreadScan: one threader candidate's body proof. `names` holds k and its
+// aliases, `shadow` every name the body or the parameters bind, and `elem` the
+// array's element type.
+struct ThreadScan { names: string[], elem: string, rows: string[], shadow: string[], structs: StructTab, sfok: string[], str_fresh: string[], fwd: string[] }
+
+// thread_elem_fresh: an element the threaded array may own outright — a fresh
+// string, or a fresh struct literal or strict-fresh struct producer's result.
+function thread_elem_fresh(e: ast.Expr, sc: ThreadScan): boolean {
+    if (sc.elem == "string") { return strarr_value_is_fresh(e, sc.str_fresh); }
+    if (is_fresh_struct_init(e, sc.structs, sc.sfok)) { return true; }
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee { return util.index_of_str(sc.fwd, cid.name) >= 0; }
+    }
+    return false;
+}
+
+function thread_expr_unsafe(e: ast.Expr, sc: ThreadScan): boolean {
+    for n in sc.names { if (expr_unsafe_for(e, n, [], [])) { return true; } }
+    return false;
+}
+
+// thread_call_ok: `c` calls a threader, holding a threaded value at its threaded
+// position and reading the threaded names nowhere else.
+function thread_call_ok(c: ast.ExprCall, sc: ThreadScan): boolean {
+    var callee: string = ident_name_or_empty(c.callee);
+    if (callee.len() == 0 || util.index_of_str(sc.shadow, callee) >= 0) { return false; }
+    var k: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        if (k < 0 && util.index_of_str(sc.rows, thread_row(i, callee)) >= 0 && thread_expr_ok(c.args[i], sc)) { k = i; }
+        else if (thread_expr_unsafe(c.args[i], sc)) { return false; }
+        i = i + 1;
+    }
+    return k >= 0;
+}
+
+// thread_expr_ok: `e` is a threaded value — a threaded name, one grown by a
+// fresh element, or a threader's result over one.
+function thread_expr_ok(e: ast.Expr, sc: ThreadScan): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return util.index_of_str(sc.names, id.name) >= 0; },
+        ast.ExprCall(c) => {
+            if let ast.ExprFieldAccess(fa) = c.callee {
+                return fa.field == "append" && c.args.len() == 1 && thread_expr_ok(fa.obj, sc)
+                    && thread_elem_fresh(c.args[0], sc) && !thread_expr_unsafe(c.args[0], sc);
+            }
+            return thread_call_ok(c, sc);
+        },
+        _ => {}
+    }
+    return false;
+}
+
+function thread_alias_visit(st: ast.Stmt, own sc: ThreadScan): ThreadScan {
+    if let ast.StmtVar(v) = st {
+        if (util.index_of_str(sc.names, v.name) < 0 && thread_expr_ok(v.init, sc)) {
+            return ThreadScan { ...sc, names: sc.names.append(v.name) };
+        }
+    }
+    return sc;
+}
+
+// thread_aliases: k's alias set, grown until no `var` bound from a threaded
+// value is left out.
+function thread_aliases(body: ast.Stmt[], sc: ThreadScan): ThreadScan {
+    var cur: ThreadScan = sc;
+    var n: i32 = 0 - 1;
+    while (n != cur.names.len()) {
+        n = cur.names.len();
+        for st in body { cur = astwalk.fold_stmt_spine(st, cur, thread_alias_visit); }
+    }
+    return cur;
+}
+
+function thread_body_ok(stmts: ast.Stmt[], sc: ThreadScan): boolean {
+    for st in stmts { if (!thread_stmt_ok(st, sc)) { return false; } }
+    return true;
+}
+
+// thread_rebinds_ok: a `var` or assignment of a threaded name takes a threaded
+// value; any other reads the threaded names only as a borrow.
+function thread_rebinds_ok(target: string, value: ast.Expr, sc: ThreadScan): boolean {
+    if (util.index_of_str(sc.names, target) >= 0) { return thread_expr_ok(value, sc); }
+    return !thread_expr_unsafe(value, sc);
+}
+
+function thread_stmt_ok(st: ast.Stmt, sc: ThreadScan): boolean {
+    match (st) {
+        ast.StmtVar(v) => { return thread_rebinds_ok(v.name, v.init, sc); },
+        ast.StmtAssign(a) => { return thread_rebinds_ok(a.target, a.value, sc); },
+        ast.StmtReturn(r) => { return thread_expr_ok(r.value, sc); },
+        ast.StmtIf(f) => { return thread_if_ok(f, sc); },
+        ast.StmtWhile(w) => { return thread_block_ok(w.cond, w.body, sc); },
+        ast.StmtFor(fo) => { return thread_for_ok(fo, sc); },
+        ast.StmtMatch(m) => { return thread_match_ok(m, sc); },
+        ast.StmtDefer(d) => { return thread_stmt_ok(d.action, sc); },
+        _ => { return !thread_stmt_unsafe(st, sc); }
+    }
+    return false;
+}
+
+function thread_stmt_unsafe(st: ast.Stmt, sc: ThreadScan): boolean {
+    for n in sc.names { if (stmt_unsafe_for(st, n, [], [])) { return true; } }
+    return false;
+}
+
+function thread_if_ok(f: ast.StmtIf, sc: ThreadScan): boolean {
+    return thread_block_ok(f.cond, f.then_body, sc) && thread_body_ok(f.else_body, sc);
+}
+
+// thread_block_ok: a condition that reads the threaded names only as a borrow,
+// and a body that keeps the threading.
+function thread_block_ok(cond: ast.Expr, body: ast.Stmt[], sc: ThreadScan): boolean {
+    return !thread_expr_unsafe(cond, sc) && thread_body_ok(body, sc);
+}
+
+// thread_for_ok: `for x in name` borrows each element for the iteration.
+function thread_for_ok(fo: ast.StmtFor, sc: ThreadScan): boolean {
+    if (ident_name_or_empty(fo.iter).len() == 0 && thread_expr_unsafe(fo.iter, sc)) { return false; }
+    return thread_body_ok(fo.body, sc);
+}
+
+function thread_match_ok(m: ast.StmtMatch, sc: ThreadScan): boolean {
+    if (thread_expr_unsafe(m.scrutinee, sc)) { return false; }
+    for arm in m.arms {
+        if (arm.has_guard && thread_expr_unsafe(arm.guard, sc)) { return false; }
+        if (!thread_body_ok(arm.body, sc)) { return false; }
+    }
+    return true;
+}
+
+// thread_param_elem: the element type when parameter k of `fn` may thread —
+// a free function returning k's own `string[]` or struct-array type — or "".
+function thread_param_elem(fn: parser.FuncDecl, k: i32, structs: StructTab): string {
+    var rt: string = fn.ret_type;
+    if (fn.receiver_type.len() > 0 || fn.params[k].type_name != rt || rt.len() < 3) { return ""; }
+    if (slice_unchecked(rt, rt.len() - 2, rt.len()) != "[]") { return ""; }
+    var el: string = slice_unchecked(rt, 0, rt.len() - 2) + "";
+    if (el == "string" || decl_is_struct(structs, el)) { return el; }
+    return "";
+}
+
+// ThreadCands: the (function index, parameter) pairs still standing in the
+// threader fixpoint.
+struct ThreadCands { fis: i32[], ks: i32[] }
+
+function thread_candidates(funcs: parser.FuncDecl[], structs: StructTab): ThreadCands {
+    var out: ThreadCands = ThreadCands { fis: [], ks: [] };
+    var fi: i32 = 0;
+    while (fi < funcs.len()) {
+        var k: i32 = 0;
+        while (k < funcs[fi].params.len() && body_has_return(funcs[fi].body)) {
+            if (thread_param_elem(funcs[fi], k, structs) != "") { out = ThreadCands { fis: out.fis.append(fi), ks: out.ks.append(k) }; }
+            k = k + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+function thread_cand_rows(funcs: parser.FuncDecl[], cands: ThreadCands): string[] {
+    var rows: string[] = [];
+    var i: i32 = 0;
+    while (i < cands.fis.len()) { rows = rows.append(thread_row(cands.ks[i], funcs[cands.fis[i]].name)); i = i + 1; }
+    return rows;
+}
+
+function thread_param_holds(fn: parser.FuncDecl, k: i32, rows: string[], structs: StructTab, sfok: string[], str_fresh: string[], fwd: string[]): boolean {
+    var shadow: string[] = astwalk.collect_bound_stmts(fn.body, []);
+    for p in fn.params { shadow = shadow.append(p.name); }
+    var sc: ThreadScan = ThreadScan { names: [fn.params[k].name], elem: thread_param_elem(fn, k, structs), rows: rows,
+        shadow: shadow, structs: structs, sfok: sfok, str_fresh: str_fresh, fwd: fwd };
+    return thread_body_ok(fn.body, thread_aliases(fn.body, sc));
+}
+
+// thread_rows_of: the "THREAD<k>:" rows, as a GREATEST fixpoint — a candidate
+// leaves once its body cites one that already left. A recursive threader holds
+// by induction on the calls that return, which a least fixpoint would refuse.
+function thread_rows_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[], str_fresh: string[], fwd: string[]): string[] {
+    var cands: ThreadCands = thread_candidates(funcs, structs);
+    var n: i32 = 0 - 1;
+    while (n != cands.fis.len()) {
+        n = cands.fis.len();
+        var rows: string[] = thread_cand_rows(funcs, cands);
+        var kept: ThreadCands = ThreadCands { fis: [], ks: [] };
+        var i: i32 = 0;
+        while (i < cands.fis.len()) {
+            if (thread_param_holds(funcs[cands.fis[i]], cands.ks[i], rows, structs, sfok, str_fresh, fwd)) {
+                kept = ThreadCands { fis: kept.fis.append(cands.fis[i]), ks: kept.ks.append(cands.ks[i]) };
+            }
+            i = i + 1;
+        }
+        cands = kept;
+    }
+    return thread_cand_rows(funcs, cands);
 }
 
 // collect_fresh_structarr_names: `var g = [P { .. }, P { .. }]` bindings whose
@@ -51131,6 +51430,13 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 else if (structarr_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
                     && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"), "STRUCTARRF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+                // An EMPTY seed grown only through a threader (#10420): append-built
+                // one call frame in.
+                else if (structarr_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
+                    && name_rebound_by_threader(stmts, v.name, fresh_ret)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             ast.StmtIf(f) => { a = collect_fresh_structarr_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_structarr_names(f.else_body, body, structs, fresh_ret, a); },
@@ -54838,7 +55144,7 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return false; }
+                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok) || thread_rebind(a.value, name, borrowable, producers)) { return false; }
                 return !struct_arr_producer_rebind(a.value, name, borrowable, producers, "ARRSTRUCTF:");
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
@@ -55104,6 +55410,12 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                     && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), "ARRSTRUCTF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
+                // An EMPTY seed grown only through a threader (#10420), as for STRUCTARR.
+                else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
+                    && name_rebound_by_threader(stmts, v.name, fresh_ret)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
+                }
             },
             ast.StmtIf(f) => { a = collect_fresh_arrstruct_names(f.then_body, body, structs, fresh_ret, a, msites, sfok); a = collect_fresh_arrstruct_names(f.else_body, body, structs, fresh_ret, a, msites, sfok); },
             ast.StmtWhile(w) => { a = collect_fresh_arrstruct_names(w.body, body, structs, fresh_ret, a, msites, sfok); },
@@ -55223,17 +55535,17 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
 
 // arrstruct_chain_esc: rctuple_chain_esc's array-of-structs sibling — re-scans
 // a code-3 chain's index expressions and call arguments.
-function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], threads: string[]): boolean {
     match (x) {
         ast.ExprCall(c) => {
-            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable, sfok)) { return true; }
-            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable, sfok)) { return true; } }
+            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable, sfok, threads)) { return true; }
+            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable, sfok, threads)) { return true; } }
             return false;
         },
-        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable, sfok); },
+        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable, sfok, threads); },
         ast.ExprIndex(ix) => {
-            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable, sfok)) { return true; }
-            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable, sfok);
+            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable, sfok, threads)) { return true; }
+            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable, sfok, threads);
         },
         ast.ExprIdent(_) => { return false; },
         _ => { return true; }
@@ -55243,11 +55555,11 @@ function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: St
 
 // arrstruct_elem_esc_at is the fold visitor: `esc` latches true, and each node
 // answers per its arrstruct_elem_esc_shape code.
-function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], threads: string[]): boolean {
     if (esc) { return true; }
     var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok);
     if (code == 2) { return true; }
-    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable, sfok); }
+    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable, sfok, threads); }
     if (code == 4) {
         match (x) {
             ast.ExprCall(c) => {
@@ -55288,9 +55600,13 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
                 var eai: i32 = 0;
                 while (eai < c.args.len()) {
                     if (ident_name_or_empty(c.args[eai]) == name) {
+                        // A threader's position (#10420) hands the elements back only
+                        // through the result, which arrstruct_unsafe_for admits solely
+                        // as a rebind of `name` itself.
                         if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
-                              || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
-                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable, sfok)) { return true; }
+                              || param_is_borrowable(borrowable, "CNT:" + callee, eai)
+                              || util.index_of_str(threads, thread_row(eai, callee)) >= 0)) { return true; }
+                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable, sfok, threads)) { return true; }
                     eai = eai + 1;
                 }
                 return false;
@@ -55304,7 +55620,7 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
         // arrstruct_self_store_elem (a bare ident or a fresh literal) and the
         // hand scan never walked it; preserved exactly.
         match (x) {
-            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable, sfok); },
+            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable, sfok, threads); },
             _ => { return true; }
         }
     }
@@ -55318,19 +55634,19 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
 // array-field read) and `name[i].f.len()` are borrows; a BARE `name[i]` element (the
 // struct box) or a bare `name` escapes — except as an ARGUMENT at an "ELB:"-flagged
 // param, where the callee is proven to touch no element.
-function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
-    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
+function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], threads: string[]): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok, threads); }
     function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
     return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
 
 // A `for p in name` iterable is not an escape here: arrstruct_row_escapes
 // judges the iteration, and only its body is scanned.
-function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
-    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
+function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], threads: string[]): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok, threads); }
     function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
     function esc_expr(x: ast.Expr): boolean { return astwalk.fold_expr_pruned(x, false, visit, descend); }
-    function esc_body(b: ast.Stmt[]): boolean { return arrstruct_elem_payload_escapes(b, name, sty, structs, msites, borrowable, sfok); }
+    function esc_body(b: ast.Stmt[]): boolean { return arrstruct_elem_payload_escapes(b, name, sty, structs, msites, borrowable, sfok, threads); }
     for stmt in stmts {
         match (stmt) {
             ast.StmtFor(fo) => {
@@ -56475,6 +56791,18 @@ function is_scalar_field_type(ft: string): boolean {
 // either class, whose rebind store frees the prior array's element boxes.
 function slot_is_reclaimable_struct_arr(s: LowerState, i: i32): boolean {
     return slot_is_reclaimable_arrstruct(s, i) || slot_is_reclaimable_structarr(s, i);
+}
+
+// arr_rebind_frees_elems: the store of `a` into this credited pointer-element
+// array frees the superseded array's elements with its buffer.
+function arr_rebind_frees_elems(s: LowerState, slot: i32, a: ast.StmtAssign): boolean {
+    if (!slot_is_reclaimable_strarr(s, slot) && !slot_is_reclaimable_struct_arr(s, slot)) { return false; }
+    return thread_rebind_pos(a.value, a.target, s.frame.sigs.return_fresh_struct_ret_fns) < 0;
+}
+
+function emit_arr_elem_reclaim_store(se: LowerState, slot: i32): LowerState {
+    if (slot_is_reclaimable_strarr(se, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
+    return emit_struct_arr_reclaim_store(se, slot);
 }
 
 // emit_struct_arr_reclaim_store stores `new` into a credited struct-array slot,
