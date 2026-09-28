@@ -1445,22 +1445,13 @@ function main(): i32 {
 	}
 }
 
-// String equality on x86-64 compares the two length words inline and calls
-// the helper's register entry only when they match, so the stack-ABI call and
-// its pushed operands are gone. The program covers each way the inline answer
-// and the helper's can go: unequal lengths, equal lengths with differing bytes,
+// String equality compares the two length words inline and calls the
+// helper's register entry only when they match, so the stack-ABI call and its
+// pushed operands are gone. The program covers each way the inline answer and
+// the helper's can go: unequal lengths, equal lengths with differing bytes,
 // equal strings on both sides of the 8-byte word loop, and the empty string.
 func TestSelfHostSSAStrEqComparesLengthsInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
-	var tg ssaBackendTarget
-	for _, c := range h.targets {
-		if c.target == "x86-64-linux" {
-			tg = c
-		}
-	}
-	if tg.target == "" {
-		t.Skip("no x86-64-linux target on this host")
-	}
 	dir := t.TempDir()
 	src := filepath.Join(dir, "streq.fern")
 	prog := `function same(a: string, b: string): i32 {
@@ -1480,30 +1471,45 @@ function main(): i32 {
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	asmPath := filepath.Join(dir, "streq.s")
-	h.compileWith(t, tg, src, asmPath, "-backend", "ssa", "-emit", "asm")
-	asm, err := os.ReadFile(asmPath)
-	if err != nil {
-		t.Fatal(err)
+	shapes := map[string]struct {
+		lengths    *regexp.Regexp // the inline compare of the two length words
+		entry, abi string         // the register-entry call and the stack-ABI call
+	}{
+		"x86-64-linux": {regexp.MustCompile(`(?m)^\s+cmpq 8\(%r\w+\), %rdx$`),
+			"call __fn___fern_str_eq.r\n", "call __fn___fern_str_eq\n"},
+		"arm64-linux": {regexp.MustCompile(`(?m)^\s+ldr x7, \[x\d+, #8\]\n\s+cmp x6, x7$`),
+			"bl __fn___fern_str_eq.r\n", "bl __fn___fern_str_eq\n"},
 	}
-	// same is inlined, so main holds all six comparisons.
-	fn := functionListing(string(asm), "__fn_main")
-	if fn == "" {
-		t.Fatalf("no __fn_main in the listing:\n%s", asm)
-	}
-	if n := len(regexp.MustCompile(`(?m)^\s+cmpq 8\(%r\w+\), %rdx$`).FindAllString(fn, -1)); n != 6 {
-		t.Errorf("main compares %d pairs of length words inline, want 6:\n%s", n, fn)
-	}
-	if n := strings.Count(fn, "call __fn___fern_str_eq.r\n"); n != 6 {
-		t.Errorf("main calls the helper's register entry %d times, want 6:\n%s", n, fn)
-	}
-	if strings.Contains(fn, "call __fn___fern_str_eq\n") {
-		t.Errorf("main still makes the stack-ABI call:\n%s", fn)
-	}
-	bin := filepath.Join(dir, "streq")
-	h.compileWith(t, tg, src, bin, "-backend", "ssa")
-	if _, code := h.runProduced(t, tg, bin); code != 44 {
-		t.Errorf("exit = %d, want 44 (4 + 8 + 32: only the three equal pairs compare equal)", code)
+	for _, tg := range h.targets {
+		shape, ok := shapes[tg.target]
+		if !ok {
+			continue
+		}
+		asmPath := filepath.Join(dir, "streq-"+tg.target+".s")
+		h.compileWith(t, tg, src, asmPath, "-backend", "ssa", "-emit", "asm")
+		asm, err := os.ReadFile(asmPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// same is inlined, so main holds all six comparisons.
+		fn := functionListing(string(asm), "__fn_main")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_main in the listing:\n%s", tg.target, asm)
+		}
+		if n := len(shape.lengths.FindAllString(fn, -1)); n != 6 {
+			t.Errorf("%s: main compares %d pairs of length words inline, want 6:\n%s", tg.target, n, fn)
+		}
+		if n := strings.Count(fn, shape.entry); n != 6 {
+			t.Errorf("%s: main calls the helper's register entry %d times, want 6:\n%s", tg.target, n, fn)
+		}
+		if strings.Contains(fn, shape.abi) {
+			t.Errorf("%s: main still makes the stack-ABI call:\n%s", tg.target, fn)
+		}
+		bin := filepath.Join(dir, "streq-"+tg.target)
+		h.compileWith(t, tg, src, bin, "-backend", "ssa")
+		if _, code := h.runProduced(t, tg, bin); code != 44 {
+			t.Errorf("%s: exit = %d, want 44 (4 + 8 + 32: only the three equal pairs compare equal)", tg.target, code)
+		}
 	}
 }
 

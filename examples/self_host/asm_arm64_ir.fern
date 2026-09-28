@@ -1416,6 +1416,24 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
+// ssa_str_eq answers unequal lengths inline, the answer to almost every
+// comparison a compiler makes, and calls the helper's register entry only for
+// equal ones, its operands moved into x0 / x9 as the entry reads them.
+function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+    s = ssa_x0_forget(s);
+    s = s.mark_str_eq();
+    s = ssa_read(reg_of, ins.args[0], "x4", s);
+    var a: string = ssa_src(reg_of, ins.args[0], "x4");
+    s = ssa_read(reg_of, ins.args[1], "x5", s);
+    var b: string = ssa_src(reg_of, ins.args[1], "x5");
+    var n: string = util.i32_to_string(ins.result);
+    s = s.write("    ldr x6, [" + a + ", #8]\n    ldr x7, [" + b + ", #8]\n    cmp x6, x7\n    b.ne " + lp + "streqn" + n + "\n");
+    s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
+    s = s.write("    bl __fn___fern_str_eq.r\n    b " + lp + "streqd" + n + "\n");
+    s = s.write(lp + "streqn" + n + ":\n    mov x0, #0\n" + lp + "streqd" + n + ":\n");
+    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+}
+
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
@@ -1729,6 +1747,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     if (k == 51) { return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s); }
     if (k >= 40 && k <= 44) { return ssa_mem_inst(ins, reg_of, s); }
     if (k >= 45 && k <= 48) { return ssa_addr_inst(ins, reg_of, s); }
+    if (k == 49 && ins.str == "str_eq") { return ssa_str_eq(ins, reg_of, lp, s); }
     if (k == 49) { return ssa_str_call(ins, reg_of, s); }
     if (k == 50 && ssa_fcall_sym(ins.str) != "") { return ssa_fcall(ins, reg_of, s); }
     if (k == 50 && ssa_host_kind(ins.str)) { return ssa_host_call(ins, reg_of, s); }
@@ -8906,6 +8925,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    b .Lsum_bytes_tail\n");
     s = s.write(".Lsum_bytes_ret:\n");
     s = s.write("    ret\n");
+    s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
     return s;
 }
 
