@@ -123,8 +123,9 @@ function ts_routed_map_roots(): string[] {
     return ["map_new_impl", "__map_set_impl", "__map_len_impl", "__map_has_impl", "__map_get_impl",
         "__map_get_or_impl", "__map_delete_impl", "__map_cow_inplace", "__map_i32_column",
         "__map_bool_column", "__map_drop_impl", "__map_iter_impl", "__mapiter_has_next_impl",
-        "__mapiter_key_impl", "__mapiter_value_impl", "__mapiter_advance_impl", "__mapiter_drop_impl",
-        "__map_string_column", "__map_key_of", "__map_lookup_val", "__map_drop_strcols_impl"];
+        "__mapiter_key_impl", "__mapiter_value_lent", "__mapiter_advance_impl", "__mapiter_drop_impl",
+        "__map_string_column", "__map_box_column", "__map_key_of", "__map_lookup_val",
+        "__map_drop_strcols_impl", "__map_drop_boxes_impl"];
 }
 
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {

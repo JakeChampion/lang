@@ -3844,7 +3844,7 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
-import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir";
+import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
 import "./modloader"; import "./flatten"; import "./treeshake";
 function main(): i32 {
     var av = args();
@@ -3911,7 +3911,9 @@ function main(): i32 {
         var lowered = ssarc.lower(p.func, p.modes, plans[at], tab, grows);
         if (!lowered.ok) { eprint(fd.name + ": " + lowered.why); return 6; }
         eprint("produced " + fd.name + "\n");
-        base = ssarc.caller_sigs(base, fd.name, p.func, p.modes, plans[at], fd.receiver_type.len() > 0);
+        var key: string = fd.name;
+        if (fd.receiver_type.len() > 0) { key = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+        base = ssarc.caller_sigs(base, key, p.func, p.modes, plans[at], fd.receiver_type.len() > 0);
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
         for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
