@@ -58,8 +58,10 @@ above is the first run of it.
 - A native-only feature that still lands is an exception argued on #4451, so
   the debt stays visible in one place, rather than the default.
 - The bootstrap pin on both Linux hosts is the self-built fixed point
-  (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`), so a
-  refresh there does not run through the native backends.
+  (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`). The first
+  pin published this way still has one native-built generation in its
+  ancestry, since its stage1 was the native candidate's output; the one after
+  it has none.
 
 ## What does not change
 
@@ -75,15 +77,18 @@ above is the first run of it.
 
 `NATIVE-CONVERGENCE.md §3a`, read against the tree on the freeze date:
 
-1. **Bootstrap without native** — closed on x86-64 Linux and arm64 Linux.
-   Open on arm64-darwin: stage2 exhausts the 16 GiB arena compiling the
-   compiler (#8479), so that host's pin is still built by native.
+1. **Bootstrap without native** — closed on x86-64 Linux, where it is
+   measured. arm64-linux is wired but unobserved: the `verify-arm64-linux`
+   run on the PR that wired it is the first, and #10448 has that shape
+   segfaulting under qemu. Open on arm64-darwin regardless: stage2 exhausts
+   the 16 GiB arena compiling the compiler (#8479), so that host's pin is
+   still built by native.
 2. **Every target self-contained on the self-host side** — closed.
 3. **The oracle decision** — made on 2026-09-28: the native backends are
-   deleted and are not witnesses. `internal/interp` is the oracle the
-   differentials anchor on, and §3 keeps it. Gates that compare self-host
-   codegen against native codegen go with the backends or are re-anchored on
-   the interpreter, in the deletion PRs.
+   not witnesses, and they go with the next step after the freeze.
+   `internal/interp` is the oracle the differentials anchor on, and §3 keeps
+   it. Gates that compare self-host codegen against native codegen go with
+   the backends or are re-anchored on the interpreter, in the deletion PRs.
 4. **The non-compiler consumers** — open. The browser playground
    (`internal/wasm/playground`, `cmd/fern-wasm`) is built on native codegen; a
    self-host driver that compiles, checks and interprets exists and runs

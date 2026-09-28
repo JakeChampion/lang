@@ -125,8 +125,11 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    `make distcheck` then has that compiler recompile the compiler, and the
    result do it once more: stage2 and stage3 are byte-identical, at 5.7 GB peak
    on a 16 GB host, in the same CI job. The publish job pins that self-built
-   fixed point on both Linux hosts, so a refresh there no longer runs through
-   the native backends. What is NOT closed: arm64-darwin, whose stage2
+   fixed point on both Linux hosts, so the pin a refresh leaves behind is a
+   self-built binary; the first pin published this way still has one
+   native-built generation in its ancestry (stage2 is stage1's output, and
+   stage1 is the native candidate's), the one after it none. What is NOT
+   closed: arm64-darwin, whose stage2
    exhausts the arena compiling the compiler (#8479), so its pin is still the
    native-built candidate. `docs/BOOTSTRAP.md`.
 2. **Every target self-contained on the self-host side.** ~~As of this
@@ -139,9 +142,9 @@ what it actually needs, because "goal 2 is nearly done" does not imply
 3. **A decision on the oracle.** ~~`BOOTSTRAP-RESEARCH.md §1` recommends
    *two-implementations-forever* precisely so the fuzz-diff oracle keeps two
    witnesses; that directly contradicts deleting the native backends.~~
-   **Decided 2026-09-28: the native backends are deleted, and they are not
-   witnesses.** The oracle is `internal/interp` (§3), which the differential
-   suites anchor on and which stays. `BOOTSTRAP-RESEARCH.md §1`'s
+   **Decided 2026-09-28: the native backends are not witnesses, and they go
+   with the next step after the freeze.** The oracle is `internal/interp`
+   (§3), which the differential suites anchor on and which stays. `BOOTSTRAP-RESEARCH.md §1`'s
    recommendation is superseded for the backends and holds for the
    interpreter. A gate that compares self-host codegen output against native
    codegen output (byte-identical emit comparisons, the native half of the

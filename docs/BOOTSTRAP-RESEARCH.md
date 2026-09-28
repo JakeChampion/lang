@@ -666,7 +666,8 @@ self-host port reaching feature parity first
 ### 1. Adopt the *two-implementations-forever* posture explicitly
 
 **Superseded for the native backends on 2026-09-28
-(`NATIVE-CONVERGENCE.md §3a.3`): they are deleted and are not witnesses.
+(`NATIVE-CONVERGENCE.md §3a.3`): they are not witnesses, and they go with
+the step after the freeze.
 It holds for `internal/interp`, the reference the differential suites anchor
 on, which stays.**
 
