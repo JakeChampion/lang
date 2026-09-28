@@ -43660,7 +43660,7 @@ function recv_ident_methods_of(recv_borrow: string[], sty: string, body: ast.Stm
 // method_result_moved_expr: does the RESULT of `name.<method>(...)` reach a
 // move position anywhere in `e`? `is_val` says whether `e` itself sits in one,
 // so the call is checked against its own position and the recursion re-answers
-// it per sub-expression.
+// it per sub-expression. An empty `method` asks about every method.
 function method_result_moved_expr(e: ast.Expr, name: string, method: string, is_val: boolean, borrowable: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -43669,7 +43669,7 @@ function method_result_moved_expr(e: ast.Expr, name: string, method: string, is_
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
                     match (fa.obj) {
-                        ast.ExprIdent(rid) => { is_target = rid.name == name && fa.field == method; },
+                        ast.ExprIdent(rid) => { is_target = rid.name == name && (method == "" || fa.field == method); },
                         _ => {}
                     }
                 },
@@ -44690,6 +44690,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // "f" flag rather than bare membership.
     var ufs: string[] = collect_unmatched_optstr_names(body, reassigned, false, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_optstr(ufs, out);
+    out = optstr_payload_subtags(body, opt_fresh_ret, ufs, out);
     out = credit_opt_alias_sites(body, ufs, "OPTSTR:", out);
     // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
@@ -54212,6 +54213,22 @@ function unmatched_optstr_payload_is_fresh(e: ast.Expr, str_fresh_ret: string[])
     return str_local_binding_is_fresh(e);
 }
 
+// result_scalar_ok_str_err: a `Result[<scalar>, string]` spelling. Its Ok
+// payload owns nothing, so the box's only rc payload is the Err string (#10439).
+function result_scalar_ok_str_err(type_name: string): boolean {
+    if (type_name.len() < 9 || slice_unchecked(type_name, 0, 7) != "Result[") { return false; }
+    return is_scalar_type_name(opt_payload_type(type_name, "Ok")) && opt_payload_type(type_name, "Err") == "string";
+}
+
+// fresh_result_box_init: `e` constructs a fresh, sole-owned box — a direct
+// `Ok(..)` / `Err(..)`, or a call to an OPTFRESH producer, every return of which
+// is a direct constructor. It proves nothing about the payload.
+function fresh_result_box_init(e: ast.Expr, opt_fresh_reg: SigReg): boolean {
+    if (opt_ctor_init_variant(e) != "") { return true; }
+    var callee: string = direct_call_callee_name(e);
+    return callee != "" && sig_reg_has_name(opt_fresh_reg, callee);
+}
+
 function unmatched_optstr_init_is_fresh(e: ast.Expr, opt_fresh_reg: SigReg, str_fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
@@ -54497,12 +54514,12 @@ function optarr_payload_escapes(stmts: ast.Stmt[], name: string): boolean {
 // below (#6360). Same quadrant, same gates; only the annotation and the freshness
 // test differ, and the credit is tagged "OPTSTR:" so the sweep picks the
 // __fern_str_free release rather than the flat dec.
-// unmatched_optarr_err_str_fresh: this local's declared Err payload is a string
+// unmatched_opt_err_str_fresh: this local's declared Err payload is a string
 // AND the value it was bound from proves every Err payload fresh — an inline
 // `Err(<literal / fresh producer>)`, or a call to an ERRFRESH-registered producer
-// (#6360). Per-LOCAL rather than per-slot-class because the OPTARR credit is
-// shared with the reassigned+match class.
-function unmatched_optarr_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fresh_reg: SigReg): boolean {
+// (#6360). Per-LOCAL rather than per-slot-class because the OPTARR and OPTSTR
+// credits are shared with classes that earned no such proof.
+function unmatched_opt_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fresh_reg: SigReg): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
@@ -54531,10 +54548,10 @@ function unmatched_optarr_err_str_fresh(stmts: ast.Stmt[], name: string, opt_fre
                     return false;
                 }
             },
-            ast.StmtIf(f) => { if (unmatched_optarr_err_str_fresh(f.then_body, name, opt_fresh_reg) || unmatched_optarr_err_str_fresh(f.else_body, name, opt_fresh_reg)) { return true; } },
-            ast.StmtWhile(w) => { if (unmatched_optarr_err_str_fresh(w.body, name, opt_fresh_reg)) { return true; } },
-            ast.StmtFor(fo) => { if (unmatched_optarr_err_str_fresh(fo.body, name, opt_fresh_reg)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_optarr_err_str_fresh(m.arms[a].body, name, opt_fresh_reg)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (unmatched_opt_err_str_fresh(f.then_body, name, opt_fresh_reg) || unmatched_opt_err_str_fresh(f.else_body, name, opt_fresh_reg)) { return true; } },
+            ast.StmtWhile(w) => { if (unmatched_opt_err_str_fresh(w.body, name, opt_fresh_reg)) { return true; } },
+            ast.StmtFor(fo) => { if (unmatched_opt_err_str_fresh(fo.body, name, opt_fresh_reg)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (unmatched_opt_err_str_fresh(m.arms[a].body, name, opt_fresh_reg)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -54551,10 +54568,15 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], fn_reassigned: string
                 // yet type through returnsNoParamEscape; the plan adds the
                 // call-arg grants, still refusing any matched local.
                 var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name));
-                if (unmatched_optstr_ann_is(v.type_name)
-                    && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
+                var fresh_init: boolean = (unmatched_optstr_ann_is(v.type_name) && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret))
+                    || (result_scalar_ok_str_err(v.type_name) && fresh_result_box_init(v.init, opt_fresh_reg));
+                // A method result can carry the string payload out uncounted
+                // (`s = r.or(..)` returns r's own Ok string), so one that is
+                // bound, stored or returned outlives this release (#10439).
+                if (fresh_init
                     && !block_reassigns(stmts, fn_reassigned, nested, v.name)
-                    && os_esc_ok) {
+                    && os_esc_ok
+                    && !method_result_moved_stmts(stmts, v.name, "", [])) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -54953,23 +54975,38 @@ function emit_optopt_rc_deep_free(se: LowerState, slot: i32, inner_freefn: strin
 // emit_optstr_deep_free: emit_optarr_deep_free with __fern_str_free on the
 // payload (#6360). Same null-then-tag shape; the difference is the release, and
 // it is not interchangeable — a string box's data buffer is separate and its
-// block class differs from the array layout.
+// block class differs from the array layout. The slot's sub-tags pick the arms:
+// "OPTSTRSCOK:" marks a scalar Ok payload, which owns nothing, and "OPTSTRERR:"
+// a proven-fresh Err string, which the else arm releases (#10439).
 function emit_optstr_deep_free(se: LowerState, slot: i32): LowerState {
+    var ok_str: boolean = !slot_credit_at(se, slot, "OPTSTRSCOK:");
+    var err_str: boolean = slot_credit_at(se, slot, "OPTSTRERR:");
     var st: LowerState = se;
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_const_i32(0));
     st = st.emit(ir.op_bin("ne", 0, false));         // old != 0 (null guard)
     st = st.emit(ir.op_if(0));
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_opt_tag());
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_bin("eq", 0, false));         // tag == 0 (Some / Ok)
-    st = st.emit(ir.op_if(0));
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_opt_payload());
-    st = st.emit(ir.op_call_direct("__fern_str_free", 1));
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_end());                       // end if-success
+    if (ok_str || err_str) {
+        var succ: string = "eq";
+        if (!ok_str) { succ = "ne"; }
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_opt_tag());
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_bin(succ, 0, false));     // tag == 0 (Some / Ok), or != 0 (Err) with no Ok release
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_opt_payload());
+        st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+        st = st.emit(ir.op_drop());
+        if (ok_str && err_str) {
+            st = st.emit(ir.op_else());
+            st = st.emit(ir.op_load_local(slot));
+            st = st.emit(ir.op_opt_payload());
+            st = st.emit(ir.op_call_direct("__fern_str_free", 1));
+            st = st.emit(ir.op_drop());
+        }
+        st = st.emit(ir.op_end());
+    }
     st = st.emit(ir.op_load_local(slot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
     st = st.emit(ir.op_drop());
@@ -83229,12 +83266,24 @@ while (ufai < ufa.len()) {
     // "OPTARRERR:" is a SUB-TAG of the "OPTARR:" entry appended just above —
     // same slot, same key — so the two are granted and resolved together and
     // cannot end up keyed differently.
-    if (unmatched_optarr_err_str_fresh(body, reclaim_site_name(ufa[ufai]), opt_fresh_ret)) {
+    if (unmatched_opt_err_str_fresh(body, reclaim_site_name(ufa[ufai]), opt_fresh_ret)) {
         out = out.append("OPTARRERR:" + ufa[ufai]);
     }
     ufai = ufai + 1;
 }
 
+    return out;
+}
+
+// optstr_payload_subtags: the per-site arms of an unmatched "OPTSTR:" release.
+// "OPTSTRSCOK:" marks a scalar Ok payload and "OPTSTRERR:" a proven-fresh Err
+// string; both are sub-tags of the "OPTSTR:" entry, same site key (#10439).
+function optstr_payload_subtags(body: ast.Stmt[], opt_fresh_ret: SigReg, ufs: string[], out: string[]): string[] {
+    for site in ufs {
+        var nm: string = reclaim_site_name(site);
+        if (result_scalar_ok_str_err(var_annot_in_stmts(body, nm))) { out = out.append("OPTSTRSCOK:" + site); }
+        if (unmatched_opt_err_str_fresh(body, nm, opt_fresh_ret)) { out = out.append("OPTSTRERR:" + site); }
+    }
     return out;
 }
 
