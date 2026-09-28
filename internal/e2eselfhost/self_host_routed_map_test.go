@@ -355,6 +355,36 @@ function main(): i32 {
 }
 `
 
+// routedMapGenericDynValuesSrc: a dyn over a generic trait pinned at two
+// arguments names its release by a trait set that is spelled with a comma,
+// brackets and a space, none of which a symbol may hold.
+const routedMapGenericDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Tagged[A, B] { function tag(self: Self): i32; }
+struct P { a: i32, s: string }
+struct Q { t: string }
+impl Tagged[i32, u32] for P { function tag(self: Self): i32 { return self.a + self.s.len(); } }
+impl Tagged[i32, u32] for Q { function tag(self: Self): i32 { return self.t.len() * 10; } }
+function main(): i32 {
+    var m: Map[string, dyn Tagged[i32, u32]] = Map {};
+    var i: i32 = 0;
+    while (i < 5) {
+        if (i % 2 == 0) { m = m.insert("k" + (i % 3).to_string(), P { a: i, s: "p" + i.to_string() }); }
+        else { m = m.insert("k" + (i % 3).to_string(), Q { t: "q" + i.to_string() }); }
+        i = i + 1;
+    }
+    var r: (Map[string, dyn Tagged[i32, u32]], boolean) = m.without("k0");
+    var t: i32 = 0;
+    for (k, v) in r.0 { t = t + v.tag(); }
+    for v in m.values() { t = t + v.tag(); }
+    var ds: dyn Tagged[i32, u32][] = [Q { t: "x" + "y" }];
+    var flags: boolean[] = [true, false];
+    t = t + ds[0].tag() + flags.len();
+    print(t.to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -378,6 +408,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"tuple_values", routedMapTupleValuesSrc, "430 v24 override 6 true"},
 		{"dyn_values", routedMapDynValuesSrc, "716"},
 		{"two_dyn_values", routedMapTwoDynValuesSrc, "27"},
+		{"generic_dyn_values", routedMapGenericDynValuesSrc, "62"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {

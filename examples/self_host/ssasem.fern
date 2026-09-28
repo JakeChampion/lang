@@ -1401,13 +1401,18 @@ pub function type_key(t: typeinfo.Type): string {
     return leaf_key(t);
 }
 
-// A canonical trait set, `A + b.C`, spelled as symbol characters: `A$b__C`.
+// A canonical trait set, `A + b.C` or `Pair[i32, u32]`, spelled in symbol
+// characters: a letter or a digit stands for itself and every other byte,
+// `_` included, is `_` and its two hex digits, so no two sets share a key.
 function trait_set_key(traits: string): string {
+    var hex: string = "0123456789abcdef";
     var out: string = "";
     var i: i32 = 0;
     while (i < traits.len()) {
         var b: i32 = traits[i] as i32;
-        if (b == 43) { out = out + "$"; } else if (b == 46) { out = out + "__"; } else if (b != 32) { out = out + slice_unchecked(traits, i, i + 1); }
+        var alnum: boolean = (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122);
+        if (alnum) { out = out + slice_unchecked(traits, i, i + 1); }
+        else { out = out + "_" + slice_unchecked(hex, b / 16, b / 16 + 1) + slice_unchecked(hex, b % 16, b % 16 + 1); }
         i = i + 1;
     }
     return out;
