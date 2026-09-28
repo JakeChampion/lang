@@ -25,9 +25,13 @@ instantiates, and Build component is that target's `-emit component`
 through both forms.
 
 `web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to the language
-server behind diagnostics, hover and completion (`fernLsp`, #6641).
-Everything below is the measurement and the reasoning that led here, kept
-as written.
+server behind diagnostics, hover and completion (`fernLsp`, #6641): 12.5 MB
+(3.3 MB gzipped) where the toolchain bundle was 28.7 MB, since nothing under
+`cmd/fern-wasm` links a code generator, an interpreter or the component
+composer any more. Everything below is the measurement and the reasoning
+that led here, kept as written on 2026-09-01: its two present-tense
+sections, the headline's bundle size and "What the playground was", describe
+the page of that date.
 
 ## Headline
 
@@ -87,7 +91,7 @@ now empty. Note the invocation: a wasmbin core module carries no `_start`, so a
 plain `wasmtime run` exits 0 having called nothing and looks like an empty
 answer. Use `--invoke main`, which appends main's return value to stdout.
 
-## What the playground actually is
+## What the playground was, on 2026-09-01
 
 `web/fern.wasm` is **not** the compiler — it is `cmd/fern-wasm` (490 lines,
 `//go:build js && wasm`), the whole Go toolchain compiled by *Go* with
