@@ -184,6 +184,7 @@ import "./x86_native";
 import "./elf";
 import "./ircore";
 import "./emitforms";
+import "./semlower";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
