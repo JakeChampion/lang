@@ -14263,54 +14263,115 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // Value semantics for a receiver this push may not mutate: bracket it so
     // the grow helper's rc==1 in-place path cannot fire (append_copy_recv_slot).
     var apcs: i32 = append_copy_recv_slot(fa.obj, s);
-    var aps0: LowerState = s;
-    if (append_report_on()) { aps0 = report_expr_append(aps0, fa, c, apcs); }
-    if (apcs >= 0) { aps0 = emit_arr_share(aps0, apcs, "__fern_arr_share_inc"); }
-    if (expr_is_f64arr(fa.obj, s)) {
-        var apf: LowerState = lower_expr(fa.obj, aps0);
-        if (!apf.ok) { return apf; }
-        apf = lower_expr(c.args[0], apf);
-        if (!apf.ok) { return apf; }
-        apf = apf.emit(ir.op_arr_push_f64());
-        if (apcs >= 0) { apf = emit_arr_share(apf, apcs, "__fern_arr_share_dec"); }
-        return settle_owned_append_result(apf, fa.obj, apcs);
+    var aps: LowerState = s;
+    if (append_report_on()) { aps = report_expr_append(aps, fa, c, apcs); }
+    if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_inc"); }
+    var tmp_recv: i32 = 0 - 1;
+    if (append_result_counted(fa.obj, s)) {
+        tmp_recv = aps.locals.len();
+        aps = aps.add_local("$apt" + util.i32_to_string(tmp_recv));
     }
-    if (expr_is_i64arr(fa.obj, s) || (expr_is_arr_src(fa.obj, s) && expr_is_u64(fa.obj, s))) {
-        var ap8: LowerState = lower_expr(fa.obj, aps0);
-        if (!ap8.ok) { return ap8; }
-        ap8 = lower_i64(c.args[0], ap8);
-        if (!ap8.ok) { return ap8; }
-        ap8 = ap8.emit(ir.op_arr_push_i64());
-        if (apcs >= 0) { ap8 = emit_arr_share(ap8, apcs, "__fern_arr_share_dec"); }
-        return settle_owned_append_result(ap8, fa.obj, apcs);
+    aps = lower_expr(fa.obj, aps);
+    if (!aps.ok) { return aps; }
+    if (tmp_recv >= 0) {
+        aps = aps.emit(ir.op_store_local(tmp_recv));
+        aps = aps.emit(ir.op_load_local(tmp_recv));
     }
-    var aps: LowerState = lower_expr(fa.obj, aps0);
+    var kind: string = append_push_kind(fa.obj, s);
+    aps = lower_append_push(c.args[0], kind, aps);
     if (!aps.ok) { return aps; }
-    aps = lower_append_elem_value(c.args[0], aps);
-    if (!aps.ok) { return aps; }
-    aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
-    // An in-place push on a BORROWED param's buffer hands that same buffer out
-    // as a second reference — the caller's slot still holds the first — so the
-    // result is counted exactly as a bare `return p` is (the return-transfer
-    // retain). Guarded on identity: a grow or a shared-receiver copy hands back
-    // a fresh rc 1 buffer that already is the one reference. A declared `own`
-    // param is the callee's to give back uncounted, as in the bare return.
-    var iprs: i32 = borrowed_arr_param_slot(fa.obj, aps);
-    if (apcs < 0 && iprs >= 0) {
-        var ipscratch: string = "$ipa" + util.i32_to_string(aps.locals.len());
-        aps = aps.add_local(ipscratch);
-        var iptmp: i32 = aps.slot_of(ipscratch);
-        aps = aps.emit(ir.op_store_local(iptmp));
-        aps = aps.emit(ir.op_load_local(iptmp));
-        aps = aps.emit(ir.op_load_local(iprs));
-        aps = aps.emit(ir.op_bin("eq", 0, false));
-        aps = aps.emit(ir.op_if(0));
-        aps = aps.retain(iptmp, "append-inplace-borrowed");
-        aps = aps.emit(ir.op_end());
-        aps = aps.emit(ir.op_load_local(iptmp));
-    }
+    aps = release_superseded_append_recv(aps, tmp_recv);
+    if (apcs < 0) { aps = retain_inplace_borrowed_push(aps, fa.obj); }
     return settle_owned_append_result(aps, fa.obj, apcs);
+}
+
+// append_push_kind names the push an expression-position append takes on
+// `recv`: "f64" and "i64" for the 8-byte element strides, "" for the
+// pointer-width push every other element kind shares.
+function append_push_kind(recv: ast.Expr, s: LowerState): string {
+    if (expr_is_f64arr(recv, s)) { return "f64"; }
+    if (expr_is_i64arr(recv, s) || (expr_is_arr_src(recv, s) && expr_is_u64(recv, s))) { return "i64"; }
+    return "";
+}
+
+// lower_append_push lowers the pushed element and the width-matched arr_push
+// over the receiver already on the operand stack.
+function lower_append_push(val: ast.Expr, kind: string, s: LowerState): LowerState {
+    if (kind == "f64") {
+        var sf: LowerState = lower_expr(val, s);
+        if (!sf.ok) { return sf; }
+        return sf.emit(ir.op_arr_push_f64());
+    }
+    if (kind == "i64") {
+        var s8: LowerState = lower_i64(val, s);
+        if (!s8.ok) { return s8; }
+        return s8.emit(ir.op_arr_push_i64());
+    }
+    var st: LowerState = lower_append_elem_value(val, s);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_arr_push());
+}
+
+// retain_inplace_borrowed_push: an in-place push on a BORROWED param's buffer
+// hands that same buffer out as a second reference — the caller's slot still
+// holds the first — so the result is counted exactly as a bare `return p` is
+// (the return-transfer retain). Guarded on identity: a grow or a shared-receiver
+// copy hands back a fresh rc 1 buffer that already is the one reference. A
+// declared `own` param is the callee's to give back uncounted, as in the bare
+// return.
+function retain_inplace_borrowed_push(s: LowerState, recv: ast.Expr): LowerState {
+    var iprs: i32 = borrowed_arr_param_slot(recv, s);
+    if (iprs < 0) { return s; }
+    var iptmp: i32 = s.locals.len();
+    var st: LowerState = s.add_local("$ipa" + util.i32_to_string(iptmp));
+    st = st.emit(ir.op_store_local(iptmp));
+    st = st.emit(ir.op_load_local(iptmp));
+    st = st.emit(ir.op_load_local(iprs));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.retain(iptmp, "append-inplace-borrowed");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(iptmp));
+}
+
+// append_result_counted: `e` is an expression-position `.append` whose result
+// holds a count of its own that only its consumer releases — the copy of a
+// bracketed receiver, a push on a borrowed parameter (retained on identity by
+// retain_inplace_borrowed_push), or a push onto such a result. The
+// in-place result of an owned local or an `own` parameter is not one: it
+// carries the slot's own reference.
+pub function append_result_counted(e: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprFieldAccess(fa) = c.callee {
+            if (fa.field != "append" || c.args.len() != 1 || arr_field_read(fa.obj, s)) { return false; }
+            if (!expr_is_arr_src(fa.obj, s) && !expr_is_strarr(fa.obj, s)
+                && !expr_is_f64arr(fa.obj, s) && !expr_is_i64arr(fa.obj, s)) { return false; }
+            return append_copy_recv_slot(fa.obj, s) >= 0 || append_result_counted(fa.obj, s)
+                || borrowed_arr_param_slot(fa.obj, s) >= 0;
+        }
+    }
+    return false;
+}
+
+// release_superseded_append_recv: the receiver parked in `tmp` was a counted
+// append result (append_result_counted). A push that moved its elements into
+// another buffer leaves that count with nothing to release it, so it is dropped
+// here; an in-place push hands the same count on in the result. The release is
+// the buffer-only __fern_rc_dec, as for a superseded rebind: the new buffer
+// holds the elements.
+function release_superseded_append_recv(s: LowerState, tmp: i32): LowerState {
+    if (tmp < 0) { return s; }
+    var res: i32 = s.locals.len();
+    var st: LowerState = s.add_local("$apr" + util.i32_to_string(res));
+    st = st.emit(ir.op_store_local(res));
+    st = st.emit(ir.op_load_local(res));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.release(tmp, "__fern_rc_dec", "superseded-append-temp");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(res));
 }
 
 // A consuming expression-position append transfers the result, but the push
@@ -45388,9 +45449,14 @@ function arrown_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: StructTab, 
     match (e) {
         // A forwarding call to a free function already admitted: its result is
         // the caller's on every path, so it is this function's caller's too.
+        // A free function's call to itself is owned by induction on the
+        // returns the rest of the walk checks.
         ast.ExprCall(c) => {
             match (c.callee) {
-                ast.ExprIdent(cid) => { return util.index_of_str(acc, "ARROWN:" + cid.name) >= 0; },
+                ast.ExprIdent(cid) => {
+                    if (cid.name == fn.name && fn.receiver_type.len() == 0) { return true; }
+                    return util.index_of_str(acc, "ARROWN:" + cid.name) >= 0;
+                },
                 _ => { return false; }
             }
         },
@@ -67583,7 +67649,10 @@ pub function borrow_reg_bare_index(reg: string[]): string[] {
 //   - a bare `p` as a slot value of a struct / tuple / array literal — the
 //     construction incs it;
 //   - `p.len()`, the pure-read builtin receiver — reads, retains nothing;
-//   - `p` as argument i of a call whose parameter i is itself counted.
+//   - `p.append(v)` for a scalar-element array, whose result is a
+//     retained alias or a fresh copy (arr_param_counted_ok);
+//   - `p` as argument i of a call whose parameter i is itself counted;
+//   - `return p` in an "ARROWN:" member, where the return retains it.
 // EVERYTHING else disqualifies, including `return p` where the return does
 // not retain it, `x = p`, an element read and a non-counted call argument.
 // Positive evidence only.
@@ -67638,9 +67707,12 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             match (c.callee) {
                 ast.ExprIdent(cid) => { callee_name = cid.name; },
                 ast.ExprFieldAccess(fa) => {
-                    // `p.len()` — the pure-read builtin receiver. Any other
-                    // method may thread the receiver, so it is not credited.
-                    var recv_counted: boolean = fa.field == "len";
+                    // `p.len()` — the pure-read builtin receiver — and, at the
+                    // array tier, `p.append(v)` (arr_param_counted_ok). Any
+                    // other method may thread the receiver, so it is not
+                    // credited.
+                    var recv_counted: boolean = fa.field == "len"
+                        || (pfx == "ACNT:" && fa.field == "append" && c.args.len() == 1);
                     if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg, pfx, structs, sfok)) { return false; }
                     // `xs.append(p)` at the STRUCT or ENUM tier is a COUNTED
                     // store: every append retains a borrowed struct or enum
@@ -67864,7 +67936,7 @@ function enum_result_cannot_alias(ret: string, structs: StructTab): boolean {
     return is_scalar_type_name(ret) || decl_is_struct(structs, ret);
 }
 
-pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[], enum_members: string[]): string[] {
+pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[], enum_members: string[], arr_members: string[]): string[] {
     var reg: string[] = [];
     var n: i32 = funcs.len();
     var deps: CallDeps = call_deps_of(funcs, false, false);
@@ -67883,7 +67955,7 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
         while (fi < n) {
             var cnt: i32 = nent[fi];
             if (dirty[fi] == 1) {
-                var ents: string[] = param_counted_entries_of(funcs[fi], reg, structs, sfok, enum_members);
+                var ents: string[] = param_counted_entries_of(funcs[fi], reg, structs, sfok, enum_members, arr_members);
                 var same: boolean = ents.len() == cnt;
                 var k: i32 = 0;
                 while (same && k < cnt) { if (ents[k] != reg[ri + k]) { same = false; } k = k + 1; }
@@ -67905,9 +67977,32 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
     return reg;
 }
 
+// arr_param_counted_ok: the ARRAY tier's verdict for parameter `p`.
+// `result_ok` says the result cannot hand the argument back uncounted. An
+// "ARROWN:" member (`arr_hb`) may return a scalar-element `p` bare, which the
+// return retains. An append on `p` leaves its result a retained alias or a
+// copy of the elements, which holds pointer elements uncounted, so a
+// `string[]` may not be an append receiver.
+function arr_param_counted_ok(fn: parser.FuncDecl, p: ast.ParamDecl, result_ok: boolean, arr_hb: boolean, reg: string[], structs: StructTab, sfok: string[]): boolean {
+    var t: string = p.type_name;
+    var scalar: boolean = is_leaksafe_array_field(t);
+    if (p.own || (!scalar && t != "string[]")) { return false; }
+    var hb: boolean = arr_hb && scalar;
+    if (!result_ok && !hb) { return false; }
+    if (!scalar && fn_appends_to(fn, p.name)) { return false; }
+    return arrparam_uses_ok_stmts(fn.body, p.name, reg, "ACNT:", structs, sfok, hb);
+}
+
+// fn_appends_to: some `name.append(v)` or `name.set(i, v)` in `fn`'s body.
+function fn_appends_to(fn: parser.FuncDecl, name: string): boolean {
+    var recvs: string[] = [];
+    for st in fn.body { recvs = collect_append_recvs_stmt(st, recvs); }
+    return util.index_of_str(recvs, name) >= 0;
+}
+
 // param_counted_entries_of: one function's tier entries under the registry
 // `reg`, in the fixed tier order the list is built in.
-function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: StructTab, sfok: string[], enum_members: string[]): string[] {
+function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: StructTab, sfok: string[], enum_members: string[], arr_members: string[]): string[] {
     var ents: string[] = [];
     // ARRAY tier. The result must not BE the argument: the release
     // fires immediately after the call, so a callee handing `d` straight
@@ -67917,7 +68012,10 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     // — the callee's counted store and the caller's post-call dec net to
     // the one reference the returned struct owns. (The string tier's
     // str_result_cannot_alias reads it the same way, minus the routing
-    // requirement.) A `string[]`/array RESULT is refused by both halves.
+    // requirement.) An array RESULT is admitted only for an "ARROWN:"
+    // member (`arr_hb`): every return hands back a count of its own, so a
+    // bare `return p` is the retained handback and the caller's dec leaves
+    // the result its one reference.
     //
     // Candidacy spans SCALAR-element arrays and `string[]`. For a
     // pointer-element array the caller's release is a shallow arr_dec,
@@ -67927,6 +68025,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     // counted slot, and the construction-side retain for an ARRAY field
     // is not gated on slit_reclaim the way the string one is.
     var scalar_result: boolean = owned_scalar_field_type(fn.ret_type);
+    var arr_hb: boolean = fn.receiver_type.len() == 0 && util.index_of_str(arr_members, fn.name) >= 0;
     var aflags: string = "";
     var aany: boolean = false;
     var sflags: string = "";
@@ -67948,12 +68047,7 @@ function param_counted_entries_of(fn: parser.FuncDecl, reg: string[], structs: S
     var ret_routes: boolean = struct_routes_field_reclaim_at(structs, sfok, fn.ret_type);
     var pj: i32 = 0;
     while (pj < fn.params.len()) {
-        var aok: boolean = false;
-        if ((scalar_result || ret_routes)
-            && (is_leaksafe_array_field(fn.params[pj].type_name)
-                || fn.params[pj].type_name == "string[]")
-            && !fn.params[pj].own
-            && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "ACNT:", structs, sfok, false)) { aok = true; }
+        var aok: boolean = arr_param_counted_ok(fn, fn.params[pj], scalar_result || ret_routes, arr_hb, reg, structs, sfok);
         if (aok) { aflags = aflags + "1"; aany = true; } else { aflags = aflags + "0"; }
         var sok: boolean = false;
         if (str_ok_result
@@ -69338,7 +69432,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
     // cannot disagree about a position and the walker needs no extra parameter.
     var rf: string[] = return_fresh_struct_ret_fns_of(funcs, structs, sfok);
     var enum_members: string[] = prefixed_names_of(rf, "ENUM:");
-    var pcnt: string[] = param_counted_of(funcs, structs, sfok, enum_members);
+    var pcnt: string[] = param_counted_of(funcs, structs, sfok, enum_members, prefixed_names_of(rf, "ARROWN:"));
     var breg: string[] = borrow_reg_with_counted(bparams, pcnt);
     var bbare: string[] = borrow_reg_bare_index(breg);
     // The #4873 / #8224 may-grow masks feed three registries — the '4' flag in
