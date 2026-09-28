@@ -118,7 +118,8 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	}
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
-	// keep-alive case from the header it leaves in place.
+	// keep-alive case from the header it leaves in place. An empty
+	// wantConnection accepts either.
 	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
@@ -136,7 +137,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		if resp.Close {
 			got = "close"
 		}
-		if got != wantConnection {
+		if got != wantConnection && (wantConnection != "" || (got != "keep-alive" && got != "close")) {
 			conn.Close()
 			t.Fatalf("%s: Connection=%q, want %q", label, got, wantConnection)
 		}
@@ -192,11 +193,11 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
 		// A pipeline of 33 requests whose peer half-closes behind them. The
-		// server may or may not read the end of stream with the first 32
-		// (that is a race on the wire), but the 33rd is answered from the
-		// backlog on a later wait, once the end of stream has certainly
-		// arrived, so its response must say close, since the close follows
-		// it; the 32 before it persist either way.
+		// 32 of the first burst persist, since a request is buffered behind
+		// each. The 33rd is answered from the backlog on a later wait, which
+		// may run before the half-close is sent, so it says close only if
+		// that wait read the end of stream; either way the server closes
+		// straight after it.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -208,7 +209,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
 		}
-		read(conn, r, "half-closed pipeline, last", "close")
+		read(conn, r, "half-closed pipeline, last", "")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
 		// then closed by the 300 ms read deadline the partial request waits
