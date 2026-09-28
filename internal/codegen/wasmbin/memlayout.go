@@ -244,7 +244,7 @@ const (
 	// here is one more `__heap_alloc_count()` tick per call, which the
 	// guest storage probes pin at exactly one.
 	ipFlatAddr = lcRetBufAddr + 16
-	ipBoxAddr  = ipFlatAddr + 48
+	ipBoxAddr  = ipFlatAddr + ipFlatSize
 	ipBox2Addr = ipBoxAddr + 8
 
 	// scratchEnd is the first address past the named scratch.
