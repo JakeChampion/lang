@@ -7381,11 +7381,11 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// Defensive low-address guard, mirroring buildRcDecBody. The
-	// static OpConstFunc closure cells live in the reserved window
-	// [closuresBase=96, 1024); rc-tracking FuncType locals would
+	// static OpConstFunc closure cells live below stringStart
+	// (closuresBase..closurePoolEnd); rc-tracking FuncType locals would
 	// otherwise inc one of those cells and read scratch / cell bytes
-	// at [ptr-8]. Heap objects (alloc / alloc_rc1) sit at >= 1024 and
-	// still get tracked. See rcLowAddrGuard.
+	// at [ptr-8]. Heap objects (alloc / alloc_rc1) sit at or above
+	// rcLowAddrGuard and still get tracked.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)
