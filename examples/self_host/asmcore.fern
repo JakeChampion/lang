@@ -6590,8 +6590,8 @@ function emitter_call_names(): string[] {
 }
 
 // callgate_known_names builds the undefined rule's admit list. Ordered
-// cheapest-first for the common misses: the builtin sets (a `print` /
-// `len` call is a miss against the free-function table and lands here),
+// cheapest-first for the common misses: the builtin sets (a `print` call
+// is a miss against the free-function table and lands here),
 // then structs and variants, then the receiver methods and top-level
 // bindings. Free functions are NOT repeated here — the walk consults the
 // arity table first, so a plain user call never reaches this array.
