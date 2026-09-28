@@ -77,12 +77,14 @@ above is the first run of it.
 
 `NATIVE-CONVERGENCE.md §3a`, read against the tree on the freeze date:
 
-1. **Bootstrap without native** — closed on x86-64 Linux, where it is
-   measured. arm64-linux is wired but unobserved: the `verify-arm64-linux`
-   run on the PR that wired it is the first, and #10448 has that shape
-   segfaulting under qemu. Open on arm64-darwin regardless: stage2 exhausts
-   the 16 GiB arena compiling the compiler (#8479), so that host's pin is
-   still built by native.
+1. **Bootstrap without native** — closed on x86-64 Linux and on arm64
+   Linux. On the arm64 runner the current compiler's chain is a fixed point
+   (`candidate-arm64-linux`: stage2 in 82 s, stage3 in 79 s, identical); the
+   2026-09-25 pin's stage1 looped compiling the compiler there and under
+   qemu (#10448), so the pin was refreshed to a self-built stage2 from the
+   PR that wired the lane. Open on arm64-darwin: stage2 exhausts the 16 GiB
+   arena compiling the compiler (#8479), so that host's pin is still built
+   by native.
 2. **Every target self-contained on the self-host side** — closed.
 3. **The oracle decision** — made on 2026-09-28: the native backends are
    not witnesses, and they go with the next step after the freeze.
