@@ -11210,7 +11210,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // lower_expr wraps it at its own width (u32_wrap, the sub-word
             // int_cast, the i32 sign-extend). Recursing here would compute it at
             // 64 bits and skip that wrap: `s64 + b * 2u8` with `b = 200` read 400.
-            if (infer_expr_width(e, s) != 64) { return lower_narrow_widened(e, s); }
+            if (infer_expr_width(e, s) != 64 && !is_chk_op(b.op) && !expr_is_f64(b.left, s) && !expr_is_f64(b.right, s)) { return lower_narrow_widened(e, s); }
             // Saturating arithmetic (#5542) carries its own width-aware
             // lowering (clamped, not wrapped) at every width.
             if (is_sat_op(b.op)) { return lower_sat_binary(b, e, s); }
