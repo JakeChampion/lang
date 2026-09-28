@@ -15,6 +15,12 @@ import (
 // scope id. __fern_ip_flat writes that flattening to a 48-byte record
 // once, and each bind, connect and stream pushes its twelve words from
 // there.
+//
+// The record and the two boxes below live in the module's reserved low
+// memory rather than the heap: a socket body consumes them before it
+// returns and none holds one across a call into another socket body, and
+// an allocation here would show as one more `__heap_alloc_count()` tick
+// per call, which the guest storage probes pin at exactly one.
 
 // errnoSocketAddressFamily is EAFNOSUPPORT in the Preview 1 errno namespace
 // used by socket return values.
@@ -22,6 +28,35 @@ const errnoSocketAddressFamily = 5
 
 // ipFlatSize is the byte size of the record __fern_ip_flat writes.
 const ipFlatSize = 48
+
+// ipFlatAddr is the record's fixed address (wasmbin.go's memory map).
+const ipFlatAddr = 96
+
+// ipBoxAddr and ipBox2Addr are two fixed 8-byte `u8[]` boxes, a length
+// word of 4 then four octets, for the bodies that still take a packed
+// IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
+const (
+	ipBoxAddr  = 144
+	ipBox2Addr = 152
+)
+
+// emitIpBox sets local `box` to a fixed box's DATA pointer, with the
+// length word written and the octets set from local `packed`, or zero for
+// a negative `packed`.
+func emitIpBox(body []byte, box uint32, addr int32, packed int32) []byte {
+	body = inst.InstI32Const(body, addr)
+	body = inst.InstI32Const(body, 4)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstI32Const(body, addr)
+	if packed < 0 {
+		body = inst.InstI32Const(body, 0)
+	} else {
+		body = inst.InstLocalGet(body, uint32(packed))
+	}
+	body = memory.InstI32Store(body, 2, 4)
+	body = inst.InstI32Const(body, addr+4)
+	return inst.InstLocalSet(body, box)
+}
 
 // buildIpFlatBody assembles __fern_ip_flat.
 //
@@ -90,13 +125,11 @@ func buildIpFlatBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
 }
 
-// emitIpFlat allocates the flat record into local `flat` and fills it from
-// the address in local `addr` and the port in local `port`, with `tmp`
-// holding the helper's answer; a refused length frees the record and
-// returns its -errno.
+// emitIpFlat points local `flat` at the record and fills it from the
+// address in local `addr` and the port in local `port`, with `tmp` holding
+// the helper's answer; a refused length returns its -errno.
 func emitIpFlat(body []byte, idxs map[string]uint32, addr, port, flat, tmp uint32) []byte {
-	body = inst.InstI32Const(body, ipFlatSize)
-	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstI32Const(body, ipFlatAddr)
 	body = inst.InstLocalSet(body, flat)
 	body = inst.InstLocalGet(body, addr)
 	body = inst.InstLocalGet(body, port)
@@ -104,7 +137,6 @@ func emitIpFlat(body []byte, idxs map[string]uint32, addr, port, flat, tmp uint3
 	body = inst.InstCall(body, idxs["__fern_ip_flat"])
 	body = inst.InstLocalTee(body, tmp)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitIpFlatFree(body, idxs, flat)
 	body = inst.InstLocalGet(body, tmp)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
@@ -128,11 +160,4 @@ func emitIpFlatWords(body []byte, flat uint32) []byte {
 		body = memory.InstI32Load(body, 2, 4*k)
 	}
 	return body
-}
-
-// emitIpFlatFree releases the record in local `flat`.
-func emitIpFlatFree(body []byte, idxs map[string]uint32, flat uint32) []byte {
-	body = inst.InstLocalGet(body, flat)
-	body = inst.InstI32Const(body, ipFlatSize)
-	return inst.InstCall(body, idxs["__free"])
 }

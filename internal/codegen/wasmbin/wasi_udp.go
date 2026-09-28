@@ -61,7 +61,7 @@ const (
 //	5:  $host_buf      SSO-normalized host pointer
 //	6:  $host_blen     host byte length
 //	7:  $i             normalize + parse loop index
-//	8:  $octets        the parsed octets as a u8[]: its length word, then 4 bytes
+//	8:  $octets        the parsed octets as a u8[], the fixed box's data pointer
 //	9:  $octIdx        which octet (0..3) the parser is filling
 //	10: $acc           current octet accumulator
 //	11: $b             current host byte
@@ -69,15 +69,8 @@ const (
 //	13: $digits        digits seen in the octet being parsed
 //	14: $rec           the socket record from udp_bind
 //	15: $sent          udp_sendto's answer
-//	16: $any           0.0.0.0 as a u8[], for the bind
+//	16: $any           0.0.0.0 as a u8[], the second fixed box's data pointer
 func buildUdpSendBody(idxs map[string]uint32) []byte {
-	alloc := idxs["__fern_alloc"]
-	free := func(body []byte, ptr uint32, size int32) []byte {
-		body = inst.InstLocalGet(body, ptr)
-		body = inst.InstI32Const(body, size)
-		return inst.InstCall(body, idxs["__free"])
-	}
-
 	var body []byte
 
 	// Parse the host as a dotted-quad IPv4 literal BEFORE creating the
@@ -86,17 +79,8 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// octet store is guarded on $octIdx separately, because a host with
 	// a fifth group would otherwise write past the 4-byte $octets.
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 7)
-	for _, arr := range []uint32{8, 16} {
-		body = inst.InstI32Const(body, 8)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, arr)
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = memory.InstI32Store(body, 2, 0)
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 0)
-		body = memory.InstI32Store(body, 2, 4)
-	}
+	body = emitIpBox(body, 8, ipBoxAddr, -1)
+	body = emitIpBox(body, 16, ipBox2Addr, -1)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalSet(body, 9) // octIdx
 	body = inst.InstI32Const(body, 0)
@@ -143,7 +127,7 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 				body = inst.InstLocalGet(body, 9)
 				body = numeric.InstI32Add(body)
 				body = inst.InstLocalGet(body, 10)
-				body = memory.InstI32Store8(body, 0, 4)
+				body = memory.InstI32Store8(body, 0, 0)
 				body = inst.InstLocalGet(body, 9)
 				body = inst.InstI32Const(body, 1)
 				body = numeric.InstI32Add(body)
@@ -222,7 +206,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Or(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstI32Const(body, -errnoSocketInvalidArgument)
-	body = free(body, 8, 4)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
@@ -231,12 +214,10 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 9)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 10)
-	body = memory.InstI32Store8(body, 0, 4)
+	body = memory.InstI32Store8(body, 0, 0)
 
 	// $rec = udp_bind(0.0.0.0, 0); a negative answer is the -errno.
 	body = inst.InstLocalGet(body, 16)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, idxs["__fern_udp_bind"])
 	body = inst.InstLocalTee(body, 14)
@@ -244,15 +225,12 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, 14)
-	body = free(body, 8, 4)
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
 	// $sent = udp_sendto($rec, octets, port, data); close; answer.
 	body = inst.InstLocalGet(body, 14)
 	body = inst.InstLocalGet(body, 8)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 4)
@@ -262,7 +240,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, idxs["__fern_udp_close"])
 	body = inst.InstDrop(body)
 	body = inst.InstLocalGet(body, 15)
-	body = free(body, 8, 4)
 
 	locals := inst.PutLocalsOneGroup(nil, 12, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -297,7 +274,6 @@ func buildUdpBindBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitIpFlatFree(body, idxs, 4)
 	body = emitErrnoNegReturnReclaim(body, 2, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, 2)
@@ -316,7 +292,6 @@ func buildUdpBindBody(idxs map[string]uint32) []byte {
 	body = emitIpFlatWords(body, 4)
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, idxs["wasi_sockets_udp_start_bind"])
-	body = emitIpFlatFree(body, idxs, 4)
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -421,7 +396,6 @@ func buildUdpConnectBody(idxs map[string]uint32) []byte {
 	body = emitIpFlatWords(body, 4)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, idxs["wasi_sockets_udp_stream"])
-	body = emitIpFlatFree(body, idxs, 4)
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -476,8 +450,7 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = emitIpFlat(body, idxs, 1, 2, 13, 14)
 	body = inst.InstElse(body)
-	body = inst.InstI32Const(body, ipFlatSize)
-	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstI32Const(body, ipFlatAddr)
 	body = inst.InstLocalSet(body, 13)
 	body = inst.InstEnd(body)
 	body = emitStrNormalize(body, idxs, 3, 4, 7, 8, 9)
@@ -542,7 +515,6 @@ func buildUdpSendtoBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 8)
 	body = inst.InstEnd(body)
-	body = emitIpFlatFree(body, idxs, 13)
 
 	// $sent = -errno from the result at $ret, then leave the send loop.
 	failed := func(body []byte, errAt uint32, depth uint32) []byte {
