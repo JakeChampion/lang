@@ -35,7 +35,11 @@ name: Bootstrap
 #            (STAGE0=candidate make bootstrap). The Linux hosts go on to
 #            `make distcheck` and upload STAGE2 — the self-built fixed point,
 #            whose bytes any correct compiler of this source reproduces — so
-#            the pin's provenance no longer runs through the native backends.
+#            the pin a refresh leaves behind is a self-built binary and
+#            `make bootstrap` never needs a native-built stage0. The first
+#            pin published this way still has one native-built generation in
+#            it (stage2 is stage1's output, stage1 is the native candidate's);
+#            the one after it has none.
 #            arm64-darwin uploads the candidate: its stage2 exhausts the arena
 #            compiling the compiler (#8479), so the fixed point is not
 #            reachable there yet.

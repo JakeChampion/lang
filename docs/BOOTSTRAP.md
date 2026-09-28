@@ -100,8 +100,11 @@ The candidate is built by the **native** toolchain, but on the Linux hosts it
 is not what gets pinned: the publish job runs `STAGE0=candidate make
 distcheck` and uploads `build/bootstrap/stage2`, the self-built fixed point.
 Those bytes are what the current source emits for itself, so any correct
-compiler of that source reproduces them, and the pin's provenance no longer
-runs through the native backends. arm64-darwin still uploads the candidate:
+compiler of that source reproduces them. The first pin published this way
+still has one native-built generation in its ancestry, since its stage1 was
+the native candidate's output; the one after it has none, and from then on
+`make bootstrap` never needs a native-built stage0. arm64-darwin still
+uploads the candidate:
 its stage2 exhausts the arena compiling the compiler (#8479), so no fixed
 point is reachable there yet, and the day it is, the darwin step joins the
 other two.

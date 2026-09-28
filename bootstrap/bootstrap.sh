@@ -11,7 +11,7 @@
 #   stage1   stage0 compiles examples/self_host/fern.fern for this host; it
 #            must then compile and run a one-line program and coreutils/tr
 #            (the smoke test), and
-#            is installed as bin/fern-selfhost — the artifact `make
+#            is installed as bin/fern-selfhost — the same compiler `make
 #            selfhost-cli` builds with the native toolchain
 #   stage2   stage1 compiles the same source: the current compiler, built by
 #            a compiler that is itself the current source

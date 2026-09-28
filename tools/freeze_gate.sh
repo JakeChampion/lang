@@ -62,10 +62,11 @@ fi
 # .github/workflows/bootstrap.yml's `verify` job, and a lane that cannot pass
 # would be red on every PR, so the wiring IS the signal.
 #
-# Match an INVOCATION, not a mention: `^[^#]*` cannot span a '#', so the
-# comments in that file that describe distcheck do not read as it running, and
-# a step's `name:` line is dropped so a step whose `run:` was removed does not
-# either. Keying on prose instead would turn any rewrite of it into a false
+# Match an INVOCATION, not a mention: the command at the start of a line,
+# alone or after `run:`, a list dash or a STAGE0= assignment. A comment, a
+# step's `name:` line and the release notes all mention `make distcheck` and
+# none of them runs it, so a lane whose `run:` was removed does not read as
+# wired. Keying on prose instead would turn any rewrite of it into a false
 # GREEN on a freeze precondition.
 #
 # The wiring only stands in for the measurement while the lane can actually
@@ -73,7 +74,7 @@ fi
 # green with distcheck still broken, so those disqualify rather than pass —
 # UNVERIFIABLE, never GREEN, since a wrong green here is the whole failure mode
 # this gate exists to prevent.
-distcheck_wired=$(grep -E '^[^#]*\b(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null | grep -v 'name:')
+distcheck_wired=$(grep -E '^[[:space:]]*(run:[[:space:]]+|-[[:space:]]+)?(STAGE0=\S+[[:space:]]+)?(make|bootstrap\.sh)[[:space:]]+distcheck' .github/workflows/bootstrap.yml 2>/dev/null)
 if [ -n "$distcheck_wired" ]; then
   if printf '%s' "$distcheck_wired" | grep -q '|| *true' \
      || grep -Eq '^[^#]*continue-on-error:[[:space:]]*true' .github/workflows/bootstrap.yml 2>/dev/null; then
