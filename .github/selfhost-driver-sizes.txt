@@ -348,10 +348,15 @@
 # wit_proxy_world: ~1,450 lines that no driver linked before), and the wasm
 # extern bridge gained its heap-payload result wrappers. Measured with
 # FERN_WARM_DRIVER=fern.fern FERN_DRIVER_SIZE_REPORT on the branch.
+# 2026-09-28 — asm_ir_run alone, 9111545 -> 11148585 (+22.4%). The driver
+# takes the typed lowering's substitution (semlower.driven), so it links
+# semsource, ssasem, ssaunits, ssarc and the planners beside the AST lowering
+# it still carries; the lowering's deletion takes irlower's AST-only half back
+# out. Measured with FERN_WARM_DRIVER=asm_ir_run.fern FERN_DRIVER_SIZE_REPORT.
 fern.fern 14118057
 asm_load_run.fern 9924729
 asm_modload_run.fern 9400865
-asm_ir_run.fern 9111545
+asm_ir_run.fern 11148585
 asm_run.fern 8624344
 wasm_ir_run.fern 8387056
 wasm_run.fern 8378800
