@@ -8896,6 +8896,7 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    b .Lsum_bytes_tail\n");
     s = s.write(".Lsum_bytes_ret:\n");
     s = s.write("    ret\n");
+    s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
     return s;
 }
 
