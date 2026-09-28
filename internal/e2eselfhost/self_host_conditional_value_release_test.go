@@ -455,6 +455,37 @@ func TestSelfHostConditionalValueReleaseX86_64(t *testing.T) {
 	}
 }
 
+// condPlanOffCensus pins the AST census under FERN_SELFHOST_RC_PLAN=0 where it
+// differs from the plan's. The off-plan struct gate (body_unsafe_for_alias)
+// reads `Some(p)` as an escape rather than a counted sink, so p is refused
+// there: a sound leak of p and its buffer, never an over-release (#10618).
+var condPlanOffCensus = map[string][2]int64{
+	"option_match_return": {60, 20},
+}
+
+// TestSelfHostConditionalValueReleasePlanOffX86_64 runs the AST lowering with
+// the rc plan off, so a change to either route that moves a census fails here.
+func TestSelfHostConditionalValueReleasePlanOffX86_64(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range condReleaseCases {
+		t.Run(tc.name, func(t *testing.T) {
+			census := tc.astCensus
+			if pin, ok := condPlanOffCensus[tc.name]; ok {
+				census = pin
+			}
+			stderr, exit := cli.exitOf(t, tc.src, "x86-64-linux", "FERN_LEAKCHECK=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			if exit != tc.want {
+				t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, tc.want, stderr)
+			}
+			balanced := assertCondCensus(t, stderr, tc.balanced, census, "ast")
+			stderr, exit = cli.exitOf(t, tc.src, "x86-64-linux", "FERN_SANITIZE=1", "FERN_SEM_IR=", "FERN_SELFHOST_RC_PLAN=0")
+			if exit != tc.want || forArrStructSanitizerFault(stderr, balanced) {
+				t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, tc.want, stderr)
+			}
+		})
+	}
+}
+
 func TestSelfHostConditionalValueReleaseArm64(t *testing.T) {
 	checkConditionalValueRelease(t, "arm64-linux")
 }

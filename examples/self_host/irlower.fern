@@ -83407,6 +83407,42 @@ function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string
     return out.append("RETRE:" + site);
 }
 
+// reassigned_from_handback: some `name = f(..)` rebinds `name` to the result of
+// a call that hands an argument back uncounted (`handback`), so `name` then
+// holds a borrow of that argument rather than a box of its own.
+function reassigned_from_handback(stmts: ast.Stmt[], name: string, handback: string[]): boolean {
+    for st in stmts { if (stmt_reassigns_handback(st, name, handback)) { return true; } }
+    return false;
+}
+function stmt_reassigns_handback(st: ast.Stmt, name: string, handback: string[]): boolean {
+    match (st) {
+        ast.StmtAssign(a) => { return a.target == name && call_hands_back(a.value, handback); },
+        ast.StmtIf(f) => { return reassigned_from_handback(f.then_body, name, handback) || reassigned_from_handback(f.else_body, name, handback); },
+        ast.StmtWhile(w) => { return reassigned_from_handback(w.body, name, handback); },
+        ast.StmtFor(fo) => { return reassigned_from_handback(fo.body, name, handback); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (reassigned_from_handback(arm.body, name, handback)) { return true; } }
+            return false;
+        },
+        ast.StmtDefer(d) => { return stmt_reassigns_handback(d.action, name, handback); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function call_hands_back(e: ast.Expr, handback: string[]): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (util.index_of_str(handback, cid.name + "|" + util.i32_to_string(ai)) >= 0) { return true; }
+                ai = ai + 1;
+            }
+        }
+    }
+    return false;
+}
+
 function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: StructTab, out: string[]): string[] {
 var cyn: string[] = [];
 if (!plan_on) { cyn = cond_yielded_names(body); }
@@ -83473,7 +83509,10 @@ while (i < fresh.len()) {
         st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
             && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
     }
-    else { st_esc_ok = !body_unsafe_for_alias(cond_credit_body(body, fnm, cyn), fnm, borrowable, recv_borrow, sal); }
+    else {
+        st_esc_ok = !body_unsafe_for_alias(cond_credit_body(body, fnm, cyn), fnm, borrowable, recv_borrow, sal)
+            && !reassigned_from_handback(body, fnm, handback);
+    }
     // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
     // Its header named the precondition itself — "family knowledge until
     // assignments carry the co-extensive retain" — and lower_stmt_assign now
