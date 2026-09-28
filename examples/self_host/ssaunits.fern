@@ -619,10 +619,11 @@ function frame_views(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
     return out;
 }
 
-// Per record or variant construction whose every field is a narrow scalar
-// constant: "|" and its field words, which is a static box's whole content;
-// "" for any other value. A static box's rc is immortal, so its releases and
-// uniqueness tests leave it alone.
+// Per record, variant or array construction whose every field or element is a
+// narrow scalar constant: "|" and its words, which is a static box's whole
+// content; "" for any other value. An empty array literal is one whatever its
+// element type. A static box's rc is immortal, so its releases and uniqueness
+// tests leave it alone.
 function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -648,12 +649,20 @@ function constants(f: ssasem.Func, defs: ssa.SInst[]): string[] {
     return out;
 }
 
-// The declared fields a record or boxed-variant construction fills, or none
-// with a -1 sentinel when it is neither. A closure's environment is a record
-// only to the lowering, so it is not one here.
+// The declared fields a record or boxed-variant construction fills, one per
+// element for an array literal, or none with a -1 sentinel for anything else.
+// A closure's environment is a record only to the lowering, so it is not one
+// here.
 function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] {
     var none: semrecords.Field[] = [semrecords.Field { name: "", ty: typeinfo.unchecked() }];
     var t: typeinfo.Type = f.values[ins.result];
+    if (ins.kind_tag == ssasem.array_new()) {
+        if let typeinfo.TypeArray(a) = t {
+            var elems: semrecords.Field[] = [];
+            while (elems.len() < ins.args.len()) { elems = elems.append(semrecords.Field { name: "", ty: a.elem }); }
+            return elems;
+        }
+    }
     if (ins.kind_tag == ssasem.record_new() && !semtypes.is_env(t)) {
         var at: i32 = semrecords.find(f.records, t);
         if (at >= 0) { return f.records[at].fields; }
@@ -669,10 +678,16 @@ function constructed_fields(f: ssasem.Func, ins: ssa.SInst): semrecords.Field[] 
 
 // A field's static word, or "" when the value is not a constant this can
 // place. A u32 literal carries its text rather than an immediate, as
-// `ssarc.constant` reads it.
+// `ssarc.constant` reads it. A copy reads through to what it copies, which is
+// how a spliced accessor's constant arrives.
 function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     if (!narrow_scalar(t)) { return ""; }
     var d: ssa.SInst = defs[v];
+    var hops: i32 = 0;
+    while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
+        d = defs[d.args[0]];
+        hops = hops + 1;
+    }
     if (d.kind_tag == 1 && d.str != "") { return small_decimal(d.str); }
     if (d.kind_tag == 1 || d.kind_tag == 2) { return util.i32_to_string(d.imm); }
     if (d.str != "-" || !ssasem.is_i32(t)) { return ""; }

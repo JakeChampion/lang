@@ -3564,7 +3564,7 @@ function emit_arm64_op_dyn_downcast(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
 // The regions are walked rather than tabulated: string boxes are a fixed 24-byte
 // stride, a record constant's block carries its own length in the `cap` word
 // the walk strides by, and a function value's block is a fixed 32 bytes. An
-// empty array holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
+// array of scalars holds no address and sits outside all three. Only the whole-program pool is contiguous and complete,
 // which is the only shape `-target arm64-android` produces; a per-module unit
 // (str_ns != "") emits its pool piecewise and gets no loop.
 // reloc_wanted decides, for BOTH the relocation loop and the data it walks,

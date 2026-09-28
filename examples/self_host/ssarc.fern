@@ -1866,7 +1866,6 @@ function arr_slice(own r: irlower.LowerResult, elem: typeinfo.Type): irlower.Low
 // the field index alone.
 function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, structs: irlower.StructTab): irlower.LowerResult {
     if (variant_op(ins.kind_tag)) { return variant(r, f, ins, structs); }
-    if (ins.kind_tag == ssasem.array_new() && ins.args.len() == 0) { return emit(r, ir.op_const_empty_array()); }
     if (ins.kind_tag == ssasem.array_new()) { return emit(r, arr_make_op(elem_type(f.values[ins.result]), ins.args.len())); }
     if (ins.kind_tag == ssasem.tuple_new()) { return emit(r, ir.op_tuple_make_k(ins.args.len(), tuple_kinds(f.values[ins.result]))); }
     if (ins.kind_tag == ssasem.record_new()) { return emit(r, ir.op_struct_make(record_name(f.values[ins.result]), ins.args.len(), decl_of(f, ins, structs))); }
@@ -2332,9 +2331,11 @@ function negation_zero(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 // loaded for the ordinary construction and are dropped unread.
 function static_box(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, words: string): irlower.LowerResult {
     for a in ins.args { r = emit(r, ir.op_drop()); }
+    var values: string = slice_unchecked(words, 1, words.len()) + "";
+    if (ins.kind_tag == ssasem.array_new()) { return emit(r, ir.op_const_array(ins.args.len(), values)); }
     var name: string = ins.str;
     if (ins.kind_tag == ssasem.record_new()) { name = record_name(f.values[ins.result]); }
-    return emit(r, ir.op_const_struct(name, ins.args.len(), slice_unchecked(words, 1, words.len()) + ""));
+    return emit(r, ir.op_const_struct(name, ins.args.len(), values));
 }
 
 function constant_op(k: i32): boolean { return k == 1 || k == 2 || k == 5 || k == ssasem.zero(); }
