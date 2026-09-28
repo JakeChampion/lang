@@ -104,7 +104,7 @@ function main(): i32 {
         "function main(): i32 {"
         + " var a = [3, 5, 7, 9];"
         + " var i = 0; var s = 0;"
-        + " while (i < len(a)) { s = s + a[i]; i = i + 1; }"
+        + " while (i < a.len()) { s = s + a[i]; i = i + 1; }"
         + " return s; }";
     var r4: interp.Value = run_pipeline(arr_src);
     match (r4) {

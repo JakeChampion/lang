@@ -28,13 +28,52 @@ func numberArgs(name string, args []Value, want int) ([]int64, error) {
 	return out, nil
 }
 
-// sockaddrV4 is the address the builtins pack in network order: the first
-// octet in the low byte.
-func sockaddrV4(hostBE, port int64) *syscall.SockaddrInet4 {
-	return &syscall.SockaddrInet4{
-		Port: int(port),
-		Addr: [4]byte{byte(hostBE), byte(hostBE >> 8), byte(hostBE >> 16), byte(hostBE >> 24)},
+// sockaddrOf is the sockaddr for a builtin's address argument (four or
+// sixteen network-order bytes) and port, or nil for another length.
+func sockaddrOf(name string, addr Value, port int64) (syscall.Sockaddr, error) {
+	ip, err := ipArg(name, addr)
+	if err != nil {
+		return nil, err
 	}
+	switch len(ip) {
+	case 4:
+		sa := &syscall.SockaddrInet4{Port: int(port)}
+		copy(sa.Addr[:], ip)
+		return sa, nil
+	case 16:
+		sa := &syscall.SockaddrInet6{Port: int(port)}
+		copy(sa.Addr[:], ip)
+		return sa, nil
+	}
+	return nil, nil
+}
+
+// senderInto writes a datagram's sender the way the natives fill `from`:
+// the family byte, the address bytes from 1, the port at 17 and 18.
+func senderInto(from Array, sa syscall.Sockaddr) {
+	if len(from.E) < 19 {
+		return
+	}
+	for k := 0; k < 19; k++ {
+		from.E[k] = Number(0)
+	}
+	var port int
+	switch a := sa.(type) {
+	case *syscall.SockaddrInet4:
+		from.E[0] = Number(4)
+		for k, b := range a.Addr {
+			from.E[1+k] = Number(b)
+		}
+		port = a.Port
+	case *syscall.SockaddrInet6:
+		from.E[0] = Number(6)
+		for k, b := range a.Addr {
+			from.E[1+k] = Number(b)
+		}
+		port = a.Port
+	}
+	from.E[17] = Number(port >> 8)
+	from.E[18] = Number(port & 255)
 }
 
 func (i *Interp) newUdpHandle(fd int) Value {
@@ -47,15 +86,29 @@ func (i *Interp) newUdpHandle(fd int) Value {
 }
 
 func builtinUdpBind(i *Interp, args []Value) (Value, error) {
-	n, err := numberArgs("udp_bind", args, 2)
+	if len(args) != 2 {
+		return nil, fmt.Errorf("udp_bind: expected 2 args, got %d", len(args))
+	}
+	n, err := numberArgs("udp_bind", args[1:], 1)
 	if err != nil {
 		return nil, err
 	}
-	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_DGRAM, 0)
+	sa, err := sockaddrOf("udp_bind", args[0], n[0])
+	if err != nil {
+		return nil, err
+	}
+	family := syscall.AF_INET
+	switch sa.(type) {
+	case *syscall.SockaddrInet6:
+		family = syscall.AF_INET6
+	case nil:
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
+	}
+	fd, err := syscall.Socket(family, syscall.SOCK_DGRAM, 0)
 	if err != nil {
 		return negErrno(err), nil
 	}
-	if err := syscall.Bind(fd, sockaddrV4(n[0], n[1])); err != nil {
+	if err := syscall.Bind(fd, sa); err != nil {
 		syscall.Close(fd)
 		return negErrno(err), nil
 	}
@@ -63,15 +116,25 @@ func builtinUdpBind(i *Interp, args []Value) (Value, error) {
 }
 
 func builtinUdpConnect(i *Interp, args []Value) (Value, error) {
-	n, err := numberArgs("udp_connect", args, 3)
+	if len(args) != 3 {
+		return nil, fmt.Errorf("udp_connect: expected 3 args, got %d", len(args))
+	}
+	n, err := numberArgs("udp_connect", []Value{args[0], args[2]}, 2)
 	if err != nil {
 		return nil, err
+	}
+	sa, err := sockaddrOf("udp_connect", args[1], n[1])
+	if err != nil {
+		return nil, err
+	}
+	if sa == nil {
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
 	}
 	fd, ok := i.udpSocks[n[0]]
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
-	if err := syscall.Connect(fd, sockaddrV4(n[1], n[2])); err != nil {
+	if err := syscall.Connect(fd, sa); err != nil {
 		return negErrno(err), nil
 	}
 	return Number(0), nil
@@ -81,7 +144,7 @@ func builtinUdpSendto(i *Interp, args []Value) (Value, error) {
 	if len(args) != 4 {
 		return nil, fmt.Errorf("udp_sendto: expected 4 args, got %d", len(args))
 	}
-	n, err := numberArgs("udp_sendto", args[:3], 3)
+	n, err := numberArgs("udp_sendto", []Value{args[0], args[2]}, 2)
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +156,18 @@ func builtinUdpSendto(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-int64(syscall.EBADF)), nil
 	}
+	// An empty address sends to the connected peer.
 	var to syscall.Sockaddr
-	if n[1] != 0 || n[2] != 0 {
-		to = sockaddrV4(n[1], n[2])
+	if addr, ok := args[1].(Array); ok && len(addr.E) != 0 {
+		to, err = sockaddrOf("udp_sendto", args[1], n[1])
+		if err != nil {
+			return nil, err
+		}
+		if to == nil {
+			return Number(-int64(syscall.EAFNOSUPPORT)), nil
+		}
+	} else if !ok {
+		return nil, fmt.Errorf("udp_sendto: expected u8[] addr arg, got %T", args[1])
 	}
 	// A datagram goes out whole or not at all, so the count is the length.
 	if err := syscall.Sendto(fd, []byte(data), 0, to); err != nil {
@@ -132,13 +204,7 @@ func builtinUdpRecvfrom(i *Interp, args []Value) (Value, error) {
 	for k := 0; k < n; k++ {
 		buf.E[k] = Number(bytes[k])
 	}
-	if v4, ok := sa.(*syscall.SockaddrInet4); ok && len(from.E) >= 6 {
-		for k := 0; k < 4; k++ {
-			from.E[k] = Number(v4.Addr[k])
-		}
-		from.E[4] = Number(v4.Port >> 8)
-		from.E[5] = Number(v4.Port & 255)
-	}
+	senderInto(from, sa)
 	return Number(n), nil
 }
 
@@ -166,11 +232,13 @@ func (i *Interp) udpLocalPort(id int64) (Value, bool) {
 	if err != nil {
 		return negErrno(err), true
 	}
-	v4, ok := sa.(*syscall.SockaddrInet4)
-	if !ok {
-		return Number(-int64(syscall.EAFNOSUPPORT)), true
+	switch a := sa.(type) {
+	case *syscall.SockaddrInet4:
+		return Number(a.Port), true
+	case *syscall.SockaddrInet6:
+		return Number(a.Port), true
 	}
-	return Number(v4.Port), true
+	return Number(-int64(syscall.EAFNOSUPPORT)), true
 }
 
 func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {

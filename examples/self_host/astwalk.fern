@@ -755,7 +755,7 @@ function ident_of(e: ast.Expr, own acc: string[]): string[] {
 
 // not_lambda stops the walk at a lambda: ident_of has already accounted for its
 // whole body.
-function not_lambda(e: ast.Expr): boolean {
+pub function not_lambda(e: ast.Expr): boolean {
     match (e) {
         ast.ExprLambda(_) => { return false; },
         _ => { return true; }

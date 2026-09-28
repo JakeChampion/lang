@@ -239,19 +239,86 @@ function __sockaddr_in(port: i32, host_be: i32): usize {
     return sa;
 }
 
-// __fern_tcp_listen_with(port, backlog, reuse_port) is a socket listening
-// on 0.0.0.0:port with that accept queue, SO_REUSEPORT set before the bind
-// when asked, or the -errno of the step that failed with the socket closed
-// again. `reuse_port` is the builtin's boolean, an i32 here.
-function __fern_tcp_listen_with(port: i32, backlog: i32, reuse_port: i32): i32 {
-    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
-    if (fd < 0) { return fd as i32; }
+// AF_INET6 and EAFNOSUPPORT, which XNU numbers differently from Linux.
+function __af_inet6(): i32 {
+    if (target_os() == "darwin") { return 30; }
+    return 10;
+}
+function __eafnosupport(): i32 {
+    if (target_os() == "darwin") { return 47; }
+    return 97;
+}
+
+// The family an address names by its length: AF_INET for four bytes,
+// AF_INET6 for sixteen, else -EAFNOSUPPORT.
+function __af_of(addr: u8[]): i32 {
+    if (addr.len() == 4) { return 2; }
+    if (addr.len() == 16) { return __af_inet6(); }
+    return 0 - __eafnosupport();
+}
+
+// socket(2) of `kind` (1 stream, 2 datagram) for the family `addr` names:
+// the descriptor, or -errno.
+function __socket_for(addr: u8[], kind: i32): i64 {
+    var af: i32 = __af_of(addr);
+    if (af < 0) { return af as i64; }
+    return __syscall3(__sys_socket(), af as i64, kind as i64, 0);
+}
+
+// A sockaddr_in (16 bytes) or sockaddr_in6 (28: the family, the port, a
+// zero flow label, the address at 8, a zero scope id) for addr:port in a
+// fresh 32-byte block, its byte length at 28. The family head is as in
+// __sockaddr_in; the port sits at 2 in network order on both.
+function __sockaddr_of(addr: u8[], port: i32): usize {
+    var sa: usize = __alloc(32);
+    var z: usize = 0;
+    while (z < 32) {
+        __store_i32(sa + z, 0);
+        z = z + 4;
+    }
+    var len: i32 = 16;
+    var at: usize = 4;
+    var family: i32 = 2;
+    if (addr.len() == 16) {
+        len = 28;
+        at = 8;
+        family = __af_inet6();
+    }
+    if (target_os() == "darwin") {
+        __store_u8(sa, len);
+        __store_u8(sa + 1, family);
+    } else {
+        __store_u8(sa, family);
+        __store_u8(sa + 1, 0);
+    }
+    __store_u8(sa + 2, (port >> 8) & 255);
+    __store_u8(sa + 3, port & 255);
+    var a: usize = addr as usize;
+    var i: usize = 0;
+    while (i < (addr.len() as usize)) {
+        __store_u8(sa + at + i, __load_u8(a + i));
+        i = i + 1;
+    }
+    __store_i32(sa + 28, len);
+    return sa;
+}
+
+// connect(2) to addr:port: 0 or -errno.
+function __connect_to(fd: i64, addr: u8[], port: i32): i64 {
+    var sa: usize = __sockaddr_of(addr, port);
+    var r: i64 = __syscall3(__sys_connect(), fd, sa as i64, __load_i32(sa + 28) as i64);
+    __free(sa, 32);
+    return r;
+}
+
+// bind(2) and listen(2) on a fresh stream socket, SO_REUSEPORT set first
+// when asked: the socket, or the -errno of the step that failed with the
+// socket closed again.
+function __listen_at(fd: i64, sa: usize, salen: i32, backlog: i32, reuse_port: i32): i32 {
     var r: i64 = 0;
     if (reuse_port != 0) { r = __setsockopt_i32(fd, __sol_socket(), __so_reuseport(), 1); }
-    var sa: usize = __sockaddr_in(port, 0);
-    if (r >= 0) { r = __syscall3(__sys_bind(), fd, sa as i64, 16); }
+    if (r >= 0) { r = __syscall3(__sys_bind(), fd, sa as i64, salen as i64); }
     if (r >= 0) { r = __syscall3(__sys_listen(), fd, backlog as i64, 0); }
-    __free(sa, 16);
     if (r < 0) {
         __syscall3(__sys_close(), fd, 0, 0);
         return r as i32;
@@ -259,10 +326,30 @@ function __fern_tcp_listen_with(port: i32, backlog: i32, reuse_port: i32): i32 {
     return fd as i32;
 }
 
-// __fern_tcp_listen(port) is __fern_tcp_listen_with at the accept queue
+// __fern_tcp_listen_with(addr, port, backlog, reuse_port) is a socket
+// listening on addr:port (4 or 16 network-order bytes; the unspecified
+// address of either family takes every interface, and `::` both families
+// where the host allows) with that accept queue, SO_REUSEPORT set before
+// the bind when asked, or -errno. `reuse_port` is the builtin's boolean,
+// an i32 here.
+function __fern_tcp_listen_with(addr: u8[], port: i32, backlog: i32, reuse_port: i32): i32 {
+    var fd: i64 = __socket_for(addr, 1);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_of(addr, port);
+    var r: i32 = __listen_at(fd, sa, __load_i32(sa + 28), backlog, reuse_port);
+    __free(sa, 32);
+    return r;
+}
+
+// __fern_tcp_listen(port) listens on 0.0.0.0:port at the accept queue
 // depth the serve loop has always used, without SO_REUSEPORT.
 function __fern_tcp_listen(port: i32): i32 {
-    return __fern_tcp_listen_with(port, 128, 0);
+    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var sa: usize = __sockaddr_in(port, 0);
+    var r: i32 = __listen_at(fd, sa, 16, 128, 0);
+    __free(sa, 16);
+    return r;
 }
 
 // __fern_tcp_socket_ctl(fd, op, arg) is one control call on a socket: op
@@ -387,19 +474,19 @@ function __fern_unix_connect(path: string): i32 {
     return fd as i32;
 }
 
-// __fern_tcp_connect_with(host_be, port, nonblocking) is a socket
-// connected to the IPv4 address packed in network order, or -errno with the
-// socket closed again. With `nonblocking` (the builtin's boolean, an i32
-// here) the socket is non-blocking and the connect is only started: the
+// __fern_tcp_connect_with(addr, port, nonblocking) is a socket connected
+// to addr:port (4 or 16 network-order bytes), or -errno with the socket
+// closed again. With `nonblocking` (the builtin's boolean, an i32 here)
+// the socket is non-blocking and the connect is only started: the
 // descriptor comes back while it is under way, and control op 5 reports
 // how it ended.
-function __fern_tcp_connect_with(host_be: i32, port: i32, nonblocking: i32): i32 {
-    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+function __fern_tcp_connect_with(addr: u8[], port: i32, nonblocking: i32): i32 {
+    var fd: i64 = __socket_for(addr, 1);
     if (fd < 0) { return fd as i32; }
     var r: i64 = 0;
     if (nonblocking != 0) { r = __fern_tcp_socket_ctl(fd as i32, 3, 1) as i64; }
     if (r >= 0) {
-        r = __connect_v4(fd, host_be, port);
+        r = __connect_to(fd, addr, port);
         if (nonblocking != 0 && r == 0 - __einprogress()) { r = 0; }
     }
     if (r < 0) {
@@ -409,8 +496,17 @@ function __fern_tcp_connect_with(host_be: i32, port: i32, nonblocking: i32): i32
     return fd as i32;
 }
 
+// __fern_tcp_connect(host_be, port) is a socket connected to the IPv4
+// address packed in network order, or -errno.
 function __fern_tcp_connect(host_be: i32, port: i32): i32 {
-    return __fern_tcp_connect_with(host_be, port, 0);
+    var fd: i64 = __syscall3(__sys_socket(), 2, 1, 0);
+    if (fd < 0) { return fd as i32; }
+    var r: i64 = __connect_v4(fd, host_be, port);
+    if (r < 0) {
+        __syscall3(__sys_close(), fd, 0, 0);
+        return r as i32;
+    }
+    return fd as i32;
 }
 
 function __fern_tcp_accept(fd: i32): i32 {
@@ -766,15 +862,15 @@ function __fern_tcp_send(fd: i32, s: string): i32 {
     return __send_str(fd, s, 0 as usize, 0);
 }
 
-// __fern_udp_bind(host_be, port) is a datagram socket bound to the IPv4
-// address packed in network order (0 for every address, port 0 for one the
-// kernel picks), or -errno with the socket closed again.
-function __fern_udp_bind(host_be: i32, port: i32): i32 {
-    var fd: i64 = __syscall3(__sys_socket(), 2, 2, 0);
+// __fern_udp_bind(addr, port) is a datagram socket bound to addr:port (4
+// or 16 network-order bytes; the unspecified address for every interface,
+// port 0 for one the kernel picks), or -errno with the socket closed again.
+function __fern_udp_bind(addr: u8[], port: i32): i32 {
+    var fd: i64 = __socket_for(addr, 2);
     if (fd < 0) { return fd as i32; }
-    var sa: usize = __sockaddr_in(port, host_be);
-    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, 16);
-    __free(sa, 16);
+    var sa: usize = __sockaddr_of(addr, port);
+    var r: i64 = __syscall3(__sys_bind(), fd, sa as i64, __load_i32(sa + 28) as i64);
+    __free(sa, 32);
     if (r < 0) {
         __syscall3(__sys_close(), fd, 0, 0);
         return r as i32;
@@ -782,41 +878,63 @@ function __fern_udp_bind(host_be: i32, port: i32): i32 {
     return fd as i32;
 }
 
-// __fern_udp_connect(fd, host_be, port) fixes a datagram socket's peer:
-// 0 or -errno.
-function __fern_udp_connect(fd: i32, host_be: i32, port: i32): i32 {
-    return __connect_v4(fd as i64, host_be, port) as i32;
+// __fern_udp_connect(fd, addr, port) fixes a datagram socket's peer: 0 or
+// -errno.
+function __fern_udp_connect(fd: i32, addr: u8[], port: i32): i32 {
+    var af: i32 = __af_of(addr);
+    if (af < 0) { return af; }
+    return __connect_to(fd as i64, addr, port) as i32;
 }
 
-// __fern_udp_sendto(fd, host_be, port, data) is one datagram to host:port,
-// or to the connected peer when both are zero: the bytes accepted, or
-// -errno.
-function __fern_udp_sendto(fd: i32, host_be: i32, port: i32, data: string): i32 {
-    if (host_be == 0 && port == 0) { return __send_str(fd, data, 0 as usize, 0); }
-    var sa: usize = __sockaddr_in(port, host_be);
-    var r: i32 = __send_str(fd, data, sa, 16);
-    __free(sa, 16);
+// __fern_udp_sendto(fd, addr, port, data) is one datagram to addr:port, or
+// to the connected peer when addr is empty: the bytes accepted, or -errno.
+function __fern_udp_sendto(fd: i32, addr: u8[], port: i32, data: string): i32 {
+    if (addr.len() == 0) { return __send_str(fd, data, 0 as usize, 0); }
+    var af: i32 = __af_of(addr);
+    if (af < 0) { return af; }
+    var sa: usize = __sockaddr_of(addr, port);
+    var r: i32 = __send_str(fd, data, sa, __load_i32(sa + 28));
+    __free(sa, 32);
     return r;
 }
 
 // __fern_udp_recvfrom(fd, buf, from) reads one datagram into buf, up to its
 // length: the datagram's byte count (an empty datagram is 0), or -errno.
-// When from holds at least six bytes it receives the sender's address in
-// network order followed by the port, high byte first.
+// When from holds at least nineteen bytes it receives the sender: the
+// family at 0 (4 or 6), the address's network-order bytes from 1 (four or
+// sixteen, the rest zero), and the port at 17, high byte first.
 function __fern_udp_recvfrom(fd: i32, buf: u8[], from: u8[]): i32 {
-    var sa: usize = __alloc(20);
-    __store_i32(sa + 16, 16);
-    var n: i64 = __syscall6(__sys_recvfrom(), fd as i64, (buf as usize) as i64, buf.len() as i64, 0, sa as i64, (sa + 16) as i64);
-    if (n >= 0 && from.len() >= 6) {
+    var sa: usize = __alloc(32);
+    __store_i32(sa + 28, 28);
+    var n: i64 = __syscall6(__sys_recvfrom(), fd as i64, (buf as usize) as i64, buf.len() as i64, 0, sa as i64, (sa + 28) as i64);
+    if (n >= 0 && from.len() >= 19) {
+        var family: i32 = __load_u8(sa + 1);
+        if (target_os() != "darwin") { family = __load_u8(sa) | (family << 8); }
         var f: usize = from as usize;
-        __store_u8(f, __load_u8(sa + 4));
-        __store_u8(f + 1, __load_u8(sa + 5));
-        __store_u8(f + 2, __load_u8(sa + 6));
-        __store_u8(f + 3, __load_u8(sa + 7));
-        __store_u8(f + 4, __load_u8(sa + 2));
-        __store_u8(f + 5, __load_u8(sa + 3));
+        var z: usize = 0;
+        while (z < 19) {
+            __store_u8(f + z, 0);
+            z = z + 1;
+        }
+        var n_addr: usize = 0;
+        var at: usize = 4;
+        if (family == 2) {
+            __store_u8(f, 4);
+            n_addr = 4;
+        } else if (family == __af_inet6()) {
+            __store_u8(f, 6);
+            n_addr = 16;
+            at = 8;
+        }
+        var k: usize = 0;
+        while (k < n_addr) {
+            __store_u8(f + 1 + k, __load_u8(sa + at + k));
+            k = k + 1;
+        }
+        __store_u8(f + 17, __load_u8(sa + 2));
+        __store_u8(f + 18, __load_u8(sa + 3));
     }
-    __free(sa, 20);
+    __free(sa, 32);
     return n as i32;
 }
 

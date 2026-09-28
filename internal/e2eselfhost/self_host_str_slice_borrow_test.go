@@ -86,22 +86,6 @@ function main(): i32 {
     if (b2 - b1 >= 32768) { return 98; }
     return 0;
 }`, 0},
-	// The free-function spelling `len(x)`, which lowers through the same
-	// view-borrowing path as the method.
-	{"str-slice-len-builtin-arg-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }
-function round(pre: string): i32 { var base: string = w(pre); return len(slice_unchecked(base, 4, 12)); }
-function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
-function main(): i32 {
-    var pre: string = "abcdefgh";
-    var a: i32 = churn(pre, 400);
-    var b1: i32 = (__heap_bump_bytes() as i32);
-    var b: i32 = churn(pre, 400);
-    var b2: i32 = (__heap_bump_bytes() as i32);
-    if (__rc_underflow_count() != 0) { return 99; }
-    if (a != b) { return 97; }
-    if (b2 - b1 >= 32768) { return 98; }
-    return 0;
-}`, 0},
 	// A byte read off the view: `base[4:12][1]` indexes the view and copies out one
 	// byte.
 	{"str-slice-index-base-borrow-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-view-box-so-the-source-string-dominates-the-measurement-when-it-is-stranded-by-a-slice-read-0123456789"; }

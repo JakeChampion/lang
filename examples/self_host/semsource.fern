@@ -3405,12 +3405,16 @@ function mode(p: ast.ParamDecl, t: typeinfo.Type): i32 {
     return ssaunits.borrow_mode();
 }
 
+// Whether a receiver is the declaration's parameter 0. An impl block's
+// associated function has a receiver_type and no receiver.
+pub function has_receiver(fd: parser.FuncDecl): boolean { return fd.receiver_name.len() > 0; }
+
 // A method's receiver is its parameter 0: the backends already lower it as
 // one, and the unit planner needs it in the same list as the declared
 // parameters, so every walk over a declaration's parameters starts here.
 function decl_param_names(fd: parser.FuncDecl): string[] {
     var out: string[] = [];
-    if (fd.receiver_name.len() > 0) { out = out.append(fd.receiver_name); }
+    if (has_receiver(fd)) { out = out.append(fd.receiver_name); }
     for p in fd.params { out = out.append(p.name); }
     return out;
 }
@@ -3420,7 +3424,7 @@ function decl_param_names(fd: parser.FuncDecl): string[] {
 // what every backend already does with a receiver, and it is the direction
 // that refuses rather than miscompiles if a body tries to consume one.
 function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
-    if (fd.receiver_name.len() == 0) { return mode(fd.params[at], t); }
+    if (!has_receiver(fd)) { return mode(fd.params[at], t); }
     if (at > 0) { return mode(fd.params[at - 1], t); }
     if (!reference(t)) { return ssaunits.value_mode(); }
     return ssaunits.borrow_mode();
@@ -3593,7 +3597,7 @@ function result_type(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bindin
 // environment record they describe (`semtypes.is_env`), and a body reading no
 // capture keeps the bare array.
 function is_closure_body(fd: parser.FuncDecl): boolean {
-    return fd.receiver_name.len() == 0 && fd.params.len() > 0 && fd.params[0].name == "__env";
+    return !has_receiver(fd) && fd.params.len() > 0 && fd.params[0].name == "__env";
 }
 
 function reads_env_slot(e: ast.Expr, slot: i32): boolean {
@@ -4483,13 +4487,13 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
         ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
         ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
-        ssasem.Contract { name: "tcp_listen_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
         ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-        ssasem.Contract { name: "udp_bind", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
-        ssasem.Contract { name: "udp_connect", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
-        ssasem.Contract { name: "udp_sendto", params: [t_i32(), t_i32(), t_i32(), t_string()], modes: [v, v, v, b], result: t_i32() },
+        ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_i32() },
+        ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
+        ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
         ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
-        ssasem.Contract { name: "tcp_connect_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "tcp_connect_with", params: [bytes, t_i32(), t_bool()], modes: [b, v, v], result: t_i32() },
         ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_i32() },
         ssasem.Contract { name: "unix_connect", params: [t_string()], modes: [b], result: t_i32() },
         ssasem.Contract { name: "reactor_new", params: [], modes: [], result: t_i32() },

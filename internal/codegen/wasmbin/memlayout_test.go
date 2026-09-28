@@ -1,6 +1,9 @@
 package wasmbin
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -170,6 +173,34 @@ func readSleb(t *testing.T, b []byte, p *int) int32 {
 				v |= -1 << shift
 			}
 			return v
+		}
+	}
+}
+
+// Every address in the package comes from memlayout.go's chain. A
+// hand-picked `xAddr = N` anywhere else can name bytes the chain has
+// already handed out: three socket scratch slots were once placed at
+// 96..159 from a stale comment, over the network-handle cache and the
+// stream-handle flags, and every IPv6 address the backend built carried
+// the network handle in its segments.
+func TestAddressConstantsComeFromTheChain(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	picked := regexp.MustCompile(`^\s*(const\s+)?[A-Za-z0-9_]*Addr\s*=\s*[0-9]`)
+	for _, f := range files {
+		if f == "memlayout.go" || strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if picked.MatchString(line) {
+				t.Errorf("%s:%d: an address is picked by hand (%q); add the slot to memlayout.go's chain instead", f, i+1, strings.TrimSpace(line))
+			}
 		}
 	}
 }

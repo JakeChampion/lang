@@ -27,7 +27,6 @@ var auditIOCases = []struct {
 	{"print", `function main(): i32 { print("hello"); return 0; }`, "hello\n", 0},
 	{"write-raw", `function main(): i32 { write("ab"); write("cd"); return 0; }`, "abcd", 0},
 	{"eprint-not-stdout", `function main(): i32 { eprint("err"); print("out"); return 0; }`, "out\n", 0},
-	{"len-free", `function main(): i32 { return len("hello") + len([1, 2, 3]); }`, "", 8},
 	{"exit-code", `function main(): i32 { exit(42); return 0; }`, "", 42},
 }
 

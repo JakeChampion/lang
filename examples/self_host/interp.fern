@@ -2669,18 +2669,6 @@ function call_buf_builtin(name: string, args: Value[]): Value {
 }
 
 function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-    // Builtin: `len(a)` on an array → i32. Special-cased here
-    // because the parser doesn't model builtins separately and
-    // the interp has no Go-side host functions yet.
-    if (name == "len") {
-        if (args.len() != 1) { return v_err("len takes exactly 1 argument"); }
-        match (args[0]) {
-            VArr(a) => { return v_int(a.elements.len()); },
-            VString(s) => { return v_int(s.v.len()); },
-            VMap(m) => { return v_int(m.keys.len()); },
-            _ => { return v_err("len: argument must be array, string, or map"); }
-        }
-    }
     // The string-taking I/O trio, matching internal/interp's builtinPrint /
     // builtinWrite / builtinEprint: print and eprint append a newline, write
     // does not, and eprint goes to stderr. The interpreter is itself a Fern
@@ -3929,8 +3917,8 @@ function check_arrays(): i32 {
         _ => { return 211; }
     }
 
-    // len() builtin on array.
-    var r22: Value = run_source("var a = [1, 2, 3, 4]; return len(a);");
+    // .len() on an array.
+    var r22: Value = run_source("var a = [1, 2, 3, 4]; return a.len();");
     match (r22) {
         VInt(i) => { if (i.v != 4) { return 220; } },
         _ => { return 221; }
@@ -3938,7 +3926,7 @@ function check_arrays(): i32 {
 
     // Sum-an-array via while loop. Sum of [3, 5, 7, 9] = 24.
     var r23: Value = run_source(
-        "var a = [3, 5, 7, 9]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s;"
+        "var a = [3, 5, 7, 9]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;"
     );
     match (r23) {
         VInt(i) => { if (i.v != 24) { return 230; } },
@@ -3953,7 +3941,7 @@ function check_arrays(): i32 {
     }
 
     // Empty array literal: len → 0.
-    var r25: Value = run_source("var a = []; return len(a);");
+    var r25: Value = run_source("var a = []; return a.len();");
     match (r25) {
         VInt(i) => { if (i.v != 0) { return 250; } },
         _ => { return 251; }
@@ -4035,9 +4023,9 @@ function check_slicing(): i32 {
 
     // The trap the expression form gave up lives on `slice_unchecked`:
     // an out-of-range bound is still an error there. (Surface it through
-    // len() so it reaches the program's return rather than getting
+    // .len() so it reaches the program's return rather than getting
     // silently stored in a var.)
-    var r32u: Value = run_source("var s = \"hi\"; return len(slice_unchecked(s, 0, 99));");
+    var r32u: Value = run_source("var s = \"hi\"; return slice_unchecked(s, 0, 99).len();");
     match (r32u) {
         VErr(_) => { },
         _ => { return 324; }

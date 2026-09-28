@@ -962,22 +962,24 @@ pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // answering the port it is bound to. The only way to learn the port the kernel
 // picked for a `tcp_listen(0)`.
 pub function op_tcp_local_port(): Op { return op0("tcp_local_port"); }
-// `tcp_listen_with` [port, backlog, reuse_port] -> i32 listener (or -errno):
-// tcp_listen with the accept queue and SO_REUSEPORT chosen by the caller.
+// `tcp_listen_with` [addr, port, backlog, reuse_port] -> i32 listener (or
+// -errno): a listener on addr:port (the address's 4 or 16 network-order
+// bytes) with the accept queue and SO_REUSEPORT chosen by the caller.
 pub function op_tcp_listen_with(): Op { return op0("tcp_listen_with"); }
 // `tcp_socket_ctl` [fd, op, arg] -> i32 0 (or -errno): one control call on a
 // socket — no-delay, keep-alive, non-blocking or shutdown (#9853).
 pub function op_tcp_socket_ctl(): Op { return op0("tcp_socket_ctl"); }
-// The datagram sockets (#9853). `udp_bind` [host_be, port] -> i32 socket (or
-// -errno); `udp_connect` [fd, host_be, port] -> i32 0 (or -errno);
-// `udp_sendto` [fd, host_be, port, data] -> i32 bytes (or -errno);
+// The datagram sockets (#9853), the address as its 4 or 16 network-order
+// bytes. `udp_bind` [addr, port] -> i32 socket (or -errno); `udp_connect`
+// [fd, addr, port] -> i32 0 (or -errno); `udp_sendto` [fd, addr, port,
+// data] -> i32 bytes (or -errno; an empty addr sends to the peer);
 // `udp_recvfrom` [fd, buf, from] -> i32 bytes read into `buf`, the sender
 // into `from` (or -errno).
 pub function op_udp_bind(): Op { return op0("udp_bind"); }
 pub function op_udp_connect(): Op { return op0("udp_connect"); }
 pub function op_udp_sendto(): Op { return op0("udp_sendto"); }
 pub function op_udp_recvfrom(): Op { return op0("udp_recvfrom"); }
-// `tcp_connect_with` [host_be, port, nonblocking] -> i32 connected fd, or one
+// `tcp_connect_with` [addr, port, nonblocking] -> i32 connected fd, or one
 // whose connect is under way (or -errno) (#9853).
 pub function op_tcp_connect_with(): Op { return op0("tcp_connect_with"); }
 // The Unix-domain sockets (#9853). `unix_listen` [path, backlog] -> i32
@@ -3223,7 +3225,7 @@ function pops3(t: i32): boolean {
         || t == 89 || t == 96 || t == 102 || t == 111                    // arr_set, arr_slice, str_slice, str_replace
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
-        || t == 332 || t == 333 || t == 335 || t == 337 || t == 338      // tcp_listen_with, tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
+        || t == 333 || t == 335 || t == 337 || t == 338                  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
         || t == 343                                                      // reactor_wait (r, events, timeout_ms)
         || t == 242                                                      // reader_seek (fd, offset, whence)
         || t == 330                                                      // reader_splice (fd, out_fd, max)
@@ -3266,7 +3268,8 @@ pub function op_pops(o: Op): i32 {
     if (pops2_arith(t) || pops2_mem(t) || pops2_io(t)) { return 2; }
     if (pops3(t)) { return 3; }
     if (t == 204) { return 4; }                       // syscall3: nr + 3 args
-    if (t == 336) { return 4; }                       // udp_sendto: fd + host + port + data
+    if (t == 332) { return 4; }                       // tcp_listen_with: addr + port + backlog + reuse_port
+    if (t == 336) { return 4; }                       // udp_sendto: fd + addr + port + data
     if (t == 342) { return 4; }                       // reactor_ctl: r + op + fd + arg
     if (t == 206) { return 5; }                       // syscall4
     if (t == 245) { return 5; }                       // mismatch: a, ao, b, bo, n

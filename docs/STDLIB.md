@@ -1079,7 +1079,12 @@ The socket controls are typed faces over the descriptor builtins
 `tcp_listen_with` and `tcp_socket_ctl`, on the same `i32` descriptors the
 `tcp_*` builtins and `std/tcp` use:
 
-- `listen_with(port, opts)` — a listener with `ListenOptions { backlog,
+- `listen_at(addr, opts)` — a listener bound to a `SocketAddr` of either
+  family with `ListenOptions { backlog, reuse_port }`; `::` takes every
+  interface of both families where the host allows a dual-stack listener
+  (Linux and Darwin by default; wasi:sockets keeps an IPv6 socket
+  IPv6-only).
+- `listen_with(port, opts)` — `listen_at` on every IPv4 interface at `port`, with `ListenOptions { backlog,
   reuse_port }` (`listen_options()` is `tcp_listen`'s 128 and one
   listener per port), or the `NetError` the bind or listen reported.
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
@@ -1095,10 +1100,9 @@ wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
 `udp_sendto` and `udp_recvfrom`, on the same descriptors:
 
-- `udp_socket(addr)` — a socket bound to a `SocketAddr` (port 0 lets the
-  host pick), receiving from any peer until `set_peer(sock, peer)` fixes
-  one. An IPv6 address is refused with `Other(address_family_errno())`
-  until the primitives take one.
+- `udp_socket(addr)` — a socket bound to a `SocketAddr` of either family
+  (port 0 lets the host pick), receiving from any peer until
+  `set_peer(sock, peer)` fixes one.
 - `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
   or to the fixed peer: the bytes accepted.
 - `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the

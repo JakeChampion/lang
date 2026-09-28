@@ -174,7 +174,7 @@ function walked(t: typeinfo.Type): boolean {
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
-    if (routed_map(t) && ssasem.boxed_map_value(ssasem.map_value(t))) { return "__map_drop_boxes_impl"; }
+    if (routed_map(t) && routed_box(ssasem.map_value(t))) { return "__map_drop_boxes_impl"; }
     if (routed_map(t) && (ssasem.is_string(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) { return "__map_drop_strcols_impl"; }
     if (routed_map(t)) { return "__map_drop_impl"; }
     if (ssasem.is_map(t)) { return map_release_name(t); }
@@ -220,7 +220,7 @@ function map_release_name(t: typeinfo.Type): string {
 // that releases one value — the key's first, the value's on top — so the
 // runtime can walk a column whose shape it does not know.
 function release(own r: irlower.LowerResult, slot: i32, t: typeinfo.Type): irlower.LowerResult {
-    if (routed_map(t) && ssasem.boxed_map_value(ssasem.map_value(t))) {
+    if (routed_map(t) && routed_box(ssasem.map_value(t))) {
         r = emit(r, ir.op_load_local(slot));
         r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
         r = emit(r, ir.op_call_direct(release_name(t), 2));
@@ -1416,7 +1416,7 @@ function routed_box_columns(f: ssasem.Func): typeinfo.Type[] {
     var out: typeinfo.Type[] = [];
     var names: string[] = [];
     for t in schema_types(f) {
-        if (!routed_map(t) || !ssasem.boxed_map_value(ssasem.map_value(t))) { continue; }
+        if (!routed_map(t) || !routed_box(ssasem.map_value(t))) { continue; }
         var name: string = env_release_name(ssasem.map_value(t));
         if (util.index_of_str(names, name) >= 0) { continue; }
         names = names.append(name);
@@ -1486,7 +1486,10 @@ pub function drop_helpers(f: ssasem.Func): irlower.LowerResult[] {
         if (has_children(e.ty, f)) { out = util.append_all(out, [one_helper(e.ty, f), release_helper(e.ty, f)]); }
     }
     for v in boxed_columns(f) { if (!outlined_release(v, f)) { out = out.append(release_helper(v, f)); } }
-    for v in routed_box_columns(f) { out = out.append(env_release_helper(v)); }
+    for v in routed_box_columns(f) {
+        if (ssasem.is_string_array(v)) { out = out.append(release_helper(v, f)); }
+        out = out.append(env_release_helper(v));
+    }
     return out;
 }
 
@@ -2034,7 +2037,13 @@ function routed_key(t: typeinfo.Type): boolean {
 // A value column may also hold boxes, one unit of each; core/map retains them
 // on every read and copy, and this lowering releases the ones it drops.
 function routed_value(t: typeinfo.Type): boolean {
-    return routed_key(t) || ssasem.boxed_map_value(t);
+    return routed_key(t) || routed_box(t);
+}
+
+// The boxes a routed value column can hold: any counted value but a string,
+// a function or a map, released through the type's own release helper.
+function routed_box(t: typeinfo.Type): boolean {
+    return ssasem.boxed_map_value(t) || ssasem.is_string_array(t);
 }
 
 function routed_column(t: typeinfo.Type): boolean {
@@ -2097,7 +2106,7 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
 // slot itself.
 function routed_val_tag(t: typeinfo.Type): i32 {
     if (ssasem.is_string(t)) { return 5; }
-    if (ssasem.boxed_map_value(t)) { return 4; }
+    if (routed_box(t)) { return 4; }
     return 0;
 }
 
@@ -2125,7 +2134,7 @@ function routed_column_read(own r: irlower.LowerResult, elem: typeinfo.Type, off
     r = emit(r, offset);
     if (ssasem.is_bool(elem)) { return emit(r, ir.op_call_direct("__map_bool_column", 2)); }
     if (ssasem.is_string(elem)) { return emit(r, ir.op_call_direct("__map_string_column", 2)); }
-    if (ssasem.boxed_map_value(elem)) { return emit(r, ir.op_call_direct("__map_box_column", 2)); }
+    if (routed_box(elem)) { return emit(r, ir.op_call_direct("__map_box_column", 2)); }
     return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
 
@@ -2160,7 +2169,7 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     var before: i32 = res + 1;
     var old_val: i32 = res + 2;
     var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
-    var boxed_val: boolean = ssasem.boxed_map_value(ssasem.map_value(t));
+    var boxed_val: boolean = routed_box(ssasem.map_value(t));
     r = reserve(r, old_val + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
@@ -2202,7 +2211,7 @@ function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     var old_key: i32 = box + 2;
     var old_val: i32 = box + 3;
     var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
-    var counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || ssasem.boxed_map_value(ssasem.map_value(t));
+    var counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
     r = reserve(r, old_val + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
@@ -3839,11 +3848,11 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // for the callers the AST lowering still emits: irlower.grow_param_flags_of's
 // mask — one token per position, the receiver's first and then one per
 // parameter — "0", "1" for an array parameter's own buffer, or "F:<field>,…"
-// naming a record parameter's fields. A free function's receiver position
-// carries "0".
-pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], method: boolean): string {
+// naming a record parameter's fields. A function with no receiver, an
+// associated function included, carries "0" in that position.
+pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], receiver: boolean): string {
     var mask: string = "";
-    if (!method) { mask = "0"; }
+    if (!receiver) { mask = "0"; }
     var i: i32 = 0;
     while (i < f.params.len()) {
         var tok: string = "0";
@@ -3882,9 +3891,10 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
 }
 
 // A produced function whose rows caller_sigs rewrites. `name` is the key an
-// AST caller looks it up by, `<Base>.<name>` for a method, whose receiver is
-// parameter 0 here but has no position in the AST's per-parameter rows.
-pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean }
+// AST caller looks it up by, `<Base>.<name>` for a method. `receiver` says
+// parameter 0 is a receiver, which has no position in the AST's per-parameter
+// rows; an associated function has none.
+pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, receiver: boolean }
 
 // caller_sigs rewrites every callee's rows at once: each registry is filtered
 // in one pass against all the callees' keys, then each callee's rows are
@@ -3924,6 +3934,8 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
     for c in callees {
         var name: string = c.name;
         var f: ssasem.Func = c.f;
+        // A threader lowered here keeps its AST callers on the shallow release (#10420).
+        arrays = irlower.without_thread_rows_through(arrays, name);
         if let typeinfo.TypeTuple(tup) = f.result {
             tuples = tuples.append(name);
             var flags: string = tuple_flags(tup);
@@ -3940,7 +3952,7 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
             counted = counted.append(name);
         }
         var first: i32 = 0;
-        if (c.method) { first = 1; }
+        if (c.receiver) { first = 1; }
         var tiers: string[] = counted_tiers(f, c.modes, first);
         params = tier_rows(params, name, tiers);
         borrows = borrow_rows(borrows, name, tiers, bare_flags(f, c.modes, c.plan, first));
@@ -4192,43 +4204,24 @@ function tuple_flags(tup: typeinfo.TypeTuple): string {
     return flags;
 }
 
-// RowKeys is the set of `prefix + name` keys whose rows caller_sigs erases.
-struct RowKeys { keys: string[], head: i32[], next: i32[] }
-
-function row_keys(names: string[], prefixes: string[]): RowKeys {
+// row_keys is the set of `prefix + name` keys whose rows caller_sigs erases.
+function row_keys(names: string[], prefixes: string[]): util.NameIndex {
     var keys: string[] = [];
     for name in names { for prefix in prefixes { keys = keys.append(prefix + name); } }
-    var head: i32[] = [];
-    var nb: i32 = keys.len() * 2 + 1;
-    while (head.len() < nb) { head = head.append(0 - 1); }
-    var next: i32[] = [];
-    var k: i32 = 0;
-    while (k < keys.len()) {
-        var b: i32 = util.hash_bucket(keys[k], nb);
-        next = next.append(head[b]);
-        head = head.with(b, k);
-        k = k + 1;
-    }
-    return RowKeys { keys: keys, head: head, next: next };
+    return util.name_index(keys);
 }
 
 // row_keyed: `row` is keyed "<key>" or "<key>|<flags>" for a key in `ks`, and
 // carries the `|<flags>` part when `barred`. Names and prefixes hold no `|`,
 // so a row's key is the text before its first `|`.
-function row_keyed(ks: RowKeys, row: string, barred: boolean): boolean {
+function row_keyed(ks: util.NameIndex, row: string, barred: boolean): boolean {
     var bar: i32 = 0;
     while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
     if (barred && bar == row.len()) { return false; }
-    var key: str = slice_unchecked(row, 0, bar);
-    var i: i32 = ks.head[util.hash_bucket(key, ks.head.len())];
-    while (i >= 0) {
-        if (ks.keys[i] == key) { return true; }
-        i = ks.next[i];
-    }
-    return false;
+    return ks.has(slice_unchecked(row, 0, bar));
 }
 
-function without_rows(rows: string[], ks: RowKeys, barred: boolean): string[] {
+function without_rows(rows: string[], ks: util.NameIndex, barred: boolean): string[] {
     var out: string[] = [];
     for row in rows { if (!row_keyed(ks, row, barred)) { out = out.append(row); } }
     return out;

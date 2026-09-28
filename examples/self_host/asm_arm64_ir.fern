@@ -2444,15 +2444,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.need("udp_send");
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
         s = s.write("    bl __fn___fern_udp_send\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 332 || o.kind_tag == 333) {  // tcp_listen_with, tcp_socket_ctl
+    } else if (o.kind_tag == 333) {  // tcp_socket_ctl
         // [a, b, c] with c on top; pop and re-push reversed, as udp_send does.
-        var ctl_fn: string = "__fn___fern_tcp_listen_with";
-        var ctl_need: string = "tcp_listen_with";
-        if (o.kind_tag == 333) { ctl_fn = "__fn___fern_tcp_socket_ctl"; ctl_need = "tcp_socket_ctl"; }
-        s = s.need(ctl_need);
+        s = s.need("tcp_socket_ctl");
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
-        s = s.write("    bl " + ctl_fn + "\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag >= 334 && o.kind_tag <= 344) {  // udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into
+        s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+    } else if (o.kind_tag == 332 || (o.kind_tag >= 334 && o.kind_tag <= 344)) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into
         // [args] with the last on top; pop and re-push reversed, as udp_send
         // does. recvfrom spreads the datagram into the caller's array from a
         // raw buffer, so it needs the heap.

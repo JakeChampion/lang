@@ -387,9 +387,17 @@ as Fern bodies on both compilers and never had a hand-written copy; the
 caller's `u8[]` reaches the kernel as `buf as usize` on the Go compiler,
 while the self-host body reads into a raw buffer and spreads the bytes one
 per slot, the way its `tcp_recv` fills a fresh array, and writes the
-sender's six bytes through `__raw_arr_ptr`. The wasm twins are in
-`wasi_udp.go` and `wasm_ir.fern`; there `udp_send` is the three of them
-in a row.
+sender's nineteen bytes through `__raw_arr_ptr`. An address arrives as a
+`u8[]` of four or sixteen network-order bytes: on the Go compiler
+`__socket_for` opens the socket for the family the length names and
+`__sockaddr_of` builds the `sockaddr_in` or `sockaddr_in6` in one 32-byte
+block with its length at 28; the self-host splices `af_of_addr` and
+`sockaddr_of` into each body, reading the bytes one per slot. Another
+length is `-EAFNOSUPPORT` before any syscall. The wasm twins are in
+`wasi_udp.go` and `wasm_ir.fern`, where `__fern_ip_flat` writes the
+ip-socket-address flattening once and each bind, connect and stream
+pushes its twelve words from there; `udp_send` is the three of them in a
+row.
 
 The **reactor floor** (#9853) is three more bodies on both compilers:
 `__fern_reactor_new` (epoll_create1, or kqueue on Darwin),

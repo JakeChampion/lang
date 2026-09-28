@@ -114,6 +114,48 @@ pub function hash_bucket(s: string, n: i32): i32 {
     return a % n;
 }
 
+// NameIndex is a list of names with a bucket index over it: head[b] is the
+// first index in bucket b (-1 when empty) and next[i] chains to the next index
+// in the same bucket, ascending, so a walk meets a repeated name's first entry
+// first.
+pub struct NameIndex { names: string[], head: i32[], next: i32[] }
+
+// name_index indexes `names`, built backward so each chain ends up ascending.
+pub function name_index(names: string[]): NameIndex {
+    var nb: i32 = names.len() * 2 + 1;
+    var head: i32[] = [];
+    while (head.len() < nb) { head = head.append(0 - 1); }
+    var next: i32[] = [];
+    while (next.len() < names.len()) { next = next.append(0 - 1); }
+    var k: i32 = names.len() - 1;
+    while (k >= 0) {
+        var b: i32 = hash_bucket(names[k], nb);
+        next = next.with(k, head[b]);
+        head = head.with(b, k);
+        k = k - 1;
+    }
+    return NameIndex { names: names, head: head, next: next };
+}
+
+// chain is the first index in `name`'s bucket, or -1; `next` walks on.
+pub function (ix: NameIndex) chain(name: string): i32 {
+    return ix.head[hash_bucket(name, ix.head.len())];
+}
+
+// find is the first index of `name`, or -1.
+pub function (ix: NameIndex) find(name: string): i32 {
+    var i: i32 = ix.chain(name);
+    while (i >= 0) {
+        if (ix.names[i] == name) { return i; }
+        i = ix.next[i];
+    }
+    return 0 - 1;
+}
+
+pub function (ix: NameIndex) has(name: string): boolean {
+    return ix.find(name) >= 0;
+}
+
 // digits_to_i32 parses a leading optional `-` then a run of decimal
 // digits, stopping at the first non-digit. The canonical sign-aware
 // version — several self-host copies were sign-naive (SH-010).
