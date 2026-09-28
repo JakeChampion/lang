@@ -10735,6 +10735,8 @@ pub function expr_subword_kind(e: ast.Expr, s: LowerState): string {
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return ""; }
             if (b.op == "<<" || b.op == ">>") { return expr_subword_kind(b.left, s); }
+            // A u32 operand makes the result a u32 (`s32 + (b + c)`).
+            if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return ""; }
             var lk: string = expr_subword_kind(b.left, s);
             if (lk != "") { return lk; }
             return expr_subword_kind(b.right, s);
@@ -11357,14 +11359,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 },
                 _ => {}
             }
-            // An i32-returning call consumed in an i64 context (`s64 + g()`): lower
-            // the i32 result (lower_expr, the normal call path) and sign-extend to
-            // i64 instead of bailing the module to AST. The checker forbids i64 +
-            // f64/string/u32 and rejects binding a bare i32 call to an i64 (it needs
-            // an explicit `as i64`), so a call reaching this point in a valid program
-            // — width 32, not i64-returning, not the 0-arg if/match IIFE handled
-            // above — necessarily returns a signed i32. infer_expr_width gates the
-            // widen; expr_is_u32 (false for calls) leaves it sign-extended.
+            // A 32-bit-slot call consumed in an i64 context (`s64 + g()`): lower
+            // the result (lower_expr, the normal call path) and extend it to i64
+            // instead of bailing the module to AST. expr_is_u32 reads the call's
+            // checker-stamped result type: a u32 call zero-extends, an i32 call
+            // sign-extends, and a u8 call's signed extend is exact because the
+            // slot already holds 0..255.
             if (infer_expr_width(e, s) == 32) {
                 var cw: LowerState = lower_expr(e, s);
                 if (!cw.ok) { return cw; }
@@ -11385,12 +11385,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     if (!ts.ok) { return ts; }
                     return ts.emit(ir.op_tuple_get_w(tn, 64, true));
                 }
-                // An i32 tuple element `t.N` consumed in an i64 context: read the
-                // i32 element (lower_expr) and widen instead of bailing to AST.
-                if (tnt == "i32" || tnt == "u32") {
+                // A 32-bit-or-narrower tuple element `t.N` consumed in an i64
+                // context: read it (lower_expr) and widen instead of bailing to AST.
+                if (is_narrow_int_tag(tnt)) {
                     var tw: LowerState = lower_expr(e, s);
                     if (!tw.ok) { return tw; }
-                    return tw.emit(ir.op_int_extend(tnt == "u32"));
+                    return tw.emit(ir.op_int_extend(tnt != "i32"));
                 }
                 return s.fail();
             }
@@ -11403,15 +11403,14 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if (!fs.ok) { return fs; }
                 return fs.emit(ir.op_struct_get_i64(fidx));
             }
-            // An i32 struct field `p.x` consumed in an i64 context (`s64 + p.x`):
-            // read the i32 field (lower_expr) and sign/zero-extend to i64 instead
-            // of bailing the module to AST. The checker forbids i64 + u32, so a
-            // plain i32 field here is signed; the u32 flag stays defensive.
+            // A 32-bit-or-narrower struct field `p.x` consumed in an i64 context
+            // (`s64 + p.x`): read the field (lower_expr) and sign/zero-extend to
+            // i64 instead of bailing the module to AST.
             var ffty: string = decl_field_type(s.frame.structs, fty, fa.field);
-            if (ffty == "i32" || ffty == "u32") {
+            if (is_narrow_int_tag(ffty)) {
                 var fw: LowerState = lower_expr(e, s);
                 if (!fw.ok) { return fw; }
-                return fw.emit(ir.op_int_extend(ffty == "u32"));
+                return fw.emit(ir.op_int_extend(ffty != "i32"));
             }
             return s.fail();
         },
@@ -11444,6 +11443,13 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
         },
         _ => { return s.fail(); }
     }
+}
+
+// is_narrow_int_tag reports whether a scalar type tag is an integer the i32
+// path reads (i32, u32, u8), which an i64 context widens; all but i32 are
+// unsigned and zero-extend.
+function is_narrow_int_tag(t: string): boolean {
+    return t == "i32" || t == "u32" || t == "u8";
 }
 
 // str_free_call_field maps a two-arg string builtin FREE-function name to the
@@ -43497,7 +43503,9 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // and no element-field-payload escape (arrstruct_elem_payload_escapes — a bare
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]` and `ps[i].xs.len()` are borrows).
-    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites, sfok);
+    // The strict-fresh producers and "ARRSTRUCTF:" rows no local of `body` shadows.
+    var producers: string[] = unshadowed_producer_rows(unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), body, "");
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, producers, [], msites, sfok);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -43509,9 +43517,9 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
         if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
         if (!marker
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"))
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, producers)
             && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
-            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok)) {
+            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, producers)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -43521,7 +43529,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
             } else {
                 out = out.append("ARRSTRUCT:" + asts[asti]);
             }
-            var apr: string[] = arrstruct_owned_elem_sites(body, asnm, structs, msites, [], sfok);
+            var apr: string[] = arrstruct_owned_elem_sites(body, asnm, []);
             var apri: i32 = 0;
             while (apri < apr.len()) { out = out.append("APOWNED:" + apr[apri]); apri = apri + 1; }
         }
@@ -54543,19 +54551,19 @@ function structarr_elem_struct_type(type_name: string, structs: StructTab): stri
 }
 
 // arrstruct_lit_is_fresh: `e` is a non-empty array literal whose EVERY element the
-// array may own — a fresh struct literal (is_fresh_struct_init) or a bare IDENT.
+// array may own — a producer_elem_is_fresh element or a bare IDENT.
 // The literal RETAINS a bare ident exactly as the self-append does, so the
 // element is a counted share and both owners run their field walk under
 // __fern_rc_is_unique; the sites that retain are the ones
 // arrstruct_owned_elem_sites stamps. The producer registries ask a stricter
 // question and use producer_lit_is_fresh instead.
-function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[]): boolean {
+function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[], pfresh: string[]): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                if (!is_fresh_struct_init(arr.elements[i], structs, sfok)) {
+                if (!producer_elem_is_fresh(arr.elements[i], structs, sfok, pfresh)) {
                     match (arr.elements[i]) {
                         ast.ExprIdent(_) => {},
                         _ => { return false; }
@@ -54579,8 +54587,9 @@ function arrstruct_lit_is_fresh(e: ast.Expr, structs: StructTab, sfok: string[])
 // flat. Measured 35200 bytes over 100 rounds on a 4-element `Val { kind: i32,
 // kids: i32[] }[]`, doubling with the round count, against 0 for the literal.
 //
-// Two element shapes qualify. A fresh struct LITERAL is the rule
-// arrstruct_lit_is_fresh applies per element — the box is sole-owned exactly as
+// Two element shapes qualify. A producer_elem_is_fresh element — a fresh struct
+// literal or a call into a strict-fresh producer — is the rule
+// arrstruct_lit_is_fresh applies per element: the box is sole-owned exactly as
 // in the literal-built form the deep walk already frees. A BARE IDENT qualifies
 // because the append RETAINS it: the container holds a counted reference, and
 // the element walk deep-drops the fields only under __fern_rc_is_unique, so a
@@ -54636,7 +54645,7 @@ function arrstruct_self_store_elem_index(e: ast.Expr, name: string): i32 {
 // then releases. It differs in one way that costs a release rather than a credit:
 // `with` REPLACES, so the superseded element has to be freed at the store
 // (emit_arrstruct_with_store) — `append` displaces nothing.
-function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab, msites: string[], sfok: string[]): boolean {
+function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab, msites: string[], sfok: string[], pfresh: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             var eidx: i32 = arrstruct_self_store_elem_index(e, name);
@@ -54653,7 +54662,7 @@ function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab
                 ast.ExprIdent(_) => { return true; },
                 _ => {}
             }
-            return is_fresh_struct_init(c.args[eidx], structs, sfok);
+            return producer_elem_is_fresh(c.args[eidx], structs, sfok, pfresh);
         },
         _ => { return false; }
     }
@@ -54677,7 +54686,7 @@ function arrstruct_self_store_elem(e: ast.Expr, name: string, structs: StructTab
 // inc from the ELEMENT's own credit instead was the bug this replaced — a source
 // with no credit got no inc while the container still dec'd once per push, so a
 // box appended four times was released four times.
-function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], acc: string[], sfok: string[]): string[] {
+function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -54686,28 +54695,23 @@ function arrstruct_owned_elem_sites(stmts: ast.Stmt[], name: string, structs: St
                 if (v.name == name) { a = arrstruct_lit_elem_sites(v.init, a); }
             },
             ast.StmtAssign(as1) => {
-                if (as1.target == name && arrstruct_self_store_elem(as1.value, name, structs, msites, sfok)) {
-                    match (as1.value) {
-                        ast.ExprCall(c) => {
-                            match (c.args[arrstruct_self_store_elem_index(as1.value, name)]) {
-                                ast.ExprIdent(eid) => {
-                                    a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
+                var eidx: i32 = arrstruct_self_store_elem_index(as1.value, name);
+                if (as1.target == name && eidx >= 0) {
+                    if let ast.ExprCall(c) = as1.value {
+                        if let ast.ExprIdent(eid) = c.args[eidx] {
+                            a = push_str_unique(a, util.i32_to_string(eid.line) + ":" + util.i32_to_string(eid.col));
+                        }
                     }
                 }
             },
             ast.StmtIf(f) => {
-                a = arrstruct_owned_elem_sites(f.then_body, name, structs, msites, a, sfok);
-                a = arrstruct_owned_elem_sites(f.else_body, name, structs, msites, a, sfok);
+                a = arrstruct_owned_elem_sites(f.then_body, name, a);
+                a = arrstruct_owned_elem_sites(f.else_body, name, a);
             },
-            ast.StmtWhile(w) => { a = arrstruct_owned_elem_sites(w.body, name, structs, msites, a, sfok); },
-            ast.StmtFor(fo) => { a = arrstruct_owned_elem_sites(fo.body, name, structs, msites, a, sfok); },
+            ast.StmtWhile(w) => { a = arrstruct_owned_elem_sites(w.body, name, a); },
+            ast.StmtFor(fo) => { a = arrstruct_owned_elem_sites(fo.body, name, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = arrstruct_owned_elem_sites(arm.body, name, structs, msites, a, sfok); }
+                for arm in m.arms { a = arrstruct_owned_elem_sites(arm.body, name, a); }
             },
             _ => {}
         }
@@ -54733,18 +54737,18 @@ function arrstruct_lit_elem_sites(e: ast.Expr, acc: string[]): string[] {
     }
     return a;
 }
-function arrstruct_name_is_appended(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], sfok: string[]): boolean {
+function arrstruct_name_is_appended(stmts: ast.Stmt[], name: string, structs: StructTab, msites: string[], sfok: string[], pfresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtAssign(a) => { if (a.target == name && arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return true; } },
+            ast.StmtAssign(a) => { if (a.target == name && arrstruct_self_store_elem(a.value, name, structs, msites, sfok, pfresh)) { return true; } },
             ast.StmtIf(f) => {
-                if (arrstruct_name_is_appended(f.then_body, name, structs, msites, sfok)) { return true; }
-                if (arrstruct_name_is_appended(f.else_body, name, structs, msites, sfok)) { return true; }
+                if (arrstruct_name_is_appended(f.then_body, name, structs, msites, sfok, pfresh)) { return true; }
+                if (arrstruct_name_is_appended(f.else_body, name, structs, msites, sfok, pfresh)) { return true; }
             },
-            ast.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs, msites, sfok)) { return true; } },
-            ast.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs, msites, sfok)) { return true; } },
+            ast.StmtWhile(w) => { if (arrstruct_name_is_appended(w.body, name, structs, msites, sfok, pfresh)) { return true; } },
+            ast.StmtFor(fo) => { if (arrstruct_name_is_appended(fo.body, name, structs, msites, sfok, pfresh)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrstruct_name_is_appended(arm.body, name, structs, msites, sfok)) { return true; } }
+                for arm in m.arms { if (arrstruct_name_is_appended(arm.body, name, structs, msites, sfok, pfresh)) { return true; } }
             },
             _ => {}
         }
@@ -54916,7 +54920,7 @@ function stmt_arrstruct_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
         },
         ast.StmtAssign(a) => {
             if (a.target == name) {
-                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok)) { return false; }
+                if (arrstruct_self_store_elem(a.value, name, structs, msites, sfok, producers)) { return false; }
                 return !struct_arr_producer_rebind(a.value, name, borrowable, producers, "ARRSTRUCTF:");
             }
             if (arrstruct_counted_field_share(a.value, name, structs, msites)) { return false; }
@@ -55160,7 +55164,7 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, sfok)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrstruct_lit_is_fresh(v.init, structs, sfok, fresh_ret)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL, the "ARRSTRUCTF:" sibling of the ARRTUP arm:
                 // the annotation supplies the element struct type and the registry
                 // proves every returned element box is the callee's own.
@@ -55173,13 +55177,13 @@ function collect_fresh_arrstruct_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // same marker trick the STRUCTARR side uses.
                 else if (arrstruct_elem_struct_type(v.type_name, structs) != ""
                     && arrarr_lit_is_empty(v.init)
-                    && arrstruct_name_is_appended(stmts, v.name, structs, msites, sfok)) {
+                    && arrstruct_name_is_appended(stmts, v.name, structs, msites, sfok, fresh_ret)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                     a = push_str_unique(a, "A|" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
                 // An EMPTY seed rebound from a producer (#10360), as for STRUCTARR.
                 else if (arrstruct_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
-                    && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), "ARRSTRUCTF:")) {
+                    && name_rebound_by_producer(stmts, v.name, fresh_ret, "ARRSTRUCTF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -55222,28 +55226,25 @@ function arrstruct_elem_type_of_decl(stmts: ast.Stmt[], name: string, structs: S
 // arrstruct_elem_esc_shape classifies one node for the array-of-structs
 // element escape scan (arrstruct_elem_esc_expr below has the scan's contract);
 // codes as rctuple_esc_shape's.
-function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], sfok: string[]): i32 {
+function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], sfok: string[], producers: string[]): i32 {
     match (e) {
         ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },   // bare array escapes
         ast.ExprNumber(_) => { return 1; },
         ast.ExprString(_) => { return 1; },
         ast.ExprBool(_) => { return 1; },
         ast.ExprFieldAccess(fa) => {
-            var ef: string = esc_elem_field_of(e, name);
-            if (ef.len() > 0) {
-                // name[i].f : a bare non-scalar field extract escapes; a scalar
-                // (or unknown) field is a value copy with only the index to check.
-                var ft: string = decl_field_type(structs, sty, ef);
-                if (ft != "" && !is_scalar_type_name(ft)) { return 2; }
-                return 3;
-            }
-            return 0;
+            var owner: string = arrstruct_chain_owner(e, name, sty, structs);
+            if (owner == "") { return 0; }
+            if (owner == "?") { return 2; }
+            // name[i].f / name[i].g.f : a bare non-scalar field extract escapes; a
+            // scalar (or unknown) field is a value copy with only the indices to check.
+            var ft: string = decl_field_type(structs, owner, fa.field);
+            if (ft != "" && !is_scalar_type_name(ft)) { return 2; }
+            return 3;
         },
         ast.ExprIndex(ix) => {
             if (ident_name_or_empty(ix.array) == name) { return 2; }   // bare name[i] struct box
-            var bf: string = esc_elem_field_of(ix.array, name);
-            if (bf.len() > 0) { return 3; }   // name[i].f[j] : indexed array-field read — safe; check both indices
-            return 0;
+            return arrstruct_chain_read_code(ix.array, name, sty, structs);   // name[i].f[j] : indexed array-field read
         },
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -55259,8 +55260,8 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
                         // `ps[0].xs[0]` — reading LESS made it leak, and one `.len()`
                         // poisoned the credit even alongside an element read. #6127.
                         if (ident_name_or_empty(cfa.obj) == name) { return 3; }
-                        var rf: string = esc_elem_field_of(cfa.obj, name);
-                        if (rf.len() > 0) { return 3; }   // name[i].f.len() : the whitelisted borrow method
+                        var rc: i32 = arrstruct_chain_read_code(cfa.obj, name, sty, structs);   // name[i].f.len() : the whitelisted borrow method
+                        if (rc != 0) { return rc; }
                     }
                     // `name.append(<elem>)` / `name.with(i, <elem>)` — the sanctioned
                     // self-store rebind (#6535). The receiver is READ to copy the
@@ -55270,7 +55271,7 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
                     // assumed: a non-store method or an unsanctioned element falls to
                     // the generic tail and still escapes through the bare receiver.
                     if (ident_name_or_empty(cfa.obj) == name
-                        && arrstruct_self_store_elem(e, name, structs, msites, sfok)) { return 5; }
+                        && arrstruct_self_store_elem(e, name, structs, msites, sfok, producers)) { return 5; }
                     return 0;
                 },
                 _ => { return 0; }
@@ -55299,19 +55300,49 @@ function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, struct
     return 0;
 }
 
+// arrstruct_chain_owner: the struct type declaring the last field of an element
+// field chain `name[i].f` / `name[i].g.f` — `sty` for one link, "" when `e` is
+// no such chain, "?" when a link does not resolve to a struct field.
+function arrstruct_chain_owner(e: ast.Expr, name: string, sty: string, structs: StructTab): string {
+    if let ast.ExprFieldAccess(fa) = e {
+        if let ast.ExprIndex(ix) = fa.obj {
+            if (ident_name_or_empty(ix.array) == name) { return sty; }
+            return "";
+        }
+        if let ast.ExprFieldAccess(pfa) = fa.obj {
+            var po: string = arrstruct_chain_owner(fa.obj, name, sty, structs);
+            if (po == "" || po == "?") { return po; }
+            var pt: string = decl_field_type(structs, po, pfa.field);
+            if (decl_is_struct(structs, pt)) { return pt; }
+            return "?";
+        }
+    }
+    return "";
+}
+
+// arrstruct_chain_read_code: the shape code of a borrow read (`[j]`, `.len()`)
+// through the element field chain `e` — 3 to re-scan its indices, 2 when a link
+// is unresolved, 0 when `e` is no chain.
+function arrstruct_chain_read_code(e: ast.Expr, name: string, sty: string, structs: StructTab): i32 {
+    var owner: string = arrstruct_chain_owner(e, name, sty, structs);
+    if (owner == "") { return 0; }
+    if (owner == "?") { return 2; }
+    return 3;
+}
+
 // arrstruct_chain_esc: rctuple_chain_esc's array-of-structs sibling — re-scans
 // a code-3 chain's index expressions and call arguments.
-function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], producers: string[]): boolean {
     match (x) {
         ast.ExprCall(c) => {
-            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable, sfok)) { return true; }
-            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable, sfok)) { return true; } }
+            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable, sfok, producers)) { return true; }
+            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable, sfok, producers)) { return true; } }
             return false;
         },
-        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable, sfok); },
+        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable, sfok, producers); },
         ast.ExprIndex(ix) => {
-            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable, sfok)) { return true; }
-            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable, sfok);
+            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable, sfok, producers)) { return true; }
+            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable, sfok, producers);
         },
         ast.ExprIdent(_) => { return false; },
         _ => { return true; }
@@ -55321,11 +55352,11 @@ function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: St
 
 // arrstruct_elem_esc_at is the fold visitor: `esc` latches true, and each node
 // answers per its arrstruct_elem_esc_shape code.
-function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
+function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], producers: string[]): boolean {
     if (esc) { return true; }
-    var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok);
+    var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok, producers);
     if (code == 2) { return true; }
-    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable, sfok); }
+    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable, sfok, producers); }
     if (code == 4) {
         match (x) {
             ast.ExprCall(c) => {
@@ -55368,7 +55399,7 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
                     if (ident_name_or_empty(c.args[eai]) == name) {
                         if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
                               || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
-                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable, sfok)) { return true; }
+                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable, sfok, producers)) { return true; }
                     eai = eai + 1;
                 }
                 return false;
@@ -55379,10 +55410,10 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
     if (code == 5) {
         // The sanctioned self-store scans only the FIRST argument — `append`'s
         // element, `with`'s index. `with`'s element argument was vetted by
-        // arrstruct_self_store_elem (a bare ident or a fresh literal) and the
+        // arrstruct_self_store_elem (a bare ident or a producer_elem_is_fresh one) and the
         // hand scan never walked it; preserved exactly.
         match (x) {
-            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable, sfok); },
+            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable, sfok, producers); },
             _ => { return true; }
         }
     }
@@ -55396,19 +55427,19 @@ function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: str
 // array-field read) and `name[i].f.len()` are borrows; a BARE `name[i]` element (the
 // struct box) or a bare `name` escapes — except as an ARGUMENT at an "ELB:"-flagged
 // param, where the callee is proven to touch no element.
-function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
-    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
-    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
+function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], producers: string[]): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok, producers); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok, producers) == 0; }
     return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
 
 // A `for p in name` iterable is not an escape here: arrstruct_row_escapes
 // judges the iteration, and only its body is scanned.
-function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[]): boolean {
-    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok); }
-    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok) == 0; }
+function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: StructTab, msites: string[], borrowable: string[], sfok: string[], producers: string[]): boolean {
+    function visit(x: ast.Expr, own esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable, sfok, producers); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites, sfok, producers) == 0; }
     function esc_expr(x: ast.Expr): boolean { return astwalk.fold_expr_pruned(x, false, visit, descend); }
-    function esc_body(b: ast.Stmt[]): boolean { return arrstruct_elem_payload_escapes(b, name, sty, structs, msites, borrowable, sfok); }
+    function esc_body(b: ast.Stmt[]): boolean { return arrstruct_elem_payload_escapes(b, name, sty, structs, msites, borrowable, sfok, producers); }
     for stmt in stmts {
         match (stmt) {
             ast.StmtFor(fo) => {

@@ -272,6 +272,119 @@ function main(): i32 {
 }
 `
 
+// routedMapTupleValuesSrc: a tuple value is a box like a record's.
+const routedMapTupleValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    var m: Map[string, (i32, string)] = Map {};
+    var i: i32 = 0;
+    while (i < 30) { m = m.insert("k" + (i % 7).to_string(), (i, "v" + i.to_string())); i = i + 1; }
+    var alias: Map[string, (i32, string)] = m;
+    alias = alias.insert("k1", (100, "over" + "ride"));
+    var r: (Map[string, (i32, string)], boolean) = m.without("k2");
+    var m2: Map[string, (i32, string)] = r.0;
+    var total: i32 = 0;
+    for (k, v) in m2 { total = total + v.0 + v.1.len(); }
+    for v in alias.values() { total = total + v.0; }
+    var hit: (i32, string) = m.get_or("k3", (0, ""));
+    var got: string = "none";
+    match (alias.get("k1")) { Some(v) => { got = v.1; }, None => {} }
+    print(total.to_string() + " " + hit.1 + " " + got + " " + m2.len().to_string() + " " + r.1.to_string());
+    return 0;
+}
+`
+
+// routedMapDynValuesSrc: a dyn value's box is whichever concrete it holds —
+// a boxed i32 or string, a record, an enum — and each is retained and
+// released through the one dyn release.
+const routedMapDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Show { function show(self: Self): i32; }
+struct Dot { r: i32 }
+enum Op { Add(i32), Neg }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
+impl Show for Op { function show(self: Self): i32 { match (self) { Add(v) => { return v + 1; }, Neg => { return 0; } } } }
+function main(): i32 {
+    var m: Map[string, dyn Show] = Map {};
+    m = m.insert("a", 41);
+    m = m.insert("b", "hello" + "!");
+    m = m.insert("c", Dot { r: 5 });
+    m = m.insert("d", Add(7));
+    var alias: Map[string, dyn Show] = m;
+    alias = alias.insert("b", Neg);
+    var r: (Map[string, dyn Show], boolean) = m.without("c");
+    var total: i32 = 0;
+    for (k, v) in r.0 { total = total + v.show(); }
+    for v in alias.values() { total = total + v.show(); }
+    match (m.get("b")) { Some(v) => { total = total + v.show() * 100; }, None => {} }
+    print(total.to_string());
+    return 0;
+}
+`
+
+// routedMapTwoDynValuesSrc: two dyn types release through helpers of their
+// own; keyed alike, one type's release would leave the other's concretes.
+const routedMapTwoDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Aa { function a(self: Self): i32; }
+trait Bb { function b(self: Self): i32; }
+struct Xa { s: string, n: i32 }
+struct Yb { t: string, u: string }
+impl Aa for Xa { function a(self: Self): i32 { return self.s.len() + self.n; } }
+impl Bb for Yb { function b(self: Self): i32 { return self.t.len() + self.u.len(); } }
+function main(): i32 {
+    var ma: Map[string, dyn Aa] = Map {};
+    var mb: Map[string, dyn Bb] = Map {};
+    var i: i32 = 0;
+    while (i < 5) {
+        ma = ma.insert("k" + i.to_string(), Xa { s: "x" + i.to_string(), n: i });
+        mb = mb.insert("k" + (i % 2).to_string(), Yb { t: "t" + i.to_string(), u: "u" + i.to_string() });
+        i = i + 1;
+    }
+    var r: (Map[string, dyn Bb], boolean) = mb.without("k0");
+    mb = r.0;
+    var t: i32 = 0;
+    for (k, v) in ma { t = t + v.a(); }
+    for (k, v) in mb { t = t + v.b(); }
+    var xs: dyn Bb[] = [Yb { t: "p" + "q", u: "r" }];
+    t = t + xs[0].b();
+    print(t.to_string());
+    return 0;
+}
+`
+
+// routedMapGenericDynValuesSrc: a dyn over a generic trait pinned at two
+// arguments names its release by a trait set that is spelled with a comma,
+// brackets and a space, none of which a symbol may hold.
+const routedMapGenericDynValuesSrc = `import "core/map";
+import "std/i32";
+trait Tagged[A, B] { function tag(self: Self): i32; }
+struct P { a: i32, s: string }
+struct Q { t: string }
+impl Tagged[i32, u32] for P { function tag(self: Self): i32 { return self.a + self.s.len(); } }
+impl Tagged[i32, u32] for Q { function tag(self: Self): i32 { return self.t.len() * 10; } }
+function main(): i32 {
+    var m: Map[string, dyn Tagged[i32, u32]] = Map {};
+    var i: i32 = 0;
+    while (i < 5) {
+        if (i % 2 == 0) { m = m.insert("k" + (i % 3).to_string(), P { a: i, s: "p" + i.to_string() }); }
+        else { m = m.insert("k" + (i % 3).to_string(), Q { t: "q" + i.to_string() }); }
+        i = i + 1;
+    }
+    var r: (Map[string, dyn Tagged[i32, u32]], boolean) = m.without("k0");
+    var t: i32 = 0;
+    for (k, v) in r.0 { t = t + v.tag(); }
+    for v in m.values() { t = t + v.tag(); }
+    var ds: dyn Tagged[i32, u32][] = [Q { t: "x" + "y" }];
+    var flags: boolean[] = [true, false];
+    t = t + ds[0].tag() + flags.len();
+    print(t.to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -292,6 +405,10 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"u32_bool", routedMapU32BoolSrc, "true true 2 12"},
 		{"string_values", routedMapStringValuesSrc, "overwritten aliasonly v24 missed v27 true true false 2254 299 n44 9 0"},
 		{"box_values", routedMapBoxValuesSrc, "2 5 3 4 27 true true false 21236 199 6 four! n44 9 12 21627 0"},
+		{"tuple_values", routedMapTupleValuesSrc, "430 v24 override 6 true"},
+		{"dyn_values", routedMapDynValuesSrc, "716"},
+		{"two_dyn_values", routedMapTwoDynValuesSrc, "27"},
+		{"generic_dyn_values", routedMapGenericDynValuesSrc, "62"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {
@@ -313,10 +430,14 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		})
 	}
 
-	// The routed program calls core/map and nothing of the runtime's map.
-	asm := routedMapAsm(t, selfHostBin, stdlibRoot, routedMapSurfaceSrc)
-	if !strings.Contains(asm, "call __fn___map_set_impl") || strings.Contains(asm, "call __fern_map_set") {
-		t.Fatal("the surface program's maps are not routed onto core/map")
+	// Each routed program calls core/map and nothing of the runtime's map, so
+	// a value column that stopped routing turns its case red here rather than
+	// passing on the runtime map.
+	for _, c := range cases {
+		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
+		if !strings.Contains(asm, "call __fn___map_set_impl") || strings.Contains(asm, "call __fern_map_set") {
+			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
+		}
 	}
 
 	// A bisect knob keeps a mixed module, so under one every map stays on the

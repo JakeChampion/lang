@@ -988,7 +988,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
         var v: Value = expr(args[i], s, shape.types[i]);
         s = v.s;
         if (!s.ok) { return v; }
-        // A 32-bit payload widens into a 64-bit field of its signedness, as
+        // A narrower payload widens into a wider field of its signedness, as
         // the checker admits `Ok(n)` for an i32 `n` into `Result[i64, _]`.
         if (widens_to(s.values[v.id], shape.types[i])) {
             v = define(s, ssasem.cast(), [v.id], 0, "", shape.types[i]);
@@ -1113,7 +1113,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
 function arithmetic(b: ast.ExprBinary, left: Value, right: Value, s: State): Value {
     right = shift_count(b.op, right, s.values[left.id]);
     s = right.s;
-    // A 32-bit operand meets a 64-bit one of its own signedness at the wider
+    // A narrower operand meets a wider one of its own signedness at the wider
     // width, as the checker settles it; every other mix is E009.
     if (widens_to(s.values[left.id], s.values[right.id])) {
         left = define(s, ssasem.cast(), [left.id], 0, "", s.values[right.id]);
@@ -1137,7 +1137,7 @@ function wide_literal(e: ast.Expr): boolean {
 function widens_to(from: typeinfo.Type, to: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(a) = from {
         if let typeinfo.TypeI32(b) = to {
-            return a.width == 32 && b.width == 64 && a.unsigned == b.unsigned && !a.is_char && !b.is_char;
+            return a.width > 0 && a.width < b.width && a.unsigned == b.unsigned && !a.is_char && !b.is_char;
         }
     }
     return false;

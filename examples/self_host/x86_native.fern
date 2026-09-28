@@ -1850,138 +1850,100 @@ function x86_gas_trim(s: string): string {
     return slice_unchecked(s, a, b) + "";
 }
 
-// x86_gas_reg maps a register token (`%rax` or `rax`) to its number, or -1.
+// x86_gas_reg_decode decodes a general-purpose register token (`%rax` or
+// `rax`, at any width) to width * 16 + number, or -1. The high-byte names
+// ah/ch/dh/bh are not accepted.
+function x86_gas_reg_decode(tok: string): i32 {
+    var i: i32 = 0;
+    if (tok.len() > 0 && tok[0] == b'%') { i = 1; }
+    var n: i32 = tok.len() - i;
+    if (n >= 2 && tok[i] == b'r' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9') {
+        return x86_gas_reg_numbered(tok, i + 1);
+    }
+    if (n == 2) {
+        if (tok[i + 1] == b'l') {
+            var low: i32 = x86_gas_reg_pair(tok[i], b'x');
+            if (low >= 0 && low < 4) { return 8 * 16 + low; }
+            return 0 - 1;
+        }
+        var word: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+        if (word >= 0) { return 16 * 16 + word; }
+        return 0 - 1;
+    }
+    if (n != 3) { return 0 - 1; }
+    var tail: i32 = x86_gas_reg_pair(tok[i + 1], tok[i + 2]);
+    if (tail >= 0 && tok[i] == b'r') { return 64 * 16 + tail; }
+    if (tail >= 0 && tok[i] == b'e') { return 32 * 16 + tail; }
+    var head: i32 = x86_gas_reg_pair(tok[i], tok[i + 1]);
+    if (head >= 4 && tok[i + 2] == b'l') { return 8 * 16 + head; }
+    return 0 - 1;
+}
+
+// x86_gas_reg_pair maps the two letters naming a legacy register (ax cx dx bx
+// sp bp si di) to its number 0..7, or -1.
+function x86_gas_reg_pair(a: u8, b: u8): i32 {
+    if (b == b'x') {
+        if (a == b'a') { return 0; }
+        if (a == b'c') { return 1; }
+        if (a == b'd') { return 2; }
+        if (a == b'b') { return 3; }
+        return 0 - 1;
+    }
+    if (a == b's' && b == b'p') { return 4; }
+    if (a == b'b' && b == b'p') { return 5; }
+    if (a == b's' && b == b'i') { return 6; }
+    if (a == b'd' && b == b'i') { return 7; }
+    return 0 - 1;
+}
+
+// x86_gas_reg_numbered decodes r8..r15 from the digits at `at`, with an
+// optional d / w / b width suffix, as x86_gas_reg_decode does.
+function x86_gas_reg_numbered(tok: string, at: i32): i32 {
+    var j: i32 = at;
+    var num: i32 = 0 - 1;
+    if (tok[j] == b'8' || tok[j] == b'9') {
+        num = (tok[j] as i32) - 48;
+        j = j + 1;
+    } else if (tok[j] == b'1' && j + 1 < tok.len() && tok[j + 1] >= b'0' && tok[j + 1] <= b'5') {
+        num = (tok[j + 1] as i32) - 38;
+        j = j + 2;
+    }
+    if (num < 0) { return 0 - 1; }
+    if (j == tok.len()) { return 64 * 16 + num; }
+    if (j + 1 != tok.len()) { return 0 - 1; }
+    if (tok[j] == b'd') { return 32 * 16 + num; }
+    if (tok[j] == b'w') { return 16 * 16 + num; }
+    if (tok[j] == b'b') { return 8 * 16 + num; }
+    return 0 - 1;
+}
+
+// x86_gas_reg_sized maps a register token to its number when it names a
+// register of exactly `width` bits, else -1.
+function x86_gas_reg_sized(tok: string, width: i32): i32 {
+    var r: i32 = x86_gas_reg_decode(tok);
+    if (r >= 0 && r / 16 == width) { return r % 16; }
+    return 0 - 1;
+}
+
+// x86_gas_reg maps a 64-bit register token (`%rax` or `rax`) to its number, or
+// -1. It also accepts the 32-bit names (`%eax`, …) at the same numbers —
+// asm.fern emits the 32-bit form for e.g. the cvttsd2si destination
+// (`cvttsd2si %xmm0, %eax`).
 function x86_gas_reg(tok: string): i32 {
-    var s: string = tok;
-    if (s.len() > 0 && s[0] == b'%') {
-        s = slice_unchecked(s, 1, s.len()) + "";
-    }
-    if (s == "rax") { return 0; }
-    if (s == "rcx") { return 1; }
-    if (s == "rdx") { return 2; }
-    if (s == "rbx") { return 3; }
-    if (s == "rsp") { return 4; }
-    if (s == "rbp") { return 5; }
-    if (s == "rsi") { return 6; }
-    if (s == "rdi") { return 7; }
-    if (s == "r8") { return 8; }
-    if (s == "r9") { return 9; }
-    if (s == "r10") { return 10; }
-    if (s == "r11") { return 11; }
-    if (s == "r12") { return 12; }
-    if (s == "r13") { return 13; }
-    if (s == "r14") { return 14; }
-    if (s == "r15") { return 15; }
-    // 32-bit GP register names (`%eax`, …) map to the same register numbers as
-    // their 64-bit counterparts — asm.fern emits the 32-bit form for e.g. the
-    // cvttsd2si destination (`cvttsd2si %xmm0, %eax`). Without these the token
-    // resolved to -1, encoding a garbage reg field (7) + REX.R, so the truncated
-    // result landed in %rdi not %eax (the capstone float / int-convert path).
-    if (s == "eax") { return 0; }
-    if (s == "ecx") { return 1; }
-    if (s == "edx") { return 2; }
-    if (s == "ebx") { return 3; }
-    if (s == "esp") { return 4; }
-    if (s == "ebp") { return 5; }
-    if (s == "esi") { return 6; }
-    if (s == "edi") { return 7; }
-    if (s == "r8d") { return 8; }
-    if (s == "r9d") { return 9; }
-    if (s == "r10d") { return 10; }
-    if (s == "r11d") { return 11; }
-    if (s == "r12d") { return 12; }
-    if (s == "r13d") { return 13; }
-    if (s == "r14d") { return 14; }
-    if (s == "r15d") { return 15; }
+    var r: i32 = x86_gas_reg_decode(tok);
+    if (r >= 0 && (r / 16 == 64 || r / 16 == 32)) { return r % 16; }
     return 0 - 1;
 }
 
-// x86_gas_reg8 maps an 8-bit register token (`%al`, `al`, …) to its
-// number, or -1. spl/bpl/sil/dil (4..7) and r8b..r15b (8..15) included.
-function x86_gas_reg8(tok: string): i32 {
-    var s: string = tok;
-    if (s.len() > 0 && s[0] == b'%') {
-        s = slice_unchecked(s, 1, s.len()) + "";
-    }
-    if (s == "al") { return 0; }
-    if (s == "cl") { return 1; }
-    if (s == "dl") { return 2; }
-    if (s == "bl") { return 3; }
-    if (s == "spl") { return 4; }
-    if (s == "bpl") { return 5; }
-    if (s == "sil") { return 6; }
-    if (s == "dil") { return 7; }
-    if (s == "r8b") { return 8; }
-    if (s == "r9b") { return 9; }
-    if (s == "r10b") { return 10; }
-    if (s == "r11b") { return 11; }
-    if (s == "r12b") { return 12; }
-    if (s == "r13b") { return 13; }
-    if (s == "r14b") { return 14; }
-    if (s == "r15b") { return 15; }
-    return 0 - 1;
-}
-
-// x86_gas_reg32 maps a 32-bit register token (`%eax`, `%r8d`, …) to its
-// number 0..15, or -1.
-function x86_gas_reg32(tok: string): i32 {
-    var s: string = tok;
-    if (s.len() > 0 && s[0] == b'%') {
-        s = slice_unchecked(s, 1, s.len()) + "";
-    }
-    if (s == "eax") { return 0; }
-    if (s == "ecx") { return 1; }
-    if (s == "edx") { return 2; }
-    if (s == "ebx") { return 3; }
-    if (s == "esp") { return 4; }
-    if (s == "ebp") { return 5; }
-    if (s == "esi") { return 6; }
-    if (s == "edi") { return 7; }
-    if (s == "r8d") { return 8; }
-    if (s == "r9d") { return 9; }
-    if (s == "r10d") { return 10; }
-    if (s == "r11d") { return 11; }
-    if (s == "r12d") { return 12; }
-    if (s == "r13d") { return 13; }
-    if (s == "r14d") { return 14; }
-    if (s == "r15d") { return 15; }
-    return 0 - 1;
-}
-
-// x86_gas_reg16 maps a 16-bit register token (`%ax`, `%r8w`, …) to its
-// number 0..15, or -1.
-function x86_gas_reg16(tok: string): i32 {
-    var s: string = tok;
-    if (s.len() > 0 && s[0] == b'%') {
-        s = slice_unchecked(s, 1, s.len()) + "";
-    }
-    if (s == "ax") { return 0; }
-    if (s == "cx") { return 1; }
-    if (s == "dx") { return 2; }
-    if (s == "bx") { return 3; }
-    if (s == "sp") { return 4; }
-    if (s == "bp") { return 5; }
-    if (s == "si") { return 6; }
-    if (s == "di") { return 7; }
-    if (s == "r8w") { return 8; }
-    if (s == "r9w") { return 9; }
-    if (s == "r10w") { return 10; }
-    if (s == "r11w") { return 11; }
-    if (s == "r12w") { return 12; }
-    if (s == "r13w") { return 13; }
-    if (s == "r14w") { return 14; }
-    if (s == "r15w") { return 15; }
-    return 0 - 1;
-}
+function x86_gas_reg8(tok: string): i32 { return x86_gas_reg_sized(tok, 8); }
+function x86_gas_reg16(tok: string): i32 { return x86_gas_reg_sized(tok, 16); }
+function x86_gas_reg32(tok: string): i32 { return x86_gas_reg_sized(tok, 32); }
 
 // x86_gas_reg64 is the width-STRICT 64-bit parser the suffix families use:
 // only the rXX names. (x86_gas_reg also tolerates the 32-bit spellings for
 // the pre-family handlers, which must not leak into a width check — a
 // `q`-suffixed op naming %eax is an operand-size mismatch, not a 64-bit op.)
-function x86_gas_reg64(tok: string): i32 {
-    if (x86_gas_reg32(tok) >= 0) { return 0 - 1; }
-    return x86_gas_reg(tok);
-}
+function x86_gas_reg64(tok: string): i32 { return x86_gas_reg_sized(tok, 64); }
 
 // x86_gas_reg_w parses a register token at the width the suffix selected.
 function x86_gas_reg_w(tok: string, size: i32): i32 {
