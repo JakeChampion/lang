@@ -92,8 +92,16 @@ Before the element gate, the first six element rows threaded and balanced:
 every store they make is counted on this tree. The gate refuses them anyway,
 because the credit's soundness would otherwise rest on that. `producer_shadowed`
 (a parameter named like a strict-fresh producer) and `loop_var_shadows` were
-already refused by another gate, so they pin the refusal rather than tell the
-two shadow checks apart. All rows are clean under `FERN_SANITIZE=1`, and the
+already refused by another gate, so neither tells the two shadow checks apart;
+`loop_var_shadows` pins its refused census, while `producer_shadowed` only has
+to balance.
+
+A value block between the threader and the handout does not get past the
+element gate: `elem_value_block` (`var h: Holder = { Holder { x: acc[0] } }`)
+is refused at 36 / 24, the same 12 live blocks as its flat twin
+`elem_struct_field`, while `value_block_read` (`var d: i32 = { acc[0].depth }`)
+threads and balances. `string_elem_loop_var` (a `string[]` loop variable
+appended to another array) is refused at 61 / 49. All rows are clean under `FERN_SANITIZE=1`, and the
 mixed legs (`FERN_SEM_IR_SKIP=main` / `=walk`) leak without faulting.
 `TestSelfHostThreadParam{X86_64,Arm64,Wasm,MixedX86_64}`.
 

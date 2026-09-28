@@ -51231,8 +51231,8 @@ function thread_rebind(e: ast.Expr, name: string, borrowable: string[], rows: st
     return true;
 }
 
-// thread_arg_unsafe: one other argument of a threader rebind. A struct
-// element's field extraction is left to the ARRSTRUCT credit's own payload walk.
+// thread_arg_unsafe: one other argument of a threader rebind. With no element
+// struct named, any field read off an element (`acc[0].f`) refuses the rebind.
 function thread_arg_unsafe(x: ast.Expr, name: string, borrowable: string[], strs: boolean): boolean {
     if (strs) { return strarr_expr_unsafe(x, name, borrowable); }
     return structarr_elem_unsafe(x, name, "", struct_tab_empty(), [], borrowable);

@@ -150,6 +150,11 @@ function main(): i32 {
 `, true, [2]int64{}},
 	// A parameter named like a strict-fresh producer: the call reaches the
 	// caller's closure, so walk threads nothing.
+	{"value_block_read", threadInst + `function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { var d: i32 = { acc[0].depth }; return acc.append(Inst { name: "w" + "", depth: d + n }); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, true, [2]int64{}},
 	{"producer_shadowed", threadInst + `function mk(n: i32): Inst { return Inst { name: "m" + "", depth: n }; }
 function walk(n: i32, mk: (i32) => Inst, acc: Inst[]): Inst[] {
     return acc.append(mk(n));
@@ -211,6 +216,11 @@ function main(): i32 {
     return acc.append(Inst { name: "w" + "", depth: n });
 }
 ` + threadInstMain, false, [2]int64{26, 14}},
+	{"elem_value_block", threadHolder + `function walk(n: i32, acc: Inst[]): Inst[] {
+    if (acc.len() > 0) { var h: Holder = { Holder { x: acc[0] } }; return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
+    return acc.append(Inst { name: "w" + "", depth: n });
+}
+` + threadInstMain, false, [2]int64{36, 24}},
 	{"elem_holder", threadHolder + `function hold(e: Inst): Holder { return Holder { x: e }; }
 function walk(n: i32, acc: Inst[]): Inst[] {
     if (acc.len() > 0) { var h: Holder = hold(acc[0]); return acc.append(Inst { name: "w" + "", depth: h.x.depth + n }); }
@@ -254,6 +264,13 @@ function walk(n: i32, acc: string[]): string[] {
     return acc.append("w" + ys.len().to_string());
 }
 ` + threadStrMain, false, [2]int64{51, 39}},
+	{"string_elem_loop_var", `import "std/i32";
+function walk(n: i32, acc: string[]): string[] {
+    var ys: string[] = [];
+    for p in acc { ys = ys.append(p); }
+    return acc.append("w" + ys.len().to_string());
+}
+` + threadStrMain, false, [2]int64{61, 49}},
 	// A loop variable rebinding the threaded name returns another array's row.
 	{"loop_var_shadows", threadInst + `function walk(qs: Inst[][], acc: Inst[]): Inst[] {
     for acc in qs { if (acc.len() > 1) { return acc; } }
