@@ -6,7 +6,8 @@ the typed path, and three bugs in it surfaced:
 - **A 32-bit operand beside a 64-bit one refused** (#10345). Native widens
   `i32` to `i64` and `u32` to `u64` for a binary operator and rejects every
   other mix with E009. `semsource.arithmetic` now casts the narrower operand
-  up in exactly those two cases.
+  up when both operands have the same signedness (`widens_to`), which since
+  covers `u8` beside `u32` or `u64` as well.
 - **A wide literal beside an `i32` literal truncated** (#10345). In
   `1 < 4611686018427387904` the right literal took the left literal's `i32`
   width. A literal past the `i32` range now keeps its `i64`, and the
