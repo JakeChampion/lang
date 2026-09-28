@@ -125,7 +125,7 @@ function bin_sym(k: string): string {
     return "";
 }
 
-// drop_n drops the last n elements (used to pop a stride-nslots scope row).
+// drop_n drops the last n elements.
 function drop_n(a: i32[], n: i32): i32[] {
     var out: i32[] = [];
     var i: i32 = 0;
