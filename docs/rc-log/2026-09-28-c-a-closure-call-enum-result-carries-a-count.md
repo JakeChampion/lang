@@ -20,7 +20,7 @@ Whatever the payload was, the chain leaked.
 All in `examples/self_host/irlower.fern`.
 
 - **The callee side.** Every body the lift hoists for a function value
-  (`closure_body_name`: `$wrap` or `$clo`) returns a declared enum `E`. Each
+  (`closure_body_name`: `$wrap`, `$clo`, or a hoisted no-capture lambda `__lam_` — a call argument, an IIFE callee, or a local that is only ever called) returns a declared enum `E`. Each
   such body is now an "ENUM:" member (`counted_closure_enum_rows`), and it
   retains any return it holds no count for (`ret_enum_closure_uncounted`).
   These returns hand over their own count and are not retained:
