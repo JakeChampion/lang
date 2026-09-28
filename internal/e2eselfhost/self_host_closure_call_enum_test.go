@@ -237,8 +237,8 @@ function round(i: i32): i32 {
 ` + closureCallEnumMain
 
 // A capture-free lambda bound to a local that is only ever called is hoisted
-// to a `__lam_` body and called by name, so its returned fresh local goes
-// through the named-function RCE: proof (rcenum_ret_value).
+// to a `__lam_` body and called by name; its returned fresh local hands its
+// count over ("ERETOWN:").
 const closureCallEnumLamLocalSrc = `enum S { Done(i32), Next(i32, string) }
 function mk(n: i32): S {
     if (n <= 0) { return Done(n); }
@@ -254,6 +254,27 @@ function size(s: S): i32 {
 function round(i: i32): i32 {
     var f: (i32) => S = (x: i32): S => { var e: S = mk(x); return e; };
     return size(f(i)) + size(f(i + 1));
+}
+` + closureCallEnumMain
+
+// No function value anywhere: a free function returning a local bound to a
+// direct construction, held to a balanced census and a clean sanitizer.
+const closureCallEnumNamedLocalSrc = `enum S { Done(i32), Next(i32, string) }
+function mk(n: i32): S {
+    if (n <= 0) { return Done(n); }
+    var e: S = Next(n, "ab" + "c");
+    return e;
+}
+function size(s: S): i32 {
+    match (s) {
+        Done(v) => { return v; },
+        Next(w, t) => { return w + t.len(); }
+    }
+    return -1;
+}
+function round(i: i32): i32 {
+    var a: S = mk(i);
+    return size(a) + size(mk(i + 1));
 }
 ` + closureCallEnumMain
 
@@ -283,6 +304,7 @@ var closureCallEnumCases = []struct {
 	{"shared", closureCallEnumSharedSrc, 86, [2]int64{30, 20}},
 	{"fresh_local", closureCallEnumFreshLocalSrc, 85, [2]int64{}},
 	{"lam_local", closureCallEnumLamLocalSrc, 60, [2]int64{}},
+	{"named_local", closureCallEnumNamedLocalSrc, 60, [2]int64{}},
 }
 
 func TestSelfHostClosureCallEnumX86_64(t *testing.T) {

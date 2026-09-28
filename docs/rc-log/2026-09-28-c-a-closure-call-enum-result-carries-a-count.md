@@ -73,9 +73,14 @@ All in `examples/self_host/irlower.fern`.
 | #9841's probe written as a recursion | 29 / 8 | 29 / 29 |
 
 x86-64 and wasm agree on every row. The `FERN_SANITIZE=1` x86-64 builds report
-only the guard's leak. `TestSelfHostClosureCallEnum{X86_64,Arm64,Wasm}` holds the
-first five programs to the interpreter's answer under both lowerings. The first
-four must balance; the guard is pinned at 30 / 20.
+only the guard's leak. `TestSelfHostClosureCallEnum{X86_64,Arm64,Wasm}` holds
+every program to the interpreter's answer under both lowerings. All must
+balance except the `shared` guard, pinned at 30 / 20. `fresh_local` pins the
+fresh-chain verdict for a returned local (it leaks 145 / 84 without
+`rcenum_ret_value`), and `lam_local` the `ERETOWN:` hand-over for a `__lam_`
+body. `named_local`, a free function returning a local bound to a direct
+construction, balances with or without that function's `RCE:` grant, since the
+function is already an `ENUM:` member.
 
 ## Not covered
 
