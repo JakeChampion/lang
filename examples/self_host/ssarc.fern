@@ -3897,6 +3897,8 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
     for c in callees {
         var name: string = c.name;
         var f: ssasem.Func = c.f;
+        // A threader lowered here keeps its AST callers on the shallow release (#10420).
+        arrays = irlower.without_thread_rows_through(arrays, name);
         if let typeinfo.TypeTuple(tup) = f.result {
             tuples = tuples.append(name);
             var flags: string = tuple_flags(tup);
