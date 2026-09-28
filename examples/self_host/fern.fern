@@ -185,6 +185,7 @@ import "./x86_native";
 import "./elf";
 import "./ircore";
 import "./emitforms";
+import "./semlower";
 
 // to_u8 copies an i32[] byte buffer (values 0..255, as the wasm binary
 // encoder produces) into a u8[] so string_from_bytes_unchecked can pack it into a
@@ -2398,12 +2399,9 @@ function run(): i32 {
 
     var typed: parser.Module = parser.module_with_builtins_typed(merged);
     var full: parser.Module = parser.erase_str_module(typed);
-    // The typed semantic lowering, unless FERN_SEM_IR= turns it off. It is produced
-    // HERE and threaded into whichever emit path runs, so the pipeline behind
-    // it is linked by the CLI and not by every driver that links a backend
-    // (docs/SELFHOST-SEMANTIC-SOURCE.md). Off, this is ircore.no_sub() and the
-    // emit paths behave exactly as they did.
-    var sub: ircore.Sub = emitforms.substitution(typed, target);
+    // The typed semantic lowering, unless FERN_SEM_IR= turns it off, threaded
+    // into whichever emit path runs. Off, this is ircore.no_sub().
+    var sub: ircore.Sub = semlower.target_substitution(typed, target);
     var out_asm: string = "";
     var emit_text: boolean = emit == "asm";
     if (target == "arm64-linux") {

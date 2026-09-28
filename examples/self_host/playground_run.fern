@@ -41,6 +41,7 @@ import "./lexer";
 import "./modloader";
 import "./parser";
 import "./platforms";
+import "./semlower";
 import "./treeshake";
 import "./util";
 import "./wasm_ir";
@@ -308,7 +309,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
 
     var typed: parser.Module = parser.module_with_builtins_typed(merged);
     var full: parser.Module = parser.erase_str_module(typed);
-    var sub: ircore.Sub = emitforms.substitution(typed, target);
+    var sub: ircore.Sub = semlower.target_substitution(typed, target);
     var out: string = "";
     if (target == "x86-64-linux") {
         out = asm_ir.emit_module_or_error_sub(full, sub);

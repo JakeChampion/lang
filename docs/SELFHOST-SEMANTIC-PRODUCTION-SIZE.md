@@ -11,7 +11,7 @@ lowering introduced by #9321. That implementation is reachable through
 | --- | ---: |
 | Baseline revision, rebuilt | 12,048,860 |
 | Current revision | 12,881,996 |
-| Current revision with only `emitforms.substitution` (then `cli_substitution`) returning `ircore.no_sub()` | 12,317,724 |
+| Current revision with only the CLI's substitution returning `ircore.no_sub()` | 12,317,724 |
 | Semantic pipeline linkage, same-source difference | 564,272 |
 | Other growth since the baseline | 268,864 |
 
@@ -36,9 +36,8 @@ backend entry point. That made partial drivers link the pipeline even
 though they cannot select it. Commit `e42b99e05` moved the producer to the
 CLI and passed an `ircore.Sub` value into each backend. This repair is
 described in [the production consumer](SELFHOST-SEMANTIC-SOURCE.md#the-production-consumer).
-The current call graph retains that boundary: only `emitforms.substitution`
-calls the producer, from the CLI and the playground driver, and backend entry
-points accept the value.
+Backend entry points accept the value; the producer is
+`semlower.target_substitution`, which the CLI calls.
 
 The current full fifteen-driver measurement and smoke run passes. Each of
 the fourteen partial drivers remains inside its existing baseline tolerance;
@@ -93,7 +92,7 @@ FERN_REQUIRE_X86_64_TOOLING=1 FERN_WARM_DRIVER="$driver_names" \
 
 For the same-source attribution, copy `examples/self_host/*.fern` into a
 temporary project with `fullSelfHostProject(t)`. Replace only the body of
-`emitforms.substitution` in that copy with `return ircore.no_sub();`, then build
+`semlower.target_substitution` in that copy with `return ircore.no_sub();`, then build
 `fern.fern` with `cachedDriverBin(t, "", dir, "fern.fern")` and stat the
 returned path. Leave the imports, remaining source, Go compiler and linker
 unchanged. Restore no files in the real checkout: the experiment edits only
