@@ -33,7 +33,7 @@ struct TEof { line: i32 }
 type Tok = TIdent | TPunct | TEof;
 
 function (l: Lx) at_end(): boolean { return l.i >= l.n; }
-function (l: Lx) peek(): i32 { return l.src[l.i]; }
+function (l: Lx) peek(): i32 { return l.src[l.i] as i32; }
 function (l: Lx) adv(): Lx { return Lx { src: l.src, i: l.i + 1, n: l.n, line: l.line }; }
 
 function skip_ws(l: Lx): Lx {

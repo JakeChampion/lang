@@ -83,6 +83,28 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: nil,
 		},
 		{
+			name: "a method reached by a method call",
+			src: `import "std/http";
+struct Sock { fd: i32 }
+function (s: Sock) close(): i32 { eprint("closing"); return s.fd; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var s: Sock = Sock { fd: 3 };
+    var n: i32 = s.close();` + tail,
+			want: []string{"4:1 handle eprint log"},
+		},
+		{
+			// #10619: std/url's url_parse has a `var close`, which reached
+			// std/async's reactor `close` and refused examples/wasm/url_router.
+			name: "a local named like a method",
+			src: `import "std/http";
+struct Sock { fd: i32 }
+function (s: Sock) close(): i32 { eprint("closing"); return s.fd; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var close: i32 = 3;
+    var n: i32 = close + 1;` + tail,
+			want: nil,
+		},
+		{
 			name: "a function without a bag",
 			src: `function helper(): i32 { eprint("hit"); return 0; }
 function main(): i32 { return helper(); }
