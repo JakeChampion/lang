@@ -41,14 +41,14 @@ var u64MixWidthIRCases = []struct {
 	{"u32-tuple", `function main(): i32 { var t: (u32, u32) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
 	// A u8 local, field, tuple element or variant payload widens like a u32
 	// one, into a u64 or a u32. 255 - 213 = 42; 4000000000 + 200 - 4000000158 = 42.
-	{"u8-ident", `function main(): i32 { var b: u8 = 12; var s: u64 = 30; return (s + b) as i32; }`},
+	{"u8-ident", `function main(): i32 { var b: u8 = 200; var s: u64 = 30; return ((s + b) - 188) as i32; }`},
 	{"u8-ident-u32-high", `function main(): i32 { var b: u8 = 200; var s: u32 = 4000000000; return ((s + b) - 4000000158) as i32; }`},
 	{"u8-field-u32", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u32 = 30; return (s + p.x) as i32; }`},
 	{"u8-payload", `@noinline function f(b: u8): Result[u64, string] { return Ok(b); } function main(): i32 { match (f(42)) { Ok(v) => { return v as i32; }, Err(_) => { return 1; } } }`},
 	{"u8-field", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; return (s + p.x) as i32; }`},
 	{"u8-field-lhs-bound", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; var r: u64 = p.x + s; return r as i32; }`},
 	{"u8-field-heap-max", `struct P { x: u8 } @noinline function mk(v: u8): P { return P { x: v }; } function main(): i32 { var p: P = mk(255); var s: u64 = 0; return ((s + p.x) - 213) as i32; }`},
-	{"u8-tuple", `function main(): i32 { var t: (u8, u8) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
+	{"u8-tuple", `function main(): i32 { var t: (u8, u8) = (200, 7); var s: u64 = 30; return ((s + t.0) - 188) as i32; }`},
 	// u64 + u32[] element across a reduction. 10+20+30 = 60.
 	{"u32-arr", `function main(): i32 { var a: u32[] = [10,20,30]; var s: u64 = 0; for i in 0..3 { s = s + a[i]; } return s as i32; }`},
 	// Regression: the i64 + i32 family is unchanged by the u32 admission, and a
