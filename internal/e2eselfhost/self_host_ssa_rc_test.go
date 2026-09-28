@@ -87,6 +87,10 @@ function main(): i32 {
     var f = fixture();
     var modes: i32[] = MODES;
     var p = ssaunits.plan(f, modes);
+    // Every row is built on the heap: these fixtures count rows, and a static box is never counted.
+    var none: string[] = [];
+    for c in p.constants { none = none.append(""); }
+    p = ssaunits.Plan { ...p, constants: none };
     var lowered = ssarc.lower(f, modes, p, irlower.struct_tab_empty(), []);
     if (!lowered.ok) { eprint(lowered.why); return 1; }
     var options = args();
