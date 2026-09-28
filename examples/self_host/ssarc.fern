@@ -1442,7 +1442,8 @@ function env_release_helper(t: typeinfo.Type): irlower.LowerResult {
         n_params: 2, n_locals: 2, name: env_release_name(t) };
     r = emit(r, ir.op_load_local(1));
     r = emit(r, ir.op_call_direct(release_helper_name(t), 1));
-    return emit(r, ir.op_return());
+    r = emit(r, ir.op_return());
+    return r;
 }
 
 // n_locals starts at n_params: `reserve` only grows it, and a body whose frame
