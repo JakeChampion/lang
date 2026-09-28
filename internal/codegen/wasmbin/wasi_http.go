@@ -137,6 +137,18 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32And(body)
 	body = memory.InstI32Store(body, 2, 0)
 
+	// A zero-size request (the canonical ABI lowers an empty list through
+	// realloc too) answers the aligned cursor without taking a block: the
+	// host writes nothing there, and the guest frees no empty list, so a
+	// block taken here would be counted and never given back.
+	body = inst.InstLocalGet(body, 3) // new_size
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, allocCursorAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
 	// return __fern_alloc(new_size)
 	body = inst.InstLocalGet(body, 3) // new_size
 	body = inst.InstCall(body, alloc)

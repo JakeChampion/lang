@@ -149,6 +149,25 @@ func TestCertifyTreatsAConsumingCallArgumentAsATransfer(t *testing.T) {
 	}
 }
 
+// A pair-returning callee consumes its arguments the same way; the
+// Option/Result ABI is over half the corpus's calls, and a walk that
+// discharged only the one-result form reported every struct handed to
+// one of them.
+func TestCertifyTreatsAConsumingPairCallArgumentAsATransfer(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	v := f.AddOp(b, OpAlloc)
+	f.AddCallPair(b, v)
+	b.Ops[len(b.Ops)-1].Str = "takes_it"
+	b.Term = Terminator{Kind: TermRet}
+
+	sigs := map[string]Signature{"takes_it": {Params: []ParamOwnership{Consumed}, Pointer: []bool{true}}}
+	if rep := Certify(f, sigs); len(rep.Leaks) != 0 {
+		t.Errorf("a unit handed to a pair call's consuming position was reported: %+v", rep.Leaks)
+	}
+}
+
 // Fail-soft: when the arms disagree about whether the unit is still
 // held, the walk says nothing rather than guessing. Reporting here is
 // how the probe turned every conditional release into a leak.

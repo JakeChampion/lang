@@ -179,11 +179,13 @@ function main(): i32 { return keepit(7)[0]; }
 	}
 }
 
-// A callee whose payload may ALIAS a parameter is not proven fresh, so there
-// is no reference to release. returnsNoParamEscape is what rules it out, and
-// it carries the whole freshness argument here: with no box there is no
-// return-transfer inc and no is_unique gate to fall back on.
-func TestPairFormPayloadKeptWhenCalleeMayAliasParam(t *testing.T) {
+// A callee whose payload ALIASES a parameter retains it on the way out
+// (emitPairFormPayloadRetain), so the caller owns one count of it and the
+// arm's release is a dec that never reaches zero while the parameter's
+// owner holds its own. The freshness proof this once demanded predated
+// that retain and stranded the count of every `Some(h.values[i])`
+// (#10606).
+func TestPairFormPayloadReleasedWhenCalleeAliasesParam(t *testing.T) {
 	ip := lowerForTest(t, `
 function pick(xs: i32[], n: i32): Option[i32[]] {
     if (n == 0) { return None; }
@@ -205,8 +207,17 @@ function main(): i32 {
     return consume(xs);
 }
 `)
-	if releasesAfterMatch(funcByName(ip, "consume"), "__fern_arr_dec") {
-		t.Error("consume: pick returns its own parameter, so the arm is releasing xs — the next iteration reads freed memory")
+	if !releasesAfterMatch(funcByName(ip, "consume"), "__fern_arr_dec") {
+		t.Error("consume: pick retained xs for the caller, so the arm must give that count back — without it every match strands one")
+	}
+	retained := false
+	for _, op := range funcByName(ip, "pick").Ops {
+		if op.Kind == ir.OpRcInc {
+			retained = true
+		}
+	}
+	if !retained {
+		t.Error("pick: returning its parameter must retain it for the caller, or the arm's release frees the caller's array")
 	}
 }
 

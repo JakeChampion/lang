@@ -596,6 +596,14 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	}
 	t, ok := b.freshOwnedBoxType(tag)
 	if !ok {
+		// A pair-form callee reaching this path (the expression form, or a
+		// statement form an `@` binding or a sub-pattern kept off the
+		// register fast path) is lowered through emitRepackPairAsHeapBox:
+		// a fresh box holding the count the return ABI handed over, which
+		// the deep drop releases exactly as it does a heap-form result's.
+		t, ok = b.freshPairFormEnumResultType(tag)
+	}
+	if !ok {
 		return ast.EnumType{}, false
 	}
 	et, ok := t.(ast.EnumType)
@@ -768,23 +776,25 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
-// result is provably fresh — a direct call to a user-declared, non-builtin
-// function the borrow analysis proved returns no parameter's heap.
+// payload the caller owns one count of: a direct call to a user-declared,
+// non-builtin function.
 //
-// It is the shared freshness gate for the two pair-form reclaims, which own
+// It is the shared ownership gate for the two pair-form reclaims, which own
 // different halves of the same value: the match-arm payload release
-// (reclaimablePairFormPayload) frees what the `(tag, payload)` register pair
-// points at, and the argument-position reclaim (stashOwnedArgTemp) frees the
-// heap box emitRepackPairAsHeapBox allocates when a consumer wants the
-// heap-form Option/Result instead.
+// (reclaimablePairFormPayload) releases what the `(tag, payload)` register
+// pair points at, and the argument-position reclaim (stashOwnedArgTemp)
+// releases the heap box emitRepackPairAsHeapBox allocates when a consumer
+// wants the heap-form Option/Result instead.
 //
 // ownedCallResultType cannot serve either: it rejects a pair-form callee
-// outright, which is exactly the set this one is for. That rejection is also
-// why `returnsNoParamEscape` must be TRUE here rather than merely present.
-// ownedCallResultType's callers lean on "an aliased return is rc>=2 via the
-// return-transfer inc, and the free is is_unique-gated"; the pair-form ABI
-// hands back registers with no box and no such inc, so freshness has to be
-// proven outright.
+// outright, which is exactly the set this one is for. The count is the
+// ABI's: a pair-form return hands over a fresh construction or call result
+// at rc 1, a moved last-use local's own reference, or an alias it retained
+// through emitPairFormPayloadRetain (`Some(h.values[i])`, `Ok(rec.field)`),
+// so every pointer payload arrives counted and the release is a dec that
+// frees only at zero. A Map payload is the one exception: its release
+// deep-frees the columns without reading the count, so it needs the
+// callee proven to return no parameter's heap.
 func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 	if !ast.RcFreeEnabled || !b.isPairFormScrutinee(e) {
 		return nil, false
@@ -798,29 +808,25 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 	if _, isUserFn := b.returnsFreshPairPayload[id.Name]; !isUserFn {
 		return nil, false
 	}
-	// The payload BOX must not be one the callee received. TWO independent
-	// proofs of that, and either suffices:
-	//
-	//   - nothing REACHABLE FROM the result aliases a parameter, so the
-	//     pointer cannot be one either. This also credits shapes that are
-	//     fresh without being a literal construction — a string concat or
-	//     slice byte-copies into a new buffer — which the second proof
-	//     does not attempt.
-	//   - the returned payload is a literal construction, so the box is
-	//     the callee's own whatever it points AT. This is the one an
-	//     iterator's `next` needs: `Some((elem, Self { xs: self.xs, … }))`
-	//     fails the first proof and passes this one.
-	//
-	// Requiring only the second cost the reclaim on `Some("x" + f(v))`,
-	// which the first had been carrying (TestX86_64PairFormReturningArmReclaim).
-	if !b.returnsNoParamEscape[id.Name] && !b.returnsFreshPairPayload[id.Name] {
-		return nil, false
-	}
 	et, ok := b.exprType(e).(ast.EnumType)
 	if !ok {
 		return nil, false
 	}
+	if pairFormPayloadIsMap(et) && !b.returnsNoParamEscape[id.Name] && !b.returnsFreshPairPayload[id.Name] {
+		return nil, false
+	}
 	return et, true
+}
+
+// pairFormPayloadIsMap reports whether any payload of a pair-form
+// Option/Result is a Map, whose slot drop reclaims the columns outright.
+func pairFormPayloadIsMap(et ast.EnumType) bool {
+	for _, a := range et.Args {
+		if isMapType(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // bindingConfinedToArm reports whether every mention of `name` in `body` is
