@@ -7406,16 +7406,13 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
         s = s.write("    call __fn___fern_udp_send\n    addq $24, %rsp\n    pushq %rax\n");
         s = s.need("udp_send");
-    } else if (o.kind_tag == 332 || o.kind_tag == 333) {  // tcp_listen_with, tcp_socket_ctl
+    } else if (o.kind_tag == 333) {  // tcp_socket_ctl
         // [a, b, c] with c on top; the stack ABI wants param[0] lowest, so
         // pop and re-push reversed, as udp_send does.
-        var ctl_fn: string = "__fn___fern_tcp_listen_with";
-        var ctl_need: string = "tcp_listen_with";
-        if (o.kind_tag == 333) { ctl_fn = "__fn___fern_tcp_socket_ctl"; ctl_need = "tcp_socket_ctl"; }
         s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
-        s = s.write("    call " + ctl_fn + "\n    addq $24, %rsp\n    pushq %rax\n");
-        s = s.need(ctl_need);
-    } else if (o.kind_tag >= 334 && o.kind_tag <= 344) {  // udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into
+        s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
+        s = s.need("tcp_socket_ctl");
+    } else if (o.kind_tag == 332 || (o.kind_tag >= 334 && o.kind_tag <= 344)) {  // tcp_listen_with, udp_bind .. udp_recvfrom, tcp_connect_with, unix_*, reactor_*, tcp_recv_into
         // [args] with the last on top; pop and re-push reversed, as udp_send
         // does. recvfrom spreads the datagram into the caller's array from a
         // raw buffer, so it needs the heap.
@@ -8598,7 +8595,7 @@ function emit_ir_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.Emi
             s = s.write("    movq 8(%rsp), %r11\n");                // reload box (helper clobbered r11)
         } else if (op.kind == "elems_drop_enum") {
             // The ENUM-array sibling: shape-dispatch each element and dec its
-            // leak-safe-array payloads before the box decs below.
+            // enum_walk_payload_field payloads before the box decs below.
             var easan: string = asmcore.sanitize_label(op.ty);
             s = s.need("enum_arr_elems_drop:" + op.ty);
             s = s.write("    movq " + off + "(%r11), %rdi\n");      // buffer
@@ -8746,11 +8743,13 @@ function emit_ir_struct_arr_elems_drop_one(s: asmcore.EmitState, ety: string): a
 // body — the enum-array sibling of the struct element walk above: for each
 // uniquely-owned element, dispatch on the variant SHAPE pointer (box@0, the
 // same interned .S label struct_make writes and variant_is compares) and dec
-// the matched variant's leak-safe-array payload fields ((k+1)*8) via the
-// rc-guarded __fern_arr_dec. Admission (enum_arr_elems_walk_ok, checked at
-// the call site) keeps every other payload kind out, so each dec is balanced
-// by the ctor's counting: a fresh literal payload is sole-owned (freed), a
-// bare-ident payload was dup'd at construction (dec'd back). The element and
+// the matched variant's enum_walk_payload_field payloads ((k+1)*8) — a
+// leak-safe array's buffer or a closure's env box — via the rc-guarded
+// __fern_arr_dec. Admission (enum_arr_elems_walk_ok, checked at the call site)
+// keeps every other payload kind out, so each dec is balanced by the ctor's
+// counting: a fresh literal payload is sole-owned (freed), a bare-ident array
+// payload was dup'd at construction (dec'd back), and a closure payload holds
+// the count count_closure_payload gave it. The element and
 // buffer boxes themselves are still freed by the caller's existing walk.
 // %rbx=buffer, %r12=index, %r13=element survive the calls (callees clobber
 // only rax/rcx/rdx/rsi/rdi/r8).

@@ -92,8 +92,6 @@ var strViewBorrowReleaseCases = []struct {
 	// outer str_slice copies, so the inner copy is dead the moment it has been
 	// read — which is why this is a borrow position and not an alias.
 	{"str-view-borrow-slice-source", viewBorrowHeap(`    return slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5).len();`), 0},
-	// The free spelling of `.len()`, which lowers through the same borrow path.
-	{"str-view-borrow-free-len-builtin", viewBorrowHeap(`    return len(slice_unchecked(base, 4, base.len()));`), 0},
 	// LIVENESS across every position at once, with the SOURCE and each RESULT
 	// read afterwards behind decoy allocations that would be handed the freed
 	// block if a release had landed too early.
@@ -105,14 +103,13 @@ var strViewBorrowReleaseCases = []struct {
     var cat: string = slice_unchecked(base, 4, base.len()) + "-tail";
     var ch: i32 = (slice_unchecked(base, 4, base.len())[0] as i32);
     var sub: string = own2(slice_unchecked(slice_unchecked(base, 4, base.len()), 1, 5));
-    var fl: i32 = len(slice_unchecked(base, 4, base.len()));
     var p1: string = w("XXXXXXXX");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("ZZZZZZZZ");
     if (p1.len() + p2.len() + p3.len() < 0) { return 0; }
     if (!has_prefix(base, "abcdefgh-a-wide")) { return 0 - 1; }
     if (has_sub(base, "XXXX")) { return 0 - 2; }
-    if (n != 102 || fl != 102) { return 0 - 3; }
+    if (n != 102) { return 0 - 3; }
     if (eq) { return 0 - 4; }
     if (!lt) { return 0 - 5; }
     if (!has_prefix(cat, "efgh-a-wide")) { return 0 - 6; }

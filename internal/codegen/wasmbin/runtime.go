@@ -874,9 +874,10 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__network_handle")
 					needs.add("__fern_tcp_listen")
 				case "__fern_tcp_listen_with":
-					// (port, backlog, reuse_port) → the same listener
-					// struct; the backlog reaches set-listen-backlog-size
-					// and reuse_port has no wasi:sockets control.
+					// (addr, port, backlog, reuse_port) → the same
+					// listener struct at the address; the backlog reaches
+					// set-listen-backlog-size and reuse_port has no
+					// wasi:sockets control.
 					needs.add("__free")
 					needs.add("__fern_alloc")
 					needs.add("__network_handle")
@@ -896,13 +897,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_tcp_accept")
 				case "__fern_tcp_connect":
 					// (host_be, port) → i32 — outbound client; same
-					// 16-byte connection struct as accept. Its body is
-					// __fern_tcp_connect_with, which its edge pulls in.
+					// 16-byte connection struct as accept. Its body boxes
+					// the address for __fern_tcp_connect_with, which its
+					// edges pull in.
 					needs.add("__fern_tcp_connect")
 				case "__fern_tcp_connect_with":
-					// (host_be, port, nonblocking) → i32 — the
-					// connection record, or one whose connect is under
-					// way. Needs the network accessor (like tcp_listen).
+					// (addr, port, nonblocking) → i32 — the connection
+					// record, or one whose connect is under way. Needs
+					// the network accessor (like tcp_listen).
 					needs.add("__fern_tcp_connect_with")
 				case "__fern_tcp_local_port":
 					needs.add("__free")
@@ -953,14 +955,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// udp_sendto → tcp_close, which its edges pull in.
 					needs.add("__fern_udp_send")
 				case "__fern_udp_bind":
-					// (host_be, port) → i32 — a bound datagram socket
+					// (addr, port) → i32 — a bound datagram socket
 					// record, or -errno.
 					needs.add("__fern_udp_bind")
 				case "__fern_udp_connect":
-					// (rec, host_be, port) → i32 — 0 or -errno.
+					// (rec, addr, port) → i32 — 0 or -errno.
 					needs.add("__fern_udp_connect")
 				case "__fern_udp_sendto":
-					// (rec, host_be, port, data) → i32 — the bytes
+					// (rec, addr, port, data) → i32 — the bytes
 					// accepted, or -errno. SSO-normalizes the data.
 					needs.add("__fern_udp_sendto")
 				case "__fern_udp_recvfrom":
@@ -1246,18 +1248,18 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 var unconditionalHelperCalls = map[string][]string{
 	"__fern_tcp_listen":       {"__fern_wasi_socket_errno"},
 	"__fern_tcp_accept":       {"__fern_wasi_socket_errno"},
-	"__fern_tcp_connect":      {"__fern_tcp_connect_with"},
-	"__fern_tcp_connect_with": {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle"},
+	"__fern_tcp_connect":      {"__fern_tcp_connect_with", "__fern_alloc", "__free"},
+	"__fern_tcp_connect_with": {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_ip_flat"},
 	"__fern_tcp_local_port":   {"__fern_wasi_socket_errno"},
-	"__fern_tcp_listen_with":  {"__fern_wasi_socket_errno"},
+	"__fern_tcp_listen_with":  {"__fern_wasi_socket_errno", "__fern_ip_flat"},
 	"__fern_tcp_socket_ctl":   {"__fern_wasi_socket_errno"},
 	"__fern_udp_send":         {"__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_udp_bind", "__fern_udp_sendto", "__fern_udp_close"},
 	// A bound datagram socket is closed through udp_close, so it comes
 	// with the socket and tcp_close gains its datagram arm.
-	"__fern_udp_bind":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close"},
+	"__fern_udp_bind":      {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__network_handle", "__fern_udp_close", "__fern_ip_flat"},
 	"__fern_udp_close":     {"__free"},
-	"__fern_udp_connect":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
-	"__fern_udp_sendto":    {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte"},
+	"__fern_udp_connect":   {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_ip_flat"},
+	"__fern_udp_sendto":    {"__fern_wasi_socket_errno", "__fern_alloc", "__free", "__fern_str_len", "__fern_str_byte", "__fern_ip_flat"},
 	"__fern_udp_recvfrom":  {"__fern_wasi_socket_errno", "__fern_alloc", "__free"},
 	"__fern_reactor_new":   {"__fern_alloc"},
 	"__fern_reactor_ctl":   {"__fern_alloc", "__free"},
@@ -2853,12 +2855,20 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		results: []byte{encode.ValtypeI32},
 		body:    buildNetworkHandleBody,
 	},
-	"__fern_tcp_listen_with": {
-		// (port, backlog, reuse_port: i32) → i32 — the listener
-		// struct __fern_tcp_listen yields, with the accept queue
-		// set through set-listen-backlog-size; -errno on failure.
-		// See wasi_tcp.go.
+	"__fern_ip_flat": {
+		// (addr, port, out: i32) → i32 — the ip-socket-address
+		// flattening of the u8[] address and the port, as twelve
+		// words at out; 0, or -EAFNOSUPPORT. See wasi_addr.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildIpFlatBody,
+	},
+	"__fern_tcp_listen_with": {
+		// (addr, port, backlog, reuse_port: i32) → i32 — the listener
+		// struct __fern_tcp_listen yields, bound to the u8[] address,
+		// with the accept queue set through set-listen-backlog-size;
+		// -errno on failure. See wasi_tcp.go.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpListenWithBody,
 	},
@@ -2896,9 +2906,9 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildTcpConnectBody,
 	},
 	"__fern_tcp_connect_with": {
-		// (host_be, port, nonblocking) → i32 — tcp_connect's record,
-		// or with nonblocking one marked connecting that control op 5
-		// finishes. See wasi_tcp.go.
+		// (addr, port, nonblocking) → i32 — a connection record to
+		// the u8[] address, or with nonblocking one marked connecting
+		// that control op 5 finishes. See wasi_tcp.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpConnectWithBody,
@@ -2977,8 +2987,8 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildUdpSendBody,
 	},
 	"__fern_udp_bind": {
-		// (host_be, port) → i32 — a datagram socket record bound to
-		// the packed IPv4 address, or -errno. See wasi_udp.go.
+		// (addr, port) → i32 — a datagram socket record bound to the
+		// u8[] address, or -errno. See wasi_udp.go.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildUdpBindBody,
@@ -2991,15 +3001,15 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		body:    buildUdpCloseBody,
 	},
 	"__fern_udp_connect": {
-		// (rec, host_be, port) → i32 — 0 once the record's streams
-		// are fixed to the peer, or -errno.
+		// (rec, addr, port) → i32 — 0 once the record's streams are
+		// fixed to the peer, or -errno.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildUdpConnectBody,
 	},
 	"__fern_udp_sendto": {
-		// (rec, host_be, port, data_data, data_len) → i32 — the bytes
-		// accepted, or -errno. A zero address sends to the peer.
+		// (rec, addr, port, data_data, data_len) → i32 — the bytes
+		// accepted, or -errno. An empty address sends to the peer.
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildUdpSendtoBody,
@@ -7371,11 +7381,11 @@ func buildRcIncBody(_ map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 	// Defensive low-address guard, mirroring buildRcDecBody. The
-	// static OpConstFunc closure cells live in the reserved window
-	// [closuresBase=96, 1024); rc-tracking FuncType locals would
+	// static OpConstFunc closure cells live below stringStart
+	// (closuresBase..closurePoolEnd); rc-tracking FuncType locals would
 	// otherwise inc one of those cells and read scratch / cell bytes
-	// at [ptr-8]. Heap objects (alloc / alloc_rc1) sit at >= 1024 and
-	// still get tracked. See rcLowAddrGuard.
+	// at [ptr-8]. Heap objects (alloc / alloc_rc1) sit at or above
+	// rcLowAddrGuard and still get tracked.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)

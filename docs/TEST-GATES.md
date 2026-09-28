@@ -157,14 +157,21 @@ through a connected socket, a short buffer that truncates, the refused
 second bind of a held port, the would-block of a non-blocking receive, and
 the close of both), and `e2eharness.NetUdpProbe` through std/net's
 `udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
-`local_port` and `close`, plus the `AddrInUse`, the refused IPv6 address
-and the `WouldBlock`; `e2eharness.ConnectProbe` on `tcp_connect_with` and
+`local_port` and `close`, plus the `AddrInUse` and the `WouldBlock`;
+`e2eharness.ConnectProbe` on `tcp_connect_with` and
 control op 5 (a started connect settled by asking until it is no longer
 `-EINPROGRESS`, then accepted and used both ways, and the
 `-ECONNREFUSED` a connect to the closed port ends with, whether it fails
 as it starts or once it settles), and `e2eharness.NetConnectProbe` through
 `connect_start`, `connect_result` and `connect`. All six check the
-received bytes, not only their count. `TestUnixSocket{Interp,X86_64,Arm64}`,
+received bytes, not only their count. `TestSocketV6{Interp,X86_64,Arm64,Wasm}`,
+`TestArm64DarwinSocketV6`, `TestSelfHostSocketV6` (x86-64, arm64 and wasm)
+and its Darwin twin run `e2eharness.SocketV6Probe` and `NetV6Probe` over
+`::1`: a listener, a dial and the reply read back, two datagram sockets
+whose sender comes back as family 6 with its sixteen bytes, and a
+connected reply. The IPv6 leg is the one gate with a skip rule: where Go
+itself cannot listen on `::1` the probe must answer "nov6" and the test
+skips, and everywhere else it must pass. `TestUnixSocket{Interp,X86_64,Arm64}`,
 `TestArm64DarwinUnixSocket`, `TestSelfHostUnixSocket` and its Darwin twin
 run `e2eharness.UnixSocketProbe` and `NetUnixProbe` over a socket file
 under /tmp (a listener, a connect, both directions through the tcp verbs,
@@ -188,6 +195,17 @@ the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
 advancing to a scripted readiness or the timeout, interest bits selecting
 it, an unwatch dropping it). The serve loops run on the reactor, so every
 serve, fetch and handler-census gate below exercises it.
+`TestHeldConnectionsHeapBoundX86_64` and `TestSelfHostHeldConnectionsHeapBoundX86_64`
+are the per-held-connection bound of #9853: a serve loop whose handler
+answers `__heap_bump_bytes()` holds 64 idle connections, then 64 more, and
+the growth the second batch cost must be under 1 KiB per connection (the
+first batch carries the table's one-time growth, so the bound is on the
+second). The Go compiler's loop costs about 145 bytes per connection and
+the self-host's about 120. The twin compiles with the production driver:
+the per-module driver's older lowering keeps an array of arrays it cannot
+prove fresh, so the connection table it rebuilds per accept leaks there
+by that lowering's design, and a gate on it would measure the lowering
+rather than the loop.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body

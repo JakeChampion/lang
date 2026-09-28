@@ -18,14 +18,15 @@ function fail(n: i32): i32 {
 }
 
 function main(): i32 {
-    var ln: i32 = tcp_listen_with(0, 4, true);
+    var any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    var ln: i32 = tcp_listen_with(any, 0, 4, true);
     if (ln < 0) { return fail(1); }
     var port: i32 = tcp_local_port(ln);
     if (port <= 0) { return fail(2); }
     // Linux lets a second SO_REUSEPORT listener share the port; it is closed
     // again before the dial so the one accept below is on the first.
     if (target_os() == "linux") {
-        var ln2: i32 = tcp_listen_with(port, 4, true);
+        var ln2: i32 = tcp_listen_with(any, port, 4, true);
         if (ln2 < 0) { return fail(3); }
         tcp_close(ln2);
     }

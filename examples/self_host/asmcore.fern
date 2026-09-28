@@ -1775,14 +1775,15 @@ pub function rt_src_tcp_connect(t: string): string {
     return "function __fern_tcp_connect(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " var rc: i32 = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
 }
 
-// rt_src_tcp_connect_with backs `tcp_connect_with(host_be, port, nonblocking)`
-// (#9853): the connected socket, or with `nonblocking` a non-blocking socket
-// whose connect is under way (-EINPROGRESS is then not a failure); control
-// op 5 reports how it ended. rt_src_tcp_connect stays its own body: a
-// runtime helper here is lowered on its own and cannot name another.
+// rt_src_tcp_connect_with backs `tcp_connect_with(addr, port, nonblocking)`
+// (#9853): the socket connected to addr:port, or with `nonblocking` a
+// non-blocking socket whose connect is under way (-EINPROGRESS is then not
+// a failure); control op 5 reports how it ended. rt_src_tcp_connect stays
+// its own body: a runtime helper here is lowered on its own and cannot
+// name another.
 pub function rt_src_tcp_connect_with(t: string): string {
     var fc: string = sysno(t, "fcntl");
-    return "function __fern_tcp_connect_with(host_be: i32, port: i32, nonblocking: boolean): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } var rc: i32 = 0; if (nonblocking) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; rc = flags; if (flags >= 0) { rc = __syscall3(" + fc + ", fd as i64, 4, (flags | " + sockopt(t, "o_nonblock") + ") as i64) as i32; } } if (rc >= 0) { var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " rc = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; if (nonblocking && rc == 0 - " + sockopt(t, "einprogress") + ") { rc = 0; } } if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
+    return "function __fern_tcp_connect_with(addr: i32[], port: i32, nonblocking: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var rc: i32 = 0; if (nonblocking) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; rc = flags; if (flags >= 0) { rc = __syscall3(" + fc + ", fd as i64, 4, (flags | " + sockopt(t, "o_nonblock") + ") as i64) as i32; } } if (rc >= 0) { var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " rc = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; if (nonblocking && rc == 0 - " + sockopt(t, "einprogress") + ") { rc = 0; } } if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
 }
 
 // rt_src_udp_send backs `udp_send(host, port, data)` (#2649, #6917) → the bytes
@@ -1818,6 +1819,8 @@ function sockopt(t: string, name: string): string {
         if (name == "so_keepalive") { return "8"; }
         if (name == "so_error") { return "4103"; }
         if (name == "einprogress") { return "36"; }
+        if (name == "af_inet6") { return "30"; }
+        if (name == "eafnosupport") { return "47"; }
         return "4";
     }
     if (name == "sol_socket") { return "1"; }
@@ -1825,15 +1828,36 @@ function sockopt(t: string, name: string): string {
     if (name == "so_keepalive") { return "9"; }
     if (name == "so_error") { return "4"; }
     if (name == "einprogress") { return "115"; }
+    if (name == "af_inet6") { return "10"; }
+    if (name == "eafnosupport") { return "97"; }
     return "2048";
 }
 
-// rt_src_tcp_listen_with backs `tcp_listen_with(port, backlog, reuse_port)`
-// (#9853): rt_src_tcp_listen with the accept queue chosen by the caller and
-// SO_REUSEPORT set before the bind when asked. The option value sits in the
-// same scratch block as the sockaddr, after it.
+// The socket primitives that take an address take it as its network-order
+// bytes, a u8[] of 4 (AF_INET) or 16 (AF_INET6) whose slots hold one byte
+// each in the self-host's array layout. af_of_addr answers the family in
+// `af` from the length of `addr`, returning -EAFNOSUPPORT for another
+// length; sockaddr_of fills the 28-byte block named `buf` with the
+// sockaddr_in or sockaddr_in6 for addr:port and leaves its byte length in
+// `salen`. The body they are spliced into holds `addr` and `port`.
+function af_of_addr(t: string): string {
+    return "var af: i32 = 2; if (addr.len() == 16) { af = " + sockopt(t, "af_inet6") + "; } else if (addr.len() != 4) { return 0 - " + sockopt(t, "eafnosupport") + "; }";
+}
+
+function sockaddr_of(t: string, buf: string): string {
+    var head: string = "__raw_store8(" + buf + ", 0, af); __raw_store8(" + buf + ", 1, 0);";
+    if (t == "arm64-darwin") { head = "__raw_store8(" + buf + ", 0, salen); __raw_store8(" + buf + ", 1, af);"; }
+    return "var salen: i32 = 16; var at: i32 = 4; if (addr.len() == 16) { salen = 28; at = 8; } var z: i32 = 0; while (z < 28) { __raw_store8(" + buf + ", z, 0); z = z + 1; } " + head
+        + " __raw_store8(" + buf + ", 2, (port >> 8) & 255); __raw_store8(" + buf + ", 3, port & 255); var ap: usize = __raw_arr_ptr(addr); var k: i32 = 0; while (k < addr.len()) { __raw_store8(" + buf + ", at + k, __raw_load_ptr(ap, k + 1) as i32); k = k + 1; }";
+}
+
+// rt_src_tcp_listen_with backs `tcp_listen_with(addr, port, backlog,
+// reuse_port)` (#9853): rt_src_tcp_listen bound to addr:port, with the
+// accept queue chosen by the caller and SO_REUSEPORT set before the bind
+// when asked. The option value sits in the same scratch block as the
+// sockaddr, after it.
 pub function rt_src_tcp_listen_with(t: string): string {
-    return "function __fern_tcp_listen_with(port: i32, backlog: i32, reuse_port: boolean): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(20); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 16, 1); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 16) as i64, 4) as i32; } " + sockaddr_head(t, "sa") + " __raw_store8(sa, 2, (port >> 8) & 255); __raw_store8(sa, 3, port & 255); var z: i32 = 4; while (z < 16) { __raw_store8(sa, z, 0); z = z + 1; } if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+    return "function __fern_tcp_listen_with(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(32); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa") + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
 // rt_src_tcp_socket_ctl backs `tcp_socket_ctl(fd, op, arg)` (#9853): op 1
@@ -1853,29 +1877,32 @@ pub function rt_src_udp_send(t: string): string {
 }
 
 // The datagram sockets (#9853), each the twin of the Fern body in
-// internal/fernrt/runtime.fern: a socket bound to host_be:port, connect(2)
-// fixing a peer, one sendto(2) to an address or (both zero) the peer, and
-// one recvfrom(2) into the caller's u8[].
+// internal/fernrt/runtime.fern: a socket bound to addr:port, connect(2)
+// fixing a peer, one sendto(2) to an address or (an empty one) the peer,
+// and one recvfrom(2) into the caller's u8[].
 pub function rt_src_udp_bind(t: string): string {
-    return "function __fern_udp_bind(host_be: i32, port: i32): i32 { var fd: i32 = __syscall3(" + sysno(t, "socket") + ", 2, 2, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " var r: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, 16) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+    return "function __fern_udp_bind(addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 2, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " var r: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
 pub function rt_src_udp_connect(t: string): string {
-    return "function __fern_udp_connect(fd: i32, host_be: i32, port: i32): i32 { var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " return __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, 16) as i32; }";
+    return "function __fern_udp_connect(fd: i32, addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " return __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; }";
 }
 
 pub function rt_src_udp_sendto(t: string): string {
     var flags: string = "16384";
     if (t == "arm64-darwin") { flags = "524288"; }
-    return "function __fern_udp_sendto(fd: i32, host_be: i32, port: i32, data: string): i32 { if (host_be == 0 && port == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } var sa: usize = __raw_scratch(16); " + sockaddr_v4(t, "sa") + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", sa as i64, 16) as i32; }";
+    return "function __fern_udp_sendto(fd: i32, addr: i32[], port: i32, data: string): i32 { if (addr.len() == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", sa as i64, salen as i64) as i32; }";
 }
 
 // The datagram lands in a raw buffer and is spread one byte per slot into
 // the caller's array, the way rt_src_tcp_recv fills a fresh one; the
 // buffer is adopted by a string only after its last read (#10486). The
-// sender's address and port go into `from` when it has six slots.
+// sender goes into `from` when it has nineteen slots: the family (4 or
+// 6), the address bytes from slot 1, the port at 17 and 18.
 pub function rt_src_udp_recvfrom(t: string): string {
-    return "function __fern_udp_recvfrom(fd: i32, buf: i32[], from: i32[]): i32 { var max: i32 = buf.len(); var p: usize = __raw_alloc(max + 1); var sa: usize = __raw_scratch(20); __raw_store8(sa, 16, 16); __raw_store8(sa, 17, 0); __raw_store8(sa, 18, 0); __raw_store8(sa, 19, 0); var n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, __raw_addr(sa, 16) as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } if (n >= 0 && from.len() >= 6) { var f: usize = __raw_arr_ptr(from); __raw_store_ptr(f, 1, __raw_load8(sa, 4) as usize); __raw_store_ptr(f, 2, __raw_load8(sa, 5) as usize); __raw_store_ptr(f, 3, __raw_load8(sa, 6) as usize); __raw_store_ptr(f, 4, __raw_load8(sa, 7) as usize); __raw_store_ptr(f, 5, __raw_load8(sa, 2) as usize); __raw_store_ptr(f, 6, __raw_load8(sa, 3) as usize); } var p_own: string = __raw_string(p, max + 1); return n; }";
+    var family: string = "var fam: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8);";
+    if (t == "arm64-darwin") { family = "var fam: i32 = __raw_load8(sa, 1);"; }
+    return "function __fern_udp_recvfrom(fd: i32, buf: i32[], from: i32[]): i32 { var max: i32 = buf.len(); var p: usize = __raw_alloc(max + 1); var sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); var n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, __raw_addr(sa, 28) as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } if (n >= 0 && from.len() >= 19) { var f: usize = __raw_arr_ptr(from); var z: i32 = 1; while (z <= 19) { __raw_store_ptr(f, z, 0 as usize); z = z + 1; } " + family + " var n_addr: i32 = 0; var at: i32 = 4; if (fam == 2) { __raw_store_ptr(f, 1, 4 as usize); n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { __raw_store_ptr(f, 1, 6 as usize); n_addr = 16; at = 8; } var k: i32 = 0; while (k < n_addr) { __raw_store_ptr(f, 2 + k, __raw_load8(sa, at + k) as usize); k = k + 1; } __raw_store_ptr(f, 18, __raw_load8(sa, 2) as usize); __raw_store_ptr(f, 19, __raw_load8(sa, 3) as usize); } var p_own: string = __raw_string(p, max + 1); return n; }";
 }
 
 // The reactor floor (#9853): a readiness set that outlives one wait, epoll
@@ -4892,7 +4919,6 @@ function builtin_i32_names(): string[] {
         // proc_exec_as(path, argv, envp) → the same failure-only i32.
         "proc_exec_as",
         "f64_bits", "f32_bits",
-        "len",
         // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
         // machine words carried as i32; __raw_string is the one that
         // produces a typed string. The stores return i32 (the value
@@ -6591,8 +6617,8 @@ function emitter_call_names(): string[] {
 }
 
 // callgate_known_names builds the undefined rule's admit list. Ordered
-// cheapest-first for the common misses: the builtin sets (a `print` /
-// `len` call is a miss against the free-function table and lands here),
+// cheapest-first for the common misses: the builtin sets (a `print` call
+// is a miss against the free-function table and lands here),
 // then structs and variants, then the receiver methods and top-level
 // bindings. Free functions are NOT repeated here — the walk consults the
 // arity table first, so a plain user call never reaches this array.

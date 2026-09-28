@@ -1,19 +1,16 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
 // recursiveLocalCases cover self-recursive local functions, which the
 // self-host desugars to `var f = lambda` and then lifts to a top-level
-// function in hoist_local_funcs_module when the body captures nothing
-// from its enclosing scope (recursion resolves once it's top-level).
-// Covers direct self-recursion, tree recursion, and a recursive local
-// that calls a top-level function. Exit codes cross-checked vs the Go
-// backend (which supports recursive locals natively).
+// function in hoist_local_funcs_module (recursion resolves once it's
+// top-level). Covers direct self-recursion, tree recursion, and a recursive
+// local that calls a top-level function. Exit codes cross-checked vs the Go
+// backend (which supports recursive locals natively). Every exit stays below
+// 126, which a wasm run cannot report (#2908).
 var recursiveLocalCases = []struct {
 	name string
 	src  string
@@ -28,70 +25,27 @@ var recursiveLocalCases = []struct {
 	{"var-before", "function main(): i32 { var x: i32 = 5; function r(n: i32): i32 { if (n <= 0) { return 0; } return r(n - 1); } return x + r(3); }", 5},
 	{"with-sibling-closure", "function main(): i32 { var base: i32 = 100; var add = (x: i32): i32 => { return x + base; }; function cd(n: i32): i32 { if (n <= 0) { return 0; } return 1 + cd(n - 1); } return add(cd(5) + 17); }", 122},
 	// Capturing recursive locals: lambda-lifted with the captured enclosing
-	// names threaded through as trailing params + at every call site.
+	// names threaded through as trailing params + at every call site. Each
+	// capture parameter has its binding's written or inferred type (#10457).
 	{"capture-one", "function main(): i32 { var base: i32 = 10; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 13},
 	{"capture-two", "function main(): i32 { var acc: i32 = 0; var step: i32 = 2; function go(n: i32): i32 { if (n <= 0) { return acc; } return step + go(n - 1); } return go(4); }", 8},
-	{"capture-2calls", "function main(): i32 { var base: i32 = 100; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(2) + f(3); }", 205},
+	{"capture-2calls", "function main(): i32 { var base: i32 = 50; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(2) + f(3); }", 105},
 	// An arrow lambda naming its `var` reads the enclosing binding of that
 	// name, so it is not a recursive local and must not be lifted (#10383).
 	{"arrow-reads-outer", "function main(): i32 { var f = (x: i32): i32 => { return x + 1; }; if (true) { var f = (x: i32): i32 => { return f(x) * 2; }; return f(3); } return 0; }", 8},
 	{"capture-inferred", "function main(): i32 { var base = 7; function f(n: i32): i32 { if (n <= 0) { return base; } return 1 + f(n - 1); } return f(3); }", 10},
+	// A counted capture: the lifted function's parameter is a string.
+	{"capture-string", "function main(): i32 { var s = \"abc\"; function f(n: i32): i32 { if (n <= 0) { return s.len(); } return 1 + f(n - 1); } return f(3); }", 6},
 }
 
-// TestSelfHostRecursiveLocalX86_64 — recursive local hoisting via the
-// self-hosted x86-64 compiler.
-func TestSelfHostRecursiveLocalX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
+func TestSelfHostRecursiveLocal(t *testing.T) {
+	cli := buildSelfHostCLI(t)
 	for _, tc := range recursiveLocalCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
-			}
-		})
-	}
-}
-
-// TestSelfHostRecursiveLocalArm64 — CI-gated arm64 counterpart.
-func TestSelfHostRecursiveLocalArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
-	for _, tc := range recursiveLocalCases {
-		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				if stderr, code := cli.exitOf(t, tc.src, target); code != tc.exit {
+					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.exit, stderr)
+				}
 			}
 		})
 	}
