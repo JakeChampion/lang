@@ -4057,31 +4057,61 @@ function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]
     for tr in traits {
         var found: boolean = false;
         for imp in impls {
-            if (impl_is_trait(imp, tr) && util.base_type_name(imp.impl_type) == n) { found = true; }
+            if (implements_trait(imp, tr) && util.base_type_name(imp.impl_type) == n) { found = true; }
         }
         if (!found) { return false; }
     }
     return true;
 }
 
-// Whether `imp` implements the trait a dyn set names as `tr`. A generic trait
-// the set pins by position (`Pair[i32, u32]`) is only the instantiation the
-// impl names; one pinned by associated type (`Iter[Item = i32]`), or not at
-// all, is any impl of the trait.
-function impl_is_trait(imp: parser.ImplInfo, tr: string): boolean {
+// Whether `imp` implements the trait a dyn set names as `tr`: the same trait,
+// the instantiation `tr` pins by position (`Pair[i32, u32]`) if it pins one,
+// and the associated type each `Name = Type` entry pins (`Iter[Item = i32]`).
+function implements_trait(imp: parser.ImplInfo, tr: string): boolean {
     if (util.base_type_name(imp.trait_name) != util.base_type_name(tr)) { return false; }
-    if (!util.contains(tr, "[") || util.contains(tr, "=")) { return true; }
-    return without_spaces(imp.trait_ref) == without_spaces(tr);
-}
-
-function without_spaces(t: string): string {
-    var out: string = "";
+    var positional: string[] = [];
+    for entry in bracket_entries(tr) {
+        var eq: i32 = util.index_of_sub(entry, "=");
+        if (eq < 0) { positional = positional.append(entry); }
+        else if (!pins_assoc(imp, util.trim(slice_unchecked(entry, 0, eq) + ""), slice_unchecked(entry, eq + 1, entry.len()) + "")) { return false; }
+    }
+    if (positional.len() == 0) { return true; }
+    var args: string[] = bracket_entries(imp.trait_ref);
+    if (args.len() != positional.len()) { return false; }
     var i: i32 = 0;
-    while (i < t.len()) {
-        if ((t[i] as i32) != 32) { out = out + slice_unchecked(t, i, i + 1); }
+    while (i < args.len()) {
+        if (!same_modulo_spaces(args[i], positional[i])) { return false; }
         i = i + 1;
     }
-    return out;
+    return true;
+}
+
+// Whether `imp` binds associated type `name` to `value`.
+function pins_assoc(imp: parser.ImplInfo, name: string, value: string): boolean {
+    var i: i32 = util.index_of_str(imp.assoc_names, name);
+    return i >= 0 && same_modulo_spaces(imp.assoc_values[i], value);
+}
+
+// The top-level entries of a `Base[a, b]` spelling; none without brackets.
+function bracket_entries(t: string): string[] {
+    var none: string[] = [];
+    var lb: i32 = util.index_of_sub(t, "[");
+    if (lb < 0 || t[t.len() - 1] != b']') { return none; }
+    return parser.split_top_commas(slice_unchecked(t, lb + 1, t.len() - 1) + "");
+}
+
+function same_modulo_spaces(a: string, b: string): boolean {
+    var i: i32 = 0;
+    var j: i32 = 0;
+    while (true) {
+        while (i < a.len() && a[i] == b' ') { i = i + 1; }
+        while (j < b.len() && b[j] == b' ') { j = j + 1; }
+        if (i == a.len() || j == b.len()) { return i == a.len() && j == b.len(); }
+        if (a[i] != b[j]) { return false; }
+        i = i + 1;
+        j = j + 1;
+    }
+    return false;
 }
 
 // The function types a type carries, itself included, through the containers

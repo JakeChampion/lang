@@ -10,6 +10,8 @@ import (
 // that instantiation only. Two impls of Pair at different arguments give their
 // methods different signatures, and taking both as arms of either dyn made the
 // typed lowering refuse the program as disagreeing implementations (#10596).
+// The same holds for a dyn that pins an associated type, alone or beside the
+// positional arguments.
 
 // dynGenericTwoInstantiationsSrc: the smallest shape, a method whose result is
 // the trait's second argument.
@@ -56,6 +58,35 @@ function main(): i32 {
 }
 `
 
+// dynMixedPinSrc: a trait pinned by position and by associated type at once.
+const dynMixedPinSrc = `import "std/i32";
+trait Conv[A] { type Out; function conv(self: Self, x: A): Self::Out; }
+struct P { }
+struct Q { }
+impl Conv[i32] for P { type Out = i32; function conv(self: Self, x: i32): i32 { return x + 1; } }
+impl Conv[u32] for Q { type Out = u32; function conv(self: Self, x: u32): u32 { return x + 2; } }
+function main(): i32 {
+    var d: dyn Conv[i32, Out = i32] = P { };
+    print(((d.conv(1) as i32) + 10).to_string());
+    return 0;
+}
+`
+
+// dynAssocPinSrc: a non-generic trait whose impls bind its associated type
+// differently, pinned by that type alone.
+const dynAssocPinSrc = `import "std/i32";
+trait Holder { type Item; function get(self: Self): Self::Item; }
+struct A { v: i32 }
+struct B { v: u32 }
+impl Holder for A { type Item = i32; function get(self: Self): i32 { return self.v; } }
+impl Holder for B { type Item = u32; function get(self: Self): u32 { return self.v; } }
+function main(): i32 {
+    var d: dyn Holder[Item = i32] = A { v: 7 };
+    print((d.get() + 10).to_string());
+    return 0;
+}
+`
+
 func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -72,6 +103,8 @@ func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"method_result", dynGenericTwoInstantiationsSrc, "7"},
 		{"maps", dynGenericTwoInstantiationsMapsSrc, "30"},
+		{"mixed_pin", dynMixedPinSrc, "12"},
+		{"assoc_pin", dynAssocPinSrc, "17"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -80,6 +113,9 @@ func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 					stdout, stderr := routedMapRun(t, selfHostBin, stdlibRoot, c.src, target, "FERN_SANITIZE=1")
 					if stdout != c.want {
 						t.Fatalf("stdout = %q, want %q\n%s", stdout, c.want, stderr)
+					}
+					if target == "x86-64-linux" && !strings.Contains(stderr, "leakcheck:") {
+						t.Fatalf("no leak census line\n%s", stderr)
 					}
 					if strings.Contains(stderr, "fern-sanitizer:") || (strings.Contains(stderr, "leakcheck:") && !strings.Contains(stderr, "live_bytes=0")) {
 						t.Fatalf("heap finding:\n%s", stderr)
