@@ -21736,6 +21736,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     if (ret_enum_alias_uncounted(r.value, se, moved_slots)) { se = se.retain_tos("ret-enum-alias"); }
     if (ret_enum_param_handback(r.value, se)) { se = se.retain_tos("ret-enum-param"); }
     if (ret_closure_uncounted(r.value, se, moved_slots)) { se = se.retain_tos("ret-borrowed-closure"); }
+    if (ret_enum_closure_uncounted(r.value, se)) { se = se.retain_tos("ret-closure-enum"); }
     se = emit_consumed_param_exit(se, r.value, true);
     se = emit_dec_sweep_except_list(se, moved_slots);
     return se.emit(ir.op_return());
@@ -21814,6 +21815,30 @@ function cloval_scan_stmt(st: ast.Stmt, own sc: CloValScan): CloValScan {
     return sc;
 }
 
+// ret_enum_closure_uncounted: a closure body of an enum result a call through
+// its value is told it owns ("CLOENUM:") returns `e`, a value this frame holds
+// no count for, so the return retains it. A construction, a counted call, an
+// owned parameter and a returned "fresh" local ("ERETOWN:") hand over their
+// own; a borrowed parameter and an "ERETALIAS:" local are retained above.
+function ret_enum_closure_uncounted(e: ast.Expr, s: LowerState): boolean {
+    if (!counted_closure_body(s)) { return false; }
+    if (variant_ctor_enum_owner(e, s.frame.structs).len() > 0 || ret_enum_param_handback(e, s)) { return false; }
+    var cn: string = direct_call_callee_name(e);
+    if (cn.len() > 0 && enum_member_call_type(e, cn, s).len() > 0) { return false; }
+    var n: string = ident_name_or_empty(e);
+    if (n.len() == 0) { return true; }
+    if (s.slot_of(n) < s.frame.n_params && s.is_own_param(n)) { return false; }
+    return !reclaim_has(s.frame.reclaimable_names, "ERETALIAS:", n) && !reclaim_has(s.frame.reclaimable_names, "ERETOWN:", n);
+}
+
+// counted_closure_body: the function being lowered is a closure body whose
+// result every call through a function value is told it owns a count of.
+function counted_closure_body(s: LowerState): boolean {
+    var rf: string[] = s.frame.sigs.return_fresh_struct_ret_fns;
+    return closure_body_name(s.frame.cur_key) && util.index_of_str(rf, "ENUM:" + s.frame.cur_key) >= 0
+        && util.index_of_str(rf, "CLOENUM:" + s.frame.cur_ret) >= 0;
+}
+
 // handback_param_name: `p` for a bare `p` or a field read `p.f`, else "".
 function handback_param_name(e: ast.Expr): string {
     if let ast.ExprFieldAccess(fa) = e { return ident_name_or_empty(fa.obj); }
@@ -21821,12 +21846,28 @@ function handback_param_name(e: ast.Expr): string {
 }
 
 // enum_member_call_type: the declared enum of `e`, a call to the "ENUM:"
-// member `name` no local shadows, or "".
+// member `name` no local shadows or through the function value `name`
+// (closure_enum_call_type), or "".
 function enum_member_call_type(e: ast.Expr, name: string, s: LowerState): string {
-    if (s.slot_of(name) >= 0 || !enum_fresh_ret_call(e, s.frame.sigs.return_fresh_struct_ret_fns)) { return ""; }
+    if (s.slot_of(name) >= 0) { return closure_enum_call_type(e, s); }
+    if (!enum_fresh_ret_call(e, s.frame.sigs.return_fresh_struct_ret_fns)) { return ""; }
     var ety: string = s.struct_ret_type(name);
     if (!decl_is_enum(s.frame.structs, ety)) { return ""; }
     return ety;
+}
+
+// closure_enum_call_type: the enum `e`, a call through a function value held
+// in a local or parameter, returns when every closure body of that result
+// hands its caller one count ("CLOENUM:", counted_closure_enum_rows), or "".
+function closure_enum_call_type(e: ast.Expr, s: LowerState): string {
+    if let ast.ExprCall(c) = e {
+        var name: string = ident_name_or_empty(c.callee);
+        var slot: i32 = s.slot_of(name);
+        if (slot < 0 || !s.is_closure_local(name)) { return ""; }
+        var ety: string = s.fn_value_ret(slot);
+        if (decl_is_enum(s.frame.structs, ety) && util.index_of_str(s.frame.sigs.return_fresh_struct_ret_fns, "CLOENUM:" + ety) >= 0) { return ety; }
+    }
+    return "";
 }
 
 // settle_returned_append: `return a.append(v)` keeps the local `a` from the exit
@@ -24427,9 +24468,9 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     else if (se.is_arr_ret_fn(fid.name)) { is_arr = true; }
                     // An "ENUM:" member's result carries this frame's count (#10365).
                     var ecsite: string = reclaim_site_key_of(v.name, v.line, v.col);
-                    if (se.slot_of(fid.name) < 0 && reclaim_has(se.frame.reclaimable_names, "ECALL:", ecsite)) {
-                        var ecty: string = se.struct_ret_type(fid.name);
-                        if (decl_is_enum(se.frame.structs, ecty)) { se = credit_counted_enum_local(se, ecsite, ecty); }
+                    if (reclaim_has(se.frame.reclaimable_names, "ECALL:", ecsite)) {
+                        var ecty: string = enum_member_call_type(v.init, fid.name, se);
+                        if (ecty.len() > 0) { se = credit_counted_enum_local(se, ecsite, ecty); }
                     }
                 },
                 // `var b = s.bytes()` / `= s.as_bytes()`: op_str_bytes
@@ -27770,6 +27811,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // accept is_fn_payload_spelling here too (the
                             // built-in Option/Result fn-payload arm's sibling).
                             ms = ms.mark_closure_local(bname);
+                            ms = ms.mark_fn_value_sidecars(bslot, "", "", decl_field_fn_ret(ms.frame.structs, ms.frame.structs.decls[vdecl].name, decl_at_field_name(ms.frame.structs, vdecl, bidx)));
                         } else if (is_cell_type_name(ev_ty)) {
                             ms = ms.mark_cell_slot_from_type(bslot, ev_ty);
                         } else if (decl_is_struct(ms.frame.structs, ev_ty) || is_enum_like_name(ev_ty, ms.frame.structs)) {
@@ -38359,8 +38401,8 @@ function fresh_enum_arg_type(s: LowerState, arg: ast.Expr, callee: string, count
 }
 
 function fresh_enum_call_arg_type(s: LowerState, arg: ast.Expr, name: string, callee: string, counted: boolean): string {
-    if (s.slot_of(name) >= 0) { return ""; }
-    var ety: string = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name);
+    var ety: string = "";
+    if (s.slot_of(name) < 0) { ety = sig_reg_tagged_value_of(s.frame.sigs.opt_fresh_ret_fns, "RCE:", name); }
     if (ety.len() == 0) { ety = enum_member_call_type(arg, name, s); }
     if (ety.len() == 0 || enum_all_variants_scalar(s.frame.structs, ety)) { return ety; }
     if (!counted && (util.contains(callee, ".") || !iife_free_fn_ret_i32(callee, s))) { return ""; }
@@ -46369,11 +46411,17 @@ function enum_local_init_kind(stmts: ast.Stmt[], name: string, structs: StructTa
 
 // enum_ret_alias_rows tags "ERETALIAS:" each "alias" local an "ENUM:" member
 // returns bare, so that return retains it when no credit moved its count out.
+// A closure body's "fresh" locals are tagged "ERETOWN:", since its other bare
+// returns are retained (ret_enum_closure_uncounted).
 function enum_ret_alias_rows(fn: parser.FuncDecl, structs: StructTab, reg: string[], acc: string[]): string[] {
     if (fn.receiver_type.len() > 0 || util.index_of_str(reg, "ENUM:" + fn.name) < 0) { return acc; }
+    var members: string[] = [];
+    if (closure_body_name(fn.name)) { members = prefixed_names_of(reg, "ENUM:"); }
     var out: string[] = acc;
     for rn in arr_returned_ident_names(fn.body, []) {
-        if (enum_ret_local_kind(fn, rn, structs, []) == "alias") { out = push_str_unique(out, "ERETALIAS:" + rn); }
+        var kind: string = enum_ret_local_kind(fn, rn, structs, members);
+        if (kind == "alias") { out = push_str_unique(out, "ERETALIAS:" + rn); }
+        if (kind == "fresh" && members.len() > 0) { out = push_str_unique(out, "ERETOWN:" + rn); }
     }
     return out;
 }
@@ -46478,6 +46526,94 @@ function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab,
     return acc;
 }
 
+// closure_body_name: `name` is a body the lift hoists for a function value — a
+// named function's or lambda's trampoline (`$wrap`), a capturing lambda
+// (`$clo`), or a hoisted no-capture lambda (`__lam_`: a call argument, an IIFE
+// callee, or a local that is only ever called). The first two are reached
+// through the value; a `__lam_` body is called by name, and is named here so
+// the verdicts below never leave one out.
+pub function closure_body_name(name: string): boolean {
+    if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__lam_") { return true; }
+    return util.contains(name, "$wrap") || util.contains(name, "$clo");
+}
+
+// closure_result_known: the declared result of `fn` names one type, so a
+// closure body it heads cannot return an enum it does not declare. A type
+// variable, an alias, or no result on a body that returns does not.
+function closure_result_known(fn: parser.FuncDecl, structs: StructTab): boolean {
+    var rt: string = fn.ret_type;
+    if (rt.len() == 0) { return !body_has_return(fn.body); }
+    if (decl_is_enum(structs, rt) || decl_is_struct(structs, rt) || is_scalar_type_name(rt)) { return true; }
+    if (rt == "void" || rt == "string" || rt == "fn" || rt[0] == b'(' || is_array_type_name(rt) || is_map_type_name(rt)) { return true; }
+    return bytes_at(rt, 0, "Option[") || bytes_at(rt, 0, "Result[");
+}
+
+// closure_result_enums: the enums some closure body declares it returns, or
+// none when any closure body's result is not known — a call through a function
+// value may then reach a body returning an enum no declaration names.
+function closure_result_enums(funcs: parser.FuncDecl[], structs: StructTab): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (closure_body_name(fn.name)) {
+            if (!closure_result_known(fn, structs)) { return []; }
+            if (decl_is_enum(structs, fn.ret_type)) { out = push_str_unique(out, fn.ret_type); }
+        }
+    }
+    return out;
+}
+
+// counted_closure_enum_rows: "CLOENUM:<E>" for each enum a call through a
+// function value hands its caller one count of, and "ENUM:<body>" for each
+// closure body returning one that fresh_enum_fwd_fixpoint (`members`) did not
+// already admit. Such a body retains a return it holds no count for
+// (ret_enum_closure_uncounted), so every closure body of result E is a member.
+function counted_closure_enum_rows(funcs: parser.FuncDecl[], structs: StructTab, members: string[]): string[] {
+    var enums: string[] = closure_result_enums(funcs, structs);
+    var out: string[] = [];
+    for e in enums { out = out.append("CLOENUM:" + e); }
+    for fn in funcs {
+        if (closure_body_name(fn.name) && util.index_of_str(enums, fn.ret_type) >= 0
+                && body_has_return(fn.body) && util.index_of_str(members, fn.name) < 0) {
+            out = out.append("ENUM:" + fn.name);
+        }
+    }
+    return out;
+}
+
+// strict_closure_enum_rows: "CLORCE:<E>" for each rc enum E whose every
+// closure body returns a fresh chain — a construction, or a forwarding call to
+// an "RCE:" member of E (`rows`) — so a call through a function value of
+// result E does too.
+function strict_closure_enum_rows(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[], rows: string[]): string[] {
+    var out: string[] = [];
+    for e in closure_result_enums(funcs, structs) {
+        if (rc_enum_has_variants(structs, e) && enum_all_variants_rc_droppable(structs, e)
+                && !closure_body_nonstrict(funcs, structs, e, str_fresh, rce_members_of(rows, e))) {
+            out = out.append("CLORCE:" + e);
+        }
+    }
+    return out;
+}
+
+function closure_body_nonstrict(funcs: parser.FuncDecl[], structs: StructTab, e: string, str_fresh: string[], fwd: string[]): boolean {
+    for fn in funcs {
+        if (closure_body_name(fn.name) && fn.ret_type == e
+                && body_has_nonqualifying_rcenum_return(fn.body, fn.body, fn.params, structs, e, str_fresh, fwd)) { return true; }
+    }
+    return false;
+}
+
+// rce_members_of: the free functions `rows` tags "RCE:<name>|<e>".
+function rce_members_of(rows: string[], e: string): string[] {
+    var out: string[] = [];
+    for r in rows {
+        if (bytes_at(r, 0, "RCE:") && r.len() > 5 + e.len() && bytes_at(r, r.len() - e.len() - 1, "|" + e)) {
+            out = out.append(slice_unchecked(r, 4, r.len() - e.len() - 1) + "");
+        }
+    }
+    return out;
+}
+
 pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, sfok: string[]): string[] {
     var out: string[] = [];
     // The whole-program str-fresh-ret registry, needed to prove a `string`
@@ -46523,6 +46659,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
         out = out.append("ENUM:" + enum_fresh[efi]);
         efi = efi + 1;
     }
+    out = append_all(out, counted_closure_enum_rows(funcs, structs, enum_fresh));
     for fn in funcs {
         var rt: string = fn.ret_type;
         // A FREE function's verdict is exactly its membership in the fixpoint
@@ -62760,8 +62897,61 @@ function non_cell_decl_of(st: ast.Stmt, own acc: string[]): string[] {
     return astwalk.binders_of(st, acc);
 }
 
+// closure_enum_sigs is `sg` as `fn` reads it: a call through one of its
+// function values of an enum result a closure call hands a count of
+// ("CLOENUM:") is an "ENUM:" member call, and one returning a fresh chain
+// ("CLORCE:") an "RCE:" one. The statement-level readers resolve a callee by
+// name alone, so a value named like a free function is left out.
+function closure_enum_sigs(fn: parser.FuncDecl, sg: FnSigs, structs: StructTab): FnSigs {
+    var vals: ast.ParamDecl[] = closure_values_of(fn);
+    if (vals.len() == 0) { return sg; }
+    var rf: string[] = sg.return_fresh_struct_ret_fns;
+    var opt: SigReg = sg.opt_fresh_ret_fns;
+    for v in vals {
+        if (decl_is_enum(structs, v.fn_ret) && !sig_reg_has_name(sg.fn_names, v.name)
+                && util.index_of_str(rf, "CLOENUM:" + v.fn_ret) >= 0) {
+            rf = rf.append("ENUM:" + v.name);
+            if (sig_reg_has_row(opt, "CLORCE:", v.fn_ret)) { opt = sig_reg_append(opt, "RCE:" + v.name + "|" + v.fn_ret); }
+        }
+    }
+    return FnSigs { ...sg, return_fresh_struct_ret_fns: rf, opt_fresh_ret_fns: opt };
+}
+
+// closure_values_of: the function values `fn` binds once — a parameter or a
+// local declared with its result — each as a parameter carrying that result.
+function closure_values_of(fn: parser.FuncDecl): ast.ParamDecl[] {
+    var out: ast.ParamDecl[] = [];
+    for pd in fn.params {
+        if (pd.type_name == "fn" && pd.fn_ret.len() > 0 && local_decl_count(fn.body, pd.name) == 0) { out = out.append(pd); }
+    }
+    for v in closure_locals_of(fn.body, []) {
+        var once: boolean = local_decl_count(fn.body, v.name) == 1;
+        for pd in fn.params { if (pd.name == v.name) { once = false; } }
+        if (once) { out = out.append(v); }
+    }
+    return out;
+}
+
+function closure_locals_of(stmts: ast.Stmt[], acc: ast.ParamDecl[]): ast.ParamDecl[] {
+    var out: ast.ParamDecl[] = acc;
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (v.fn_ret.len() > 0) { out = out.append(fn_param_decl(v.name, [], v.fn_ret)); }
+            },
+            ast.StmtIf(f) => { out = closure_locals_of(f.else_body, closure_locals_of(f.then_body, out)); },
+            ast.StmtWhile(w) => { out = closure_locals_of(w.body, out); },
+            ast.StmtFor(fo) => { out = closure_locals_of(fo.body, out); },
+            ast.StmtMatch(m) => { for arm in m.arms { out = closure_locals_of(arm.body, out); } },
+            _ => {}
+        }
+    }
+    return out;
+}
+
 pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for_wasm: boolean): LowerResult {
     fn = parser.FuncDecl { ...fn, body: cell_reads_as_index(fn) };
+    sg = closure_enum_sigs(fn, sg, structs);
     // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
     // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
     // here — after every AST transform — so no later pass clobbers the flag.
@@ -64877,7 +65067,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
         else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
                 && body_has_return(fn.body)
-                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt, str_fresh)) {
+                && !body_has_nonqualifying_rcenum_return(fn.body, fn.body, fn.params, structs, rt, str_fresh, [])) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
@@ -64918,7 +65108,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
             out = out.append("ARC:" + fn.name + "|" + rflag);
         }
     }
-    return out;
+    return append_all(out, strict_closure_enum_rows(funcs, structs, str_fresh, out));
 }
 
 // arrenum_producer_enum: the element enum of an array-of-enums producer, or "".
@@ -65321,21 +65511,42 @@ function rcenum_ctor_payload_strings_fresh(e: ast.Expr, structs: StructTab): boo
 // may be a call to a proven fresh-string producer, not only a syntactic literal
 // or concat. It is built from FuncDecls alone and passed into
 // opt_fresh_ret_fns_of, so it is complete before this proof runs.
-function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[]): boolean {
+//
+// `fwd` names free functions a return may forward to instead: each returns a
+// fresh chain of `owner` on its own, so a direct call to one qualifies. A local
+// shadowing one is a closure value of the same result, whose own bodies these
+// verdicts inspect, so the name lookup needs no shadow guard.
+function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, owner: string, str_fresh: string[], fwd: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (fresh_rcpayload_enum_init(r.value, structs, str_fresh, [], false) != owner) { return true; }
-                if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
+                var rv: ast.Expr = rcenum_ret_value(r.value, body, params);
+                if (util.index_of_str(fwd, direct_call_callee_name(rv)) < 0) {
+                    if (fresh_rcpayload_enum_init(rv, structs, str_fresh, [], false) != owner) { return true; }
+                    if (!rcenum_ctor_payload_strings_fresh(rv, structs)) { return true; }
+                }
             },
-            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner, str_fresh) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner, str_fresh)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner, str_fresh)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner, str_fresh)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner, str_fresh)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, body, params, structs, owner, str_fresh, fwd) || body_has_nonqualifying_rcenum_return(f.else_body, body, params, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, body, params, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, body, params, structs, owner, str_fresh, fwd)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, body, params, structs, owner, str_fresh, fwd)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
     return false;
+}
+
+// rcenum_ret_value: a returned local declared once in `body`, never reassigned,
+// not also a parameter, and used only by bare returns stands for its
+// initialiser; anything else is itself.
+function rcenum_ret_value(e: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[]): ast.Expr {
+    var n: string = ident_name_or_empty(e);
+    if (n.len() == 0 || local_decl_count(body, n) != 1) { return e; }
+    for pd in params { if (pd.name == n) { return e; } }
+    if (util.index_of_str(body_assign_targets(body), n) >= 0 || body_unsafe_for_allow_bare_ret(body, n, [])) { return e; }
+    var init: ast.Expr = cap_local_init(body, n);
+    if let ast.ExprUnknown(_) = init { return e; }
+    return init;
 }
 
 // collect_try_str_binding_names: string LOCALS bound from a `?` over an
