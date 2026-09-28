@@ -4155,43 +4155,24 @@ function tuple_flags(tup: typeinfo.TypeTuple): string {
     return flags;
 }
 
-// RowKeys is the set of `prefix + name` keys whose rows caller_sigs erases.
-struct RowKeys { keys: string[], head: i32[], next: i32[] }
-
-function row_keys(names: string[], prefixes: string[]): RowKeys {
+// row_keys is the set of `prefix + name` keys whose rows caller_sigs erases.
+function row_keys(names: string[], prefixes: string[]): util.NameIndex {
     var keys: string[] = [];
     for name in names { for prefix in prefixes { keys = keys.append(prefix + name); } }
-    var head: i32[] = [];
-    var nb: i32 = keys.len() * 2 + 1;
-    while (head.len() < nb) { head = head.append(0 - 1); }
-    var next: i32[] = [];
-    var k: i32 = 0;
-    while (k < keys.len()) {
-        var b: i32 = util.hash_bucket(keys[k], nb);
-        next = next.append(head[b]);
-        head = head.with(b, k);
-        k = k + 1;
-    }
-    return RowKeys { keys: keys, head: head, next: next };
+    return util.name_index(keys);
 }
 
 // row_keyed: `row` is keyed "<key>" or "<key>|<flags>" for a key in `ks`, and
 // carries the `|<flags>` part when `barred`. Names and prefixes hold no `|`,
 // so a row's key is the text before its first `|`.
-function row_keyed(ks: RowKeys, row: string, barred: boolean): boolean {
+function row_keyed(ks: util.NameIndex, row: string, barred: boolean): boolean {
     var bar: i32 = 0;
     while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
     if (barred && bar == row.len()) { return false; }
-    var key: str = slice_unchecked(row, 0, bar);
-    var i: i32 = ks.head[util.hash_bucket(key, ks.head.len())];
-    while (i >= 0) {
-        if (ks.keys[i] == key) { return true; }
-        i = ks.next[i];
-    }
-    return false;
+    return ks.has(slice_unchecked(row, 0, bar));
 }
 
-function without_rows(rows: string[], ks: RowKeys, barred: boolean): string[] {
+function without_rows(rows: string[], ks: util.NameIndex, barred: boolean): string[] {
     var out: string[] = [];
     for row in rows { if (!row_keyed(ks, row, barred)) { out = out.append(row); } }
     return out;
