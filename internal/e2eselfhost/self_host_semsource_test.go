@@ -3899,6 +3899,7 @@ function main(): i32 {
         funcs = funcs.append(p.func);
     }
     var grows: ssaunits.GrowRow[] = ssaunits.grow_table(keys, funcs, plans);
+    var callees: ssarc.Callee[] = [];
     at = 0;
     for fd in mod.funcs {
         var p = built.decls[at];
@@ -3913,7 +3914,7 @@ function main(): i32 {
         eprint("produced " + fd.name + "\n");
         var key: string = fd.name;
         if (fd.receiver_type.len() > 0) { key = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-        base = ssarc.caller_sigs(base, key, p.func, p.modes, plans[at], fd.receiver_type.len() > 0);
+        callees = callees.append(ssarc.Callee { name: key, f: p.func, modes: p.modes, plan: plans[at], method: fd.receiver_type.len() > 0 });
         seeds = seeds.append(fd.name + "|" + ssarc.grow_mask(fd.name, p.func, grows, false));
         for row in ssarc.consumed_array_rows(fd.name, p.func, p.modes) { consumed = consumed.append(row); }
         for h in ssarc.drop_helpers(p.func) { helpers = helpers.append(h); }
@@ -3930,6 +3931,7 @@ function main(): i32 {
         instances = instances.append(lowered);
         ai = ai + 1;
     }
+    base = ssarc.caller_sigs(base, callees);
     base = irlower.regrow_sigs(base, mod.funcs, tab, seeds);
     base = irlower.consume_sigs(base, mod.funcs, consumed);
     var g = ircore.lower_gated(mod, tab, base, [], av[1] == "wasm32-wasi", ircore.no_sub());

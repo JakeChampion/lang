@@ -3844,22 +3844,18 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
     return out;
 }
 
-pub function caller_sigs(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
-    return bare_indexed(caller_rows(sg, name, f, modes, plan, method));
-}
+// A produced function whose rows caller_sigs rewrites. `name` is the key an
+// AST caller looks it up by, `<Base>.<name>` for a method, whose receiver is
+// parameter 0 here but has no position in the AST's per-parameter rows.
+pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean }
 
-// `borrow_bare` indexes every row of `borrowable_params`: a caller applying
-// many functions' rows reindexes once, after the last.
-pub function bare_indexed(sg: irlower.FnSigs): irlower.FnSigs {
-    return irlower.FnSigs { ...sg, borrow_bare: irlower.borrow_reg_bare_index(sg.borrowable_params) };
-}
-
-// caller_sigs without the `borrow_bare` reindex; see bare_indexed. `name` is
-// the key an AST caller looks the callee up by, `<Base>.<name>` for a method,
-// whose receiver is parameter 0 here but has no position in the AST's
-// per-parameter rows.
-pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean): irlower.FnSigs {
-    var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, name, ["", "ARRF:", "MAPF:"]);
+// caller_sigs rewrites every callee's rows at once: each registry is filtered
+// in one pass against all the callees' keys, then each callee's rows are
+// appended in order.
+pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs {
+    var names: string[] = [];
+    for c in callees { names = names.append(c.name); }
+    var tuples: string[] = without_rows(sg.tuple_fresh_ret_fns, row_keys(names, ["", "ARRF:", "MAPF:"]), false);
     // Every row an AST reader could have written for this result is erased,
     // including the bare name. A row says the caller may release something;
     // once this function is lowered here, a row the AST inferred from syntax
@@ -3872,43 +3868,50 @@ pub function caller_rows(sg: irlower.FnSigs, name: string, f: ssasem.Func, modes
     // AST caller release a result this boundary lowered. The readers are the
     // `index_of_str(...return_fresh_struct_ret_fns, "<prefix>" + name)` sites
     // in irlower; grep that shape when adding one.
-    var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, name,
+    var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, row_keys(names,
         ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
-         "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]);
-    if let typeinfo.TypeTuple(tup) = f.result {
-        tuples = tuples.append(name);
-        var flags: string = tuple_flags(tup);
-        if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
-    }
-    if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
-    var built: boolean = built_record(f, plan);
-    if (bare_row_result(f, built)) { arrays = arrays.append(name); }
-    // A union result is one counted reference the caller releases, which the
-    // "ENUM:" readers' rc-gated releases honour whatever the payload (#10365).
-    if let typeinfo.TypeUnion(_) = f.result { arrays = arrays.append("ENUM:" + name); }
+         "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]), false);
     // The counted-return class ("CNTRET:") is read through two more fields of
     // its own, so erasing the prefixed row alone would leave the caller still
     // told the result carries a count: cnt_struct_ret_fns names the callee and
     // cnt_handback_params its bare-returned positions. A result this boundary
-    // lowered carries the contract above instead — one counted reference whose
+    // lowered carries the contract below instead — one counted reference whose
     // release is the caller's — and an AST caller that ALSO gave back a
     // handback's extra count would release twice. Both go with the row. A
     // record every return builds is the class's strict-fresh member, with no
     // handback position, so it keeps the class.
-    var counted: string[] = without_rows(sg.cnt_struct_ret_fns, name, [""]);
-    if (built) {
-        arrays = arrays.append("CNTRET:" + name);
-        counted = counted.append(name);
+    var counted: string[] = without_rows(sg.cnt_struct_ret_fns, row_keys(names, [""]), false);
+    var handback: string[] = without_rows(sg.cnt_handback_params, row_keys(names, [""]), false);
+    var params: string[] = without_rows(sg.param_counted, row_keys(names, tier_prefixes()), true);
+    var borrows: string[] = sg.borrowable_params;
+    for c in callees {
+        var name: string = c.name;
+        var f: ssasem.Func = c.f;
+        if let typeinfo.TypeTuple(tup) = f.result {
+            tuples = tuples.append(name);
+            var flags: string = tuple_flags(tup);
+            if (flags != "") { tuples = tuples.append("ARRF:" + name + "|" + flags); }
+        }
+        if let typeinfo.TypeArray(_) = f.result { arrays = arrays.append("ARROWN:" + name); }
+        var built: boolean = built_record(f, c.plan);
+        if (bare_row_result(f, built)) { arrays = arrays.append(name); }
+        // A union result is one counted reference the caller releases, which the
+        // "ENUM:" readers' rc-gated releases honour whatever the payload (#10365).
+        if let typeinfo.TypeUnion(_) = f.result { arrays = arrays.append("ENUM:" + name); }
+        if (built) {
+            arrays = arrays.append("CNTRET:" + name);
+            counted = counted.append(name);
+        }
+        var first: i32 = 0;
+        if (c.method) { first = 1; }
+        var tiers: string[] = counted_tiers(f, c.modes, first);
+        params = tier_rows(params, name, tiers);
+        borrows = borrow_rows(borrows, name, tiers, bare_flags(f, c.modes, c.plan, first));
     }
-    var first: i32 = 0;
-    if (method) { first = 1; }
-    var tiers: string[] = counted_tiers(f, modes, first);
-    var borrows: string[] = borrow_rows(sg.borrowable_params, name, tiers, bare_flags(f, modes, plan, first));
-    return irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays,
-        cnt_struct_ret_fns: counted,
-        cnt_handback_params: without_rows(sg.cnt_handback_params, name, [""]),
-        param_counted: counted_rows(sg.param_counted, name, tiers),
+    var out: irlower.FnSigs = irlower.FnSigs { ...sg, tuple_fresh_ret_fns: tuples, return_fresh_struct_ret_fns: arrays,
+        cnt_struct_ret_fns: counted, cnt_handback_params: handback, param_counted: params,
         borrowable_params: borrows };
+    return irlower.FnSigs { ...out, borrow_bare: irlower.borrow_reg_bare_index(out.borrowable_params) };
 }
 
 // The AST caller's release of an argument it built follows the callee's
@@ -3958,20 +3961,9 @@ function tier_flags(tiers: string[], prefix: string): string {
 
 function tier_prefixes(): string[] { return ["ACNT:", "SCNT:", "ECNT:", "DCNT:", "TCNT:", "PCNT:"]; }
 
-function counted_rows(rows: string[], name: string, tiers: string[]): string[] {
-    var out: string[] = [];
-    var plain: boolean = !util.contains(name, "|");
-    var prefixes: string[] = tier_prefixes();
-    for row in rows {
-        var mine: boolean = false;
-        if (plain) {
-            var at: i32 = row_name_at(row, name);
-            mine = at >= 0 && at + name.len() < row.len() && prefix_listed(row, at, prefixes);
-        } else {
-            for prefix in prefixes { if (util.str_has_prefix(row, prefix + name + "|")) { mine = true; } }
-        }
-        if (!mine) { out = out.append(row); }
-    }
+// tier_rows appends `name`'s row for each counted tier its parameters use.
+function tier_rows(rows: string[], name: string, tiers: string[]): string[] {
+    var out: string[] = rows;
     for prefix in tier_prefixes() {
         var flags: string = tier_flags(tiers, prefix);
         if (flags != "") { out = out.append(prefix + name + "|" + flags); }
@@ -4163,47 +4155,46 @@ function tuple_flags(tup: typeinfo.TypeTuple): string {
     return flags;
 }
 
-// A row keyed "<prefix><name>" or "<prefix><name>|<flags>".
-function keyed_row(row: string, prefix: string, name: string): boolean {
-    var key: string = prefix + name;
-    if (row == key) { return true; }
-    return row.len() > key.len() && slice_unchecked(row, 0, key.len()) == key && row[key.len()] == b'|';
-}
+// RowKeys is the set of `prefix + name` keys whose rows caller_sigs erases.
+struct RowKeys { keys: string[], head: i32[], next: i32[] }
 
-function without_rows(rows: string[], name: string, prefixes: string[]): string[] {
-    var out: string[] = [];
-    var plain: boolean = !util.contains(name, "|");
-    for row in rows {
-        var drop: boolean = false;
-        if (plain) { drop = prefix_listed(row, row_name_at(row, name), prefixes); }
-        else { for prefix in prefixes { if (keyed_row(row, prefix, name)) { drop = true; } } }
-        if (!drop) { out = out.append(row); }
+function row_keys(names: string[], prefixes: string[]): RowKeys {
+    var keys: string[] = [];
+    for name in names { for prefix in prefixes { keys = keys.append(prefix + name); } }
+    var head: i32[] = [];
+    var nb: i32 = keys.len() * 2 + 1;
+    while (head.len() < nb) { head = head.append(0 - 1); }
+    var next: i32[] = [];
+    var k: i32 = 0;
+    while (k < keys.len()) {
+        var b: i32 = util.hash_bucket(keys[k], nb);
+        next = next.append(head[b]);
+        head = head.with(b, k);
+        k = k + 1;
     }
-    return out;
+    return RowKeys { keys: keys, head: head, next: next };
 }
 
-// row_name_at: where `name` starts in `row` when the text before the row's
-// first `|` ends with it, or -1. For a name and prefixes with no `|`, a row is
-// keyed `prefix + name` exactly when the text before that position is
-// `prefix`, which reads the row in place instead of building every key.
-function row_name_at(row: string, name: string): i32 {
+// row_keyed: `row` is keyed "<key>" or "<key>|<flags>" for a key in `ks`, and
+// carries the `|<flags>` part when `barred`. Names and prefixes hold no `|`,
+// so a row's key is the text before its first `|`.
+function row_keyed(ks: RowKeys, row: string, barred: boolean): boolean {
     var bar: i32 = 0;
     while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
-    var at: i32 = bar - name.len();
-    if (at < 0) { return 0 - 1; }
-    var i: i32 = 0;
-    while (i < name.len()) {
-        if (row[at + i] != name[i]) { return 0 - 1; }
-        i = i + 1;
+    if (barred && bar == row.len()) { return false; }
+    var key: str = slice_unchecked(row, 0, bar);
+    var i: i32 = ks.head[util.hash_bucket(key, ks.head.len())];
+    while (i >= 0) {
+        if (ks.keys[i] == key) { return true; }
+        i = ks.next[i];
     }
-    return at;
+    return false;
 }
 
-// prefix_listed: `row`'s first `at` bytes are one of `prefixes`.
-function prefix_listed(row: string, at: i32, prefixes: string[]): boolean {
-    if (at < 0) { return false; }
-    for prefix in prefixes { if (prefix.len() == at && util.str_has_prefix(row, prefix)) { return true; } }
-    return false;
+function without_rows(rows: string[], ks: RowKeys, barred: boolean): string[] {
+    var out: string[] = [];
+    for row in rows { if (!row_keyed(ks, row, barred)) { out = out.append(row); } }
+    return out;
 }
 
 // A frame view's three words sit above every other slot, which is only known
