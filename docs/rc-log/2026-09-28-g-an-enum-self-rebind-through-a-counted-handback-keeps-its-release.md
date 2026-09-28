@@ -55,6 +55,13 @@ All in `examples/self_host/irlower.fern`.
 | `sc_other` (`cs = hb_sc_param(o)`) | 200 / 0 | 200 / 200 |
 | `rc_other` (guard: hands back another local's chain) | 400 / 0 | 400 / 0, pinned |
 | `rc_pick_mixed` (guard: two handback positions, one the local) | 400 / 100 | 400 / 100, pinned |
+| `sc_cond` (a handback or fresh call in each branch of an `if`) | 250 / 50 | 250 / 250 |
+| `sc_loop_call` (a counted call rebind inside a nested `while`) | 300 / 0 | 300 / 300 |
+| `sc_cond_alias` (guard: `cs = o` inside a branch) | 200 / 100 | 200 / 100, pinned |
+
+`sc_cond_alias` is what the branch arms of `stmt_assigns_counted_enum_call`
+exist for: without them the alias is admitted, and the sanitizer reports a
+use-after-free.
 
 `TestSelfHostEnumSelfRebind{X86_64,Arm64,Wasm}` holds every row to the
 interpreter's answer under both lowerings. The x86-64 leg also runs
@@ -62,7 +69,13 @@ interpreter's answer under both lowerings. The x86-64 leg also runs
 
 ## Not covered
 
-Five of #10447's shapes remain, each with its own cause:
+Seven shapes remain on the AST lowering, each with its own cause. The typed
+lowering balances all of them.
+
+- a cross-local handback between two rc-payload locals
+  (`cur = hb_rc_param(o)`, the `rc_other` row);
+- a two-position handback where only one position is the local
+  (`cur = hb_rc_pick(cur, o, ..)`, the `rc_pick_mixed` row);
 
 - a method receiver (`mk_sc(r).val()`): there is no borrow proof for an enum
   receiver;

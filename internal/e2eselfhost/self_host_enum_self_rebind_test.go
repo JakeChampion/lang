@@ -48,6 +48,33 @@ var enumSelfRebindRows = []leakRow{
         cs = hb_sc_param(o);
         t = t + cs.val() + o.val();
 `), true, [2]int64{}},
+	// Rebinds inside a branch are admitted when each is an "ENUM:" call.
+	{"sc_cond", enumRebindLoop(`        var cs: Sc = mk_sc(r);
+        var o: Sc = mk_sc(r + 1);
+        if (r % 2 == 0) {
+            cs = hb_sc_param(o);
+        } else {
+            cs = mk_sc(r + 3);
+        }
+        t = t + cs.val() + o.val();
+`), true, [2]int64{}},
+	{"sc_loop_call", enumRebindLoop(`        var cs: Sc = mk_sc(r);
+        var j: i32 = 0;
+        while (j < 2) {
+            cs = mk_sc(r + j);
+            j = j + 1;
+        }
+        t = t + cs.val();
+`), true, [2]int64{}},
+	// A rebind to another local inside a branch is not a counted call, so the
+	// local keeps no credit rather than being released alongside the lender.
+	{"sc_cond_alias", enumRebindLoop(`        var cs: Sc = mk_sc(r);
+        var o: Sc = mk_sc(r + 1);
+        if (r % 2 == 0) {
+            cs = o;
+        }
+        t = t + cs.val() + o.val();
+`), false, [2]int64{200, 100}},
 	// Handing back another local's chain keeps the rc local out of the fresh
 	// family: the result is not its own chain.
 	{"rc_other", enumRebindLoop(`        var cur: Rc = mk_rc(r);
