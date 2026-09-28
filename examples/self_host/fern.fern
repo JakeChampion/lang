@@ -1951,6 +1951,10 @@ function run(): i32 {
     var entry_path: string = "";
     var out_path: string = "";
     var root: string = "";
+    var have_root: boolean = false;
+    // Positionals past the stdlib root are the program's own, as `-interp
+    // FILE ARG...` hands them to `args()` behind the entry's path.
+    var prog_args: string[] = [];
     var target: string = "x86-64-linux";
     // Output FORM, independent of the target: "" is the target's default
     // (a linked executable, or a component on wasm), "asm" the emitter's
@@ -2075,8 +2079,11 @@ function run(): i32 {
             if (!have_entry) {
                 entry_path = a;
                 have_entry = true;
-            } else {
+            } else if (!have_root) {
                 root = a;
+                have_root = true;
+            } else {
+                prog_args = prog_args.append(a);
             }
         }
         i = i + 1;
@@ -2241,7 +2248,13 @@ function run(): i32 {
         // result becomes the process exit code (VInt → its value,
         // VBool → 1/0), matching interp_run.fern. A non-i32/bool
         // result exits 254.
-        var result: interp.Value = interp.eval_module(merged);
+        var argv: string[] = [entry_path];
+        var pa: i32 = 0;
+        while (pa < prog_args.len()) {
+            argv = argv.append(prog_args[pa]);
+            pa = pa + 1;
+        }
+        var result: interp.Value = interp.eval_module_argv(merged, argv);
         match (result) {
             interp.VInt(iv) => { return iv.v; },
             interp.VBool(bv) => {
