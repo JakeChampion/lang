@@ -76,7 +76,7 @@ jobs:
   playwright:
     name: playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 
@@ -111,6 +111,11 @@ jobs:
           # under Ubuntu sandbox restrictions, so we don't have to
           # paper over them with --no-sandbox here.
           npx playwright install --with-deps chromium
+
+      # Its own step, outside Playwright's webServer timeout: it builds the
+      # self-host compiler and then the playground with it.
+      - name: Build the playground bundle
+        run: ./web/build.sh
 
       - name: Run Playwright suite
         run: |
