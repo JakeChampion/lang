@@ -44,9 +44,17 @@ import (
 // module the backend produces, so it goes on the build, not the run.
 func buildLeakCheckComponent(t *testing.T, src string, sanitize bool) string {
 	t.Helper()
+	return buildLeakCheckComponentPrinting(t, withResultPrinter(src), sanitize, true)
+}
+
+// buildLeakCheckComponentPrinting is buildLeakCheckComponent with the
+// result printer optional, for a program whose stdout is its own (a
+// server announcing its port) and whose source already imports what it
+// needs.
+func buildLeakCheckComponentPrinting(t *testing.T, src string, sanitize, printResult bool) string {
+	t.Helper()
 	skipIfPreview2Missing(t)
 
-	src = withResultPrinter(src)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -85,7 +93,7 @@ func buildLeakCheckComponent(t *testing.T, src string, sanitize bool) string {
 		ForceMemorySection: true,
 		Preview2WASI:       true,
 		SynthCliRun:        true,
-		PrintMainResult:    true,
+		PrintMainResult:    printResult,
 	})
 	restore()
 	if err != nil {

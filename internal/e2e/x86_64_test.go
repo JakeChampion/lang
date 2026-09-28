@@ -624,12 +624,14 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Fatalf("server never bound on %s within 10s", addr)
 	}
 
+	// Each request asks the server to close, so reading to end of
+	// stream sees the whole response.
 	cases := []struct {
 		req  string
 		want string
 	}{
-		{"GET /first HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n", "method=GET path=/first body-len=0"},
-		{"POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello", "method=POST path=/second body-len=5"},
+		{"GET /first HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", "method=GET path=/first body-len=0"},
+		{"POST /second HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello", "method=POST path=/second body-len=5"},
 	}
 	for i, c := range cases {
 		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)

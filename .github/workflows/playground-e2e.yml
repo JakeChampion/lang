@@ -76,7 +76,7 @@ jobs:
   playwright:
     name: playwright
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
 

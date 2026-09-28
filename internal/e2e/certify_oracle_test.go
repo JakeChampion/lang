@@ -151,6 +151,10 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	//	                arm and replaced on the shared one, is returned
 	//	                through the phi; the credit for the replacement
 	//	                masked the consumption (#8530's inline branch)
+	//	alloc           a struct handed to a pair-returning callee's
+	//	                consuming position: the walk discharged only a
+	//	                one-result call's arguments, and the fixture
+	//	                that showed it had leaked elsewhere until #10606
 	//
 	// The floors below still matter more than this line. Zero findings
 	// over a walk that had stopped understanding anything would satisfy
