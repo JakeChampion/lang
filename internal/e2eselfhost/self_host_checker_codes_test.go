@@ -215,6 +215,13 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"value-block-struct-tail-mismatch", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nfunction measure(d: dyn Shape): i32 { return d.area(); }\nfunction main(): i32 { var s = Square { side: 3 }; var n: i32 = { var q = s; q }; return measure({ var q = s; q }) + n; }\n", []string{"E003"}},
 		{"value-block-wide-tail-mismatch", "function main(): i32 { var k: i64 = 4i64; var n: i32 = { var q = k; q }; return n; }\n", []string{"E003"}},
 		{"value-block-tail-typed", "struct P { x: i32 }\nfunction main(): i32 { var p: P = { var q = P { x: 1 }; q }; var y: i64 = { var z = 0; 5 }; return p.x; }\n", nil},
+		// A literal local a block tail returns takes the destination's width,
+		// as it does outside a block.
+		{"value-block-literal-local-tail-widens", "function main(): i32 { var y: i64 = { var z = 5; z }; return 0; }\n", nil},
+		{"value-block-literal-local-tail-sum-widens", "function main(): i32 { var y: i64 = { var z = 5; z + 1 }; return 0; }\n", nil},
+		{"value-block-literal-local-tail-i32", "function main(): i32 { var y: i32 = { var z = 5; z }; return y; }\n", nil},
+		{"value-block-literal-local-tail-arg-widens", "function f(n: u64): u64 { return n; }\nfunction main(): i32 { var r: u64 = f({ var z = 5; z }); return 0; }\n", nil},
+		{"value-block-typed-local-tail-mismatch", "function main(): i32 { var k: i32 = 7; var y: i64 = { var q = k; q }; return 0; }\n", []string{"E003"}},
 		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
 		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
 		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},

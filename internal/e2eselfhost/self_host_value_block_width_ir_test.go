@@ -107,3 +107,31 @@ func TestSelfHostValueBlockWidthIRArm64(t *testing.T) {
 		})
 	}
 }
+
+// A literal local a block tail returns takes the width its destination reads
+// it at (an annotated `var`, a parameter, a return), as it does outside a
+// block, so the arithmetic on it runs at that width.
+const valueBlockLiteralLocalWidthSrc = `function wide(n: u64): u64 { return n / 1000000000u64; }
+function f(): i64 { return { var z = 2; z * 1000000000 }; }
+function main(): i32 {
+    var y: i64 = { var z = 5; z * 1000000000 };
+    var w: u64 = wide({ var k = 3; k * 1000000000 });
+    return ((y / 1000000000i64) as i32) + 10 * (w as i32) + 40 * ((f() / 1000000000i64) as i32);
+}
+`
+
+// TestSelfHostValueBlockLiteralLocalWidth goes through the production CLI:
+// the emit drivers do not run the checker's literal settlement.
+func TestSelfHostValueBlockLiteralLocalWidth(t *testing.T) {
+	if want := interpExit(t, buildLangBinForInterp(t), valueBlockLiteralLocalWidthSrc); want != 115 {
+		t.Fatalf("interpreter exit %d, want 115", want)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			if stderr, exit := cli.exitOf(t, valueBlockLiteralLocalWidthSrc, target); exit != 115 {
+				t.Errorf("exit = %d, want 115\n%s", exit, stderr)
+			}
+		})
+	}
+}

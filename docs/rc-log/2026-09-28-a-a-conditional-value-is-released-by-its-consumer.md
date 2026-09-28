@@ -20,9 +20,11 @@ The arms retain an array local and nothing else: `lower_value_tail`'s
 `ifexpr-alias-leaf`, the match arm's `tmp = E` store (`reassign_inc`), and a
 block's tail local, which the block moves out or retains. So:
 
-- an array value is owned when every leaf is an array local or a fresh
-  scalar-element array (a literal, a slice, an `ARR:` / leak-safe `ARROWN:`
-  producer, or such a value nested). It is judged after the value is lowered,
+- an array value is owned when every leaf is a scalar-element array local or a
+  fresh scalar-element array (a literal, a slice, an `ARR:` / leak-safe
+  `ARROWN:` producer, or such a value nested). The consumer's release is one
+  buffer dec, so a `string[]`, struct or nested-array leaf is refused: it
+  would free the buffer and strand the elements. It is judged after the value is lowered,
   so a block's tail local resolves by its binding site. A match temp typed as
   an array releases its old value at each store, so it disqualifies the value.
 - a string value is owned when every leaf is a fresh string, and a struct
@@ -50,19 +52,38 @@ a block, so annotate stamped no type on the call. The lowering then guessed:
 
 The block is now typed by its final `return` with the leading statements bound
 (an earlier `return` leaves the function). A bare literal tail stays unknown, as
-`inferred_lambda_result` keeps it. `type_to_irtag` spells a `dyn` type, so a
+`inferred_lambda_result` keeps it. A literal local the tail returns
+(`var y: i64 = { var z = 5; z }`) takes the width the block is read at, an
+annotated `var`, a parameter or a return: `settle_literal_locals` demands the
+tail at that type, as it demands a plain `var`'s initializer. Without it the
+local settled at i32 and the typed block drew E003 / E038 that native does not
+report. `type_to_irtag` spells a `dyn` type, so a
 block yielding a `dyn` local is typed too. The self-host checker now reports a
 block's type mismatch as E003, as native does, instead of "could not infer".
 
 ## A value block's own locals earned no credit
 
-The credit collectors walk statements and never enter an expression, so a
-local a value block declared was invisible to them. `lower_func` now hands
+The credit collectors find locals by walking statements, and a value block's
+statements sit inside an expression, so a local a value block declared was
+invisible to them. (The escape walkers already read expressions, lambda, call,
+index, slice and field-access arms included, so a block's value could escape
+through one before this change.) `lower_func` now hands
 `reclaimable_names_of` a view of the body in which each value block's
 statements (less the value it yields) also stand as a nested block ahead of the
 statement that holds it. The statement still carries the block, so the escape
 walkers read the yielded value there, as a value. The reassignment set is read
 from the same view.
+
+Every `if` and `match` in the hoisted copy contributes only its arm bodies, each
+as its own nested block, without its condition or scrutinee. An arm left empty
+adds nothing, and so does a block that comes to nothing. A hoisted copy of the
+whole match made `return (match (o) { … })` read `o` twice.
+`consuming_match_of` grants the Option its credit only to a sole match, so it
+refused, and `TestSelfHostContainerSinkMatrixX86_64`'s `option__moved` and
+`option__live` cells, clean on main, leaked on the self-host: 60 / 0 for
+`condOptionMatchReturnSrc`, 60 / 60 on main and now. A local declared ahead of
+the match (a tuple match's value local, a block's own `var`) still stands in
+the view: `condBlockTailMatchSrc` is 40 / 40, where main is 40 / 20.
 
 ## A bound struct-array element
 
@@ -103,11 +124,21 @@ generic one and a `dyn` one alike.
 | `condStructArrLocalsSrc` | 70 / 30 | 70 / 70 |
 | `condElemHandoutSrc` | 60 / 60, exit 55 (interp 75), sanitizer use-after-free | 60 / 60, exit 75 |
 | `condNotOwnedSrc` | 18 / 0 | 18 / 0 |
+| `condNonScalarElemSrc` | 223 / 81, 80 buffers freed without their elements | 223 / 1 |
+| `condRowHandoutSrc` | 60 / 60 | 60 / 60 |
+| `condOptionMatchReturnSrc` | 60 / 60 | 60 / 60 |
+| `condBlockTailMatchSrc` | 40 / 20 | 40 / 40 |
 
-`TestSelfHostConditionalValueRelease{X86_64,Arm64,Wasm}` holds the six programs
-to the interpreter's answer on both lowerings: a balanced census for five,
-and no more frees than allocations for `condNotOwnedSrc`, with the sanitizer
-silent on x86-64.
+`condNonScalarElemSrc` is the refused class: `string[]`, struct-array and
+nested-array block tails and arms at `.len()`, an index and a borrowing call.
+Admitting them released the buffer alone and stranded the elements.
+
+`TestSelfHostConditionalValueRelease{X86_64,Arm64,Wasm}` holds the ten
+programs to the interpreter's answer on both lowerings: a balanced census for
+eight, no more frees than allocations for `condNotOwnedSrc`, and for
+`condNonScalarElemSrc` a balanced semantic census and the AST census pinned at
+223 / 1. The sanitizer reports no fault on x86-64 (a leak is allowed where the
+census allows one).
 
 ## Not covered
 
@@ -118,6 +149,14 @@ silent on x86-64.
 - A parameter yielded by a conditional reads as escaping to the borrow
   inference (`sum(if (c) { a } else { b })` inside a callee), so its callers
   keep their argument (#10571).
+- A `string[]`, struct-array or nested-array conditional value at a consumer
+  leaks whole on the AST lowering, as it did before: releasing it needs an
+  element-aware release at each consumer.
+- The element handout check covers a bare array argument (`keep(q, i)`). A row
+  handed through a call (`g(q[0])`, as a binding, an assignment, a discarded
+  statement or an operand) is not in it and does not need to be: the element
+  box is counted there. `condRowHandoutSrc` holds that at 60 / 60 on both
+  lowerings with the sanitizer silent.
 - A `dyn` local declared in a loop body frees only its last value, and a fresh
   value from a `dyn`-returning producer passed at a `dyn` parameter is never
   released (#10572).
