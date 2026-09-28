@@ -6158,7 +6158,9 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
     var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
     var n: string = util.i32_to_string(ins.result);
     s = s.write("    movq 8(" + a + "), %rdx\n    cmpq 8(" + b + "), %rdx\n    jne " + lp + "streqn" + n + "\n");
-    s = s.write("    movq " + a + ", %rdx\n    movq " + b + ", %rcx\n    movq %rdx, %rax\n    movq %rcx, %rsi\n");
+    s = s.write("    movq " + a + ", %rdx\n");
+    if (b != "%rcx") { s = s.write("    movq " + b + ", %rcx\n"); }
+    s = s.write("    movq %rdx, %rax\n    movq %rcx, %rsi\n");
     s = s.write("    call __fn___fern_str_eq.r\n    jmp " + lp + "streqd" + n + "\n");
     s = s.write(lp + "streqn" + n + ":\n    xorl %eax, %eax\n" + lp + "streqd" + n + ":\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
