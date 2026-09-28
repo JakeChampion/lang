@@ -45919,8 +45919,9 @@ function fresh_struct_fwd_fixpoint(funcs: parser.FuncDecl[], structs: StructTab,
 // closure_body_name: `name` is a body the lift hoists for a function value — a
 // named function's or lambda's trampoline (`$wrap`), a capturing lambda
 // (`$clo`), or a hoisted no-capture lambda (`__lam_`: a call argument, an IIFE
-// callee, or a local that is only ever called) — which a call through the
-// value reaches.
+// callee, or a local that is only ever called). The first two are reached
+// through the value; a `__lam_` body is called by name, and is named here so
+// the verdicts below never leave one out.
 pub function closure_body_name(name: string): boolean {
     if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__lam_") { return true; }
     return util.contains(name, "$wrap") || util.contains(name, "$clo");
