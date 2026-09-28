@@ -10735,6 +10735,8 @@ pub function expr_subword_kind(e: ast.Expr, s: LowerState): string {
         ast.ExprBinary(b) => {
             if (b.op == "==" || b.op == "!=" || b.op == "<" || b.op == ">" || b.op == "<=" || b.op == ">=") { return ""; }
             if (b.op == "<<" || b.op == ">>") { return expr_subword_kind(b.left, s); }
+            // A u32 operand makes the result a u32 (`s32 + (b + c)`).
+            if (expr_is_u32(b.left, s) || expr_is_u32(b.right, s)) { return ""; }
             var lk: string = expr_subword_kind(b.left, s);
             if (lk != "") { return lk; }
             return expr_subword_kind(b.right, s);
@@ -11359,9 +11361,10 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             }
             // A 32-bit-slot call consumed in an i64 context (`s64 + g()`): lower
             // the result (lower_expr, the normal call path) and extend it to i64
-            // instead of bailing the module to AST. expr_is_u32 is false for a
-            // call, so the extend is signed: exact for an i32, and a no-op for a
-            // u8, which the slot already holds in 0..255.
+            // instead of bailing the module to AST. expr_is_u32 reads the call's
+            // checker-stamped result type: a u32 call zero-extends, an i32 call
+            // sign-extends, and a u8 call's signed extend is exact because the
+            // slot already holds 0..255.
             if (infer_expr_width(e, s) == 32) {
                 var cw: LowerState = lower_expr(e, s);
                 if (!cw.ok) { return cw; }
