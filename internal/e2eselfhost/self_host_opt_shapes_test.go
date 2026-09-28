@@ -222,6 +222,41 @@ function main(): i32 { return (hot(5i64) % 100i64) as i32; }
 		forbid: map[string][]string{
 			"x86-64-linux": {`movq %rax, -\d+\(%rbp\)\n\s+cmpq`},
 			"arm64-linux":  {`str x0, \[sp, #\d+\]\n\s+cmp `}}},
+	// A block of values each read a few times across a long call-free loop body
+	// gives up its registers before the short temporaries between them: a
+	// shift's result is used at once, so spilling it costs a store and a load
+	// for almost no span freed (#10615).
+	{name: "spill_the_long_value", fn: "mix", exit: 49, src: `
+@noinline function mix(xs: i64[], n: i32): i64 {
+    var h: i64 = 0i64;
+    var i: i32 = 0;
+    while (i < n) {
+        var w0: i64 = xs[0]; var w1: i64 = xs[1]; var w2: i64 = xs[2]; var w3: i64 = xs[3];
+        var w4: i64 = xs[4]; var w5: i64 = xs[5]; var w6: i64 = xs[6]; var w7: i64 = xs[7];
+        var w8: i64 = xs[8]; var w9: i64 = xs[9]; var w10: i64 = xs[10]; var w11: i64 = xs[11];
+        h = (h ^ (h >> 7i64)) + w0 + ((h << 3i64) ^ w11);
+        h = (h ^ (h >> 5i64)) + w1 + ((h << 2i64) ^ w10);
+        h = (h ^ (h >> 3i64)) + w2 + ((h << 4i64) ^ w9);
+        h = (h ^ (h >> 9i64)) + w3 + ((h << 1i64) ^ w8);
+        h = (h ^ (h >> 7i64)) + w4 + ((h << 3i64) ^ w7);
+        h = (h ^ (h >> 5i64)) + w5 + ((h << 2i64) ^ w6);
+        h = (h ^ (h >> 3i64)) + w6 + ((h << 4i64) ^ w5);
+        h = (h ^ (h >> 9i64)) + w7 + ((h << 1i64) ^ w4);
+        h = (h ^ (h >> 7i64)) + w8 + ((h << 3i64) ^ w3);
+        h = (h ^ (h >> 5i64)) + w9 + ((h << 2i64) ^ w2);
+        h = (h ^ (h >> 3i64)) + w10 + ((h << 4i64) ^ w1);
+        h = (h ^ (h >> 9i64)) + w11 + ((h << 1i64) ^ w0);
+        i = i + 1;
+    }
+    return h;
+}
+function main(): i32 {
+    var xs: i64[] = [1i64, 2i64, 3i64, 4i64, 5i64, 6i64, 7i64, 8i64, 9i64, 10i64, 11i64, 12i64];
+    return (((mix(xs, 1000) % 100i64) + 100i64) % 100i64) as i32;
+}
+`,
+		want:   map[string][]string{"x86-64-linux": {`sarq \$7, %\w+\n\s+xorq`}},
+		forbid: map[string][]string{"x86-64-linux": {`(?:sar|shl)q \$\d+, %\w+\n\s+movq %\w+, -\d+\(%rbp\)`}}},
 	// Spilled values whose lifetimes do not meet share a frame slot: the
 	// second phase's spills reuse the first phase's slots.
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
