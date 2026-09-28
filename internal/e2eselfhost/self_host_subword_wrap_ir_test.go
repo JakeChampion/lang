@@ -65,6 +65,9 @@ var subwordWrapIRCases = []struct {
 	// A 32-bit binary inside a 64-bit context wraps at 32 bits.
 	{"i32-add-wrap-in-i64", `function main(): i32 { var i: i32 = 2147483647; var s: i64 = 0; if ((s + (i + 1)) == (0 - 2147483648)) { return 5; } return 9; }`},
 	{"u32-add-wrap-in-u64", `function main(): i32 { var i: u32 = 4294967295; var s: u64 = 0; if ((s + (i + 1)) == 0) { return 5; } return 9; }`},
+	// A narrow checked binary is an Option, not a narrow value: its unwrapped
+	// payload is what widens, sign-extended for a negative i32.
+	{"narrow-checked-in-i64", `function narrow_chk(s: i64, a: i32, b: i32): Option[i64] { return Some(s + ((a +? b)?)); } function main(): i32 { match (narrow_chk(10, 2147483647, 1)) { Some(_) => { return 9; }, None => {} } match (narrow_chk(10, 0 - 30, 0 - 40)) { Some(v) => { if (v == (0 - 60)) { return 5; } return 9; }, None => { return 9; } } }`},
 }
 
 // TestSelfHostSubwordWrapIR compiles each case with the self-host CLI for

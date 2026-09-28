@@ -11199,8 +11199,12 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
             // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
             // read, so the unwrapped value is a true i64 here (the `var x: i64 =
             // inner?` binding lands in lower_i64). lower_try bails for non-i64/u64
-            // payloads, so this stays sound for the i64 domain.
-            if (u.op == "try_") { return lower_try(u.operand, s); }
+            // payloads, so this stays sound for the i64 domain. A 32-bit-or-narrower
+            // payload (`s64 + (a +? b)?`) is unwrapped at its own width and widened.
+            if (u.op == "try_") {
+                if (infer_expr_width(e, s) != 64) { return lower_narrow_widened(e, s); }
+                return lower_try(u.operand, s);
+            }
             return s.fail();
         },
         ast.ExprBinary(b) => {
