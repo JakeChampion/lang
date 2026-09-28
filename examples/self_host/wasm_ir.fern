@@ -211,6 +211,19 @@ pub function sleep_scratch_addr(): i32 { return (map_hash_seed_addr() + 4 + 7) /
 // nevents 8.
 pub function sleep_scratch_bytes(): i32 { return 88; }
 
+// ip_flat_addr is the 48-byte wasi:sockets ip-socket-address record
+// $__fern_ip_flat writes: the family discriminant and the eleven payload
+// words each bind, connect and stream pushes. ip_box_addr and ip_box2_addr
+// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot) for
+// the bodies that still take a packed IPv4 address (tcp_connect, udp_send)
+// and bind to 0.0.0.0. Scratch rather than heap: a socket body consumes them
+// before it returns, none holds one across a call into another socket body,
+// and an allocation here is one more `__heap_alloc_count()` tick per call,
+// which the guest storage probes pin at exactly one.
+pub function ip_flat_addr(): i32 { return (sleep_scratch_addr() + sleep_scratch_bytes() + 7) / 8 * 8; }
+pub function ip_box_addr(): i32 { return ip_flat_addr() + 48; }
+pub function ip_box2_addr(): i32 { return ip_box_addr() + 24; }
+
 // str_region_base is where a unit's string-literal region starts: the low
 // scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
 // aligned. Named rather than inlined because const_str emits offsets RELATIVE
@@ -218,7 +231,7 @@ pub function sleep_scratch_bytes(): i32 { return 88; }
 // every slot added below has moved it (24 -> 32 -> 40 -> 128), which every
 // literal offset and both derived bases (fl_base / heap_base) follow
 // automatically.
-pub function str_region_base(): i32 { return (sleep_scratch_addr() + sleep_scratch_bytes() + 7) / 8 * 8; }
+pub function str_region_base(): i32 { return (ip_box2_addr() + 24 + 7) / 8 * 8; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
 // segment is emitted at index 0 today, so whole-program emit uses 0 — but
@@ -2695,13 +2708,13 @@ pub function ip_flat_func(): string {
     return o;
 }
 
-// The flat record for $addr:$port into $flat, or the early return with
-// its -errno; the twelve words pushed from it; and its release.
+// The flat record for $addr:$port into the ip_flat_addr slot, or the early
+// return with its -errno; and the twelve words pushed from it.
 function ip_flat_prologue(): string {
     var o: string = "";
-    o = o + "    (local.set $flat (call $__fern_alloc (i32.const 48)))\n";
+    o = o + "    (local.set $flat (i32.const " + util.i32_to_string(ip_flat_addr()) + "))\n";
     o = o + "    (local.set $tmp (call $__fern_ip_flat (local.get $addr) (local.get $port) (local.get $flat)))\n";
-    o = o + "    (if (local.get $tmp) (then (call $__fern_raw_free (local.get $flat) (i32.const 48)) (return (local.get $tmp))))\n";
+    o = o + "    (if (local.get $tmp) (then (return (local.get $tmp))))\n";
     return o;
 }
 
@@ -2709,18 +2722,13 @@ function ip_flat_words(): string {
     return "      (i32.load offset=0 (local.get $flat))\n      (i32.load offset=4 (local.get $flat))\n      (i32.load offset=8 (local.get $flat))\n      (i32.load offset=12 (local.get $flat))\n      (i32.load offset=16 (local.get $flat))\n      (i32.load offset=20 (local.get $flat))\n      (i32.load offset=24 (local.get $flat))\n      (i32.load offset=28 (local.get $flat))\n      (i32.load offset=32 (local.get $flat))\n      (i32.load offset=36 (local.get $flat))\n      (i32.load offset=40 (local.get $flat))\n      (i32.load offset=44 (local.get $flat))\n";
 }
 
-function ip_flat_free(): string {
-    return "    (call $__fern_raw_free (local.get $flat) (i32.const 48))\n";
-}
-
-// $__fern_ip4_box(host_be) -> a fresh u8[] of the four octets of the IPv4
-// address packed in network order, for the callers that still take one
-// (tcp_connect, udp_send's parsed literal). Released with $__fern_arr_dec.
+// $__fern_ip4_box(host_be, box) -> the u8[] box at `box` (ip_box_addr or
+// ip_box2_addr) filled with the four octets of the IPv4 address packed in
+// network order, for the callers that still take one (tcp_connect,
+// udp_send's parsed literal).
 pub function ip4_box_func(): string {
     var o: string = "";
-    o = o + "  (func $__fern_ip4_box (param $host i32) (result i32)\n";
-    o = o + "    (local $a i32)\n";
-    o = o + "    (local.set $a (call $__fern_arr_box (i32.const 16)))\n";
+    o = o + "  (func $__fern_ip4_box (param $host i32) (param $a i32) (result i32)\n";
     o = o + "    (i32.store (local.get $a) (i32.const 4))\n";
     o = o + "    (i32.store offset=4 (local.get $a) (i32.const 4))\n";
     o = o + "    (i32.store offset=8 (local.get $a) (i32.and (local.get $host) (i32.const 255)))\n";
@@ -2741,13 +2749,11 @@ pub function tcp_connect_with_func(): string {
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
     o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
-    o = o + ip_flat_free();
     o = o + "      (return (local.get $e))))\n";
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_tcp_start_connect (local.get $sock) (call $__fern_network_handle)\n";
     o = o + ip_flat_words();
     o = o + "      (local.get $ret))\n";
-    o = o + ip_flat_free();
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (call $__fern_wasi_tcp_socket_drop (local.get $sock))\n";
     o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=1 (local.get $ret)))))\n";
@@ -2778,15 +2784,11 @@ pub function tcp_connect_with_func(): string {
 }
 
 // $__fern_tcp_connect(host_be, port) is $__fern_tcp_connect_with without
-// the non-blocking flag, the packed address boxed for it.
+// the non-blocking flag, the packed address boxed in scratch for it.
 pub function tcp_connect_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_connect (param $host i32) (param $port i32) (result i32)\n";
-    o = o + "    (local $a i32) (local $r i32)\n";
-    o = o + "    (local.set $a (call $__fern_ip4_box (local.get $host)))\n";
-    o = o + "    (local.set $r (call $__fern_tcp_connect_with (local.get $a) (local.get $port) (i32.const 0)))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $a)))\n";
-    o = o + "    (local.get $r))\n";
+    o = o + "    (call $__fern_tcp_connect_with (call $__fern_ip4_box (local.get $host) (i32.const " + util.i32_to_string(ip_box_addr()) + ")) (local.get $port) (i32.const 0)))\n";
     return o;
 }
 
@@ -2869,13 +2871,11 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
     o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
-    if (with_backlog) { o = o + ip_flat_free(); }
     o = o + "      (return (local.get $e))))\n";
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     if (with_backlog) {
         o = o + "    (call $__fern_wasi_tcp_start_bind (local.get $sock) (call $__fern_network_handle)\n" + ip_flat_words() + "      (local.get $ret))\n";
-        o = o + ip_flat_free();
-        o = o + tcp_listen_step("");
+            o = o + tcp_listen_step("");
     } else {
         o = o + tcp_listen_step("(call $__fern_wasi_tcp_start_bind (local.get $sock) (call $__fern_network_handle)\n" +
             "      (i32.const 0) (local.get $port)\n" +
@@ -3365,11 +3365,10 @@ pub function udp_bind_func(): string {
     o = o + ip_flat_prologue();
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_create_udp_socket (i32.load (local.get $flat)) (local.get $ret))\n";
-    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n      " + udp_errno("$e", 4) + "\n  " + ip_flat_free() + fail_tail;
+    o = o + "    (if (i32.load8_u (local.get $ret)) (then\n      " + udp_errno("$e", 4) + fail_tail;
     o = o + "    (local.set $sock (i32.load offset=4 (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_udp_start_bind (local.get $sock) (call $__fern_network_handle)\n";
     o = o + ip_flat_words() + "      (local.get $ret))\n";
-    o = o + ip_flat_free();
     o = o + fail_head + udp_errno("$e", 1) + fail_tail;
     o = o + "    (call $__fern_wasi_udp_finish_bind (local.get $sock) (local.get $ret))\n";
     o = o + fail_head + udp_errno("$e", 1) + fail_tail;
@@ -3415,7 +3414,6 @@ pub function udp_connect_func(): string {
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (call $__fern_wasi_udp_stream (i32.load (local.get $c))\n";
     o = o + "      (i32.const 1)\n" + ip_flat_words() + "      (local.get $ret))\n";
-    o = o + ip_flat_free();
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n      " + udp_errno("$e", 4) + "\n";
     o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 16))\n      (return (local.get $e))))\n";
     o = o + "    (i32.store offset=4 (local.get $c) (i32.load offset=4 (local.get $ret)))\n";
@@ -3441,10 +3439,10 @@ pub function udp_sendto_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_udp_sendto (param $c i32) (param $addr i32) (param $port i32) (param $data i32) (result i32)\n";
     o = o + "    (local $ret i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32) (local $flat i32) (local $tmp i32) (local $k i32)\n";
-    o = o + "    (local.set $flat (call $__fern_alloc (i32.const 48)))\n";
+    o = o + "    (local.set $flat (i32.const " + util.i32_to_string(ip_flat_addr()) + "))\n";
     o = o + "    (if (i32.load (local.get $addr)) (then\n";
     o = o + "      (local.set $tmp (call $__fern_ip_flat (local.get $addr) (local.get $port) (local.get $flat)))\n";
-    o = o + "      (if (local.get $tmp) (then (call $__fern_raw_free (local.get $flat) (i32.const 48)) (return (local.get $tmp))))))\n";
+    o = o + "      (if (local.get $tmp) (then (return (local.get $tmp))))))\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (local.set $out (i32.load offset=8 (local.get $c)))\n";
     o = o + "    (local.set $dg (call $__fern_alloc (i32.const 44)))\n";
@@ -3470,7 +3468,6 @@ pub function udp_sendto_func(): string {
     o = o + "            (i32.store8 offset=20 (local.get $dg) (i32.load offset=16 (local.get $flat)))\n";
     o = o + "            (i32.store8 offset=21 (local.get $dg) (i32.load offset=20 (local.get $flat))))))\n";
     o = o + "      (else (i32.store offset=8 (local.get $dg) (i32.const 0))))\n";
-    o = o + ip_flat_free();
     o = o + "    (block $done\n";
     o = o + "      (loop $again\n";
     o = o + "        (call $__fern_wasi_udp_check_send (local.get $out) (local.get $ret))\n";
@@ -3565,19 +3562,15 @@ pub function udp_recvfrom_func(): string {
 pub function udp_send_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_udp_send (param $host i32) (param $port i32) (param $data i32) (result i32)\n";
-    o = o + "    (local $ip i32) (local $ret i32) (local $c i32) (local $sent i32) (local $any i32) (local $to i32)\n";
+    o = o + "    (local $ip i32) (local $ret i32) (local $c i32) (local $sent i32)\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
     o = o + "    (if (i32.lt_s (call $__fern_ipv4_parse (local.get $host) (local.get $ret)) (i32.const 0))\n";
     o = o + "      (then (call $__fern_raw_free (local.get $ret) (i32.const 16)) (return (i32.const -28))))\n";
     o = o + "    (local.set $ip (i32.load (local.get $ret)))\n";
     o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 16))\n";
-    o = o + "    (local.set $any (call $__fern_ip4_box (i32.const 0)))\n";
-    o = o + "    (local.set $c (call $__fern_udp_bind (local.get $any) (i32.const 0)))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $any)))\n";
+    o = o + "    (local.set $c (call $__fern_udp_bind (call $__fern_ip4_box (i32.const 0) (i32.const " + util.i32_to_string(ip_box_addr()) + ")) (i32.const 0)))\n";
     o = o + "    (if (i32.lt_s (local.get $c) (i32.const 0)) (then (return (local.get $c))))\n";
-    o = o + "    (local.set $to (call $__fern_ip4_box (local.get $ip)))\n";
-    o = o + "    (local.set $sent (call $__fern_udp_sendto (local.get $c) (local.get $to) (local.get $port) (local.get $data)))\n";
-    o = o + "    (drop (call $__fern_arr_dec (local.get $to)))\n";
+    o = o + "    (local.set $sent (call $__fern_udp_sendto (local.get $c) (call $__fern_ip4_box (local.get $ip) (i32.const " + util.i32_to_string(ip_box2_addr()) + ")) (local.get $port) (local.get $data)))\n";
     o = o + "    (drop (call $__fern_udp_close (local.get $c)))\n";
     o = o + "    (local.get $sent))\n";
     return o;
