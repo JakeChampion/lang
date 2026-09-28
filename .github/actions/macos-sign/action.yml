@@ -71,6 +71,13 @@ runs:
         security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" > /dev/null
         security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
 
+        echo "=== all identities ==="
+        security find-identity -v "$keychain" || true
+        echo "=== codesigning identities ==="
+        security find-identity -v -p codesigning "$keychain" || true
+        echo "=== certificates ==="
+        security find-certificate -a -Z "$keychain" || true
+
         identity="$(security find-identity -p codesigning "$keychain" \
           | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
         if [ -z "$identity" ]; then
