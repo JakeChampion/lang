@@ -5,8 +5,9 @@
 // playground exercises the same bundle everywhere, so per-browser
 // matrix is overkill.
 //
-// `webServer.url` polls until the page returns 200 so the suite
-// doesn't race the wasm build. retries=1 absorbs the occasional
+// The server only serves: `web/build.sh` takes minutes, so it runs before
+// the suite (`npm test` runs it first; CI as its own step) rather than
+// inside `webServer.timeout`. retries=1 absorbs the occasional
 // flaky paint timing without masking real bugs (a 2-retries-then-fail
 // pattern would).
 
@@ -38,10 +39,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    // Build the wasm bundle then serve web/ on the configured port.
-    // build.sh is idempotent — re-running it overwrites lang.wasm
-    // with the latest source.
-    command: `bash -c "./web/build.sh && python3 -m http.server --bind 127.0.0.1 --directory web ${port}"`,
+    command: `python3 -m http.server --bind 127.0.0.1 --directory web ${port}`,
     url: `http://127.0.0.1:${port}/index.html`,
     cwd: "../../..",
     reuseExistingServer: !process.env.CI,

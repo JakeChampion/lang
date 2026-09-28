@@ -112,6 +112,11 @@ jobs:
           # paper over them with --no-sandbox here.
           npx playwright install --with-deps chromium
 
+      # Its own step, outside Playwright's webServer timeout: it builds the
+      # self-host compiler and then the playground with it.
+      - name: Build the playground bundle
+        run: ./web/build.sh
+
       - name: Run Playwright suite
         run: |
           cd web/test/playwright
