@@ -280,14 +280,6 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
         eprint(util.format_diags_in(errs, files));
         return 1;
     }
-    if (platforms.for_target(target).isa == "wasm32") {
-        var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
-        if (unsupported.len() > 0) {
-            eprint(wasm_ir.wasm_unsupported_message(unsupported));
-            return 1;
-        }
-    }
-
     // Tree-shaking is required here rather than an optimisation: the
     // overlay hands the loader every stdlib module the program's imports reach,
     // and without the shake the emitted module carries all of them. It runs on
@@ -299,6 +291,15 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
     merged = constfold.fold_module(merged);
     merged = checker.annotate_module(merged);
     merged = treeshake.treeshake(merged);
+    // Judged on the shaken module, as the CLI's E066 pass is: a builtin only
+    // unreachable stdlib code names is not a refusal.
+    if (platforms.for_target(target).isa == "wasm32") {
+        var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
+        if (unsupported.len() > 0) {
+            eprint(wasm_ir.wasm_unsupported_message(unsupported));
+            return 1;
+        }
+    }
 
     var typed: parser.Module = parser.module_with_builtins_typed(merged);
     var full: parser.Module = parser.erase_str_module(typed);
