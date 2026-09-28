@@ -882,9 +882,9 @@ End-to-end exit code 42 demo (covered by
     diagnostic long before composition (`TestEnforceFsByTarget`); the
     proxy world has no filesystem to compose against. `-wasi-adapter` /
     preview-1 / the `wasm-tools` shell-out are themselves already retired
-    (`docs/WASI-PREVIEW2.md`). Still unimplemented, and neither a
-    composer gap: inbound UDP (there is no `udp_bind` builtin) and
-    hostname addressing (`udp_send` parses an IPv4 literal only).
+    (`docs/WASI-PREVIEW2.md`). Still unimplemented, and not a composer
+    gap: hostname addressing (`udp_send` parses an IPv4 literal only;
+    the datagram sockets take an address as its bytes).
   - **Default-path driver wiring for `-target wasm32-wasi`.** Shipped
     in #1204. `-target wasm32-wasi` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)

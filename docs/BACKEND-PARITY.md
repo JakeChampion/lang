@@ -145,8 +145,23 @@ Go ones. The bytes floor the last three are written on, `__str_bytes` and
 self-host (`docs/RUNTIME-IN-FERN.md`); the interpreter has no floor, as it
 has none of the raw floor.
 
-`tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
-arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
+Every socket primitive that takes an address takes it as a `u8[]` of its
+network-order bytes, four for IPv4 and sixteen for IPv6, and opens the
+socket for the family the length names; any other length answers
+`-EAFNOSUPPORT` before a socket exists (97 on Linux, 47 on Darwin, 5 in
+the WASI numbering). The unspecified address of either family takes
+every interface, and `::` both families where the host allows a
+dual-stack listener: Linux and Darwin do by default, and wasi:sockets 0.2
+keeps an IPv6 socket IPv6-only. A host without IPv6 refuses the family:
+`-EAFNOSUPPORT` from `socket(2)` natively and in the interpreter, and on
+wasm the `-ENOTSUP` wasmtime answers for create-socket. `tcp_connect` and
+`udp_send` keep their packed IPv4 forms and box them for the same bodies.
+The IPv6 leg (`TestSocketV6*` and the self-host twin) runs where Go can
+listen on `::1` and skips, with the probe's own "nov6" answer required,
+where it cannot.
+
+`tcp_listen_with(addr, port, backlog, reuse_port)` and `tcp_socket_ctl(fd,
+op, arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
 `shutdown(2)` with `arg` its how, 5 the result of a connect under way) are
 the socket controls of #9853; std/net wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
 numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
@@ -158,15 +173,17 @@ both compilers' wasm socket bodies read the byte the result's shape names,
 so a refused bind or dial reports its errno rather than whatever the area
 held.
 
-The datagram sockets (#9853) are `udp_bind(host_be, port)` (a socket bound
-to the IPv4 address packed in network order, 0 for every address and port
-0 for one the host picks, or -errno), `udp_connect(fd, host_be, port)`
-(fix the peer: 0 or -errno), `udp_sendto(fd, host_be, port, data)` (one
-datagram to host:port, or to the peer when both are 0: the bytes accepted,
-or -errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
-`buf`, up to its length, the sender's four address bytes and then its port,
-high byte first, into a `from` of six bytes or more: the byte count, or
--errno). `tcp_close` and `tcp_local_port` take a datagram socket too, and
+The datagram sockets (#9853) are `udp_bind(addr, port)` (a socket bound
+to addr:port, the unspecified address for every interface and port 0 for
+one the host picks, or -errno), `udp_connect(fd, addr, port)` (fix the
+peer: 0 or -errno), `udp_sendto(fd, addr, port, data)` (one datagram to
+addr:port, or to the peer when `addr` is empty: the bytes accepted, or
+-errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
+`buf`, up to its length, and the sender into a `from` of nineteen bytes
+or more: the family at 0, 4 or 6, the address's network-order bytes from
+1, four or sixteen with the rest zero, and the port at 17, high byte
+first: the byte count, or -errno). `tcp_close` and `tcp_local_port` take
+a datagram socket too, and
 std/net wraps the four as `udp_socket`, `set_peer`, `send_to`, `send`,
 `recv_from`, `recv`, `local_port` and `close`. The same on every target,
 with these divergences: on wasm a datagram "fd" is the tcp record with a
@@ -177,12 +194,12 @@ leaves the socket without streams until the next one succeeds, and
 `udp_recvfrom` blocks on the incoming stream's pollable where the natives
 block in recvfrom(2), so `set_nonblocking` has no udp arm there; on Darwin
 a `udp_sendto` naming an address on a connected socket is refused with
-`EISCONN` where Linux sends it, so a connected socket sends with a zero
+`EISCONN` where Linux sends it, so a connected socket sends with an empty
 address on every target; and the interpreter keeps a raw descriptor per
 datagram socket, so its errnos are the host's like the natives'.
 
-`tcp_connect_with(host_be, port, nonblocking)` is `tcp_connect`, or with
-`nonblocking` a non-blocking socket whose connect is only started: the
+`tcp_connect_with(addr, port, nonblocking)` is a connect to addr:port, or
+with `nonblocking` a non-blocking socket whose connect is only started: the
 descriptor comes back while the connect is under way (-errno only when it
 could not start), and control op 5 says how it ended: 0 once a peer is
 attached, `-EINPROGRESS` while none is and no error is pending, else the
@@ -238,6 +255,26 @@ pipe the set watches; wasm, which has no signals, answers -ENOTSUP. The
 Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
 `unwatch_signal` and `close` (std/async), std/sim scripts readiness for
 its leg with `ready_at`, and the serve loops run on it.
+
+Per target, every socket primitive is provided as follows. "Fern body" is
+the one body per compiler over the syscall floor (`internal/fernrt` and
+`asmcore.fern`), the same on x86-64-linux and arm64-linux under both
+backends and on arm64-darwin with its sockaddr length byte, option numbers
+and `MSG_NOSIGNAL` value. wasi-http is the proxy world, whose profile grants
+none of `tcp`, `unix` or `reactor`, so E066 refuses each of these at check
+time there.
+
+| Primitive | Linux natives | arm64-darwin | wasm32-wasi | wasi-http | interp |
+| --- | --- | --- | --- | --- | --- |
+| `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_recv`, `tcp_send` | Fern body | Fern body | wasi:sockets/tcp bodies (`wasi_tcp.go`, `wasm_ir.fern`); a "fd" is the 16-byte record | E066 | net package |
+| `tcp_connect` (packed IPv4) | Fern body | Fern body | boxes the address for `tcp_connect_with` | E066 | net package |
+| `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
+| `tcp_socket_ctl` | Fern body | Fern body | ops 2, 4, 5 through wasi:sockets; 1 and 3 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record | E066 | net package controls; op 5 answers 0 at once |
+| `tcp_recv_into` | Fern body, `read(2)` | Fern body | non-blocking read on the input stream, `-EAGAIN` when empty | E066 | a read through the descriptor |
+| `udp_send` | Fern body, dotted-quad parse | Fern body | `udp_bind` then `udp_sendto` then close | E066 | net package |
+| `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasi_udp.go`, `wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
+| `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |
+| `reactor_new`, `reactor_ctl`, `reactor_wait` | Fern body, epoll | Fern body, kqueue | a table of wasi:io pollables; signals `-ENOTSUP` | E066: no `reactor` | an epoll or kqueue set over the handles; signals through a pipe |
 
 The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
 and closes, pins the errno of a bad descriptor, and round-trips bytes through

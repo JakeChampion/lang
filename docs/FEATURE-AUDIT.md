@@ -141,7 +141,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Modules / imports (`import "./path";`) | | | | | | ⬜ | |
 | Visibility (`pub`) | | | | | | ⬜ | front-end only |
 | Top-level `const` (folded) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | desugars to a zero-arg fn; a bare ref is a call. Self-host: native + AST path, and now the **IR path** too (a bare const ident lowers to `call_direct(name, 0)`, [#2954](https://github.com/JakeChampion/lang/issues/2954); `TestSelfHostAsmIRPath/const-*`) |
-| `len(x)` / `.len()` builtin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | string / array / map |
+| `.len()` builtin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | string / array / map |
 
 ## B. Built-in functions (checker-registered)
 
@@ -151,7 +151,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `write(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stdout raw, no newline |
 | `eprint(s)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | stderr (not on stdout) |
 | `putchar(b)` | ✅ | ✅ | ✅ | ✅ | ✅ | 🔧 | self-host: fixed on the **IR path** ([#2839](https://github.com/JakeChampion/lang/issues/2839)) — `__fern_putchar` (`write(1, &byte, 1)`) emitted by the x86-64 / arm64 / wasm IR backends, guarded by `self_host_putchar_{,arm64_,wasm_}ir_test.go`. Legacy AST `asm.fern` still doesn't lower it (IR-path-only, per goal 1) |
-| `len(x)` / `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | native uses `.len()` method; self-host also has free `len(x)` |
+| `.len()` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | free `len(x)` is E001 on both front ends |
 | `args(): string[]` | | | | | ✅ | ⚠️ | self-host ✓; native arg-passing via CLI e2e tests |
 | `env(name): Option[string]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | unset → `None` |
 | `exit(code)` | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | native interp/x86/arm + self-host; wasm proc_exit vs result-line harness |
@@ -4397,8 +4397,8 @@ reach stdout), and `.len()` (string + array). ✅ on interp / x86-64 / arm64 /
 wasm.
 
 **Self-host arm (x86-64):** new test
-`internal/e2e/self_host_audit_io_test.go` — checks the compiled program's
-stdout + exit code for `print` / `write` / `eprint` / `len` / `exit`. All pass.
+`internal/e2eselfhost/self_host_audit_io_test.go` — checks the compiled program's
+stdout + exit code for `print` / `write` / `eprint` / `exit`. All pass.
 
 **Finding — `putchar` unsupported on self-host
 ([#2839](https://github.com/JakeChampion/lang/issues/2839)):** the self-hosted
@@ -4406,9 +4406,8 @@ compiler lowers `putchar(b)` to `call __fn_putchar` but never emits that runtime
 so the program fails to link (both IR and legacy paths). Native inlines it as a
 `write(1, …)` syscall. Held out of the self-host I/O table, referencing #2839.
 
-**Notes:** native exposes `len` only as the `.len()` method (free `len(x)` is an
-undefined identifier); the self-host front-end also accepts free `len(x)` — a
-minor permissiveness difference. `exit(code)` with code > 1 doesn't round-trip
+**Notes:** both front ends expose `len` only as the `.len()` method; free `len(x)`
+is an undefined identifier (E001). `exit(code)` with code > 1 doesn't round-trip
 through the wasm result-line harness (proc_exit terminates before the result
 line), so the §B `exit` wasm cell is ⚠️.
 

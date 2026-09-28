@@ -378,24 +378,11 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// would dereference to recover (fn_idx, env_ptr).
 	//
 	// Cells live in their own static region above the freelist heads
-	// table and below the string pool — closuresBase / maxClosureCells /
-	// stringStart are derived together in runtime.go so no two regions
-	// can claim the same window again (#6142).
-	//
-	//	0..47     args / env / read_byte cache (see wasi.go)
-	//	48..55    print iovec
-	//	56..59    print ret
-	//	60..63    random buf
-	//	64..71    __str_idx scratch (data, len) for inline-form strings
-	//	72..79    rc==1 append-cliff bytes copied (i64 accumulator)
-	//	80..83    preview-2 stdout-handle init flag
-	//	84..87    preview-2 stdout-handle cache
-	//	88..91    preview-2 stderr-handle init flag
-	//	92..95    preview-2 stderr-handle cache
-	//	96..255   reserved
-	//	256..1023 freelist heads (freelistHeadsAddr)
-	//	1024..    closure pair cells (8 bytes each, closuresBase)
-	//	          then the string pool (stringStart), then the heap
+	// table and below the string pool. memlayout.go derives every
+	// address of the map (the scratch slots, the freelist heads, this
+	// pool, the string pool) by chaining sizes, so no two regions can
+	// claim the same window (#6142); it is the one place the map is
+	// written down.
 	closureTableIdx := map[string]int{}
 	// progFuncTableIdx maps a user-function name to its position
 	// in prog.Funcs. The element segment places prog.Funcs[i] at

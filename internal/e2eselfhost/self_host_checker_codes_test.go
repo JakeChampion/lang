@@ -208,6 +208,20 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// A method called on a dyn value has the result its trait declares.
 		{"dyn-method-result-typed", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { var x: string = s.say(); return x.len(); }\nfunction main(): i32 { return f(7); }\n", []string{"E003"}},
 		{"dyn-method-result-accepted", "trait Speak { function say(self: Self): i32; }\nimpl Speak for i32 { function say(self: Self): i32 { return self + 100; } }\nfunction f(s: dyn Speak): i32 { var x: i32 = s.say(); return x; }\nfunction main(): i32 { return f(7); }\n", nil},
+		// A `{ …; tail }` block is typed by its tail with the leading
+		// statements bound (#10438). The self-host typed it as nothing, so a
+		// mismatch went unreported and the lowering stamped no type on it.
+		{"value-block-tail-mismatch", "function main(): i32 { var q: string = { var k = 1 + 2; k }; return 0; }\n", []string{"E003"}},
+		{"value-block-struct-tail-mismatch", "trait Shape { function area(self: Self): i32; }\nstruct Square { side: i32 }\nimpl Shape for Square { function area(self: Self): i32 { return self.side; } }\nfunction measure(d: dyn Shape): i32 { return d.area(); }\nfunction main(): i32 { var s = Square { side: 3 }; var n: i32 = { var q = s; q }; return measure({ var q = s; q }) + n; }\n", []string{"E003"}},
+		{"value-block-wide-tail-mismatch", "function main(): i32 { var k: i64 = 4i64; var n: i32 = { var q = k; q }; return n; }\n", []string{"E003"}},
+		{"value-block-tail-typed", "struct P { x: i32 }\nfunction main(): i32 { var p: P = { var q = P { x: 1 }; q }; var y: i64 = { var z = 0; 5 }; return p.x; }\n", nil},
+		// A literal local a block tail returns takes the destination's width,
+		// as it does outside a block.
+		{"value-block-literal-local-tail-widens", "function main(): i32 { var y: i64 = { var z = 5; z }; return 0; }\n", nil},
+		{"value-block-literal-local-tail-sum-widens", "function main(): i32 { var y: i64 = { var z = 5; z + 1 }; return 0; }\n", nil},
+		{"value-block-literal-local-tail-i32", "function main(): i32 { var y: i32 = { var z = 5; z }; return y; }\n", nil},
+		{"value-block-literal-local-tail-arg-widens", "function f(n: u64): u64 { return n; }\nfunction main(): i32 { var r: u64 = f({ var z = 5; z }); return 0; }\n", nil},
+		{"value-block-typed-local-tail-mismatch", "function main(): i32 { var k: i32 = 7; var y: i64 = { var q = k; q }; return 0; }\n", []string{"E003"}},
 		{"literal-local-compared-takes-width", "function main(): i32 { var hi = 255; var i = 250; var b: u8 = i; if (i != hi) {} var c: i32 = hi; return 0; }\n", []string{"E003"}},
 		{"literal-local-compared-out-of-range", "function main(): i32 { var hi = 300; var i = 250; var b: u8 = i; if (i != hi) {} return 0; }\n", []string{"E047"}},
 		{"range-variable-two-widths", "function main(): i32 { for i in 0..4 { var a: u64 = i; var b: i32 = i; } return 0; }\n", []string{"E003"}},
@@ -586,6 +600,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// the self-host must keep flagging it (init `q()` is E001, avoiding an
 		// E003 init-mismatch cascade, same as unknown-var-type above).
 		{"unknown-byte-var-type", "function main(): i32 { var x: byte = q(); return 0; }\n", []string{"E001", "E064"}},
+		// Only the method spelling `a.len()` exists; a free `len(a)` names nothing.
+		{"free-len-is-undefined", "function main(): i32 { var a: i32[] = [1, 2]; return len(a); }\n", []string{"E001"}},
 		// isize/i8/i16/u16 were retired (#4408): neither is a lexer keyword
 		// any more, so a reference to one is an unknown nominal type — both
 		// checkers must now flag E064 here, the mirror image of the

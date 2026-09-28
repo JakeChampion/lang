@@ -85,7 +85,7 @@ var traitsCases = []struct {
 	{"trait-bounded-generic-array-elem",
 		"trait Eq { function eq(self: Self, other: Self): boolean; } " +
 			"impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } " +
-			"function all_eq[T: Eq](a: T[], b: T[]): i32 { var i: i32 = 0; while (i < len(a)) { if (!a[i].eq(b[i])) { return 0; } i = i + 1; } return 1; } " +
+			"function all_eq[T: Eq](a: T[], b: T[]): i32 { var i: i32 = 0; while (i < a.len()) { if (!a[i].eq(b[i])) { return 0; } i = i + 1; } return 1; } " +
 			"function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = [1, 2, 3]; return all_eq(x, y); }", 1},
 	// TWO independent type parameters → the monomorphiser infers each
 	// from its own argument and mangles the clone with both concrete

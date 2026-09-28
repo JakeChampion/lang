@@ -112,7 +112,7 @@ func TestSelfHostUndefinedCallGate(t *testing.T) {
 	}
 
 	// One accept program exercising most admit-list arms at once: builtins
-	// (`print` / `len`), the emitter-only free-function spellings
+	// (`print`), the emitter-only free-function spellings
 	// (`i32_to_string` / `str_to_upper`, which native's checker rejects but
 	// every self-host emitter lowers), an Option constructor, a user enum
 	// variant constructor, and a receiver method.
@@ -131,7 +131,7 @@ function main(): i32 {
     var xs: i32[] = [1, 2, 3];
     print(i32_to_string(area(Circle(2))) + str_to_upper("ok"));
     match (Some(dbl(p.sum()))) {
-        Some(v) => { return v + len(xs) + xs.len(); },
+        Some(v) => { return v + xs.len() + xs.len(); },
         None => { return 1; },
     }
 }
@@ -152,7 +152,7 @@ function main(): i32 {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 		}
 		out, exit := runBin(cmd, "")
-		if exit != 20 { // dbl(7) = 14, + len(xs) 3 + xs.len() 3
+		if exit != 20 { // dbl(7) = 14, + xs.len() 3, twice
 			t.Errorf("program exited %d, want 20 (stdout %q)", exit, out)
 		}
 		if !strings.Contains(out, "6OK") {

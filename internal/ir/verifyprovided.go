@@ -204,7 +204,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_tcp_connect":              {2, rWord},
 	"__fern_tcp_listen":               {1, rWord},
 	"__fern_tcp_local_port":           {1, rWord},
-	"__fern_tcp_listen_with":          {3, rWord},
+	"__fern_tcp_listen_with":          {4, rWord},
 	"__fern_tcp_socket_ctl":           {3, rWord},
 	"__fern_tcp_connect_with":         {3, rWord},
 	"__fern_reactor_new":              {0, rWord},

@@ -3080,7 +3080,7 @@ function check_expressions_and_control_flow(): i32 {
     }
 
     // While + array literal + index + len.
-    var src4: string = "var a = [3, 5, 7]; var i = 0; var s = 0; while (i < len(a)) { s = s + a[i]; i = i + 1; } return s;";
+    var src4: string = "var a = [3, 5, 7]; var i = 0; var s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s;";
     var rt4: parser.Module = roundtrip_module(src4);
     if (rt4.top_stmts.len() != 5) { return 40; }
     match (rt4.top_stmts[0]) {

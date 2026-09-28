@@ -52,7 +52,8 @@ function main(): i32 {
     if (reactor_wait(r, one, 0) != 0 - einval()) { return fail(3); }
     var events: i32[] = [0, 0, 0, 0];
     if (reactor_wait(r, events, 20) != 0) { return fail(4); }
-    var ln: i32 = tcp_listen_with(0, 4, false);
+    var any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    var ln: i32 = tcp_listen_with(any, 0, 4, false);
     if (ln < 0) { return fail(5); }
     var port: i32 = tcp_local_port(ln);
     if (reactor_ctl(r, 1, ln, 1) != 0) { return fail(6); }

@@ -543,7 +543,7 @@ var rcInert = map[string]bool{
 	"__fern_string_from_bytes": true, "__fern_tcp_accept": true,
 	"__fern_tcp_close": true, "__fern_tcp_connect": true,
 	"__fern_tcp_listen": true, "__fern_tcp_local_port": true,
-	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true,
+	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true, "__fern_ip_flat": true,
 	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true,
 	"__fern_tcp_pollable": true,
 	"__fern_tcp_recv":     true, "__fern_tcp_send": true, "__fern_temp_dir": true,

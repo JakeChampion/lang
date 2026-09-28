@@ -15,9 +15,12 @@ import (
 
 // leakRow is one program held to the census on every lowering. balanced false
 // holds it to the sanitizer only: a leak is allowed, any other report is not.
+// A nonzero refused pins such a row's AST-lowering census to the shallow
+// fallback's allocs and frees.
 type leakRow struct {
 	name, src string
 	balanced  bool
+	refused   [2]int64
 }
 
 const structArrRebindInst = `struct Inst { name: string, depth: i32 }
@@ -41,20 +44,20 @@ function main(): i32 {
     pending = mk(1);
     return pending.len();
 }
-`, true},
+`, true, [2]int64{}},
 	{"producer_seed", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = mk(2);
     pending = mk(3);
     return pending.len() + pending[2].depth;
 }
-`, true},
+`, true, [2]int64{}},
 	{"literal_seed", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [Inst { name: "q" + "", depth: 7 }];
     var t: i32 = pending[0].depth;
     pending = mk(2);
     return t + pending.len();
 }
-`, true},
+`, true, [2]int64{}},
 	{"loop_with_append", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [];
     var t: i32 = 0;
@@ -68,7 +71,7 @@ function main(): i32 {
     }
     return t;
 }
-`, true},
+`, true, [2]int64{}},
 	{"array_field_elem", `struct Node { name: string, kids: i32[] }
 function mk(n: i32): Node[] {
     var out: Node[] = [];
@@ -82,7 +85,7 @@ function main(): i32 {
     while (r < 4) { pending = mk(r); t = t + pending[0].kids[1]; r = r + 1; }
     return t + pending.len();
 }
-`, true},
+`, true, [2]int64{}},
 	// An element bound out of the old array keeps it from the credit.
 	{"bound_elem", structArrRebindInst + `function main(): i32 {
     var pending: Inst[] = [];
@@ -91,7 +94,7 @@ function main(): i32 {
     pending = mk(4);
     return keep.depth + pending[3].depth;
 }
-`, false},
+`, false, [2]int64{}},
 }
 
 var semanticAndAST = []ownAliasLowering{
@@ -99,10 +102,12 @@ var semanticAndAST = []ownAliasLowering{
 	{"ast", "FERN_SEM_IR="},
 }
 
-func checkLeakRowCensus(t *testing.T, stderr string, row leakRow) {
+func checkLeakRowCensus(t *testing.T, stderr string, row leakRow, lw ownAliasLowering) {
 	t.Helper()
 	if row.balanced {
 		assertBalancedCensus(t, stderr)
+	} else if row.refused != ([2]int64{}) && lw.name == "ast" {
+		assertRefusedCensus(t, stderr, row.refused)
 	}
 }
 
@@ -118,7 +123,7 @@ func runLeakRowsX86_64(t *testing.T, rows []leakRow) {
 				if exit != want {
 					t.Fatalf("leakcheck: exit = %d, want %d\n%s", exit, want, stderr)
 				}
-				checkLeakRowCensus(t, stderr, tc)
+				checkLeakRowCensus(t, stderr, tc, lw)
 				stderr, exit = runWithStdin(t, cli.runner, cli.x86Binary(t, src, "FERN_SANITIZE=1", lw.env), nil)
 				if exit != want || forArrStructSanitizerFault(stderr, tc.balanced) {
 					t.Fatalf("sanitize: exit = %d, want %d, and no sanitizer fault\n%s", exit, want, stderr)
@@ -148,7 +153,7 @@ func runLeakRowsArm64(t *testing.T, rows []leakRow) {
 				if code := cmd.ProcessState.ExitCode(); code != want {
 					t.Fatalf("exit = %d, want %d\n%s", code, want, eb.String())
 				}
-				checkLeakRowCensus(t, eb.String(), tc)
+				checkLeakRowCensus(t, eb.String(), tc, lw)
 			})
 		}
 	}
@@ -169,7 +174,7 @@ func runLeakRowsWasm(t *testing.T, rows []leakRow) {
 				if exit != want {
 					t.Fatalf("exit = %d, want %d\n%s", exit, want, stderr)
 				}
-				checkLeakRowCensus(t, stderr, tc)
+				checkLeakRowCensus(t, stderr, tc, lw)
 			})
 		}
 	}
