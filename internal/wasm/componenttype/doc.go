@@ -1,6 +1,6 @@
 // Regeneration notes for fern.bin / http.bin / proxy.bin.
 //
-// The two .bin files hold the inner *payload* of the
+// The three .bin files hold the inner *payload* of the
 // `component-type` custom section that wasm-tools writes when
 // you run `wasm-tools component embed -w <world>` against the
 // WIT files in cmd/fern/wit/. They are world-specific and
