@@ -21316,7 +21316,7 @@ function settle_returned_append(e: ast.Expr, s: LowerState): LowerState {
         if let ast.ExprFieldAccess(fa) = c.callee {
             var slot: i32 = s.slot_of(ident_name_or_empty(fa.obj));
             if (fa.field != "append" || c.args.len() != 1 || slot < s.frame.n_params) { return s; }
-            if (!s.is_arr_slot(slot) || !arr_slot_shallow_release_ok(s, slot)) { return s; }
+            if (!s.is_arr_slot(slot) || !aliased_push_store_ok(s, slot)) { return s; }
             return emit_aliased_push_store(s, slot, false).emit(ir.op_load_local(slot));
         }
     }
@@ -22795,14 +22795,14 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // store — the shallow emit_arr_store dec (were is_arr even set) would
     // free only the outer buffer and leak every inner per iteration.
     if (slot_is_reclaimable_arrarr(sb, slot)) {
-        return emit_arrarr_reclaim_store(sb, slot);
+        return emit_arrarr_reclaim_store(sb, slot, vt.alias_inc);
     }
     // Reclaimable closure-ARRAY LOOP-LOCAL (#4354): free the prior iteration's
     // element boxes with the buffer. The credit, not the is_closurearr flag,
     // routes it: an annotated empty literal grown by `.append` earns the flag
     // only at the append, which lowers after this bind.
     if (slot_is_reclaimable_cloarr(sb, slot)) {
-        return emit_arrarr_reclaim_store(sb, slot);
+        return emit_arrarr_reclaim_store(sb, slot, false);
     }
     // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
     // arr-of-arr rebind above — free the prior iteration's payload buffers +
@@ -25034,7 +25034,7 @@ function aliased_push_releases_old(sole_owner: boolean, s: LowerState, slot: i32
 // arm counts them (#9209). An old buffer this frame held alone was outgrown,
 // its elements moved to the new one, and it is freed without the retain.
 function emit_aliased_push_store(se: LowerState, slot: i32, sole_owner: boolean): LowerState {
-    if (sole_owner || !arr_slot_shallow_release_ok(se, slot) || !slot_holds_counted_elems(se, slot)) {
+    if (sole_owner || !aliased_push_store_ok(se, slot) || !slot_holds_counted_elems(se, slot)) {
         return emit_arr_store(se, slot, false, aliased_push_releases_old(sole_owner, se, slot));
     }
     var scratch: string = "$rea" + util.i32_to_string(se.locals.len());
@@ -25058,6 +25058,18 @@ function emit_aliased_push_store(se: LowerState, slot: i32, sole_owner: boolean)
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
     return st.emit(ir.op_store_local(slot));
+}
+
+// aliased_push_store_ok: the slot's reference to a superseded buffer may be
+// given back with one dec once the copy's shared elements are retained —
+// arr_slot_shallow_release_ok's question, with a credited arr-of-arr admitted:
+// its rows are counted, so a shared old buffer's rows survive in the copy and a
+// sole-owned one's move to it.
+function aliased_push_store_ok(s: LowerState, slot: i32): boolean {
+    if (slot_is_reclaimable_arrarr(s, slot)) {
+        return !s.is_borrowed_arr_slot(slot) && !slot_list_has(s.frame.moved_elided, slot);
+    }
+    return arr_slot_shallow_release_ok(s, slot);
 }
 
 // slot_holds_counted_elems: the array in slot `i` stores rc-counted element
@@ -25667,6 +25679,10 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // exclusion either: the target IS an array here, which is what makes this
     // the branch the array classes below could not cover.
     if (slot_is_reclaimable_strarr(s, slot)) { return emit_strarr_reclaim_store(se, slot, false); }
+    // A credited arr-of-arr reassigned from a member of its group (`h = g`,
+    // credit_arrarr_group): the superseded buffer may be the last reference to
+    // its rows.
+    if (slot_is_reclaimable_arrarr(s, slot)) { return emit_arrarr_reclaim_store(se, slot, reassign_inc); }
     // A credited struct array REBOUND from a producer (`ps = mk(n)`, #10360):
     // the rebuild shares nothing with the old array, so its element boxes go
     // with its buffer.
@@ -29654,11 +29670,22 @@ function emit_tup_elem_reclaim_store(se: LowerState, slot: i32, kinds: string): 
 // the live value. The arr-of-arr sibling of emit_str_reclaim_store; the
 // first binding sees old = the zero-initialised slot → the helper's null
 // guard no-ops.
-function emit_arrarr_reclaim_store(se: LowerState, slot: i32): LowerState {
+//
+// alias_inc: an aliasing bind (`var h = g`, `var p = r.grid`) retains the new
+// buffer, so the old reference is released even when it is the same buffer.
+function emit_arrarr_reclaim_store(se: LowerState, slot: i32, alias_inc: boolean): LowerState {
     var scratch: string = "$aarea" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
     st = st.emit(ir.op_store_local(tmp));
+    if (alias_inc) {
+        st = st.retain(tmp, "arrarr-store-alias");
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_call_direct(arrarr_free_helper_of(st, slot), 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_load_local(tmp));
+        return st.emit(ir.op_store_local(slot));
+    }
     st = st.emit(ir.op_load_local(slot));        // OLD value the slot holds
     st = st.emit(ir.op_load_local(tmp));         // new value
     st = st.emit(ir.op_bin("ne", 0, false));     // old != new (cow guard)
@@ -31732,7 +31759,7 @@ function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
     return false;
 }
 
-// str_alias_reassign_target_sites: the binding SITES of string locals `t` that are
+// alias_reassign_target_sites: the binding SITES in `cands` of locals `t` that are
 // reassigned from `src` (`t = src`) and from nothing else uncounted. Handed to the
 // escape walker as extra alias_ok entries so the source's bare-ident use at that
 // assignment is read as the counted share it now is, and credited alongside it so
@@ -31740,9 +31767,8 @@ function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
 //
 // Every reassign of `t` must be a bare ident: a field or element read (`t = x.f`,
 // `t = xs[i]`) is a borrow of a container's memory that no retain covers, and a
-// fresh producer (`t = a + b`) is the consume-rebind that emit_str_reclaim_store
-// already owns and which deliberately takes no inc.
-function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: string[], body: ast.Stmt[], acc: string[]): string[] {
+// fresh producer (`t = a + b`) is a consume-rebind, which takes no inc.
+function alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -31751,7 +31777,7 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
                     ast.ExprIdent(rid) => {
                         if (rid.name == src && asg.target != src
                                 && str_all_reassigns_bare_ident(body, asg.target, false)) {
-                            var tsite: string = str_cand_site_of(cands, asg.target);
+                            var tsite: string = cand_site_named(cands, asg.target);
                             if (tsite.len() > 0) { a = push_str_unique(a, tsite); }
                         }
                     },
@@ -31759,14 +31785,14 @@ function str_alias_reassign_target_sites(stmts: ast.Stmt[], src: string, cands: 
                 }
             },
             ast.StmtIf(f) => {
-                a = str_alias_reassign_target_sites(f.then_body, src, cands, body, a);
-                a = str_alias_reassign_target_sites(f.else_body, src, cands, body, a);
+                a = alias_reassign_target_sites(f.then_body, src, cands, body, a);
+                a = alias_reassign_target_sites(f.else_body, src, cands, body, a);
             },
-            ast.StmtWhile(w) => { a = str_alias_reassign_target_sites(w.body, src, cands, body, a); },
-            ast.StmtFor(fo) => { a = str_alias_reassign_target_sites(fo.body, src, cands, body, a); },
+            ast.StmtWhile(w) => { a = alias_reassign_target_sites(w.body, src, cands, body, a); },
+            ast.StmtFor(fo) => { a = alias_reassign_target_sites(fo.body, src, cands, body, a); },
             ast.StmtMatch(m) => {
                 var ai: i32 = 0;
-                while (ai < m.arms.len()) { a = str_alias_reassign_target_sites(m.arms[ai].body, src, cands, body, a); ai = ai + 1; }
+                while (ai < m.arms.len()) { a = alias_reassign_target_sites(m.arms[ai].body, src, cands, body, a); ai = ai + 1; }
             },
             _ => {}
         }
@@ -31806,8 +31832,8 @@ function str_reassign_value_ok(v: ast.Expr, field_read: boolean): boolean {
     return false;
 }
 
-// str_cand_site_of: the binding-site key in `cands` for the variable `name`, or "".
-function str_cand_site_of(cands: string[], name: string): string {
+// cand_site_named: the binding-site key in `cands` for the variable `name`, or "".
+function cand_site_named(cands: string[], name: string): string {
     var i: i32 = 0;
     while (i < cands.len()) {
         if (reclaim_site_name(cands[i]) == name) { return cands[i]; }
@@ -31860,28 +31886,15 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // (the "ALIASSRC:" row), so a link reassigned only from the source keeps a
 // counted share and stays in the chain.
 function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[], counted_reassign: boolean): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0
-                && !(counted_reassign && reassigned_only_from(body, names[vi], src))) { return acc; }
-        if (body_unsafe_for_alias(body, names[vi], borrowable, recv_borrow, sites)) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0
+                && !(counted_reassign && reassigned_only_from(body, link, src))) { return acc; }
+        if (body_unsafe_for_alias(body, link, borrowable, recv_borrow, sites)) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -31936,27 +31949,14 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
 // All-or-nothing, for alias_chain_sites_of's reason: one buffer is shared by
 // every link, so a link that escapes taints every release in the set.
 function strarr_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], body: ast.Stmt[], acc: string[]): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
-        if (strarr_unsafe_for_alias(body, names[vi], borrowable, str_fresh, strarr_producers, sites, [])) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0) { return acc; }
+        if (strarr_unsafe_for_alias(body, link, borrowable, str_fresh, strarr_producers, sites, [])) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -32064,11 +32064,11 @@ function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, want_elem: boo
     return a;
 }
 
-// opt_alias_chain_closure is the transitive closure of bare-ident binds from
-// `src` — `src` -> `v` -> `u` -> … — walked RAW. Both Option questions need it
-// and must agree: which binds may share the credit, and whether any bind in the
-// chain was left unvetted (#7750).
-function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
+// alias_chain_closure is the transitive closure of bare-ident binds from `src` —
+// `src` -> `v` -> `u` -> … — walked RAW, as the binding-site keys of the links.
+// Every alias-chain credit vets this one set, so the question "which binds may
+// share the credit" and "was any bind left unvetted" cannot disagree (#7750).
+function alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
     var sites: string[] = [];
     var names: string[] = [src];
     var ni: i32 = 0;
@@ -32108,7 +32108,7 @@ function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
 // release, so N links mean N extra retains and N extra box decs — the same
 // arithmetic the single-link case rests on, with more owners.
 function opt_alias_bind_sites_of(body: ast.Stmt[], src: string): string[] {
-    var all: string[] = opt_alias_chain_closure(body, src);
+    var all: string[] = alias_chain_closure(body, src);
     if (all.len() == 0) { return []; }
     var reasg: string[] = body_assign_targets(body);
     var i: i32 = 0;
@@ -32153,28 +32153,15 @@ function credit_opt_alias_sites(body: ast.Stmt[], keys: string[], pfx: string, o
 // deep-drops the payload and a payload extracted from ANY link is invisible to
 // the plain walker.
 function rcenum_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], structs: StructTab, body: ast.Stmt[], acc: string[]): string[] {
-    var sites: string[] = [];
-    var names: string[] = [src];
-    var ni: i32 = 0;
-    while (ni < names.len()) {
-        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], false, []);
-        var fi: i32 = 0;
-        while (fi < found.len()) {
-            if (util.index_of_str(sites, found[fi]) < 0) {
-                sites = sites.append(found[fi]);
-                names = names.append(reclaim_site_name(found[fi]));
-            }
-            fi = fi + 1;
-        }
-        ni = ni + 1;
-    }
+    var sites: string[] = alias_chain_closure(stmts, src);
     if (sites.len() == 0) { return acc; }
     var reasg: string[] = body_assign_targets(body);
-    var vi: i32 = 1;
-    while (vi < names.len()) {
-        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
-        if (body_unsafe_for_enumfield_alias(body, names[vi], borrowable, structs, sites)) { return acc; }
-        if (enum_body_binds_rc_payload(body, names[vi], structs)) { return acc; }
+    var vi: i32 = 0;
+    while (vi < sites.len()) {
+        var link: string = reclaim_site_name(sites[vi]);
+        if (util.index_of_str(reasg, link) >= 0) { return acc; }
+        if (body_unsafe_for_enumfield_alias(body, link, borrowable, structs, sites)) { return acc; }
+        if (enum_body_binds_rc_payload(body, link, structs)) { return acc; }
         vi = vi + 1;
     }
     var out: string[] = acc;
@@ -39956,18 +39943,23 @@ function name_is_param(params: ast.ParamDecl[], name: string): boolean {
     return false;
 }
 
+// local_struct_type_of: the type a local declared exactly once in `body` is
+// annotated with, or for an unannotated one (`var b = Big { … }`) the type its
+// literal names, under fresh_struct_lit_type_deep's single-type contract.
+function local_struct_type_of(body: ast.Stmt[], name: string, structs: StructTab): string {
+    if (local_decl_count(body, name) != 1) { return ""; }
+    var rt: string = util.base_type_name(body_local_decl_type(body, name));
+    if (rt.len() == 0) { rt = literal_struct_type_of(body, name, structs); }
+    return rt;
+}
+
 function local_recv_method_key(callee: ast.Expr, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
     match (callee) {
         ast.ExprFieldAccess(mfa) => {
             match (mfa.obj) {
                 ast.ExprIdent(rid) => {
                     if (name_is_param(params, rid.name)) { return ""; }
-                    if (local_decl_count(body, rid.name) != 1) { return ""; }
-                    var rt: string = util.base_type_name(body_local_decl_type(body, rid.name));
-                    // An UNANNOTATED receiver (`var b = Big { … }`) has no
-                    // declared type to read; its literal names one, under
-                    // fresh_struct_lit_type_deep's own single-type contract.
-                    if (rt.len() == 0) { rt = literal_struct_type_of(body, rid.name, structs); }
+                    var rt: string = local_struct_type_of(body, rid.name, structs);
                     if (rt.len() == 0) { return ""; }
                     if (decl_field_type(structs, rt, mfa.field) != "") { return ""; }
                     return rt + "." + mfa.field;
@@ -43787,7 +43779,10 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // is a counted reference the walk's rc-guarded dec cannot free, and `for row
     // in g` is a transient borrow the loop outlives — only a body that lets the
     // loop var escape dangles. A `g[i][j]` / `g[i].len()` borrow binds nothing).
+    // A `var h = g` alias and a `var p = r.grid` field bind are counted owners
+    // too, and take the same release under the same gates (credit_arrarr_group).
     var aarrs: string[] = collect_fresh_arrarr_names(body, opt_fresh_ret, []);
+    aarrs = collect_arrarr_field_bind_sites(body, body, params, structs, aarrs);
     out = reclaimable_arrarr(aarrs, body, borrowable, opt_fresh_ret, out);
     // Fresh Option[<scalar-arr>][] locals (#4365): `var xs: Option[i32[]][] =
     // [Some([..]), None]` — credited "OPTAARR:" so slot_is_reclaimable_optaarr
@@ -51249,8 +51244,10 @@ function arrarr_lit_is_fresh(e: ast.Expr, stmts: ast.Stmt[], k: i32): boolean {
 // back unchanged, and every test below then fails it.
 //
 // A local row is admitted only when it is declared earlier in THIS statement
-// list from an array LITERAL, is mentioned nowhere between that declaration and
-// `k`, appears exactly once in `k`, and is never read afterwards. Together those
+// list from an array LITERAL, or from a local that resolves the same way at that
+// declaration (`var h = g` as g's last use), is mentioned nowhere between that
+// declaration and `k`, appears exactly once in `k`, and is never read
+// afterwards. Together those
 // say the arr-of-arr construction consumes the local, which is the invariant a
 // literal row gets for free: its buffer is born in the slot, so the deep reclaim
 // frees nothing anything else still reads.
@@ -51267,6 +51264,7 @@ function arrarr_row_effective(e: ast.Expr, stmts: ast.Stmt[], k: i32): ast.Expr 
                             decl = 0 - 1;
                             match (v.init) {
                                 ast.ExprArray(_) => { decl = j; },
+                                ast.ExprIdent(_) => { decl = j; },
                                 _ => {}
                             }
                         }
@@ -51283,7 +51281,7 @@ function arrarr_row_effective(e: ast.Expr, stmts: ast.Stmt[], k: i32): ast.Expr 
             }
             if (!rc_ml_last_use(stmts, id.name, k)) { return e; }
             match (stmts[decl]) {
-                ast.StmtVar(dv) => { return dv.init; },
+                ast.StmtVar(dv) => { return arrarr_row_effective(dv.init, stmts, decl); },
                 _ => { return e; }
             }
         },
@@ -51405,27 +51403,34 @@ function arrarr_row_store_strings_fresh(e: ast.Expr): boolean {
 // because the arr-of-arr class's own element hazard — a bound ROW pointer — is
 // checked separately by arrarr_row_escapes, which the credit applies alongside
 // this gate. The sanctioned form never descends into its own receiver, so
-// `g` appearing as the append receiver is not read as an escape.
-function arrarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg): boolean {
-    for stmt in stmts { if (stmt_arrarr_unsafe_for(stmt, name, borrowable, ofr)) { return true; } }
+// `g` appearing as the append receiver is not read as an escape. A `var v = g`
+// bind or a `v = g` / `g = v` assignment with `v` in `alias_ok` is a counted
+// share rather than an escape.
+function arrarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
+    for stmt in stmts { if (stmt_arrarr_unsafe_for(stmt, name, borrowable, ofr, alias_ok)) { return true; } }
     return false;
 }
-function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], ofr: SigReg): boolean {
+function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 if (arrarr_self_append_row(a.value, name, ofr) >= 0) { return false; }
+                // `name = h` from a member of the group retains, as a bind does.
+                match (a.value) {
+                    ast.ExprIdent(rid) => { return !alias_ok_holds_name(alias_ok, rid.name); },
+                    _ => {}
+                }
                 return true;   // any other reassignment of the candidate
             }
-            return expr_unsafe_for(a.value, name, borrowable, []);
+            return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok);
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, [])) { return true; }
-            return arrarr_unsafe_for(f.then_body, name, borrowable, ofr) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr);
+            return arrarr_unsafe_for(f.then_body, name, borrowable, ofr, alias_ok) || arrarr_unsafe_for(f.else_body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, [])) { return true; }
-            return arrarr_unsafe_for(w.body, name, borrowable, ofr);
+            return arrarr_unsafe_for(w.body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -51434,18 +51439,18 @@ function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, []); }
             }
             if (iter_unsafe) { return true; }
-            return arrarr_unsafe_for(fo.body, name, borrowable, ofr);
+            return arrarr_unsafe_for(fo.body, name, borrowable, ofr, alias_ok);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, [])) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, [])) { return true; }
-                if (arrarr_unsafe_for(arm.body, name, borrowable, ofr)) { return true; }
+                if (arrarr_unsafe_for(arm.body, name, borrowable, ofr, alias_ok)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr); },
-        _ => { return stmt_unsafe_for(st, name, borrowable, []); }
+        ast.StmtDefer(d) => { return stmt_arrarr_unsafe_for(d.action, name, borrowable, ofr, alias_ok); },
+        _ => { return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok); }
     }
     return false;
 }
@@ -53115,7 +53120,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], fn_reassigned: string
 function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[], alias_ok: string[]): boolean {
     if (!plan_on) { return !body_unsafe_for_alias(stmts, name, [], [], alias_ok); }
     return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name)
-        && opt_alias_chain_closure(stmts, name).len() == alias_ok.len();
+        && alias_chain_closure(stmts, name).len() == alias_ok.len();
 }
 
 // unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
@@ -81078,7 +81083,7 @@ while (si < strs.len()) {
     // the escape walker reads the source's use there as the share it is, and
     // takes the "STR:" credit alongside — the same "granting both is what makes
     // inc and dec co-extensive" this block already states for the bind.
-    var sra: string[] = str_alias_reassign_target_sites(body, snm, str_cands, body, []);
+    var sra: string[] = alias_reassign_target_sites(body, snm, str_cands, body, []);
     var sal_all: string[] = sal;
     var sri: i32 = 0;
     while (sri < sra.len()) { sal_all = push_str_unique(sal_all, sra[sri]); sri = sri + 1; }
@@ -81157,7 +81162,7 @@ var li2: i32 = 0;
 while (li2 < lits.len()) {
     var lnm: string = reclaim_site_name(lits[li2]);
     var lal: string[] = alias_bind_sites_of(body, lnm, borrowable, recv_borrow, body, []);
-    var lra: string[] = str_alias_reassign_target_sites(body, lnm, str_cands, body, []);
+    var lra: string[] = alias_reassign_target_sites(body, lnm, str_cands, body, []);
     var lri: i32 = 0;
     while (lri < lra.len()) { lal = push_str_unique(lal, lra[lri]); lri = lri + 1; }
     if (util.index_of_str(strs, lits[li2]) < 0
@@ -81417,19 +81422,120 @@ while (aai < aarrs.len()) {
     // each rebind individually (only `g = g.append(<row literal>)` passes)
     // and is otherwise body_unsafe_for, so it subsumes both former checks.
     // The string[] class has worked this way since #4355.
-    if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
-        && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
-        && !arrarr_row_escapes_iter(body, reclaim_site_name(aan), borrowable)) {
-        out = out.append("ARRARR:" + aan);
-        // STRICT string-kind credit only when every inner element proved
-        // fresh (slot_is_reclaimable_arrarr consults this one when the
-        // slot's type-aware arrarr_elem says the inners hold strings).
-        if (util.index_of_str(aarrs, "S|" + aan) >= 0) { out = out.append("ARRARRS:" + aan); }
+    if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')) {
+        out = credit_arrarr_group(out, aan, aarrs, body, borrowable, opt_fresh_ret);
     }
     aai = aai + 1;
 }
 
     return out;
+}
+
+// credit_arrarr_group credits the candidate at `site` together with every local
+// sharing its buffer (#10416): the `var v = <it>` alias chain, and each other
+// candidate reassigned only from the group (`h = g`). All or nothing. Each bind
+// and each such assignment retains the outer buffer, so every member holds a
+// counted reference, and __fern_arrarr_free walks the rows only at rc 1:
+// whichever owner releases last frees them. The string-kind credit
+// (slot_is_reclaimable_arrarr consults it for string inners) needs every
+// candidate in the group strings-fresh.
+function credit_arrarr_group(out: string[], site: string, cands: string[], body: ast.Stmt[], borrowable: string[], ofr: SigReg): string[] {
+    var nm: string = reclaim_site_name(site);
+    var group: string[] = arrarr_group_sites(body, site, cands);
+    var strict: boolean = true;
+    var i: i32 = 0;
+    while (i < group.len()) {
+        if (arrarr_owner_unsafe(body, reclaim_site_name(group[i]), borrowable, ofr, group)) { return out; }
+        if (util.index_of_str(cands, group[i]) >= 0 && util.index_of_str(cands, "S|" + group[i]) < 0) { strict = false; }
+        i = i + 1;
+    }
+    var o: string[] = credit_alias_sites(out, "ARRARR:", group);
+    if (strict) { o = credit_alias_sites(o, "ARRARRS:", group); }
+    return o;
+}
+
+// arrarr_group_sites: `site`, the alias chain bound off it, and the candidates
+// in `cands` reassigned from any of those.
+function arrarr_group_sites(body: ast.Stmt[], site: string, cands: string[]): string[] {
+    var group: string[] = [site];
+    var links: string[] = alias_chain_closure(body, reclaim_site_name(site));
+    var i: i32 = 0;
+    while (i < links.len()) { group = push_str_unique(group, links[i]); i = i + 1; }
+    var n: i32 = group.len();
+    i = 0;
+    while (i < n) {
+        var tgts: string[] = alias_reassign_target_sites(body, reclaim_site_name(group[i]), cands, body, []);
+        var j: i32 = 0;
+        while (j < tgts.len()) { group = push_str_unique(group, tgts[j]); j = j + 1; }
+        i = i + 1;
+    }
+    return group;
+}
+
+// arrarr_owner_unsafe: `name` may not take the arr-of-arr release — it escapes
+// (a share with a member of `alias_ok` excepted), or a row read from it does.
+function arrarr_owner_unsafe(body: ast.Stmt[], name: string, borrowable: string[], ofr: SigReg, alias_ok: string[]): boolean {
+    return arrarr_unsafe_for(body, name, borrowable, ofr, alias_ok) || arrarr_row_escapes_iter(body, name, borrowable);
+}
+
+// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested scalar-array
+// struct field, `r` a parameter or a single-declaration local. The bind retains
+// the field's buffer and the rows in it are counted — __struct_drop_<T> walks
+// them — so `p` is one more counted owner and may take the arr-of-arr release
+// on the same terms as an alias.
+function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab, acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (is_scalar_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            ast.StmtIf(f) => {
+                a = collect_arrarr_field_bind_sites(f.then_body, body, params, structs, a);
+                a = collect_arrarr_field_bind_sites(f.else_body, body, params, structs, a);
+            },
+            ast.StmtWhile(w) => { a = collect_arrarr_field_bind_sites(w.body, body, params, structs, a); },
+            ast.StmtFor(fo) => { a = collect_arrarr_field_bind_sites(fo.body, body, params, structs, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_arrarr_field_bind_sites(arm.body, body, params, structs, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// arrarr_field_bind_type: the declared type of the struct field `v` binds, or
+// "" when its init is not a named field of a parameter or a local whose struct
+// type the body states once. An annotation is that type, and is read first
+// because resolving the holder walks the body.
+function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
+    if (v.type_name.len() > 0 && !is_scalar_rows_type(v.type_name)) { return ""; }
+    match (v.init) {
+        ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) { return ""; }
+            match (fa.obj) {
+                ast.ExprIdent(oid) => {
+                    var oty: string = param_struct_type_of(params, oid.name, structs);
+                    if (oty.len() == 0 && !name_is_param(params, oid.name)) { oty = local_struct_type_of(body, oid.name, structs); }
+                    if (oty.len() == 0) { return ""; }
+                    return decl_field_type(structs, oty, fa.field);
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// is_scalar_rows_type: `t` is an array of scalar arrays (`i32[][]`, `f64[][]`),
+// whose rows __fern_arrarr_free releases whole with one dec each.
+function is_scalar_rows_type(t: string): boolean {
+    if (t.len() < 5 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
+    return is_leaksafe_array_field(slice_unchecked(t, 0, t.len() - 2));
 }
 
 function reclaimable_optaarr(body: ast.Stmt[], borrowable: string[], oaas: string[], plan_fe: string[], plan_on: boolean, reassigned: string[], recv_borrow: string[], out: string[]): string[] {
