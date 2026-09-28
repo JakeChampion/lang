@@ -382,34 +382,34 @@ function main(): i32 {
     var boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
     var boxOnlySchema = semrecords.Record { ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     var boxOnlyFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: selfGraph, values: [boxOnly], params: [boxOnly], result: boxOnly, records: [boxOnlySchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", boxOnlyFunc, [3], ssaunits.refused("no plan"), false).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: boxOnlyFunc, modes: [3], plan: ssaunits.refused("no plan"), method: false }]).return_fresh_struct_ret_fns, "mk") < 0) { return 30; }
     // A reference field is exactly what makes that sweep dangerous, so the same
     // shape one field over gets nothing and keeps the leak floor — here the
     // result is the borrowed parameter, a box its caller still owns.
     var withKids: typeinfo.Type = typeinfo.TypeStruct { name: "WithKids", args: [] };
     var withKidsSchema = semrecords.Record { ty: withKids, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     var withKidsFunc = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], graph: selfGraph, values: [withKids], params: [withKids], result: withKids, records: [withKidsSchema], enums: [], calls: [] };
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [3], ssaunits.refused("no plan"), false).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), method: false }]).return_fresh_struct_ret_fns, "mk") >= 0) { return 31; }
     var passPlan = ssaunits.plan(withKidsFunc, [2]);
     if (!passPlan.ok) { eprint(passPlan.why); return 108; }
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", withKidsFunc, [2], passPlan, false).return_fresh_struct_ret_fns, "mk") >= 0) { return 109; }
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [2], plan: passPlan, method: false }]).return_fresh_struct_ret_fns, "mk") >= 0) { return 109; }
     // A record the body builds is the caller's only reference, whatever the
     // counts on its fields (#10415). A method's row goes under the
     // Base.name key its AST callers look it up by, and nowhere else.
-    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", recordFunc, [2], recordPlan, false).return_fresh_struct_ret_fns, "mk") < 0) { return 201; }
-    var methodSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "Rec.mk", recordFunc, [2], recordPlan, true);
+    if (util.index_of_str(ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: recordFunc, modes: [2], plan: recordPlan, method: false }]).return_fresh_struct_ret_fns, "mk") < 0) { return 201; }
+    var methodSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "Rec.mk", f: recordFunc, modes: [2], plan: recordPlan, method: true }]);
     if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "Rec.mk") < 0) { return 202; }
     if (util.index_of_str(methodSigs.return_fresh_struct_ret_fns, "mk") >= 0) { return 203; }
     // The parameter rows come from the contract, not the syntax: a borrowed
     // reference parameter is the retained-keep row, and without a plan to show
     // it keeps nothing never the bare one; a counted or scalar parameter has
     // neither.
-    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), "mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 3], ssaunits.refused("no plan"), false);
+    var rowSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "mk", f: ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, modes: [2, 1, 3], plan: ssaunits.refused("no plan"), method: false }]);
     var rowAll: string = "";
     for bucket in rowSigs.borrowable_params { rowAll = rowAll + bucket; }
     if (!has_sub(rowAll, "CNT:mk|100\n") || has_sub("\n" + rowAll, "\nmk|")) { return 130; }
     if (util.index_of_str(rowSigs.param_counted, "PCNT:mk|100") < 0 || rowSigs.param_counted.len() != 1) { return 132; }
-    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, "mk", withKidsFunc, [3], ssaunits.refused("no plan"), false);
+    var rowNone = ssarc.caller_sigs(irlower.FnSigs { ...rowSigs, borrowable_params: irlower.borrow_reg_set(rowSigs.borrowable_params, "mk", "1") }, [ssarc.Callee { name: "mk", f: withKidsFunc, modes: [3], plan: ssaunits.refused("no plan"), method: false }]);
     rowAll = "";
     for bucket in rowNone.borrowable_params { rowAll = rowAll + bucket; }
     if (has_sub("\n" + rowAll, "\nmk|")) { return 131; }
@@ -417,11 +417,24 @@ function main(): i32 {
     // the AST's per-parameter rows, which start at the first declared
     // parameter (#10515). The rows its syntax gave are replaced.
     var methodRows = ssarc.caller_sigs(irlower.FnSigs { ...irlower.fn_sigs_empty(), borrowable_params: irlower.borrow_reg_set([], "W.mk", "11"),
-        param_counted: ["PCNT:W.mk|11"] }, "W.mk", ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, [2, 1, 2], ssaunits.refused("no plan"), true);
+        param_counted: ["PCNT:W.mk|11"] }, [ssarc.Callee { name: "W.mk", f: ssasem.Func { ...withKidsFunc, params: [withKids, i32ty, withKids] }, modes: [2, 1, 2], plan: ssaunits.refused("no plan"), method: true }]);
     rowAll = "";
     for bucket in methodRows.borrowable_params { rowAll = rowAll + bucket; }
     if (!has_sub(rowAll, "CNT:W.mk|01\n") || has_sub("\n" + rowAll, "\nW.mk|")) { eprint(rowAll); return 204; }
     if (util.index_of_str(methodRows.param_counted, "PCNT:W.mk|01") < 0 || methodRows.param_counted.len() != 1) { return 205; }
+    // Callees are rewritten together: each one's rows are erased and its own
+    // appended in callee order, while a row keyed by another name, or a counted
+    // row with no flags, stays where it was.
+    var both = ssarc.caller_sigs(irlower.FnSigs { ...irlower.fn_sigs_empty(),
+        return_fresh_struct_ret_fns: ["ARR:mk", "keep", "ENUM:mk2", "ARR:mkx|1"],
+        param_counted: ["PCNT:mk|1", "PCNT:mk", "PCNT:other|1"] },
+        [ssarc.Callee { name: "mk", f: recordFunc, modes: [2], plan: recordPlan, method: false },
+         ssarc.Callee { name: "mk2", f: recordFunc, modes: [2], plan: recordPlan, method: false }]);
+    var arrs: string[] = both.return_fresh_struct_ret_fns;
+    if (arrs.len() < 4 || arrs[0] != "keep" || arrs[1] != "ARR:mkx|1") { return 207; }
+    if (util.index_of_str(arrs, "ARR:mk") >= 0 || util.index_of_str(arrs, "ENUM:mk2") >= 0) { return 208; }
+    if (util.index_of_str(arrs, "CNTRET:mk") < 0 || util.index_of_str(arrs, "CNTRET:mk") > util.index_of_str(arrs, "CNTRET:mk2")) { return 209; }
+    if (both.param_counted.len() < 2 || both.param_counted[0] != "PCNT:mk" || both.param_counted[1] != "PCNT:other|1") { return 210; }
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -433,12 +446,14 @@ function main(): i32 {
     // A borrowed parameter the plan shows the callee keeps nothing of (no
     // retain, nothing handed on) earns the bare row as well as the counted one.
     var lenRows: string = "";
-    for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "len", arrLen, [2], arrLenPlan, false).borrowable_params { lenRows = lenRows + bucket; }
+    var lenSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "len", f: arrLen, modes: [2], plan: arrLenPlan, method: false }]);
+    for bucket in lenSigs.borrowable_params { lenRows = lenRows + bucket; }
     if (!has_sub("\n" + lenRows, "\nlen|1\n")) { eprint(lenRows); return 194; }
     // The same body as a method keeps nothing of its receiver, which the AST
     // rows have no position for, so it writes no parameter row at all.
     lenRows = "";
-    for bucket in ssarc.caller_sigs(irlower.fn_sigs_empty(), "Arr.len", arrLen, [2], arrLenPlan, true).borrowable_params { lenRows = lenRows + bucket; }
+    lenSigs = ssarc.caller_sigs(irlower.fn_sigs_empty(), [ssarc.Callee { name: "Arr.len", f: arrLen, modes: [2], plan: arrLenPlan, method: true }]);
+    for bucket in lenSigs.borrowable_params { lenRows = lenRows + bucket; }
     if (has_sub(lenRows, "len|")) { eprint(lenRows); return 206; }
     var arrLenLowered = ssarc.lower(arrLen, [2], arrLenPlan, irlower.struct_tab_empty(), []);
     if (!arrLenLowered.ok) { eprint(arrLenLowered.why); return 33; }
