@@ -1069,10 +1069,10 @@ function main(): i32 {
     var sawIntStrFree: boolean = false;
     for o in dropIntStrLowered.ops { if (o.str == "__map_drop_strcols_impl") { sawIntStrFree = true; } }
     if (!sawIntStrFree) { return 173; }
-    // The free of a column of boxes takes the value's release as a second
-    // argument, a function value the lowering also emits as a helper; an
-    // insert into it names the same release (value kind 3, width bits 4 and
-    // 5) for the entry it supersedes.
+    // A column of boxes on core/map is dropped through __map_drop_boxes_impl,
+    // handed the value's release as a closure over an environment-first
+    // wrapper the lowering emits beside the release itself; an insert reads
+    // out the box it may supersede and releases it through the same release.
     var dropArrMap = ssasem.Func { ...dropIntMap, values: [arrMapTy, i32ty], params: [arrMapTy] };
     var dropArrLowered = ssarc.lower(dropArrMap, [3], ssaunits.plan(dropArrMap, [3]), irlower.struct_tab_empty(), []);
     if (!dropArrLowered.ok) { eprint(dropArrLowered.why); return 187; }
@@ -1080,13 +1080,17 @@ function main(): i32 {
     var sawArrFree: boolean = false;
     var sawArrRelease: boolean = false;
     for o in dropArrLowered.ops {
-        if (o.kind_tag == 149 && o.str == "__fern_map_free_ksvf" && o.i32_imm == 2) { sawArrFree = true; }
-        if (o.kind_tag == 6 && o.str == releaseName) { sawArrRelease = true; }
+        if (ir.render_op(o) == "call_direct __map_drop_boxes_impl/2") { sawArrFree = true; }
+        if (ir.render_op(o) == "const_closure " + releaseName + "$env") { sawArrRelease = true; }
     }
     if (!sawArrFree || !sawArrRelease) { return 188; }
     var sawHelper: boolean = false;
-    for h in ssarc.drop_helpers(dropArrMap) { if (h.name == releaseName && h.n_params == 1) { sawHelper = true; } }
-    if (!sawHelper) { return 189; }
+    var sawEnvHelper: boolean = false;
+    for h in ssarc.drop_helpers(dropArrMap) {
+        if (h.name == releaseName && h.n_params == 1) { sawHelper = true; }
+        if (h.name == releaseName + "$env" && h.n_params == 2) { sawEnvHelper = true; }
+    }
+    if (!sawHelper || !sawEnvHelper) { return 189; }
     var arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
@@ -1096,10 +1100,14 @@ function main(): i32 {
     var arrInsertLowered = ssarc.lower(arrInsert, [3, 3, 3], arrInsertPlan, irlower.struct_tab_empty(), []);
     if (!arrInsertLowered.ok) { eprint(arrInsertLowered.why); return 191; }
     var sawArrSet: boolean = false;
+    var sawOldRead: boolean = false;
+    var sawOldRelease: boolean = false;
     for o in arrInsertLowered.ops {
-        if (o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1 && o.str == releaseName) { sawArrSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_set_impl") { sawArrSet = true; }
+        if (o.kind_tag == 149 && o.str == "__map_lookup_val") { sawOldRead = true; }
+        if (o.kind_tag == 149 && o.str == releaseName) { sawOldRelease = true; }
     }
-    if (!sawArrSet) { return 192; }
+    if (!sawArrSet || !sawOldRead || !sawOldRelease) { return 192; }
     var intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
             ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
