@@ -92,12 +92,11 @@ above is the first run of it.
    it. Gates that compare self-host codegen against native codegen go with
    the backends or are re-anchored on the interpreter, in the deletion PRs.
 4. **The non-compiler consumers** — the playground runs on the self-host
-   compiler since 2026-09-28 (`PLAYGROUND-SELFHOST-WASM.md`, top). The
-   self-host compiler has had `wasm32-wasi-http` since the same day (#6636:
-   `std/wasi_http` is the entry, `wit_compose.fern` the framing, and the
-   native component is the differential's other side), so the page's http
-   panes can move to `playground.wasm` the way the others did; until that
-   switch lands they still call `cmd/fern-wasm`'s two http entry points, and
-   `internal/codegen/wasmbin`'s handler wrapper stays for them. The
-   language server (#6641) is the Go front end the freeze keeps and does
-   not touch the backends; `cmd/fern-lsp` is the same front end.
+   compiler since 2026-09-28 (`PLAYGROUND-SELFHOST-WASM.md`, top), the
+   wasi:http world included: the self-host compiler has had
+   `wasm32-wasi-http` since the same day (#6636: `std/wasi_http` is the
+   entry, `wit_compose.fern` the framing, and the native component is the
+   differential's other side), and the page's http panes run on it. What
+   `cmd/fern-wasm` still carries is the language server (#6641), the Go
+   front end the freeze keeps, which does not touch the backends;
+   `cmd/fern-lsp` is the same front end.

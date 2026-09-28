@@ -18,16 +18,16 @@ component is `-emit component`. Every form is the CLI's own pipeline, and
 `fern`. The page's examples and the docs' embeds run through the driver in
 `TestSelfHostPlaygroundExamples` / `TestSelfHostDocsPlaygroundEmbeds`.
 
+The wasi:http world runs on the same driver: Run (wasm) is `-target
+wasm32-wasi-http -emit core-module`, the handler core `web/wasi-http-shim.js`
+instantiates, and Build component is that target's `-emit component`
+(#6636). `TestSelfHostPlaygroundExamples` drives the page's handler example
+through both forms.
+
 `web/fern.wasm`, the Go toolchain under `GOOS=js`, is down to the language
-server behind diagnostics, hover and completion (`fernLsp`, #6641) and the
-two wasi:http entry points (`fernCompileHttpComponent`,
-`fernCompileHttpHandlerCore`). The self-host compiler emits for that world
-too — `fern.fern -target wasm32-wasi-http` (#6636), with `-emit core-module`
-producing the handler core `web/wasi-http-shim.js` instantiates and the
-default form the component — and `playground_run.fern` takes the same target
-and forms, so the page's http panes can move to `playground.wasm` the way the
-other panes did. Everything below is the measurement
-and the reasoning that led here, kept as written.
+server behind diagnostics, hover and completion (`fernLsp`, #6641).
+Everything below is the measurement and the reasoning that led here, kept
+as written.
 
 ## Headline
 
