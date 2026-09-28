@@ -5,8 +5,9 @@ import "std/string";
 // examples/tests/http_request_bytes_test.fern — the byte-based request
 // parser (#5714): `http_parse_request_bytes` reads the request as it came
 // off the wire, and `http_parse_request` is the same parse over text. The
-// two must agree on every request, well-formed or not, and what the parse
-// keeps must be owned copies, so the wire buffer is free to be reused.
+// two must agree on every request, well-formed or not, and nothing the
+// parse keeps may be a view into the wire, so the buffer is free to be
+// reused.
 
 function wire_post(): string {
     return "POST /echo HTTP/1.1\r\nHost: example.test\r\nX-Request-Id: 42\r\nContent-Length: 5\r\n\r\nhello";
@@ -89,12 +90,14 @@ function test_refusals_agree(): test.TestOutcome {
     return test.pass();
 }
 
-function test_parse_copies_out_of_the_wire(): test.TestOutcome {
+function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
     var wire: u8[] = wire_post().bytes();
     match (http.http_parse_request_bytes(wire)) {
         Some(req) => {
             // Overwrite the wire buffer after the parse: the request must
-            // not see it.
+            // not see it. A counted alias would be copied on write and pass
+            // here too, so what this pins is that no field is an uncounted
+            // view (a `str`, a slice) into the wire.
             var i: i32 = 0;
             while (i < wire.len()) { wire = wire.with(i, 120 as u8); i = i + 1; }
             if (req.path != "/echo") { return test.fail("the path aliased the wire buffer"); }
@@ -112,6 +115,6 @@ function main(): i32 {
     r = r.it("bare request has no headers", test_bare_request_has_no_headers);
     r = r.it("header without colon is skipped", test_header_without_colon_is_skipped);
     r = r.it("refusals agree", test_refusals_agree);
-    r = r.it("parse copies out of the wire", test_parse_copies_out_of_the_wire);
+    r = r.it("parse holds no view into the wire", test_parse_holds_no_view_into_the_wire);
     return r.finish();
 }
