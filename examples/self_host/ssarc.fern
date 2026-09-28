@@ -3802,11 +3802,11 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
 // for the callers the AST lowering still emits: irlower.grow_param_flags_of's
 // mask — one token per position, the receiver's first and then one per
 // parameter — "0", "1" for an array parameter's own buffer, or "F:<field>,…"
-// naming a record parameter's fields. A free function's receiver position
-// carries "0".
-pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], method: boolean): string {
+// naming a record parameter's fields. A function with no receiver, an
+// associated function included, carries "0" in that position.
+pub function grow_mask(callee: string, f: ssasem.Func, rows: ssaunits.GrowRow[], receiver: boolean): string {
     var mask: string = "";
-    if (!method) { mask = "0"; }
+    if (!receiver) { mask = "0"; }
     var i: i32 = 0;
     while (i < f.params.len()) {
         var tok: string = "0";
@@ -3845,9 +3845,10 @@ pub function consumed_array_rows(key: string, f: ssasem.Func, modes: i32[]): str
 }
 
 // A produced function whose rows caller_sigs rewrites. `name` is the key an
-// AST caller looks it up by, `<Base>.<name>` for a method, whose receiver is
-// parameter 0 here but has no position in the AST's per-parameter rows.
-pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, method: boolean }
+// AST caller looks it up by, `<Base>.<name>` for a method. `receiver` says
+// parameter 0 is a receiver, which has no position in the AST's per-parameter
+// rows; an associated function has none.
+pub struct Callee { name: string, f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, receiver: boolean }
 
 // caller_sigs rewrites every callee's rows at once: each registry is filtered
 // in one pass against all the callees' keys, then each callee's rows are
@@ -3903,7 +3904,7 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
             counted = counted.append(name);
         }
         var first: i32 = 0;
-        if (c.method) { first = 1; }
+        if (c.receiver) { first = 1; }
         var tiers: string[] = counted_tiers(f, c.modes, first);
         params = tier_rows(params, name, tiers);
         borrows = borrow_rows(borrows, name, tiers, bare_flags(f, c.modes, c.plan, first));
