@@ -33,22 +33,26 @@ var u64MixWidthIRCases = []struct {
 	{"u32-field-static-distinct", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 30 }; var q: P = P { x: 12 }; var s: u64 = 0; return (s + p.x + q.x) as i32; }`},
 	// A u32 literal past 2^31 or in hex is not a static word, so its record is
 	// on the heap, as is one built from a parameter. 4000000000 - 3999999958 = 42.
-	{"u32-field-heap-high", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 4000000000 }; var s: u64 = 0; return ((s + p.x) - 3999999958) as i32; }`},
+	{"u32-field-heap-high", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 4000000000 }; var s: u64 = 0; if (s + p.x == 4000000000) { return 42; } return 7; }`},
 	{"u32-field-heap-hex", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 0x1E }; var s: u64 = 12; return (s + p.x) as i32; }`},
 	{"u32-field-heap-param", `struct P { x: u32 } @noinline function mk(v: u32): P { return P { x: v }; } function main(): i32 { var p: P = mk(12); var s: u64 = 30; return (s + p.x) as i32; }`},
-	{"u32-field-heap-param-high", `struct P { x: u32 } @noinline function mk(v: u32): P { return P { x: v }; } function main(): i32 { var p: P = mk(4000000000); var s: u64 = 0; return ((p.x + s) - 3999999958) as i32; }`},
+	{"u32-field-heap-param-high", `struct P { x: u32 } @noinline function mk(v: u32): P { return P { x: v }; } function main(): i32 { var p: P = mk(4000000000); var s: u64 = 0; if (p.x + s == 4000000000) { return 42; } return 7; }`},
+	// A u32-returning call past 2^31 zero-extends too.
+	{"u32-call-high", `@noinline function f(): u32 { return 4000000000; } function main(): i32 { var s: u64 = 5; if (s + f() == 4000000005) { return 42; } return 7; }`},
 	// u64 + u32 tuple element. 30 + 12 = 42.
 	{"u32-tuple", `function main(): i32 { var t: (u32, u32) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
 	// A u8 local, field, tuple element or variant payload widens like a u32
-	// one, into a u64 or a u32. 255 - 213 = 42; 4000000000 + 200 - 4000000158 = 42.
-	{"u8-ident", `function main(): i32 { var b: u8 = 200; var s: u64 = 30; return ((s + b) - 188) as i32; }`},
-	{"u8-ident-u32-high", `function main(): i32 { var b: u8 = 200; var s: u32 = 4000000000; return ((s + b) - 4000000158) as i32; }`},
+	// one, into a u64 or a u32. A value of 128 or more compares against its
+	// zero-extended sum, since an exit code cannot tell it from the
+	// sign-extended one: the two differ by exactly 256.
+	{"u8-ident", `function main(): i32 { var b: u8 = 200; var s: u64 = 30; if (s + b == 230) { return 42; } return 7; }`},
+	{"u8-ident-u32-high", `function main(): i32 { var b: u8 = 200; var s: u32 = 4000000000; if (s + b == 4000000200) { return 42; } return 7; }`},
 	{"u8-field-u32", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u32 = 30; return (s + p.x) as i32; }`},
 	{"u8-payload", `@noinline function f(b: u8): Result[u64, string] { return Ok(b); } function main(): i32 { match (f(42)) { Ok(v) => { return v as i32; }, Err(_) => { return 1; } } }`},
 	{"u8-field", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; return (s + p.x) as i32; }`},
 	{"u8-field-lhs-bound", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; var r: u64 = p.x + s; return r as i32; }`},
-	{"u8-field-heap-max", `struct P { x: u8 } @noinline function mk(v: u8): P { return P { x: v }; } function main(): i32 { var p: P = mk(255); var s: u64 = 0; return ((s + p.x) - 213) as i32; }`},
-	{"u8-tuple", `function main(): i32 { var t: (u8, u8) = (200, 7); var s: u64 = 30; return ((s + t.0) - 188) as i32; }`},
+	{"u8-field-heap-max", `struct P { x: u8 } @noinline function mk(v: u8): P { return P { x: v }; } function main(): i32 { var p: P = mk(255); var s: u64 = 0; if (s + p.x == 255) { return 42; } return 7; }`},
+	{"u8-tuple", `function main(): i32 { var t: (u8, u8) = (200, 7); var s: u64 = 30; if (s + t.0 == 230) { return 42; } return 7; }`},
 	// u64 + u32[] element across a reduction. 10+20+30 = 60.
 	{"u32-arr", `function main(): i32 { var a: u32[] = [10,20,30]; var s: u64 = 0; for i in 0..3 { s = s + a[i]; } return s as i32; }`},
 	// Regression: the i64 + i32 family is unchanged by the u32 admission, and a
@@ -58,8 +62,8 @@ var u64MixWidthIRCases = []struct {
 }
 
 // TestSelfHostU64MixWidthIR compiles each case with the self-host CLI for
-// x86-64, arm64 and wasm under both lowerings, with an IR bail an error, and
-// checks the exit code against the interpreter.
+// x86-64, arm64 and wasm under both lowerings, treating an IR bail as an
+// error, and checks the exit code against the interpreter.
 func TestSelfHostU64MixWidthIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
