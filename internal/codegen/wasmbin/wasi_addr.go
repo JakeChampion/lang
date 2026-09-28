@@ -15,12 +15,9 @@ import (
 // scope id. __fern_ip_flat writes that flattening to a 48-byte record
 // once, and each bind, connect and stream pushes its twelve words from
 // there.
-//
-// The record and the two boxes below live in the module's reserved low
-// memory rather than the heap: a socket body consumes them before it
-// returns and none holds one across a call into another socket body, and
-// an allocation here would show as one more `__heap_alloc_count()` tick
-// per call, which the guest storage probes pin at exactly one.
+// The record (ipFlatAddr) and the two packed-IPv4 boxes (ipBoxAddr,
+// ipBox2Addr) are scratch slots of the derived memory map in
+// memlayout.go, which says why they are not heap allocations.
 
 // errnoSocketAddressFamily is EAFNOSUPPORT in the Preview 1 errno namespace
 // used by socket return values.
@@ -28,17 +25,6 @@ const errnoSocketAddressFamily = 5
 
 // ipFlatSize is the byte size of the record __fern_ip_flat writes.
 const ipFlatSize = 48
-
-// ipFlatAddr is the record's fixed address (wasmbin.go's memory map).
-const ipFlatAddr = 96
-
-// ipBoxAddr and ipBox2Addr are two fixed 8-byte `u8[]` boxes, a length
-// word of 4 then four octets, for the bodies that still take a packed
-// IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
-const (
-	ipBoxAddr  = 144
-	ipBox2Addr = 152
-)
 
 // emitIpBox sets local `box` to a fixed box's DATA pointer, with the
 // length word written and the octets set from local `packed`, or zero for

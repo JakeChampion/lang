@@ -233,8 +233,22 @@ const (
 	// program no longer had.
 	lcRetBufAddr = lcLineBufEnd
 
+	// ipFlatAddr is the 48-byte wasi:sockets ip-socket-address record
+	// __fern_ip_flat writes (wasi_addr.go): the family discriminant and
+	// the eleven payload words each bind, connect and stream pushes.
+	// ipBoxAddr and ipBox2Addr are two 8-byte `u8[]` boxes, a length word
+	// of 4 then four octets, for the bodies that still take a packed IPv4
+	// address (tcp_connect, udp_send) and bind to 0.0.0.0. Scratch rather
+	// than heap: a socket body consumes them before it returns and none
+	// holds one across a call into another socket body, and an allocation
+	// here is one more `__heap_alloc_count()` tick per call, which the
+	// guest storage probes pin at exactly one.
+	ipFlatAddr = lcRetBufAddr + 16
+	ipBoxAddr  = ipFlatAddr + 48
+	ipBox2Addr = ipBoxAddr + 8
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = lcRetBufAddr + 16
+	scratchEnd = ipBox2Addr + 8
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot
