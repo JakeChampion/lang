@@ -423,6 +423,43 @@ function flag_source(ops: ir.Op[], if_at: i32): i32 {
     return 0 - 1;
 }
 
+// A miss here falls through to read_site's own skip, so it carries no reason.
+function no_keep(): Site {
+    return Site { ok: false, why: "", have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
+}
+
+// read_keep_site recognises the self-host's kept-field reuse (ssarc.keep_token,
+// keep_release). There the select before the allocation releases the donor on
+// `token != 0` rather than on a uniqueness flag: the proof is an earlier select
+// that tested the donor and stored it, or null, into the token slot. That
+// earlier select supplies the gate and the token source, and the later one's
+// else arm the decline release.
+function read_keep_site(ops: ir.Op[], span: IfSpan, end_at: i32, token_slot: i32): Site {
+    var at: i32 = span.if_at;
+    if (at < 3 || !is_kind(ops[at - 1], "ne") || !is_kind(ops[at - 2], "const_i32") || ops[at - 2].i32_imm != 0
+        || !is_kind(ops[at - 3], "load_local") || ops[at - 3].i32_imm != token_slot) {
+        return no_keep();
+    }
+    var k: i32 = at - 4;
+    while (k >= 2) {
+        if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
+            && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
+            var sel: IfSpan = match_if_backwards(ops, k);
+            if (!sel.ok || sel.else_at < 0) { return no_keep(); }
+            var gate: GateRead = gate_slot(ops, sel.if_at);
+            if (gate.code != 0) { return no_keep(); }
+            var tok: SlotFind = sole_token_source(ops, sel.if_at + 1, sel.else_at, token_slot);
+            if (!tok.ok) { return no_keep(); }
+            var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+            if (!dec.ok) { return no_keep(); }
+            return Site { ok: true, why: "", have_dec: dec.found, gate: gate.slot, token: tok.slot, dec: dec.slot,
+                gate_at: sel.if_at - 3, token_at: tok.at, dec_at: dec.at };
+        }
+        k = k - 1;
+    }
+    return no_keep();
+}
+
 // read_site recognises the reuse site whose allocator call is at `call`.
 function read_site(ops: ir.Op[], call: i32): Site {
     var tok_at: i32 = token_arg_slot(ops, call);
@@ -437,6 +474,10 @@ function read_site(ops: ir.Op[], call: i32): Site {
     if (span.else_at < 0) { return site_skip("token select has no decline arm"); }
 
     var gate: GateRead = gate_slot(ops, span.if_at);
+    if (gate.code == 2) {
+        var kept: Site = read_keep_site(ops, span, end_at, token_slot);
+        if (kept.ok) { return kept; }
+    }
     if (gate.code == 1) { return site_skip("no uniqueness gate before the token select"); }
     if (gate.code == 2) { return site_skip("token select is not conditioned on a local"); }
 

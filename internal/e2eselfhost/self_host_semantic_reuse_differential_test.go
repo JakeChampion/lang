@@ -339,18 +339,44 @@ function main(): i32 {
     return a.names.len() * 10 + keep.names.len() + keep.tag.len() + a.tag.len() + keep.n;
 }`, 33, 1, 1, 5, 6, false, false},
 
-	// A field carried over into its own slot AND copied into another: the
-	// donor's slot holds one unit and the two operands need two, so the field
-	// is not kept in place and both operands take their unit as before.
-	{"update-duplicate-operand", `struct P { a: string, b: string, n: i32 }
+	// A field carried over into its own slot AND copied into another. The two
+	// are distinct reads of slot 0: the carried-over one is kept in place, and
+	// the copy, placed at slot 1, is not a read of its own slot, so it takes
+	// its unit as before.
+	{"update-duplicate-operand", `struct P { a: i32[], b: i32[], n: i32 }
 function dup(own p: P): P { p = P { ...p, b: p.a, n: p.n + 1 }; return p; }
-function main(): i32 {
-    var p: P = P { a: "xy" + "z", b: "q" + "r", n: 0 };
+function run(k: i32): i32 {
+    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
     var i: i32 = 0;
     while (i < 4) { p = dup(p); i = i + 1; }
-    if (__rc_underflow_count() != 0) { return 99; }
     return p.n * 10 + p.a.len() + p.b.len();
-}`, 46, 1, 0, 1, 5, false, false},
+}
+function main(): i32 {
+    var r: i32 = run(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r;
+}`, 44, 1, 0, 3, 7, false, false},
+
+	// One local named in two field positions is ONE operand value appearing
+	// twice. The donor's slot holds one unit and the construction needs two,
+	// so the field is not kept and both positions take their unit as before.
+	{"update-local-in-two-slots", `struct P { a: i32[], b: i32[], n: i32 }
+function twice(own p: P): P {
+    var x: i32[] = p.a;
+    p = P { ...p, a: x, b: x, n: p.n + 1 };
+    return p;
+}
+function run(k: i32): i32 {
+    var p: P = P { a: [k, k + 1], b: [k + 2], n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { p = twice(p); i = i + 1; }
+    return p.n * 10 + p.a.len() + p.b.len();
+}
+function main(): i32 {
+    var r: i32 = run(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r;
+}`, 44, 1, 0, 3, 7, false, false},
 
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {

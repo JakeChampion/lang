@@ -1308,7 +1308,7 @@ function is_array(t: typeinfo.Type): boolean {
     return false;
 }
 
-function occurrences(xs: i32[], v: i32): i32 {
+pub function occurrences(xs: i32[], v: i32): i32 {
     var n: i32 = 0;
     for x in xs { if (x == v) { n = n + 1; } }
     return n;

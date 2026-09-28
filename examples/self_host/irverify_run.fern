@@ -496,6 +496,40 @@ function selfhost_reuse(gate: i32, token: i32): ir.Op[] {
     ];
 }
 
+// keep_reuse builds ssarc's kept-field shape: keep_token's select, a read in
+// between, then keep_release's select on the token, the donor cleared, and the
+// allocation.
+function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
+    return [
+        ir.op_load_local(gate),
+        ir.op_call_direct("__fern_rc_is_unique", 1),
+        ir.op_if(0),
+        ir.op_load_local(token),
+        ir.op_store_local(4),
+        ir.op_else(),
+        ir.op_const_i32(0),
+        ir.op_store_local(4),
+        ir.op_end(),
+        ir.op_load_local(gate),
+        ir.op_struct_get(1, 0),
+        ir.op_store_local(5),
+        ir.op_load_local(4),
+        ir.op_const_i32(0),
+        ir.op_bin("ne", 0, false),
+        ir.op_if(0),
+        ir.op_else(),
+        ir.op_load_local(dec),
+        ir.op_call_direct("__fern_rc_dec", 1),
+        ir.op_drop(),
+        ir.op_end(),
+        ir.op_const_i32(0),
+        ir.op_store_local(gate),
+        ir.op_load_local(4),
+        ir.op_const_i32(3),
+        ir.op_call_direct("__fern_alloc_reuse", 2)
+    ];
+}
+
 // native_reuse builds emitReuseToken's shape, which the same pass must also
 // model: the flag stored and loaded back, a header-subtracting token take, an
 // rc_dec decline, the donor-slot zeroing, and a three-argument allocator.
@@ -664,6 +698,18 @@ function rc_checks(): i32 {
     var distinct: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
     var di: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", distinct);
     if (di.checked != 2 || di.problems.len() != 0) { return 217; }
+
+    // ---- a kept-field reuse is modelled through its earlier select ------
+    // ssarc.keep_token proves the donor unique and stores it, or null, into
+    // the token slot; keep_release then branches on the token itself. The gate
+    // and the token source come from the first select, the decline release
+    // from the second.
+    var kc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
+    if (kc.checked != 1 || kc.problems.len() != 0) { return 218; }
+    var kt: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 2, 1));
+    if (kt.checked != 1 || kt.problems.len() != 1 || !util.contains(kt.problems[0].msg, "never proved unique")) { return 219; }
+    var kd: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 2));
+    if (kd.checked != 1 || kd.problems.len() != 1 || !util.contains(kd.problems[0].msg, "leaks on the decline path")) { return 220; }
 
     // ---- coverage renders the tally and the grouped reasons ------------
     if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) { return 209; }

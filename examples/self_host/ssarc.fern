@@ -1218,7 +1218,7 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
             var i: i32 = util.index_of_i32(ins.args, get.result);
             // Once: the donor's slot holds one unit, which a second operand
             // naming the same value would need a retain of its own for.
-            if (i == get.imm && !slots[i] && occurrences(ins.args, get.result) == 1) {
+            if (i == get.imm && !slots[i] && ssaunits.occurrences(ins.args, get.result) == 1) {
                 values = values.append(get.result);
                 slots = slots.with(i, true);
                 if (start < 0) { start = pos; }
@@ -1268,12 +1268,6 @@ function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlo
         pos = pos + 1;
     }
     return out;
-}
-
-function occurrences(xs: i32[], v: i32): i32 {
-    var n: i32 = 0;
-    for x in xs { if (x == v) { n = n + 1; } }
-    return n;
 }
 
 function kept_values(k: Keeps): i32[] {
