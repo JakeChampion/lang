@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -156,6 +157,22 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatal(err)
 		}
 	}
+	cork := func(conn net.Conn) {
+		t.Helper()
+		raw, err := conn.(*net.TCPConn).SyscallConn()
+		if err == nil {
+			ctlErr := raw.Control(func(fd uintptr) {
+				err = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, tcpCorkOpt, 1)
+			})
+			if ctlErr != nil {
+				err = ctlErr
+			}
+		}
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+	}
 	halfClose := func(conn net.Conn) {
 		t.Helper()
 		if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
@@ -192,17 +209,19 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
 		// A pipeline of 33 requests whose peer half-closes behind them. The
-		// server may or may not read the end of stream with the first 32
-		// (that is a race on the wire), but the 33rd is answered from the
-		// backlog on a later wait, once the end of stream has certainly
-		// arrived, so its response must say close, since the close follows
-		// it; the 32 before it persist either way.
+		// socket is corked, so the requests and the end of stream arrive in
+		// one segment: the 33rd is answered from the backlog on a later wait,
+		// after the end of stream, so its response must say close. The 32
+		// before it are answered in the first burst and persist. Uncorked, the
+		// end of stream could arrive after the 33rd's answer, which is then
+		// correctly keep-alive.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
 		for i := 0; i < 33; i++ {
 			fmt.Fprintf(&pipeline, "GET /q%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
+		cork(conn)
 		write(conn, pipeline.String())
 		halfClose(conn)
 		for i := 0; i < 32; i++ {
