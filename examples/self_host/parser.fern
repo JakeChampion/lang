@@ -17514,17 +17514,17 @@ pub function infer_ret_types_module(mod: Module): Module {
 //     (assignments are always statements; the only expr carrying statements is
 //     a lambda, which cannot touch the outer bindings).
 //
-// An access is marked only when `0 <= i < len(arr)` is syntactically provable:
+// An access is marked only when `0 <= i < arr.len()` is syntactically provable:
 //   - the guard is exactly `i < arr.len()` (strict `<`, both operands bare
-//     idents) — the upper bound `i < len`;
+//     idents) — the upper bound;
 //   - `i` starts at a non-negative integer literal in the statement immediately
 //     before the loop, and every assignment to `i` in the body is
 //     `i = i + <non-negative int literal>` — so `i` is monotonic non-decreasing
 //     and never drops below 0 (the check also guards NEGATIVE indices);
 //   - `arr` is never reassigned and neither `i` nor `arr` is rebound (shadowed)
-//     in the body — so `len(arr)` and the binding stay invariant;
+//     in the body — so `arr.len()` and the binding stay invariant;
 //   - the access precedes the first statement that assigns `i` (a read after an
-//     increment could reach `len`).
+//     increment could reach `arr.len()`).
 // Accesses inside a lambda / defer body are never marked: that code runs later,
 // when `i` may have advanced past `len`.
 
