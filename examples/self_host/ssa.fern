@@ -566,21 +566,44 @@ function remove_reg(free: i32[], reg: i32): i32[] {
     return out;
 }
 // cheapest_active is the index of the active interval, among those holding a
-// register of the class this value needs, whose spill costs least (the latest
-// ending on a tie), or -1. A spilled value pays at every reference, so what
-// is spilled should be what is referenced least, weighted by loop depth.
-function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], nregs: i32, need_saved: boolean): i32 {
+// register of the class this value needs, whose spill costs least per
+// position it covers (the latest ending on a tie), or -1. A spilled value pays
+// at every reference and frees its register for its whole interval, so what is
+// spilled should be what is referenced least for the span it holds, weighted
+// by loop depth.
+function cheapest_active(act_val: i32[], act_reg: i32[], act_hi: i32[], shared_with: i32[], weight: i32[], lo: i32[], nregs: i32, need_saved: boolean): i32 {
     var best: i32 = 0 - 1;
     var best_w: i32 = 0;
+    var best_len: i32 = 1;
     var i: i32 = 0;
     while (i < act_val.len()) {
         if ((act_reg[i] >= nregs) == need_saved) {
             var w: i32 = chain_weight(act_val[i], shared_with, weight);
-            if (best < 0 || w < best_w || (w == best_w && act_hi[i] > act_hi[best])) { best = i; best_w = w; }
+            var len: i32 = act_hi[i] - chain_lo(act_val[i], shared_with, lo) + 1;
+            var cmp: i32 = cmp_density(w, len, best_w, best_len);
+            if (best < 0 || cmp < 0 || (cmp == 0 && act_hi[i] > act_hi[best])) { best = i; best_w = w; best_len = len; }
         }
         i = i + 1;
     }
     return best;
+}
+
+// cmp_density orders two spill costs by weight per position covered:
+// negative when w1 / len1 is the smaller.
+function cmp_density(w1: i32, len1: i32, w2: i32, len2: i32): i32 {
+    var a: i64 = (w1 as i64) * (len2 as i64);
+    var b: i64 = (w2 as i64) * (len1 as i64);
+    if (a < b) { return 0 - 1; }
+    if (a > b) { return 1; }
+    return 0;
+}
+
+// chain_lo is where the first of the values sharing v's register begins.
+function chain_lo(v: i32, shared_with: i32[], lo: i32[]): i32 {
+    var m: i32 = lo[v];
+    var ev: i32 = shared_with[v];
+    while (ev >= 0) { if (lo[ev] < m) { m = lo[ev]; } ev = shared_with[ev]; }
+    return m;
 }
 
 // chain_weight sums the spill weights of a register's holder and of the
@@ -838,10 +861,13 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
             // instead. `need_saved` keeps the two pools apart, since a value
             // live across a call may only sit in a callee-saved register.
             var need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-            var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, nregs, need_saved);
-            var fw: i32 = 0;
-            if (fa >= 0) { fw = chain_weight(act_val[fa], shared_with, weight); }
-            if (fa >= 0 && (fw < weight[v] || (fw == weight[v] && act_hi[fa] > hi[v]))) {
+            var fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, nregs, need_saved);
+            var cmp: i32 = 0;
+            if (fa >= 0) {
+                var fw: i32 = chain_weight(act_val[fa], shared_with, weight);
+                cmp = cmp_density(fw, act_hi[fa] - chain_lo(act_val[fa], shared_with, lo) + 1, weight[v], hi[v] - lo[v] + 1);
+            }
+            if (fa >= 0 && (cmp < 0 || (cmp == 0 && act_hi[fa] > hi[v]))) {
                 var taken: i32 = act_reg[fa];
                 var ev: i32 = act_val[fa];
                 while (ev >= 0) { reg_of = reg_of.with(ev, 0 - 1); var nx: i32 = shared_with[ev]; shared_with = shared_with.with(ev, 0 - 1); ev = nx; }

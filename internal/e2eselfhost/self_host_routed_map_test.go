@@ -523,7 +523,8 @@ func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...
 	var run *exec.Cmd
 	switch target {
 	case "x86-64-linux":
-		run = exec.Command(out)
+		_, runner := x86_64Tooling(t)
+		run = runX86_64Bin(runner, out)
 	case "arm64-linux":
 		_, qemu := arm64Tooling(t)
 		run = runArm64Bin(qemu, out)
