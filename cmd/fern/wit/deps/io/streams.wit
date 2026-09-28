@@ -1,7 +1,8 @@
 // Vendored copy of the wasi:io@0.2.0 WIT package, just the
 // `error` and `streams` interfaces and only the methods the wasm
-// backend currently emits (output-stream.blocking-write-and-flush
-// for print / eprint; resource drops needed by component-new).
+// backend emits (output-stream.blocking-write-and-flush for print /
+// eprint, the reads and the reactor's subscribes; resource drops needed
+// by component-new).
 // Source: https://github.com/WebAssembly/wasi-io
 package wasi:io@0.2.0;
 
@@ -13,6 +14,7 @@ interface error {
 
 interface streams {
     use error.{error};
+    use poll.{pollable};
 
     /// The reason a `read` / `write` failed.
     variant stream-error {
@@ -29,6 +31,9 @@ interface streams {
         read: func(len: u64) -> result<list<u8>, stream-error>;
         /// Perform a blocking read of up to `len` bytes.
         blocking-read: func(len: u64) -> result<list<u8>, stream-error>;
+        /// A pollable ready when `read` would return bytes or the stream
+        /// has closed.
+        subscribe: func() -> pollable;
     }
 
     /// An output bytestream — write-side of a stream.
@@ -41,5 +46,7 @@ interface streams {
         blocking-write-and-flush: func(contents: list<u8>) -> result<_, stream-error>;
         /// Block until any pending output has been written.
         blocking-flush: func() -> result<_, stream-error>;
+        /// A pollable ready when the stream accepts a write.
+        subscribe: func() -> pollable;
     }
 }

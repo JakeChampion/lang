@@ -1360,8 +1360,9 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 // WasiSocketsTcpInstanceTypeBody returns the type-section body for
 // `wasi:sockets/tcp@0.2.0` — the `tcp-socket` resource plus the seven
 // methods a listening server uses: start-bind / finish-bind /
-// start-listen / finish-listen / accept / subscribe / local-address.
-// It outer-aliases
+// start-listen / finish-listen / accept / subscribe / local-address,
+// and the three controls set-listen-backlog-size / set-keep-alive-enabled
+// / shutdown. It outer-aliases
 // network / error-code / ip-socket-address (from sockets/network),
 // input-stream / output-stream (from io/streams), and pollable (from
 // io/poll); the caller must have surfaced those six at the top level
@@ -1376,9 +1377,10 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 // resource, 7 borrow<tcp-socket>, 8 borrow<network>, 9
 // result<_,error-code>, 10-13 own<tcp-socket|input|output|pollable>,
 // 14 tuple<10,11,12>, 15 result<14,error-code>, then 16/18/20/22/24/26
-// the method functypes (each followed by its export). local-address is
-// appended LAST — 22/23 here, 26/27 in the connect variant — so the
-// indices above hold either way. 31 decls, 37 with connect.
+// the method functypes (each followed by its export). local-address and
+// the controls are appended LAST — from 22 here, from 26 in the connect
+// variant — so the indices above hold either way. 39 decls, 45 with
+// connect.
 func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
 	return wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT, false)
 }
@@ -1401,9 +1403,9 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	declCount := byte(0x1f) // 31
+	declCount := byte(0x27) // 39
 	if withConnect {
-		declCount = 0x25 // 37: +tuple, +result, +2 functypes, +2 exports
+		declCount = 0x2d // 45: +tuple, +result, +2 functypes, +2 exports
 	}
 	body := []byte{0x01, 0x42, declCount}
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
@@ -1470,6 +1472,22 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 	body = append(body, InnerTypeResultOkErr(2, 1)...)
 	body = append(body, tcpMethodFuncDecl("local-address", []string{"self"}, []byte{0x07}, localAddr)...)
 	body = exportMethod(body, "[method]tcp-socket.local-address", localAddr+1)
+	// The three socket controls tcp_listen_with / tcp_socket_ctl reach:
+	// set-listen-backlog-size(self, u64), set-keep-alive-enabled(self, bool)
+	// and shutdown(self, shutdown-type), each -> result 9. shutdown-type is
+	// the enum at localAddr+2, exported under its name at +3 (a named type
+	// an exported function mentions has to be exported too); the functypes
+	// follow it.
+	ctl := localAddr + 2
+	body = append(body, 0x01)
+	body = append(body, InnerTypeEnum([]string{"receive", "send", "both"})...)
+	body = append(body, ExportTypeEqDecl("shutdown-type", uint32(ctl))...)
+	body = append(body, tcpMethodFuncDecl("set-listen-backlog-size", []string{"self", "value"}, []byte{0x07, CValtypeU64}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.set-listen-backlog-size", ctl+2)
+	body = append(body, tcpMethodFuncDecl("set-keep-alive-enabled", []string{"self", "value"}, []byte{0x07, CValtypeBool}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.set-keep-alive-enabled", ctl+3)
+	body = append(body, tcpMethodFuncDecl("shutdown", []string{"self", "shutdown-type"}, []byte{0x07, ctl + 1}, 0x09)...)
+	body = exportMethod(body, "[method]tcp-socket.shutdown", ctl+4)
 	return body
 }
 
@@ -1502,22 +1520,21 @@ func WasiSocketsTcpCreateSocketInstanceTypeBody(ipAddrFamilyT, errorCodeT, tcpSo
 }
 
 // WasiSocketsUdpInstanceTypeBody returns the type-section body for the
-// send-only subset of `wasi:sockets/udp@0.2.0` — what udp_send (one-shot
-// fire-and-forget datagram) needs: the udp-socket resource plus
-// start-bind / finish-bind / stream, and the outgoing-datagram-stream
-// resource plus check-send / send. The incoming-datagram-stream is
-// declared as a bare resource (stream() returns a tuple of both, and
-// the unused incoming half is dropped) but carries no methods — instance
-// subtyping lets a send-only client omit receive / subscribe.
+// subset of `wasi:sockets/udp@0.2.0` the datagram sockets use: the
+// udp-socket resource with start-bind / finish-bind / stream /
+// local-address, the outgoing-datagram-stream with check-send / send /
+// subscribe, and the incoming-datagram-stream with receive / subscribe.
 //
 // Unlike TCP, the datagram path is NOT wasi:io/streams: send takes a
 // `list<outgoing-datagram>` (each `{ data: list<u8>, remote-address:
-// option<ip-socket-address> }`). outgoing-datagram-stream also exposes
-// subscribe -> own<pollable>, so a sender can block until the stream
-// permits a datagram (wasmtime >=45 rejects a send that exceeds the
-// last check-send permit). It outer-aliases network / error-code /
-// ip-socket-address from sockets/network plus pollable from io/poll;
-// the caller surfaces those four and passes their type indices.
+// option<ip-socket-address> }`) and receive answers a
+// `list<incoming-datagram>` (each `{ data, remote-address }`). Both
+// streams expose subscribe -> own<pollable>, so a sender can block
+// until the stream permits a datagram (wasmtime >=45 rejects a send
+// that exceeds the last check-send permit) and a receiver until one is
+// pending. It outer-aliases network / error-code / ip-socket-address
+// from sockets/network plus pollable from io/poll; the caller surfaces
+// those four and passes their type indices.
 func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT uint32) []byte {
 	var decls []byte
 	idx := uint32(0)
@@ -1582,9 +1599,14 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 		{Name: "data", Valtype: byte(listU8)},
 		{Name: "remote-address", Valtype: byte(optAddr)},
 	})))
+	inDatagram := exportType("incoming-datagram", def(InnerTypeRecord([]RecordField{
+		{Name: "data", Valtype: byte(listU8)},
+		{Name: "remote-address", Valtype: byte(sockAddrT)},
+	})))
 	bUdp := def(InnerTypeBorrow(udpSock))
 	bNet := def(InnerTypeBorrow(netT))
 	bOut := def(InnerTypeBorrow(outStream))
+	bIn := def(InnerTypeBorrow(inStream))
 	ownPoll := def([]byte{0x69, byte(pollT)})
 	resEmptyErr := def(InnerTypeResultErr(errT))
 	ownIn := def([]byte{0x69, byte(inStream)})
@@ -1593,6 +1615,9 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 	resStream := def(InnerTypeResultOkErr(tupStreams, errT))
 	resU64 := def(InnerTypeResultOkErr(CValtypeU64, errT))
 	listDatagram := def(InnerTypeList(byte(outDatagram)))
+	listIn := def(InnerTypeList(byte(inDatagram)))
+	resListIn := def(InnerTypeResultOkErr(listIn, errT))
+	resAddr := def(InnerTypeResultOkErr(sockAddrT, errT))
 
 	method("[method]udp-socket.start-bind",
 		[]string{"self", "network", "local-address"}, []byte{byte(bUdp), byte(bNet), byte(sockAddrT)}, byte(resEmptyErr))
@@ -1601,6 +1626,9 @@ func WasiSocketsUdpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, pollableT
 	method("[method]outgoing-datagram-stream.check-send", []string{"self"}, []byte{byte(bOut)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.send", []string{"self", "datagrams"}, []byte{byte(bOut), byte(listDatagram)}, byte(resU64))
 	method("[method]outgoing-datagram-stream.subscribe", []string{"self"}, []byte{byte(bOut)}, byte(ownPoll))
+	method("[method]udp-socket.local-address", []string{"self"}, []byte{byte(bUdp)}, byte(resAddr))
+	method("[method]incoming-datagram-stream.receive", []string{"self", "max-results"}, []byte{byte(bIn), CValtypeU64}, byte(resListIn))
+	method("[method]incoming-datagram-stream.subscribe", []string{"self"}, []byte{byte(bIn)}, byte(ownPoll))
 
 	body := []byte{0x01, 0x42}
 	body = leb128.UlebU64(body, uint64(declCount))
@@ -2351,6 +2379,41 @@ func WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx uint32) []byte {
 	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.blocking-read")))
 	body = append(body, "[method]input-stream.blocking-read"...)
 	body = append(body, 0x01, 0x0d)
+	return body
+}
+
+// WasiIoStreamsReadWriteReactorInstanceTypeBody is the read-write body
+// with the reactor's surface: input-stream.subscribe and
+// output-stream.subscribe, each `func() -> own<pollable>` with the
+// pollable outer-aliased from io/poll, and the non-blocking
+// input-stream.read with blocking-read's signature. Appended after decl
+// 15 so every index the read-write body fixes is unchanged; exports take
+// a decl slot but no type index, so the types continue from 14.
+func WasiIoStreamsReadWriteReactorInstanceTypeBody(outerErrorTypeidx, pollableT uint32) []byte {
+	body := WasiIoStreamsReadWriteInstanceTypeBody(outerErrorTypeidx)
+	body[2] = 0x18                                           // 24 decls
+	body = append(body, OuterAliasTypeDecl(1, pollableT)...) // type 14
+	body = append(body, 0x01, 0x69, 0x0e)                    // type 15: own<pollable=14>
+	// type 16: subscribe(self: borrow-in=8) -> own<pollable>=15
+	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x08}, 0x0f)...)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.subscribe")))
+	body = append(body, "[method]input-stream.subscribe"...)
+	body = append(body, 0x01, 0x10)
+	// type 17: subscribe(self: borrow-out=7) -> own<pollable>=15
+	body = append(body, tcpMethodFuncDecl("subscribe", []string{"self"}, []byte{0x07}, 0x0f)...)
+	body = append(body, 0x04, 0x00, byte(len("[method]output-stream.subscribe")))
+	body = append(body, "[method]output-stream.subscribe"...)
+	body = append(body, 0x01, 0x11)
+	// type 18: read(self: borrow-in=8, len: u64) -> result<list<u8>, stream-error>=11
+	body = append(body,
+		0x01, 0x40, 0x02,
+		0x04, 's', 'e', 'l', 'f', 0x08,
+		0x03, 'l', 'e', 'n', CValtypeU64,
+		0x00, 0x0b,
+	)
+	body = append(body, 0x04, 0x00, byte(len("[method]input-stream.read")))
+	body = append(body, "[method]input-stream.read"...)
+	body = append(body, 0x01, 0x12)
 	return body
 }
 

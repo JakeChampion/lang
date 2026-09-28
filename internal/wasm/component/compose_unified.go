@@ -22,6 +22,14 @@ type ComposeRequest struct {
 	// chains, and a TCP connection's send/recv. DropInput / DropOutput
 	// are Reader/Writer close() → canon resource.drop.
 	BlockWrite, BlockRead bool
+	// StreamReactor is the reactor's surface on a connection:
+	// input-stream.subscribe and output-stream.subscribe, which put the
+	// pollable resource in the streams instance type, and the
+	// non-blocking input-stream.read.
+	StreamReactor bool
+	// UdpRecv adds incoming-datagram-stream.receive, whose list result
+	// needs the realloc lowering.
+	UdpRecv               bool
 	DropInput, DropOutput bool
 	DropError             bool // owned last-operation-failed payload
 
@@ -32,7 +40,7 @@ type ComposeRequest struct {
 
 	// Socket / HTTP method surfaces.
 	Tcp  bool // TCP server (listen/accept/close)
-	Udp  bool // send-only UDP client
+	Udp  bool // the datagram sockets
 	Http bool // wasi:http/incoming-handler
 
 	// TcpConnect adds the outbound-client chain (start-connect /
@@ -75,9 +83,9 @@ type ComposeRequest struct {
 // halves of wasi:io/streams surfaced.
 func (r ComposeRequest) streamDirections() (needIn, needOut bool) {
 	needIn = r.Stdin || r.BlockRead || r.DropInput ||
-		r.File.Read || r.Tcp || r.Http
+		r.File.Read || r.Tcp || r.Http || r.StreamReactor
 	needOut = r.Stdout || r.Stderr || r.BlockWrite || r.DropOutput ||
-		r.File.Write || r.File.Append || r.Tcp || r.Http
+		r.File.Write || r.File.Append || r.Tcp || r.Http || r.StreamReactor
 	return needIn, needOut
 }
 
@@ -97,6 +105,12 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 
 	// Surface io/streams first with the full direction union so the
 	// later ensure* calls (which request narrower directions) are no-ops.
+	// The subscribe methods return the io/poll pollable, so that instance
+	// comes first when they are wanted.
+	g.needStreamReactor = req.StreamReactor
+	if req.StreamReactor {
+		g.ensureIoPoll()
+	}
 	if needIn, needOut := req.streamDirections(); needIn || needOut {
 		g.ensureIoStreams(needIn, needOut)
 	}
@@ -177,6 +191,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: tcp, name: "[method]tcp-socket.finish-listen", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.accept", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.local-address", kind: gMem, params: composeTcpSelfRetParams},
+			gImport{iface: tcp, name: "[method]tcp-socket.set-listen-backlog-size", kind: gMem, params: composeTcpSelfI64RetParams},
+			gImport{iface: tcp, name: "[method]tcp-socket.set-keep-alive-enabled", kind: gMem, params: composeTcpSelfI32RetParams},
+			gImport{iface: tcp, name: "[method]tcp-socket.shutdown", kind: gMem, params: composeTcpSelfI32RetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.subscribe", kind: gNoOpt},
 			gImport{iface: tcp, name: "[resource-drop]tcp-socket", kind: gDrop, resourceT: g.surfaced["tcp-socket"]},
 		)
@@ -202,10 +219,15 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.check-send", kind: gMem, params: udpSelfRetParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.send", kind: gMem, params: udpSendParams},
 			gImport{iface: udp, name: "[method]outgoing-datagram-stream.subscribe", kind: gNoOpt},
+			gImport{iface: udp, name: "[method]udp-socket.local-address", kind: gMem, params: udpSelfRetParams},
+			gImport{iface: udp, name: "[method]incoming-datagram-stream.subscribe", kind: gNoOpt},
 			gImport{iface: udp, name: "[resource-drop]udp-socket", kind: gDrop, resourceT: g.surfaced["udp-socket"]},
 			gImport{iface: udp, name: "[resource-drop]incoming-datagram-stream", kind: gDrop, resourceT: g.surfaced["incoming-datagram-stream"]},
 			gImport{iface: udp, name: "[resource-drop]outgoing-datagram-stream", kind: gDrop, resourceT: g.surfaced["outgoing-datagram-stream"]},
 		)
+	}
+	if req.UdpRecv {
+		g.add(gImport{iface: "wasi:sockets/udp@0.2.0", name: "[method]incoming-datagram-stream.receive", kind: gMemRealloc, params: composeTcpSelfI64RetParams})
 	}
 	if req.Tcp || req.Udp {
 		g.add(gImport{iface: "wasi:sockets/instance-network@0.2.0", name: "instance-network", kind: gNoOpt})
@@ -335,6 +357,11 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 	}
 	if req.BlockRead {
 		g.add(gImport{iface: streams, name: composeBlockReadName, kind: gMemRealloc, params: composeBlockReadParams})
+	}
+	if req.StreamReactor {
+		g.add(gImport{iface: streams, name: "[method]input-stream.subscribe", kind: gNoOpt})
+		g.add(gImport{iface: streams, name: "[method]output-stream.subscribe", kind: gNoOpt})
+		g.add(gImport{iface: streams, name: "[method]input-stream.read", kind: gMemRealloc, params: composeBlockReadParams})
 	}
 	if req.DropInput {
 		g.add(gImport{iface: streams, name: "[resource-drop]input-stream", kind: gDrop, resourceT: g.surfaced["input-stream"]})

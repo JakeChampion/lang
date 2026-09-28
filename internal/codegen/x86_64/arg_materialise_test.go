@@ -112,3 +112,49 @@ function main(): i32 {
 		}
 	}
 }
+
+// A narrowing copy (`mov edi, eax`) folded over a register-to-register
+// materialisation must narrow the source as well: `mov edi, rcx` is not an
+// instruction. The remainder of a 64-bit division by a constant lands in
+// rcx and is copied to rax, so an i64 narrowed to an i32 argument emits
+// exactly this shape (#10526).
+func TestNarrowingRenameTakesTheSourceLowHalf(t *testing.T) {
+	cases := []struct{ op, want string }{
+		{"\tmov rax, rcx", "\tmov edi, ecx"},
+		{"\tmov rax, r9", "\tmov edi, r9d"},
+		{"\tmov rax, [rbp-8]", "\tmov edi, [rbp-8]"},
+		{"\tmov rax, -1", "\tmov edi, -1"},
+		{"\tmov rax, 3000000000", "\tmov edi, 3000000000"},
+		{"\tmov rax, qword ptr [rbp-8]", ""},
+		{"\tmov rax, 4294967296", ""},
+		{"\tmov rax, -2147483649", ""},
+	}
+	for _, c := range cases {
+		got, ok := renameAccDest(c.op, "rdi", true)
+		if c.want == "" {
+			if ok {
+				t.Errorf("%q: folded to %q, want a refusal", c.op, got)
+			}
+			continue
+		}
+		if !ok || got != c.want {
+			t.Errorf("%q: got %q (ok=%v), want %q", c.op, got, ok, c.want)
+		}
+	}
+	asm := compileOpts(t, `
+@noinline function take(x: i32): i32 { return x + 1; }
+@noinline function now(): i64 { return 1234567i64; }
+function main(): i32 {
+  return take((now() % (1000000 as i64)) as i32);
+}`, Options{})
+	body, ok := fnBodyOf(asm, "main")
+	if !ok {
+		t.Fatal("main not found in emitted asm")
+	}
+	if strings.Contains(body, "mov edi, rcx") {
+		t.Errorf("a 64-bit source under a 32-bit destination:\n%s", body)
+	}
+	if !strings.Contains(body, "mov edi, ecx") {
+		t.Errorf("the remainder did not narrow straight into edi:\n%s", body)
+	}
+}

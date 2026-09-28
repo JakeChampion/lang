@@ -20,9 +20,9 @@ func TestWorldInterfaces(t *testing.T) {
 	}
 
 	wantOrder := []string{
-		"wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdin@0.2.0",
-		"wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/environment@0.2.0",
-		"wasi:cli/exit@0.2.0", "wasi:io/poll@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
+		"wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0",
+		"wasi:cli/stdin@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0",
+		"wasi:cli/environment@0.2.0", "wasi:cli/exit@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
 		"wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
 		"wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
 		"wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
@@ -43,8 +43,10 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:io/streams@0.2.0",
 		[]string{
 			"[method]input-stream.read", "[method]input-stream.blocking-read",
+			"[method]input-stream.subscribe",
 			"[method]output-stream.check-write", "[method]output-stream.write",
 			"[method]output-stream.blocking-write-and-flush", "[method]output-stream.blocking-flush",
+			"[method]output-stream.subscribe",
 		},
 		[]string{"input-stream", "output-stream"})
 	checkInv(t, byName, "wasi:cli/stdout@0.2.0", []string{"get-stdout"}, nil)
@@ -63,12 +65,15 @@ func TestWorldInterfaces(t *testing.T) {
 	checkInv(t, byName, "wasi:sockets/udp-create-socket@0.2.0", []string{"create-udp-socket"}, nil)
 	checkInv(t, byName, "wasi:sockets/udp@0.2.0",
 		[]string{
+			"[method]incoming-datagram-stream.receive",
+			"[method]incoming-datagram-stream.subscribe",
 			"[method]outgoing-datagram-stream.check-send",
 			"[method]outgoing-datagram-stream.send",
 			"[method]outgoing-datagram-stream.subscribe",
 			"[method]udp-socket.start-bind",
 			"[method]udp-socket.finish-bind",
 			"[method]udp-socket.stream",
+			"[method]udp-socket.local-address",
 		},
 		[]string{"incoming-datagram-stream", "outgoing-datagram-stream", "udp-socket"})
 }

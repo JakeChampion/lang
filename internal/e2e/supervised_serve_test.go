@@ -111,7 +111,7 @@ func freeLoopbackPort(t *testing.T) int {
 	t.Helper()
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()

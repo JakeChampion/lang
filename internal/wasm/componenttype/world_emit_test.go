@@ -128,9 +128,9 @@ func TestPrefixLayout(t *testing.T) {
 	}
 	for name, want := range map[string]int{
 		"wasi:io/error@0.2.0":      0,
-		"wasi:io/streams@0.2.0":    1,
-		"wasi:cli/stdout@0.2.0":    3,
-		"wasi:cli/stderr@0.2.0":    4,
+		"wasi:io/streams@0.2.0":    2,
+		"wasi:cli/stdout@0.2.0":    4,
+		"wasi:cli/stderr@0.2.0":    5,
 		"wasi:random/random@0.2.0": 18,
 		"wasi:not/a-thing@9.9.9":   -1,
 	} {

@@ -233,6 +233,12 @@ var rcResultOwned = map[string]bool{
 	// classified there under the builtin name, which is why they are
 	// spelled the builtin's way here too.
 	"access":            true,
+	"unix_listen":       true,
+	"unix_connect":      true,
+	"reactor_new":       true,
+	"reactor_ctl":       true,
+	"reactor_wait":      true,
+	"tcp_recv_into":     true,
 	"write_file_exec":   true,
 	"chmod":             true,
 	"chmod_at":          true,
@@ -508,7 +514,8 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_putchar": true, "__fern_exit": true, "__free": true,
 	"__fern_lc_report": true,
 	"__memcpy":         true, "__memset": true, "__store_i32": true,
-	"__store_i64": true, "__store_ptr": true, "__http_entry": true,
+	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__http_entry": true,
+	"__str_bytes": true, "__arr_set_len": true,
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
 	"strbuf_reset":    true, "strbuf_append": true,
@@ -523,6 +530,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_sqrt_f64": true, "__fern_trunc_f64": true,
 
 	// i64.
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,
 	"__fern_heap_alloc_count": true,
 	"__fern_idiv_s64":         true, "__fern_idiv_u64": true, "__fern_irem_s64": true,
@@ -565,6 +573,10 @@ var rcResultNonPointer = map[string]bool{
 
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,
+	"__fern_udp_bind": true, "__fern_udp_connect": true,
+	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
+	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true,
+	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true,
 	"__fern_tcp_local_port": true,
 
 	// Opaque host handles. Pointer-SHAPED and not memory: a wasi

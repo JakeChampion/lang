@@ -145,16 +145,16 @@ of this combinator.)
 
 ## 5. `with_deadline` — await all within a budget
 
-`with_deadline(ms, fs, on_timeout)` is `gather` with an SLA: fan out, take
-whatever answers within `ms` wall-clock milliseconds, and drop the stragglers
-(their slots get `on_timeout`).
+`with_deadline(deadline, fs)` is `gather` with an SLA: fan out, take
+whatever answers within `deadline` (a `Duration`, built with
+`time.duration_millis` and friends) of wall-clock time, and drop the
+stragglers (their slots come back `None`).
 
 ```fern
-var none: u8[] = [];
-var bodies: u8[][] = async.with_deadline(250, [
+var bodies: Option[u8[]][] = async.with_deadline(time.duration_millis(250), [
     fetch.fetch_future(cache,   80, "/k"),
     fetch.fetch_future(primary, 80, "/k"),
-], none);   // any upstream slower than 250ms lands as an empty body
+]);   // any upstream slower than 250ms lands as None
 ```
 
 ---
@@ -185,7 +185,7 @@ var fs: async.Future[string][] = [
     sim.future_at(d, 40000000, "late"),   // ready at 40ms of virtual time
     sim.future_at(d, 10000000, "early")   // ready at 10ms
 ];
-var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
 // got == [None, Some("early")], and d.now_ns() == exactly 25000000
 ```
 

@@ -404,7 +404,9 @@ func TestFoldHandlesNestedControlFlow(t *testing.T) {
 // lowers its exit test to `<cond> ; OpNot ; OpBrIf breakD`; with a
 // literal `false` that collapses to `OpConstI32 1 ; OpBrIf breakD`
 // (branch always taken), which Fold turns into an unconditional
-// OpBr — the loop exits at the top and no br_if survives.
+// OpBr — the loop exits at the top, no br_if survives, and the block
+// that branch exits is then reduced to what ran before it: nothing, so
+// the loop body's add is gone with it (foldBlockExit).
 func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
 	src := `function f(): i32 { var i: i32 = 0; while (false) { i = i + 1; } return i; }`
 	// Before Fold the exit test is a real br_if on a constant.
@@ -419,7 +421,9 @@ func TestFoldConstBrIfAlwaysTaken(t *testing.T) {
 			t.Fatalf("constant-true br_if should fold to an unconditional OpBr:\n%s", p)
 		}
 	}
-	mustContainOp(t, p, "f", OpBr)
+	if hasOpKind(p, "f", OpAdd) || hasOpKind(p, "f", OpLoop) {
+		t.Fatalf("the never-entered loop body survived the fold:\n%s", p)
+	}
 	assertScopesBalanced(t, p)
 }
 
@@ -916,5 +920,40 @@ func TestFoldLeavesRcOpsOnANonNullConstant(t *testing.T) {
 		if !found {
 			t.Errorf("%s on a non-null pointer was folded away:\n%s", kind, p)
 		}
+	}
+}
+
+// A block exited by an unconditional branch is its branch value, in both
+// the direct shape and the one pruneConstIf leaves behind an inlined
+// `if (c) { return v; }` ladder; the ops after the branch are unreachable.
+// A conditional branch is not an exit and the block stays.
+func TestFoldBlockExitedByUnconditionalBranch(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []Op
+		want []OpKind
+	}{
+		{"direct", []Op{{Kind: OpBlock, I32: 1}, {Kind: OpConstI32, I32: 7}, {Kind: OpBr, I32: 0}, {Kind: OpConstI32, I32: 9}, {Kind: OpEnd}, {Kind: OpReturn}},
+			[]OpKind{OpConstI32, OpReturn}},
+		{"through the pruned arm", []Op{{Kind: OpBlock, I32: 1}, {Kind: OpBlock}, {Kind: OpConstI32, I32: 41}, {Kind: OpBr, I32: 1}, {Kind: OpEnd}, {Kind: OpConstI32, I32: 198}, {Kind: OpEnd}, {Kind: OpReturn}},
+			[]OpKind{OpConstI32, OpReturn}},
+		{"conditional stays", []Op{{Kind: OpBlock, I32: 1}, {Kind: OpConstI32, I32: 7}, {Kind: OpLoadLocal}, {Kind: OpBrIf, I32: 0}, {Kind: OpConstI32, I32: 9}, {Kind: OpEnd}, {Kind: OpReturn}},
+			[]OpKind{OpBlock, OpConstI32, OpLoadLocal, OpBrIf, OpConstI32, OpEnd, OpReturn}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := foldOnce(c.in)
+			if len(got) != len(c.want) {
+				t.Fatalf("got %d ops, want %d: %v", len(got), len(c.want), got)
+			}
+			for i, k := range c.want {
+				if got[i].Kind != k {
+					t.Errorf("op[%d] = %s, want %s", i, got[i].Kind, k)
+				}
+			}
+			if c.name != "conditional stays" && got[0].I32 != c.in[1].I32 && got[0].I32 != c.in[2].I32 {
+				t.Errorf("the branch value did not survive: %v", got[0])
+			}
+		})
 	}
 }

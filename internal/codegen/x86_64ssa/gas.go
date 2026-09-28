@@ -2062,6 +2062,7 @@ var pokeInline = map[string]struct {
 	mnem  string
 	wide  bool
 	store bool
+	byte  bool
 	off   int64
 }{
 	"__load_i32":  {mnem: "mov"},
@@ -2072,6 +2073,7 @@ var pokeInline = map[string]struct {
 	"__store_i32": {mnem: "mov", store: true},
 	"__store_i64": {mnem: "mov", wide: true, store: true},
 	"__store_ptr": {mnem: "mov", wide: true, store: true},
+	"__store_u8":  {mnem: "mov", store: true, byte: true},
 	"__ptr_width": {},
 }
 
@@ -2115,6 +2117,9 @@ func inlinePokeLines(in Inst, numAlloc int) ([]string, bool) {
 		addr := materialise(in.ArgLocs[0], s0)
 		val := materialise(in.ArgLocs[1], s1)
 		// Void, so there is no result to place and no width to fix.
+		if form.byte {
+			return append(out, fmt.Sprintf("mov byte ptr %s, %s", memRef(reg(addr), form.off), reg8n(val))), true
+		}
 		return append(out, fmt.Sprintf("mov %s, %s", memRef(reg(addr), form.off), operand(val))), true
 	case form.mnem == "movzx":
 		if len(in.ArgLocs) != 1 {
@@ -2396,15 +2401,12 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__method_Reader_read_line":       emitReadLineHelper("__method_Reader_read_line", "", -1),
 	"read_line":                       emitReadLineHelper("read_line", "_0", 0),
 	"read_dir":                        emitReadDirHelper,
-	"tcp_listen":                      emitTcpListenHelper,
-	"tcp_connect":                     emitTcpConnectHelper,
-	"tcp_accept":                      emitTcpAcceptHelper,
-	"tcp_local_port":                  emitTcpLocalPortHelper,
-	"tcp_recv":                        emitTcpRecvHelper,
-	"tcp_send":                        emitTcpSendHelper,
-	"udp_send":                        emitUdpSendHelper,
-	"tcp_close":                       emitTcpCloseHelper,
-	"tcp_pollable":                    emitIdentityHelper("tcp_pollable"),
+	"__str_bytes":                     emitStrBytesHelper,
+	"__arr_set_len":                   emitArrSetLenHelper,
+	"__syscall3":                      emitSyscallHelper(3),
+	"__syscall4":                      emitSyscallHelper(4),
+	"__syscall5":                      emitSyscallHelper(5),
+	"__syscall6":                      emitSyscallHelper(6),
 	"wasm_timer_pollable":             emitConstHelper("wasm_timer_pollable", -1),
 	"wasm_pollable_drop":              emitConstHelper("wasm_pollable_drop", 0),
 	"poll":                            emitPollHelper,
@@ -2630,7 +2632,6 @@ var heapUsingHelpers = map[string]bool{
 	"__method_Reader_read_line":  true,
 	"read_line":                  true,
 	"read_dir":                   true,
-	"tcp_recv":                   true,
 	"poll":                       true,
 	"hostname":                   true,
 	"create_dir_all":             true,
@@ -2732,7 +2733,6 @@ var runtimeHelperDeps = map[string][]string{
 	"temp_dir":                        {"__fern_io_error", "__fern_rc_inc"},
 	"random_bytes":                    {"__alloc_u8"},
 	"read_dir":                        {"__fern_io_error", "__fern_rc_inc"},
-	"tcp_recv":                        {"__alloc_u8"},
 	"__method_Reader_isatty":          {"isatty"},
 	"__method_Writer_isatty":          {"isatty"},
 	"create_dir_all":                  {"__fern_io_error", "__fern_rc_inc"},
@@ -2811,7 +2811,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				if (in.Op == Call || in.Op == CallPair) && !inlinedCall(in) {
-					add(in.Callee)
+					add(ir.CodegenAlias(in.Callee))
 				}
 			}
 		}
@@ -2831,7 +2831,7 @@ func referencedRuntimeHelpers(progs map[string]*Program) (asm, fern []string) {
 // optimise and emit steps as a program function, so it lands in the module
 // under fnLabel(name).
 func liftFernHelper(name string, numAlloc int) (*Program, error) {
-	_, irFn, err := fernrt.Func(name, 8)
+	_, irFn, err := fernrt.Func(name, fernrt.Target{PtrW: 8, OS: "linux", Arch: "x86-64"})
 	if err != nil {
 		return nil, err
 	}

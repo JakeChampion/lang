@@ -1953,6 +1953,71 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_listen_with(port, backlog, reuse_port): number — tcp_listen with
+	// the accept queue's depth and SO_REUSEPORT chosen by the caller, so
+	// several workers can bind one port (#9853). The listener, or -errno.
+	c.info.FuncSigs["tcp_listen_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_socket_ctl(fd, op, arg): number — one control call on a socket.
+	// op 1 is TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK, each with arg
+	// 0 or 1; op 4 is shutdown with arg 0 (read), 1 (write) or 2 (both);
+	// op 5 is the result of a connect tcp_connect_with started: 0 once
+	// connected, -EINPROGRESS while under way, else the -errno it failed
+	// with. 0, or -errno; an op the target has no control for is -EINVAL.
+	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_connect_with(host_be, port, nonblocking): number — tcp_connect,
+	// or with `nonblocking` a non-blocking socket whose connect is only
+	// started: the descriptor while it is under way (-errno if it could
+	// not start), and tcp_socket_ctl op 5 to learn how it ended (#9853).
+	c.info.FuncSigs["tcp_connect_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
+	// The Unix-domain sockets (#9853): unix_listen(path, backlog) is a
+	// stream socket listening at the filesystem path, unix_connect(path)
+	// one connected to the listener there; each a descriptor or -errno,
+	// and both -ENAMETOOLONG for a path longer than the address holds.
+	// tcp_accept, tcp_recv, tcp_send and tcp_close take the descriptors.
+	// Native only: neither WASI world has a filesystem namespace for
+	// sockets, so the `unix` capability refuses them there.
+	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["unix_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	// The reactor floor (#9853): reactor_new() is a readiness set that
+	// outlives one wait (epoll, kqueue, a wasi pollable table), or -errno;
+	// reactor_ctl(r, op, fd, arg) watches fd for the interest in arg (op
+	// 1; 1 readable, 2 writable), stops watching it (op 2) or closes the
+	// set (op 3); reactor_wait(r, events, timeout_ms) fills events with
+	// (fd, readiness) pairs and answers their count, 0 on the timeout, or
+	// -errno.
+	c.info.FuncSigs["reactor_new"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["reactor_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["reactor_wait"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_recv_into(fd, buf): number — one read into the caller's buffer,
+	// up to its length: the byte count, 0 at EOF, or -errno.
+	c.info.FuncSigs["tcp_recv_into"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
 	// tcp_recv(fd, max): u8[] — one blocking read of at most max
 	// bytes; socket data is raw bytes (D9, #5714). The empty array
 	// signals EOF / error / closed alike.
@@ -2047,6 +2112,35 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// syslog to a local agent.)
 	c.info.FuncSigs["udp_send"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	// The datagram sockets (#9853). udp_bind(host_be, port): a socket bound
+	// to the IPv4 address packed in network order (0 for every address,
+	// port 0 for one the kernel picks), or -errno. It is closed with
+	// tcp_close and its port read with tcp_local_port, like any socket.
+	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_connect(fd, host_be, port): fixes the peer a bound socket sends
+	// to and receives from. 0, or -errno.
+	c.info.FuncSigs["udp_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_sendto(fd, host_be, port, data): one datagram to host:port, or to
+	// the connected peer when both are 0. The bytes accepted, or -errno.
+	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_recvfrom(fd, buf, from): one datagram read into buf, up to its
+	// length; the datagram's byte count (0 for an empty one), or -errno.
+	// A `from` of at least six bytes receives the sender's IPv4 address in
+	// network order and then its port, high byte first.
+	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, u8s},
 		Result: ast.NumberType{},
 	}
 	// read_file(path): Result[string, IoError] — reads the entire
@@ -4119,6 +4213,44 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
 		Params: []ast.Type{usizeT},
 		Result: ast.NumberType{},
+	}
+	// `__store_u8(addr, v)` — one byte, the low eight bits of v; the
+	// sockaddr and option bytes the socket helpers write.
+	c.info.FuncSigs["__store_u8"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__str_bytes(s, scratch)` — the address of a string's bytes, for the
+	// length `s.len()` reports. A heap string answers its data pointer; a
+	// string a backend carries inline in its words is copied into `scratch`,
+	// sixteen bytes the caller keeps alive as long as it reads through the
+	// result, or answers 0 when `scratch` is 0. The socket send helpers hand
+	// the kernel a string through it.
+	c.info.FuncSigs["__str_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, usizeT},
+		Result: usizeT,
+	}
+	// `__arr_set_len(a, n)` — shorten a fresh `u8[]` from `__alloc_u8` to
+	// the n bytes a read filled; its capacity is unchanged.
+	c.info.FuncSigs["__arr_set_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__syscall3(nr, a, b, c)` … `__syscall6(nr, a, …, f)` — the native
+	// runtime's syscall floor, the same names and shapes the self-host's
+	// asmcore helpers are written on: the number and arguments are
+	// machine words, signed so a negative errno reads as one, and the
+	// result is the kernel's word unchanged (-errno on every target; the
+	// arm64-darwin emitter negates the carry-flagged error itself). Native
+	// only: wasm has no kernel and refuses the callee; the interpreter
+	// implements every builtin in Go and never reaches it.
+	wordT := ast.NumberType{Width: 64, Signed: true}
+	for n := 3; n <= 6; n++ {
+		params := []ast.Type{ast.NumberType{}}
+		for i := 0; i < n; i++ {
+			params = append(params, wordT)
+		}
+		c.info.FuncSigs[fmt.Sprintf("__syscall%d", n)] = &ast.FuncType{Params: params, Result: wordT}
 	}
 	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
 	// Address AND value are usize so the full 8-byte pointer

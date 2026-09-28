@@ -327,13 +327,17 @@ func socketHostBody(operation, moduleName, name string) string {
         (i32.store offset=8 (local.get 3) (global.get $fh_handle))))))`
 	}
 	phase, ret, own := 0, 1, ""
+	// errAt is where the canonical ABI puts the error-code of the method's
+	// result: 1 after `result<_, error-code>`, 4 after a handle, handle
+	// tuple or address, 8 after a u64 count.
+	errAt := 4
 	switch {
 	case strings.HasPrefix(name, "create-"):
 		phase, own = 1, "(global.set $fh_socket (i32.const 1))"
 	case strings.HasSuffix(name, ".start-bind"), strings.HasSuffix(name, ".start-connect"):
-		phase, ret = 2, 14
+		phase, ret, errAt = 2, 14, 1
 	case strings.HasSuffix(name, ".finish-bind"):
-		phase = 3
+		phase, errAt = 3, 1
 	case strings.HasSuffix(name, ".finish-connect"):
 		phase, own = 3, "streams"
 	case strings.HasSuffix(name, ".accept"):
@@ -341,15 +345,15 @@ func socketHostBody(operation, moduleName, name string) string {
 	case strings.HasSuffix(name, ".local-address"):
 		phase = 1
 	case strings.HasSuffix(name, ".start-listen"):
-		phase = 4
+		phase, errAt = 4, 1
 	case strings.HasSuffix(name, ".finish-listen"):
-		phase = 5
+		phase, errAt = 5, 1
 	case strings.HasSuffix(name, ".stream"):
 		phase, ret, own = 4, 14, "streams"
 	case strings.HasSuffix(name, ".check-send"):
-		phase = 5
+		phase, errAt = 5, 8
 	case strings.HasSuffix(name, ".send"):
-		phase, ret = 6, 3
+		phase, ret, errAt = 6, 3, 8
 	}
 	if phase == 0 {
 		return "unreachable"
@@ -373,5 +377,5 @@ func socketHostBody(operation, moduleName, name string) string {
 	if operation == "udp" && phase >= 5 {
 		payload = fmt.Sprintf("(i64.store offset=8 (local.get %d) (i64.const 1))", ret)
 	}
-	return fmt.Sprintf("(if (i32.eq (global.get $fh_fail) (i32.const %d)) (then (i32.store (local.get %d) (i32.const 1)) (i32.store offset=4 (local.get %d) (i32.const 0))) (else (i32.store (local.get %d) (i32.const 0)) %s %s))", phase, ret, ret, ret, payload, own)
+	return fmt.Sprintf("(if (i32.eq (global.get $fh_fail) (i32.const %d)) (then (i32.store (local.get %d) (i32.const 1)) (i32.store8 offset=%d (local.get %d) (i32.const 0))) (else (i32.store (local.get %d) (i32.const 0)) %s %s))", phase, ret, errAt, ret, ret, payload, own)
 }

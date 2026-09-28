@@ -47,9 +47,10 @@ emits a dedicated IR op (`monotonic_ns()` → `ir.op_monotonic_ns()`,
 for free (it's an op, not a `call_direct`).
 
 **The source to port** (native, already correct): `internal/codegen/x86_64/x86_64.go`
-`emitPollRuntime`, `emitTcpConnectRuntime` / `…Recv` / `…Send` / `…Close`,
-`emitTcpPollableRuntime`, `emitWasmTimerPollableRuntime`,
-`emitWasmPollableDropRuntime`; the arm64 mirrors in
+`emitPollRuntime`, `emitTcpRecvRuntime` / `…Send`,
+`emitWasmTimerPollableRuntime`, `emitWasmPollableDropRuntime` (the
+connect, close and pollable helpers are Fern bodies in `internal/fernrt`
+now); the arm64 mirrors in
 `internal/codegen/arm64/arm64.go`; the wasm reactor helpers +
 `wasi:io/poll` composition in `internal/codegen/wasmbin` +
 `internal/wasm/component`. Each must be re-expressed in the self-host

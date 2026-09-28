@@ -340,30 +340,88 @@ hand-written `__fern_utf8_valid`. `internal/fernrt` is the native answer:
 `runtime.fern` defines a helper as an ordinary Fern function under its exact
 runtime symbol name, and a backend that needs it asks `fernrt.Func` for the
 declaration and lowered IR and emits it through the same function emitter it
-uses for user code. One source, lowered per target. There is no bootstrap
+uses for user code. One source, lowered per target: `fernrt.Func` takes the
+target (`fernrt.Target`: pointer width, OS, ISA), folds `target_os()` and
+`target_arch()` before the body is checked, and `ir.Inline` then makes a
+constant-returning sibling (`__sys_socket()`, a syscall number keyed by
+target) the constant at its call sites. There is no bootstrap
 circularity on this side — Go compiles the source — so the only constraint is
 the one the self-host has: a body may reach only the provided-callee floor
-(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, …) and never an
-operation that lowers to a call of the helper it implements.
+(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, `__store_u8`,
+`__syscall3` … `__syscall6`, …) and never an operation that lowers to a
+call of the helper it implements.
 `TestHelpersCallOnlyTheFloorOrEachOther` pins that.
 
 How each backend reaches a helper:
 
 - **x86-64 / arm64** — a hand-written body that calls one declares it with
   `needFern` next to its other use-flags (`read_file` is the one that needs
-  `__fern_utf8_valid`), the pre-scan walks the helper's IR for the flags it
-  sets, and the helper is emitted through `emitFunc` at the head of the
-  runtime chain under `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is
-  the symbol the hand-asm calls.
-- **arm64ssa** — `referencedRuntimeHelpers` reports the Fern helpers the
-  module reaches (through `runtimeHelperDeps` as well), and each is lifted
-  with `ssa.LiftFromIRWith`, optimised, verified and emitted as a module
-  function under `fnLabel(name)`; the scan repeats until a lifted helper
-  reaches nothing new.
+  `__fern_utf8_valid`), a builtin whose helper is Fern reaches it through
+  `ir.CodegenAliases` (`tcp_listen` → `__fern_tcp_listen`) in the pre-scan,
+  the pre-scan walks the helper's IR for the flags it sets, and the helper
+  is emitted through `emitFunc` at the head of the runtime chain under
+  `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is the symbol the
+  hand-asm calls.
+- **x86-64ssa / arm64ssa** — `referencedRuntimeHelpers` reports the Fern
+  helpers the module reaches (through `ir.CodegenAlias` and
+  `runtimeHelperDeps` as well), and each is lifted with
+  `ssa.LiftFromIRWith`, optimised, verified and emitted as a module function
+  under `fnLabel(name)`; the scan repeats until a lifted helper reaches
+  nothing new.
 - **wasmbin** — `injectFernHelpers` moves the helper out of the
   `runtimeHelperSpecs` set and into `prog.Funcs`, unexported, so `emitBody`
   lowers it and `funcIdx` resolves its name for the hand-built bodies; its
-  own needs are scanned in like a user function's.
+  own needs are scanned in like a user function's. A name that has a
+  hand-built wasi body is that target's twin of a native helper written on
+  the syscall floor, and the wasi body wins.
+
+The socket helpers `__fern_tcp_listen`, `__fern_tcp_listen_with`,
+`__fern_tcp_connect`, `__fern_tcp_accept`, `__fern_tcp_local_port`,
+`__fern_tcp_close`, `__fern_tcp_pollable`, `__fern_tcp_socket_ctl`,
+`__fern_tcp_recv`, `__fern_tcp_send` and `__fern_udp_send` are Fern bodies
+over `__syscall3`, `__syscall5` and `__syscall6` (#9853): four hand-written
+copies each, x86-64, arm64, x86-64ssa and arm64ssa, are gone, and the two
+controls never had any. The datagram sockets `__fern_udp_bind`,
+`__fern_udp_connect`, `__fern_udp_sendto` and `__fern_udp_recvfrom` arrived
+as Fern bodies on both compilers and never had a hand-written copy; the
+caller's `u8[]` reaches the kernel as `buf as usize` on the Go compiler,
+while the self-host body reads into a raw buffer and spreads the bytes one
+per slot, the way its `tcp_recv` fills a fresh array, and writes the
+sender's six bytes through `__raw_arr_ptr`. The wasm twins are in
+`wasi_udp.go` and `wasm_ir.fern`; there `udp_send` is the three of them
+in a row.
+
+The **reactor floor** (#9853) is three more bodies on both compilers:
+`__fern_reactor_new` (epoll_create1, or kqueue on Darwin),
+`__fern_reactor_ctl` (epoll_ctl with ADD then MOD on EEXIST and DEL for no
+interest; on Darwin one kevent change per filter, EV_ADD with EV_ENABLE or
+EV_DELETE, ENOENT on a delete ignored) and `__fern_reactor_wait`
+(epoll_pwait into a block of events, 12 bytes each on x86-64 where the
+struct is packed and 16 on arm64; kevent with a timespec on Darwin, the
+wait writing (fd, readiness) pairs into the caller's `i32[]` through its
+data pointer on the Go compiler and `__raw_arr_ptr` on the self-host).
+`__fern_tcp_recv_into` is one read into the caller's `u8[]`, the way
+`udp_recvfrom` fills its buffer. The wasm twins keep a guest table of
+pollables (`wasi_reactor.go`, `wasm_ir.fern`).
+
+The last three needed the **bytes floor**: `__str_bytes(s, scratch)` is
+the address of a string's bytes for the length `s.len()` reports, and
+`__arr_set_len(a, n)` shortens a fresh `u8[]` from `__alloc_u8` to the
+bytes a read filled. A string a backend carries inline in its word (x86-64
+and arm64's stack backends, and wasm) has no address until it is spilled,
+so the caller passes sixteen bytes of scratch it keeps alive while it reads
+through the answer, or 0 to be told the string is inline (the answer is
+then 0); a heap string, which is every string on the SSA backends, is
+answered from where it is. The stack backends emit both as inline arms on
+their SSO seams (`emitStrBytes`, and the two-word `emitStrBytes2W` on
+arm64), the SSA backends as leaf helpers, wasm as bodies over its
+`(data, len)` pair, and the self-host lowers them onto `__raw_data` and the
+length slot of its box. `tcp_send` sends a heap string from where it is;
+only an inline one borrows sixteen bytes for the call.
+The x86-64 stack backend records a raw syscall whose number is a literal
+(`literalSyscallNumbers`, off the IR's operand-stack model), so the seccomp
+allowlist stays exact through them; a number computed at run time is refused
+under `FERN_SANDBOX=1`.
 
 A Fern helper is a function, not a provided callee: it has no row in
 `verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and
@@ -958,8 +1016,8 @@ a millisecond count. Darwin now uses `kqueue` and six-argument `kevent` through
 the same Fern runtime floor (#9853). Its temporary event lists share one owned
 buffer, and every wait closes its kqueue. Native Apple Silicon execution tests
 cover pipe and TCP readiness, timeout/error paths, duplicate descriptors,
-descriptor cleanup and balanced allocation counts. A persistent worker-owned
-reactor remains a separate P0 step.
+descriptor cleanup and balanced allocation counts. The persistent reactor
+is the `__fern_reactor_*` family below.
 
 `__syscall5` **has since landed**, with `sleep_ms` as its first consumer — the
 leaf whose two targets disagree on the call itself, not just the number: Linux

@@ -25,12 +25,13 @@ import (
 func TestAsyncCombinatorsPortable(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `import "std/async";
+import "std/time";
 function main(): i32 {
     var fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
     var summed: i32[] = async.gather(fs, -1);
     var sum: i32 = summed[0] + summed[1] + summed[2];   // 42
     var (w, v) = async.race(fs, -1);                    // (0, 5)
-    var d: Option[i32][] = async.with_deadline(50, fs); // [Some(5),Some(7),Some(30)]
+    var d: Option[i32][] = async.with_deadline(time.duration_millis(50), fs); // [Some(5),Some(7),Some(30)]
     var d2: i32 = 0;
     match (d[2]) { Some(x) => { d2 = x; }, None => { } }
     if (sum == 42 && w == 0 && v == 5 && d2 == 30) { return 42; }
@@ -71,7 +72,7 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port

@@ -1750,7 +1750,7 @@ func TestWasiSocketsTcpCreateSocketInstanceTypeBody_Validates(t *testing.T) {
 	}
 }
 
-// TestWasiSocketsUdpInstanceTypeBody_Validates composes the send-only
+// TestWasiSocketsUdpInstanceTypeBody_Validates composes the
 // wasi:sockets/udp + udp-create-socket instance types over
 // sockets/network and io/poll (the datagram path is its own resources,
 // but outgoing-datagram-stream.subscribe returns own<pollable>) and

@@ -87,6 +87,20 @@ func foldOnce(ops []Op) []Op {
 				continue
 			}
 		}
+		// A block that exits through an unconditional branch before anything
+		// else can run is its branch value: `block(A) X br 0 … end`, or, as
+		// pruneConstIf leaves an inlined `if (c) { return v; }` ladder,
+		// `block(A) block X br 1 end … end`. X is straight-line and leaves
+		// the value the branch carries; what follows the branch is
+		// unreachable. This is what turns a target-keyed constant function
+		// into the constant at its inlined call sites.
+		if ops[i].Kind == OpBlock {
+			if x, end, ok := foldBlockExit(ops, i); ok {
+				out = append(out, x...)
+				i = end
+				continue
+			}
+		}
 		// Constant-conditioned br_if: `OpConstI32 c; OpBrIf N`. When the
 		// condition is a compile-time constant the branch is decided —
 		// a nonzero c always branches (→ unconditional OpBr N, dropping
@@ -336,6 +350,35 @@ func pruneConstIf(ops []Op, i int) ([]Op, bool) {
 	out = append(out, arm...)
 	out = append(out, Op{Kind: OpEnd, Pos: ops[endIdx].Pos})
 	return out, true
+}
+
+// foldBlockExit matches the two shapes foldOnce describes at the OpBlock
+// ops[i], answering the straight-line ops the block reduces to and the
+// index of its OpEnd.
+func foldBlockExit(ops []Op, i int) ([]Op, int, bool) {
+	_, end := scanIfBlock(ops, i)
+	if end < 0 {
+		return nil, 0, false
+	}
+	start, depth := i+1, int32(0)
+	if start < end && ops[start].Kind == OpBlock {
+		start, depth = start+1, 1
+	}
+	for k := start; k < end; k++ {
+		switch ops[k].Kind {
+		case OpBlock, OpLoop, OpIf, OpElse, OpEnd, OpBrIf:
+			return nil, 0, false
+		case OpBr:
+			if ops[k].I32 != depth {
+				return nil, 0, false
+			}
+			if depth == 1 && (k+1 >= end || ops[k+1].Kind != OpEnd) {
+				return nil, 0, false
+			}
+			return append([]Op{}, ops[start:k]...), end, true
+		}
+	}
+	return nil, 0, false
 }
 
 // armNeedsWrapping reports whether splicing arm in place of the

@@ -1,0 +1,373 @@
+// Tiny scalar leaves spliced into their callers, then tuples read apart.
+//
+// A leaf here computes only on scalars and tuples of them and calls nothing,
+// so splicing it moves no count: every value it makes is a word or a fresh
+// tuple the splice then takes apart. A tuple built and only read, which is
+// what a spliced `(ok, value)` return becomes, is never allocated: each read
+// takes the element straight from the construction, through the phi that
+// joins several returns, and a construction nothing reads is dropped.
+import "./ssa";
+import "./ssasem";
+import "./typeinfo";
+import "core/map";
+
+// Past these a leaf is not tiny, and splicing it grows its callers more than
+// the call it removes costs.
+function max_leaf_insts(): i32 { return 40; }
+function max_leaf_blocks(): i32 { return 16; }
+function max_splices(): i32 { return 64; }
+// A caller already this large gains little from a splice and pays for it in
+// register pressure across the whole body.
+function max_caller_insts(): i32 { return 1500; }
+
+// `funcs[i]` is spliced into its callers when `inlinable[i]` and it is a leaf;
+// `rewrite[i]` says which functions may be rewritten at all. `names[i]` is the
+// key a call to `funcs[i]` carries.
+pub function inline_leaves(funcs: ssasem.Func[], names: string[], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
+    var leaves: Map[string, i32] = map_new(64);
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (inlinable[i] && leaf(funcs[i])) { leaves = leaves.insert(names[i], i); any = true; }
+        i = i + 1;
+    }
+    var out: ssasem.Func[] = [];
+    i = 0;
+    while (i < funcs.len()) {
+        var f: ssasem.Func = funcs[i];
+        if (rewrite[i]) {
+            if (any && count_insts(f.graph) <= max_caller_insts()) { f = splice_calls(f, funcs, leaves); }
+            f = split_tuples(f);
+        }
+        out = out.append(f);
+        i = i + 1;
+    }
+    return out;
+}
+
+function scalar(t: typeinfo.Type): boolean {
+    return ssasem.is_integer(t) || ssasem.is_float(t) || ssasem.is_bool(t) || ssasem.is_char(t);
+}
+
+function scalar_tuple(t: typeinfo.Type): boolean {
+    if let typeinfo.TypeTuple(tt) = t {
+        for e in tt.elements { if (!scalar(e)) { return false; } }
+        return tt.elements.len() > 0;
+    }
+    return false;
+}
+
+function leaf_kind(k: i32): boolean {
+    return (k >= 1 && k <= 10 && k != 5) || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get();
+}
+
+function leaf(f: ssasem.Func): boolean {
+    if (f.graph.takes_env || f.graph.blocks.len() > max_leaf_blocks()) { return false; }
+    // The splice gives the entry one predecessor, the caller's block.
+    if (f.graph.blocks[f.graph.entry].preds.len() > 0) { return false; }
+    if (!scalar(f.result) && !scalar_tuple(f.result)) { return false; }
+    for t in f.values { if (!scalar(t) && !scalar_tuple(t)) { return false; } }
+    var n: i32 = 0;
+    for b in f.graph.blocks {
+        if (b.term.kind_tag < 1 || b.term.kind_tag > 3) { return false; }
+        for ins in b.insts {
+            if (!leaf_kind(ins.kind_tag)) { return false; }
+            if (ins.kind_tag != 6) { n = n + 1; }
+        }
+    }
+    return n <= max_leaf_insts();
+}
+
+// The leaf a call instruction names, as an index into `funcs`, or -1.
+function leaf_callee(ins: ssa.SInst, leaves: Map[string, i32]): i32 {
+    if (ins.kind_tag != ssasem.call()) { return 0 - 1; }
+    return leaves.get_or(ins.str, 0 - 1);
+}
+
+function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], leaves: Map[string, i32]): ssasem.Func {
+    var f: ssasem.Func = f0;
+    var done: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < f.graph.blocks.len() && done < max_splices()) {
+        var k: i32 = 0;
+        var spliced: boolean = false;
+        while (k < f.graph.blocks[bi].insts.len() && !spliced) {
+            var at: i32 = leaf_callee(f.graph.blocks[bi].insts[k], leaves);
+            if (at >= 0 && funcs[at].graph.name != f.graph.name) {
+                f = splice(f, bi, k, funcs[at]);
+                done = done + 1;
+                spliced = true;
+            }
+            k = k + 1;
+        }
+        // The block's tail moved to a new block at the end, which this walk
+        // reaches in turn.
+        bi = bi + 1;
+    }
+    return f;
+}
+
+function next_block_id(g: ssa.SFunc): i32 {
+    var hi: i32 = 0;
+    for b in g.blocks { if (b.id >= hi) { hi = b.id + 1; } }
+    return hi;
+}
+
+function br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
+
+function term_targets(t: ssa.STerm): i32[] {
+    if (t.kind_tag == 2) { return [t.target]; }
+    if (t.kind_tag == 3) { return [t.t, t.f]; }
+    return [];
+}
+
+// The call at block `bi`, position `k` becomes a branch into a copy of
+// `callee`'s blocks; every return in the copy branches to a new block that
+// defines the call's result and carries on with the rest of the old block.
+function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Func {
+    var g: ssa.SFunc = f.graph;
+    var b: ssa.SBlock = g.blocks[bi];
+    var call: ssa.SInst = b.insts[k];
+    var base: i32 = g.nvals;
+    var first: i32 = next_block_id(g);
+    var cont: i32 = first + callee.graph.blocks.len();
+    var vmap: i32[] = [];
+    var v: i32 = 0;
+    while (v < callee.graph.nvals) { vmap = vmap.append(base + v); v = v + 1; }
+    for cb in callee.graph.blocks {
+        for ins in cb.insts { if (ins.kind_tag == 6) { vmap = vmap.with(ins.result, call.args[ins.imm]); } }
+    }
+    var ids: i32[] = [];
+    for cb in callee.graph.blocks { ids = ids.append(cb.id); }
+    var entry_id: i32 = callee.graph.blocks[callee.graph.entry].id;
+    var copied: ssa.SBlock[] = [];
+    var rets: i32[] = [];
+    var ret_vals: i32[] = [];
+    var j: i32 = 0;
+    while (j < callee.graph.blocks.len()) {
+        var cb: ssa.SBlock = callee.graph.blocks[j];
+        var insts: ssa.SInst[] = [];
+        for ins in cb.insts {
+            if (ins.kind_tag == 6) { continue; }
+            var args: i32[] = [];
+            for a in ins.args { args = args.append(vmap[a]); }
+            insts = insts.append(ssa.SInst { ...ins, result: vmap[ins.result], args: args });
+        }
+        var preds: i32[] = [];
+        for p in cb.preds { preds = preds.append(first + index_of(ids, p)); }
+        if (cb.id == entry_id) { preds = [b.id]; }
+        var t: ssa.STerm = cb.term;
+        if (t.kind_tag == 1) {
+            rets = rets.append(first + j);
+            ret_vals = ret_vals.append(vmap[t.value]);
+            t = br(cont);
+        } else if (t.kind_tag == 2) {
+            t = br(first + index_of(ids, t.target));
+        } else {
+            t = ssa.STerm { ...t, cond: vmap[t.cond], t: first + index_of(ids, t.t), f: first + index_of(ids, t.f) };
+        }
+        copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
+        j = j + 1;
+    }
+    var head: ssa.SInst[] = [];
+    var tail: ssa.SInst[] = [];
+    var kind: i32 = 8;
+    if (ret_vals.len() == 1) { kind = 7; }
+    if (call.result >= 0) { tail = tail.append(ssa.SInst { kind_tag: kind, result: call.result, args: ret_vals, imm: 0, str: "" }); }
+    var p: i32 = 0;
+    while (p < b.insts.len()) {
+        if (p < k) { head = head.append(b.insts[p]); }
+        if (p > k) { tail = tail.append(b.insts[p]); }
+        p = p + 1;
+    }
+    var blocks: ssa.SBlock[] = [];
+    var targets: i32[] = term_targets(b.term);
+    for ob in g.blocks {
+        if (ob.id == b.id) {
+            blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: br(first + index_of(ids, entry_id)) });
+        } else if (index_of(targets, ob.id) >= 0) {
+            var preds: i32[] = [];
+            for q in ob.preds { if (q == b.id) { preds = preds.append(cont); } else { preds = preds.append(q); } }
+            blocks = blocks.append(ssa.SBlock { ...ob, preds: preds });
+        } else {
+            blocks = blocks.append(ob);
+        }
+    }
+    for cb in copied { blocks = blocks.append(cb); }
+    blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
+    var values: typeinfo.Type[] = f.values;
+    for t in callee.values { values = values.append(t); }
+    return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: base + callee.graph.nvals }, values: values };
+}
+
+function index_of(xs: i32[], x: i32): i32 {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] == x) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// ---- tuples read apart ---------------------------------------------------
+
+struct Def { block: i32, pos: i32 }
+
+function defs_of(g: ssa.SFunc): Def[] {
+    var out: Def[] = [];
+    var v: i32 = 0;
+    while (v < g.nvals) { out = out.append(Def { block: 0 - 1, pos: 0 - 1 }); v = v + 1; }
+    var bi: i32 = 0;
+    while (bi < g.blocks.len()) {
+        var k: i32 = 0;
+        while (k < g.blocks[bi].insts.len()) {
+            var r: i32 = g.blocks[bi].insts[k].result;
+            if (r >= 0 && r < out.len()) { out = out.with(r, Def { block: bi, pos: k }); }
+            k = k + 1;
+        }
+        bi = bi + 1;
+    }
+    return out;
+}
+
+function def_inst(g: ssa.SFunc, defs: Def[], v: i32): ssa.SInst {
+    var none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    if (v < 0 || v >= defs.len() || defs[v].block < 0) { return none; }
+    return g.blocks[defs[v].block].insts[defs[v].pos];
+}
+
+// The tuple construction a value is, through copies, or -1.
+function construction(g: ssa.SFunc, defs: Def[], v: i32): i32 {
+    var x: i32 = v;
+    var steps: i32 = 0;
+    while (steps < 64) {
+        var d: ssa.SInst = def_inst(g, defs, x);
+        if (d.kind_tag == ssasem.tuple_new()) { return x; }
+        if (d.kind_tag != 7 || d.args.len() != 1) { return 0 - 1; }
+        x = d.args[0];
+        steps = steps + 1;
+    }
+    return 0 - 1;
+}
+
+// Every read of a known construction reads its element instead, a read of a
+// phi joining constructions reads a per-element phi, and a construction or
+// joining phi left unread is dropped.
+function split_tuples(f0: ssasem.Func): ssasem.Func {
+    if (!reads_tuples(f0.graph)) { return f0; }
+    var f: ssasem.Func = f0;
+    var round: i32 = 0;
+    var changed: boolean = true;
+    while (changed && round < 8) {
+        changed = false;
+        var g: ssa.SFunc = f.graph;
+        var defs: Def[] = defs_of(g);
+        var bi: i32 = 0;
+        while (bi < g.blocks.len()) {
+            var k: i32 = 0;
+            while (k < g.blocks[bi].insts.len()) {
+                var ins: ssa.SInst = g.blocks[bi].insts[k];
+                if (ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && scalar(f.values[ins.result])) {
+                    var src: Source = element_source(f, g, defs, ins.args[0], ins.imm, bi);
+                    if (src.value >= 0) {
+                        f = src.f;
+                        g = f.graph;
+                        var copy: ssa.SInst = ssa.SInst { kind_tag: 7, result: ins.result, args: [src.value], imm: 0, str: "" };
+                        g = with_inst(g, bi, k + src.shift, copy);
+                        f = ssasem.Func { ...f, graph: g };
+                        if (src.shift > 0 || g.nvals > defs.len()) { defs = defs_of(g); }
+                        changed = true;
+                    }
+                }
+                k = k + 1;
+            }
+            bi = bi + 1;
+        }
+        var swept: ssasem.Func = drop_unread(f);
+        if (swept.graph.blocks.len() > 0 && count_insts(swept.graph) != count_insts(f.graph)) { changed = true; }
+        f = swept;
+        round = round + 1;
+    }
+    return f;
+}
+
+function reads_tuples(g: ssa.SFunc): boolean {
+    for b in g.blocks { for ins in b.insts { if (ins.kind_tag == ssasem.tuple_get()) { return true; } } }
+    return false;
+}
+
+struct Source { f: ssasem.Func, value: i32, shift: i32 }
+
+// The value element `idx` of tuple `v` is, adding a per-element phi when `v`
+// is a phi of constructions. `shift` is how many instructions that added in
+// front of the read when the phi joins the read's own block, at its head.
+function element_source(f: ssasem.Func, g: ssa.SFunc, defs: Def[], v: i32, idx: i32, read_block: i32): Source {
+    var none: Source = Source { f: f, value: 0 - 1, shift: 0 };
+    var c: i32 = construction(g, defs, v);
+    if (c >= 0) {
+        var d: ssa.SInst = def_inst(g, defs, c);
+        if (idx < 0 || idx >= d.args.len()) { return none; }
+        return Source { f: f, value: d.args[idx], shift: 0 };
+    }
+    var phi: ssa.SInst = def_inst(g, defs, v);
+    if (phi.kind_tag != 8) { return none; }
+    var elems: i32[] = [];
+    for a in phi.args {
+        var ca: i32 = construction(g, defs, a);
+        if (ca < 0) { return none; }
+        var da: ssa.SInst = def_inst(g, defs, ca);
+        if (idx < 0 || idx >= da.args.len()) { return none; }
+        elems = elems.append(da.args[idx]);
+    }
+    var ty: typeinfo.Type = element_type(f.values[v], idx);
+    var nv: i32 = g.nvals;
+    var pb: i32 = defs[v].block;
+    var blk: ssa.SBlock = g.blocks[pb];
+    var insts: ssa.SInst[] = [ssa.SInst { kind_tag: 8, result: nv, args: elems, imm: 0, str: "" }];
+    for ins in blk.insts { insts = insts.append(ins); }
+    var ng: ssa.SFunc = ssa.SFunc { ...g, nvals: nv + 1, blocks: g.blocks.with(pb, ssa.SBlock { ...blk, insts: insts }) };
+    var shift: i32 = 0;
+    if (pb == read_block) { shift = 1; }
+    return Source { f: ssasem.Func { ...f, graph: ng, values: f.values.append(ty) }, value: nv, shift: shift };
+}
+
+function element_type(t: typeinfo.Type, idx: i32): typeinfo.Type {
+    if let typeinfo.TypeTuple(tt) = t { return tt.elements[idx]; }
+    return t;
+}
+
+function with_inst(g: ssa.SFunc, bi: i32, k: i32, ins: ssa.SInst): ssa.SFunc {
+    var b: ssa.SBlock = g.blocks[bi];
+    return ssa.SFunc { ...g, blocks: g.blocks.with(bi, ssa.SBlock { ...b, insts: b.insts.with(k, ins) }) };
+}
+
+function count_insts(g: ssa.SFunc): i32 {
+    var n: i32 = 0;
+    for b in g.blocks { n = n + b.insts.len(); }
+    return n;
+}
+
+// Tuple constructions, and phis and copies of tuples, that nothing reads.
+function drop_unread(f: ssasem.Func): ssasem.Func {
+    var g: ssa.SFunc = f.graph;
+    var reads: i32[] = [];
+    var v: i32 = 0;
+    while (v < g.nvals) { reads = reads.append(0); v = v + 1; }
+    for b in g.blocks {
+        for ins in b.insts { for a in ins.args { if (a >= 0 && a < reads.len()) { reads = reads.with(a, reads[a] + 1); } } }
+        if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < reads.len()) { reads = reads.with(b.term.value, reads[b.term.value] + 1); }
+        if (b.term.kind_tag == 3 && b.term.cond >= 0 && b.term.cond < reads.len()) { reads = reads.with(b.term.cond, reads[b.term.cond] + 1); }
+    }
+    var blocks: ssa.SBlock[] = [];
+    for b in g.blocks {
+        var insts: ssa.SInst[] = [];
+        for ins in b.insts {
+            var dead: boolean = ins.result >= 0 && ins.result < reads.len() && reads[ins.result] == 0
+                && scalar_tuple(f.values[ins.result])
+                && (ins.kind_tag == ssasem.tuple_new() || ins.kind_tag == 7 || ins.kind_tag == 8);
+            if (!dead) { insts = insts.append(ins); }
+        }
+        blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+    }
+    return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } };
+}

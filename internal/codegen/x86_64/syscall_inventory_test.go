@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
@@ -21,20 +22,25 @@ import (
 // the process on a legitimate path — so the claim needs a gate, not a
 // convention.
 //
-// Two tests hold it up:
+// Three tests hold it up:
 //
 //  1. TestNoBareSyscallEmit — nothing can emit `syscall` except the two
-//     recording helpers. This is the structural half: it makes the set
-//     exact by construction rather than by diligence, so a future
-//     syscall cannot be added without being recorded.
+//     recording helpers and the raw-floor helper. This is the structural
+//     half: it makes the set exact by construction rather than by
+//     diligence, so a future syscall cannot be added without being
+//     recorded.
 //  2. TestSyscallSetMatchesEmittedAsm — the recorded set agrees with
 //     what is actually in the asm text. This is the behavioural half:
 //     it catches a helper called with the wrong number (the one way
 //     emitSyscallPreloaded could lie).
+//  3. TestRawSyscallRefusedUnderSandbox — the raw floor, whose number is
+//     a run-time operand, is refused under the sandbox rather than
+//     emitted past a filter that cannot name it.
 
 // TestNoBareSyscallEmit is the essential structural gate: every
 // syscall emission must go through emitSyscall or
-// emitSyscallPreloaded, which record the number. A bare
+// emitSyscallPreloaded, which record the number, or emitSyscallRaw,
+// which marks the program as one the sandbox refuses. A bare
 // `g.emit("syscall")` would issue a syscall the recorded set does not
 // know about — invisible here, fatal once a filter is derived from it.
 func TestNoBareSyscallEmit(t *testing.T) {
@@ -48,15 +54,17 @@ func TestNoBareSyscallEmit(t *testing.T) {
 		if !strings.Contains(l, `g.emit("syscall")`) {
 			continue
 		}
-		// The two recording helpers are the only legitimate emitters.
+		// The two recording helpers and the raw-floor helper are the
+		// only legitimate emitters.
 		if inFunc(lines, i, "func (g *generator) emitSyscall(") ||
-			inFunc(lines, i, "func (g *generator) emitSyscallPreloaded(") {
+			inFunc(lines, i, "func (g *generator) emitSyscallPreloaded(") ||
+			inFunc(lines, i, "func (g *generator) emitSyscallRaw(") {
 			continue
 		}
 		offenders = append(offenders, strings.TrimSpace(l)+" (line "+itoa(i+1)+")")
 	}
 	if len(offenders) > 0 {
-		t.Errorf("bare syscall emission outside the recording helpers — the syscall set would silently miss these:\n  %s\n\nUse g.emitSyscall(n), or g.emitSyscallPreloaded(n) when eax is loaded separately.",
+		t.Errorf("bare syscall emission outside the recording helpers — the syscall set would silently miss these:\n  %s\n\nUse g.emitSyscall(n), g.emitSyscallPreloaded(n) when eax is loaded separately, or g.emitSyscallRaw(callee) for a run-time number.",
 			strings.Join(offenders, "\n  "))
 	}
 }
@@ -85,9 +93,66 @@ func itoa(n int) string {
 	return string(b)
 }
 
+// The raw floor's number is recorded when it is a literal — the shape every
+// runtime helper written in Fern uses — so the seccomp allowlist stays
+// exact. A number computed at run time can not be: a sandboxed build is
+// refused, naming the callee, rather than handed a filter that kills the
+// program at its first call, and without the sandbox the site records
+// nothing.
+func TestRawSyscallRefusedUnderSandbox(t *testing.T) {
+	const literal = `function main(): i32 {
+    var closed: i64 = __syscall3(3, 0 - 1, 0, 0);
+    if (closed != 0 - 9) { return 1; }
+    return 0;
+}
+`
+	_, syscalls := emitAsmAndSyscalls(t, literal)
+	recorded := false
+	for _, n := range syscalls {
+		recorded = recorded || n == 3
+	}
+	if !recorded {
+		t.Fatal("a raw syscall with a literal number was not recorded")
+	}
+	const src = `function main(): i32 {
+    var nr: i32 = __load_i32(__alloc(4)) + 3;
+    var closed: i64 = __syscall3(nr, 0 - 1, 0, 0);
+    if (closed != 0 - 9) { return 1; }
+    return 0;
+}
+`
+	asm, syscalls := emitAsmAndSyscalls(t, src)
+	if !strings.Contains(asm, "\tsyscall\n") {
+		t.Fatal("the raw floor emitted no syscall instruction")
+	}
+	for _, n := range syscalls {
+		if n == 3 {
+			t.Fatal("the raw site's number is a run-time operand; nothing about it can be recorded")
+		}
+	}
+	was := ast.SandboxEnabled
+	ast.SandboxEnabled = true
+	defer func() { ast.SandboxEnabled = was }()
+	_, _, err := emitProgram(t, src)
+	if err == nil || !strings.Contains(err.Error(), "__syscall3") {
+		t.Fatalf("sandboxed build of a raw-floor program: err = %v, want a refusal naming __syscall3", err)
+	}
+}
+
 // emitAsmAndSyscalls compiles src through the standard pipeline and
 // returns the asm plus the recorded syscall set.
 func emitAsmAndSyscalls(t *testing.T, src string) (string, []int) {
+	t.Helper()
+	asm, syscalls, err := emitProgram(t, src)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return asm, syscalls
+}
+
+// emitProgram runs src through the front end and EmitWithSyscalls,
+// handing back the emitter's own error.
+func emitProgram(t *testing.T, src string) (string, []int, error) {
 	t.Helper()
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -108,11 +173,7 @@ func emitAsmAndSyscalls(t *testing.T, src string) (string, []int) {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	asm, syscalls, err := EmitWithSyscalls(prog, info, Options{})
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	return asm, syscalls
+	return EmitWithSyscalls(prog, info, Options{})
 }
 
 var movEaxRe = regexp.MustCompile(`(?m)^\tmov eax, (\d+)$`)
@@ -163,7 +224,10 @@ func TestSyscallSetMatchesEmittedAsm(t *testing.T) {
 // stopped culling, this would silently widen every future filter.
 func TestSyscallSetIsProgramSpecific(t *testing.T) {
 	_, minimal := emitAsmAndSyscalls(t, `function main(): i32 { return 0; }`)
-	for _, banned := range []int{sysExecve, sysFork, sysSocket, sysGetrandom} {
+	// socket (41) is a Fern body's literal now (internal/fernrt), so it is
+	// no longer a constant of this package; the number is what the filter
+	// sees.
+	for _, banned := range []int{sysExecve, sysFork, 41, sysGetrandom} {
 		for _, n := range minimal {
 			if n == banned {
 				t.Errorf("a do-nothing program's syscall set contains %d; the set should be program-specific, not the language's whole surface (got %v)", banned, minimal)

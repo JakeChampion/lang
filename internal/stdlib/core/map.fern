@@ -1086,19 +1086,24 @@ pub function __map_key_of(m: usize, k: usize): usize {
     return __load_ptr(entriesBase + idx * (2 * __ptr_width()));
 }
 
-// __map_drop_strkey_impl is __map_drop_impl for a string key column whose
-// slots are the keys themselves: the last reference releases every live key
-// before the buffer and the handle go.
-pub function __map_drop_strkey_impl(m: usize): usize {
+// __map_drop_strcols_impl is __map_drop_impl for a map whose string columns
+// hold their strings in the slots themselves: the last reference releases
+// every live key of a string key column (keyKind 1) and every live value of a
+// string value column (valKind 5) before the buffer and the handle go.
+pub function __map_drop_strcols_impl(m: usize): usize {
     if (m == 0) { return m; }
     if (__load_i32(m - 8) == 1) {
         var buf: usize = __load_ptr(m);
+        var keys: boolean = __load_i32(buf + 8) == 1;
+        var vals: boolean = __map_val_kind(buf) == 5;
         var len_: i32 = __load_i32(buf + 4);
-        var entryStride: i32 = 2 * __ptr_width();
+        var ptrW: i32 = __ptr_width();
         var entriesBase: usize = buf + __map_hdr(buf) + __load_i32(buf) * 4;
         var i: i32 = 0;
         while (i < len_) {
-            __fern_str_dec(__load_ptr(entriesBase + i * entryStride) as string);
+            var slot: usize = entriesBase + i * (2 * ptrW);
+            if (keys) { __fern_str_dec(__load_ptr(slot) as string); }
+            if (vals) { __fern_str_dec(__load_ptr(slot + ptrW) as string); }
             i = i + 1;
         }
     }

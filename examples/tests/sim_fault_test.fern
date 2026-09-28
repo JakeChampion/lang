@@ -1,6 +1,7 @@
 import "std/test";
 import "std/async";
 import "std/sim";
+import "std/time";
 
 // examples/tests/sim_fault_test.fern — SimNet fault injection
 // (docs/DST-PLATFORM-BRIEF.md slice 3): seed-driven fault schedules on
@@ -17,8 +18,8 @@ import "std/sim";
 function test_fail_immediate(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "other", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "other", time.duration_nanos(10000000 as i64));
     n = n.fault_fail(1, 80, "/k");
     var f: async.Future[string] = n.fetch_future(1, 80, "/k");
     match (f) {
@@ -38,14 +39,14 @@ function test_fail_immediate(): test.TestOutcome {
 function test_stall_dropped_at_deadline(): test.TestOutcome {
     var d: sim.Sim = sim.new(7);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "healthy", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "silent", 5000000 as i64);
+    n = n.serve(1, 80, "/k", "healthy", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "silent", time.duration_nanos(5000000 as i64));
     n = n.fault_stall(2, 80, "/k");
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
         n.fetch_future(2, 80, "/k")
     ];
-    var got: Option[string][] = async.with_deadline_on(d, 25, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
     match (got[0]) {
         Some(v) => { if (v != "healthy") { return test.fail("wrong healthy body: " + v); } },
         None => { return test.fail("healthy endpoint dropped alongside the stalled one"); },
@@ -60,8 +61,8 @@ function test_stall_dropped_at_deadline(): test.TestOutcome {
 function test_stall_gather_incomplete(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "ok", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "gone", 5000000 as i64);
+    n = n.serve(1, 80, "/k", "ok", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "gone", time.duration_nanos(5000000 as i64));
     n = n.fault_stall(2, 80, "/k");
     var fs: async.Future[string][] = [
         n.fetch_future(1, 80, "/k"),
@@ -79,7 +80,7 @@ function test_stall_gather_incomplete(): test.TestOutcome {
 function test_partial_prefix_then_silent(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     n = n.fault_partial(1, 80, "/big", 2);
     var f: async.Future[string] = n.fetch_future(1, 80, "/big");
     var toks: i32[] = [];
@@ -108,10 +109,10 @@ function test_partial_prefix_then_silent(): test.TestOutcome {
 function test_partial_deadline_none(): test.TestOutcome {
     var d: sim.Sim = sim.new(1);
     var n: sim.Net = sim.net(d);
-    n = n.serve_chunked(1, 80, "/big", "abcdefghij", 5000000 as i64, 5000000 as i64, sim.chunks_of(10, 4));
+    n = n.serve_chunked(1, 80, "/big", "abcdefghij", time.duration_nanos(5000000 as i64), time.duration_nanos(5000000 as i64), sim.chunks_of(10, 4));
     n = n.fault_partial(1, 80, "/big", 2);
     var fs: async.Future[string][] = [n.fetch_future(1, 80, "/big")];
-    var got: Option[string][] = async.with_deadline_on(d, 30, fs);
+    var got: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs);
     match (got[0]) { Some(v) => { return test.fail("partial endpoint resolved: " + v); }, None => { } }
     return test.assert_eq(d.now_ns(), 30000000 as i64);
 }
@@ -123,7 +124,7 @@ function test_partial_deadline_none(): test.TestOutcome {
 function __flaky_pattern(seed: i64): string {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
     var out: string = "";
     var i: i32 = 0;
@@ -160,9 +161,9 @@ function test_same_seed_reproducible(): test.TestOutcome {
 function __gather_shape_ok(seed: i64): boolean {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "alpha", 10000000 as i64);
-    n = n.serve(2, 80, "/k", "beta", 20000000 as i64);
-    n = n.serve(3, 80, "/k", "gamma", 5000000 as i64);
+    n = n.serve(1, 80, "/k", "alpha", time.duration_nanos(10000000 as i64));
+    n = n.serve(2, 80, "/k", "beta", time.duration_nanos(20000000 as i64));
+    n = n.serve(3, 80, "/k", "gamma", time.duration_nanos(5000000 as i64));
     n = n.fault_flaky(2, 80, "/k", 50);
     n = n.fault_stall(3, 80, "/k");
     var fs: async.Future[string][] = [
@@ -183,7 +184,7 @@ function __gather_shape_ok(seed: i64): boolean {
 function __flaky_first_call_ok(seed: i64): boolean {
     var d: sim.Sim = sim.new(seed);
     var n: sim.Net = sim.net(d);
-    n = n.serve(1, 80, "/k", "body", 10000000 as i64);
+    n = n.serve(1, 80, "/k", "body", time.duration_nanos(10000000 as i64));
     n = n.fault_flaky(1, 80, "/k", 50);
     var ok: boolean = false;
     match (n.fetch_future(1, 80, "/k")) {

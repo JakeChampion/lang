@@ -18,9 +18,19 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/parser"
 )
+
+// Target is what a helper's body is lowered for: the pointer width, and the
+// OS and ISA halves of the target name that `target_os()` and `target_arch()`
+// fold to before the body is checked, so one source keys its syscall numbers
+// and struct layouts by target and a branch on either folds away.
+type Target struct {
+	PtrW     int
+	OS, Arch string
+}
 
 //go:embed runtime.fern
 var source string
@@ -31,7 +41,7 @@ type lowered struct {
 }
 
 type cacheKey struct {
-	ptrW    int
+	target  Target
 	twoWord bool
 }
 
@@ -41,11 +51,15 @@ var (
 	names map[string]bool
 )
 
-// front parses and checks the source. Every caller holds mu.
-func front() (*ast.Program, *checker.Info, error) {
+// front parses the source, folds the target calls for t and checks it. Every
+// caller holds mu.
+func front(t Target) (*ast.Program, *checker.Info, error) {
 	prog, err := parser.Parse(source)
 	if err != nil {
 		return nil, nil, fmt.Errorf("fernrt: parse runtime.fern: %w", err)
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: t.OS, TargetArch: t.Arch}); err != nil {
+		return nil, nil, fmt.Errorf("fernrt: fold runtime.fern: %w", err)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
@@ -58,7 +72,7 @@ func helperNames() map[string]bool {
 	if names != nil {
 		return names
 	}
-	prog, _, err := front()
+	prog, _, err := front(Target{})
 	if err != nil {
 		panic(err)
 	}
@@ -88,30 +102,33 @@ func Names() []string {
 	return out
 }
 
-// Func returns the declaration and lowered IR of the named helper for a
-// target whose pointers are ptrW bytes wide. The string ABI follows
-// ast.UseTwoWordStrings(ptrW) at the time of the call, as it does for the
-// program the backend is emitting. The IR has been through
-// ir.OptimizeFunctions — the per-function half of the battery every backend
-// runs — so it arrives in the shape their emitters expect. Only that half:
-// helpers here are looked up BY NAME, so a pass that inlined one into its sole
-// caller and culled the original would delete what a later lookup asks for.
-func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
+// Func returns the declaration and lowered IR of the named helper for t. The
+// string ABI follows ast.UseTwoWordStrings(t.PtrW) at the time of the call,
+// as it does for the program the backend is emitting. The IR has been
+// through ir.Inline and ir.OptimizeFunctions, so it arrives in the shape the
+// emitters expect and a helper's call of a constant-returning sibling (a
+// syscall number keyed by target) is the constant itself, which is what
+// lets the x86-64 backend record it for the seccomp allowlist. Not the rest
+// of the whole-program battery: helpers here are looked up BY NAME, so a
+// pass that culled a function inlined into its sole caller would delete
+// what a later lookup asks for.
+func Func(name string, t Target) (*ast.FuncDecl, *ir.Func, error) {
 	mu.Lock()
 	defer mu.Unlock()
-	k := cacheKey{ptrW: ptrW, twoWord: ast.UseTwoWordStrings(ptrW)}
+	k := cacheKey{target: t, twoWord: ast.UseTwoWordStrings(t.PtrW)}
 	l, ok := cache[k]
 	if !ok {
-		prog, info, err := front()
+		prog, info, err := front(t)
 		if err != nil {
 			return nil, nil, err
 		}
 		// The helpers are not the program under measurement, and this
 		// lowering is cached across -cover and plain builds alike.
-		ip, err := ir.LowerWith(prog, info, ptrW, ir.CoverExempt())
+		ip, err := ir.LowerWith(prog, info, t.PtrW, ir.CoverExempt())
 		if err != nil {
 			return nil, nil, fmt.Errorf("fernrt: lower runtime.fern: %w", err)
 		}
+		ir.Inline(ip)
 		ir.OptimizeFunctions(ip)
 		l = &lowered{decls: map[string]*ast.FuncDecl{}, funcs: map[string]*ir.Func{}}
 		for _, fn := range prog.Funcs {

@@ -148,7 +148,7 @@ function main(): i32 {
 	t.Run("raw-socket-serve", func(t *testing.T) {
 		probe, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			t.Skipf("no free TCP port: %v", err)
+			t.Fatalf("no free TCP port: %v", err)
 		}
 		port := probe.Addr().(*net.TCPAddr).Port
 		probe.Close()
@@ -220,11 +220,27 @@ function main(): i32 {
 // on separate connections, because the second only answers correctly if the
 // first request's allocations were reclaimed rather than leaked or reused.
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
+	checkSelfHostHttpHandlerServes(t, func(port int) string {
+		return fmt.Sprintf("return tcp.tcp_serve(%d, handle);", port)
+	})
+}
+
+// The same loop through tcp_serve_opts (#9853): a backlog of 4 and
+// SO_REUSEPORT on the listener, which reach tcp_listen_with through the
+// self-host's own lowering of the struct spread.
+func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
+	checkSelfHostHttpHandlerServes(t, func(port int) string {
+		return fmt.Sprintf("var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };\n    return tcp.tcp_serve_opts(%d, opts, handle);", port)
+	})
+}
+
+func checkSelfHostHttpHandlerServes(t *testing.T, entry func(port int) string) {
+	t.Helper()
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	port := probe.Addr().(*net.TCPAddr).Port
 	probe.Close()
@@ -237,9 +253,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function main(): i32 {
-    return tcp.tcp_serve(%d, handle);
+    %s
 }
-`, port)
+`, entry(port))
 
 	asm, progDir := compileSourceModload(t, runner, driverBin, src)
 	if !strings.Contains(asm, ".Lssa_") {

@@ -298,9 +298,9 @@ function wit_lift_bytes(s: string): i32[] {
 }
 function main(): i32 {
     var want: string[] = [
-        "wasi:io/error@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdin@0.2.0",
-        "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0", "wasi:cli/environment@0.2.0",
-        "wasi:cli/exit@0.2.0", "wasi:io/poll@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
+        "wasi:io/error@0.2.0", "wasi:io/poll@0.2.0", "wasi:io/streams@0.2.0",
+        "wasi:cli/stdin@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/stderr@0.2.0",
+        "wasi:cli/environment@0.2.0", "wasi:cli/exit@0.2.0", "wasi:clocks/monotonic-clock@0.2.0",
         "wasi:clocks/wall-clock@0.2.0", "wasi:filesystem/types@0.2.0",
         "wasi:filesystem/preopens@0.2.0", "wasi:sockets/network@0.2.0",
         "wasi:sockets/instance-network@0.2.0", "wasi:sockets/tcp@0.2.0",
@@ -520,8 +520,8 @@ function main(): i32 {
     if (pl.types != 32) { return 1; }
     if (pl.instances != 19) { return 2; }
     if (wit_import_instance_index(tb, "wasi:io/error@0.2.0") != 0) { return 3; }
-    if (wit_import_instance_index(tb, "wasi:io/streams@0.2.0") != 1) { return 4; }
-    if (wit_import_instance_index(tb, "wasi:cli/stdout@0.2.0") != 3) { return 5; }
+    if (wit_import_instance_index(tb, "wasi:io/streams@0.2.0") != 2) { return 4; }
+    if (wit_import_instance_index(tb, "wasi:cli/stdout@0.2.0") != 4) { return 5; }
     if (wit_import_instance_index(tb, "wasi:random/random@0.2.0") != 18) { return 6; }
     if (wit_import_instance_index(tb, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
     return 0;
