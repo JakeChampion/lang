@@ -135,7 +135,7 @@ func TestSelfHostWitWorldRoundTrip(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	watPath := witCompileToWat(t, dir, "wit_world_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witPayloadFunc(t, "HTTP_BIN", "http") + witWorldSelfTestMain)
+	watPath := witCompileToWat(t, dir, "wit_world_selftest", witPayloadFunc(t, "FERN_BIN", "fern")+witPayloadFunc(t, "HTTP_BIN", "http")+witWorldSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -194,7 +194,7 @@ func TestSelfHostWitWorldLift(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	watPath := witCompileToWat(t, dir, "wit_lift_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witLiftSelfTestMain)
+	watPath := witCompileToWat(t, dir, "wit_lift_selftest", witPayloadFunc(t, "FERN_BIN", "fern")+witLiftSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -251,7 +251,7 @@ func TestSelfHostWitEmitWorldImports(t *testing.T) {
 		t.Fatalf("EmitWorldImports: %v", err)
 	}
 
-	watPath := witCompileToWat(t, dir, "wit_emit_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witBytesFunc("EMIT_REF", ref) + witEmitSelfTestMain)
+	watPath := witCompileToWat(t, dir, "wit_emit_selftest", witPayloadFunc(t, "FERN_BIN", "fern")+witBytesFunc("EMIT_REF", ref)+witEmitSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -302,7 +302,7 @@ func TestSelfHostWitClassify(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	watPath := witCompileToWat(t, dir, "wit_classify_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witClassifySelfTestMain)
+	watPath := witCompileToWat(t, dir, "wit_classify_selftest", witPayloadFunc(t, "FERN_BIN", "fern")+witClassifySelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
@@ -348,7 +348,7 @@ func TestSelfHostWitPrefixLayout(t *testing.T) {
 	}
 	dir := t.TempDir()
 
-	watPath := witCompileToWat(t, dir, "wit_layout_selftest", witPayloadFunc(t, "FERN_BIN", "fern") + witLayoutSelfTestMain)
+	watPath := witCompileToWat(t, dir, "wit_layout_selftest", witPayloadFunc(t, "FERN_BIN", "fern")+witLayoutSelfTestMain)
 	cmd := exec.Command("wasmtime", "run", watPath)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
