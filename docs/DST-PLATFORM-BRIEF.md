@@ -32,7 +32,10 @@ also *closes a backend gap*: async programs become testable under
 
 ### The driver seam
 
-A `Driver` value bundles the four waiting primitives:
+A `Driver` value bundles the four waiting primitives, and since #9853 the
+reactor: a readiness set that outlives one wait, which the serve loops run
+on (`watch`, `unwatch`, `wait`, `close`; the sim leg scripts readiness with
+`ready_at`).
 
 ```fern
 pub trait Driver {
@@ -40,6 +43,10 @@ pub trait Driver {
     function now_ns(self: Self): i64;
     function timer(self: Self, ns: i64): i32;
     function drop_token(self: Self, tok: i32): i32;
+    function watch(self: Self, fd: i32, interest: i32): i32;
+    function unwatch(self: Self, fd: i32): i32;
+    function wait(self: Self, max: i32, timeout_ms: i32): i32[];
+    function close(self: Self): i32;
 }
 ```
 

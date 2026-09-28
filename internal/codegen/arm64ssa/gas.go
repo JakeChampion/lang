@@ -157,7 +157,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	// until nothing new is reached.
 	for len(fern) > 0 {
 		for _, name := range fern {
-			_, irFn, err := fernrt.Func(name, 8)
+			_, irFn, err := fernrt.Func(name, fernrt.Target{PtrW: 8, OS: "linux", Arch: "arm64"})
 			if err != nil {
 				return "", err
 			}
@@ -1458,15 +1458,12 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"read_dir":                    emitReadDirHelper,
 	"read_dir_all":                emitReadDirAllHelper,
 	"__fern_io_error":             emitIoErrorHelper,
-	"tcp_listen":                  emitTcpListenHelper,
-	"tcp_connect":                 emitTcpConnectHelper,
-	"tcp_accept":                  emitTcpAcceptHelper,
-	"tcp_local_port":              emitTcpLocalPortHelper,
-	"tcp_recv":                    emitTcpRecvHelper,
-	"tcp_send":                    emitTcpSendHelper,
-	"udp_send":                    emitUdpSendHelper,
-	"tcp_close":                   emitTcpCloseHelper,
-	"tcp_pollable":                emitTcpPollableHelper,
+	"__str_bytes":                 emitStrBytesHelper,
+	"__arr_set_len":               emitArrSetLenHelper,
+	"__syscall3":                  emitSyscallHelper(3),
+	"__syscall4":                  emitSyscallHelper(4),
+	"__syscall5":                  emitSyscallHelper(5),
+	"__syscall6":                  emitSyscallHelper(6),
 	"poll":                        emitPollHelper,
 	"isatty":                      emitIsattyHelper,
 	"process_alive":               emitProcessAliveHelper,
@@ -3173,311 +3170,6 @@ func emitRandomBytesHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitTcpListenHelper writes tcp_listen(port) → i32: create an AF_INET TCP
-// listener bound to 0.0.0.0:port and return its fd, or -errno on any syscall
-// failure. socket(2)/bind(2)/listen(2); the 16-byte sockaddr_in is built on the
-// stack (htons the port via rev16). x19=port / x20=fd across the syscalls.
-func emitTcpListenHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_listen"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstp x19, x20, [sp, #16]")
-	w("\tmov x19, x0") // port
-	// socket(AF_INET=2, SOCK_STREAM=1, 0)
-	w("\tmov x0, #2")
-	w("\tmov x1, #1")
-	w("\tmov x2, #0")
-	w("\tmov x8, #198") // socket
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpl_err")
-	w("\tmov x20, x0") // listener fd
-	// Build sockaddr_in { family=AF_INET, port=htons(port), addr=0 } on the stack.
-	w("\tsub sp, sp, #16")
-	w("\tmov w0, #2")
-	w("\tstrh w0, [sp]") // sin_family
-	w("\trev16 w0, w19") // htons(port)
-	w("\tstrh w0, [sp, #2]")
-	w("\tstr wzr, [sp, #4]") // sin_addr = 0.0.0.0
-	w("\tstr xzr, [sp, #8]") // sin_zero
-	// bind(fd, sa, 16)
-	w("\tmov x0, x20")
-	w("\tmov x1, sp")
-	w("\tmov x2, #16")
-	w("\tmov x8, #200") // bind
-	w("\tsvc #0")
-	w("\tadd sp, sp, #16") // pop sockaddr_in before any branch
-	w("\ttbnz x0, #63, .Lssa_tcpl_close")
-	// listen(fd, 128)
-	w("\tmov x0, x20")
-	w("\tmov x1, #128")
-	w("\tmov x8, #201") // listen
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpl_close")
-	w("\tmov x0, x20") // return fd
-	w("\tb .Lssa_tcpl_ret")
-	w(".Lssa_tcpl_close:")
-	w("\tmov x19, x0") // port is dead; preserve errno
-	w("\tmov x0, x20")
-	w("\tmov x8, #57") // close
-	w("\tsvc #0")
-	w("\tmov x0, x19")
-	w(".Lssa_tcpl_err:")
-	// x0 holds -errno from the failed syscall.
-	w(".Lssa_tcpl_ret:")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
-}
-
-// emitTcpConnectHelper writes tcp_connect(host_be, port) → i32: an AF_INET TCP
-// socket connected to host_be:port and its fd, or -errno from whichever syscall
-// failed. host_be is the IPv4 address already in network byte order, so it goes
-// into sin_addr as it arrives; the port is byte-swapped with rev16.
-//
-// The 16-byte sockaddr_in is built from the incoming arguments before socket(2)
-// runs, which is what lets this keep one callee-saved register (x19 = fd) where
-// tcp_listen needs two. The stack pointer moves back before either branch to
-// the exit, so both paths leave the frame as they found it.
-func emitTcpConnectHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_connect"))
-	w("\tstp x29, x30, [sp, #-32]!")
-	w("\tmov x29, sp")
-	w("\tstr x19, [sp, #16]")
-	// sockaddr_in { family=AF_INET, port=htons(port), addr=host_be } on the stack.
-	w("\tsub sp, sp, #16")
-	w("\tmov w2, #2")
-	w("\tstrh w2, [sp]") // sin_family
-	w("\trev16 w2, w1")  // htons(port)
-	w("\tstrh w2, [sp, #2]")
-	w("\tstr w0, [sp, #4]")  // sin_addr, already network order
-	w("\tstr xzr, [sp, #8]") // sin_zero
-	// socket(AF_INET=2, SOCK_STREAM=1, 0)
-	w("\tmov x0, #2")
-	w("\tmov x1, #1")
-	w("\tmov x2, #0")
-	w("\tmov x8, #198") // socket
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpc_ret")
-	w("\tmov x19, x0") // fd
-	// connect(fd, sa, 16)
-	w("\tmov x0, x19")
-	w("\tmov x1, sp")
-	w("\tmov x2, #16")
-	w("\tmov x8, #203") // connect
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcpc_close")
-	w("\tmov x0, x19") // return fd
-	w("\tb .Lssa_tcpc_ret")
-	w(".Lssa_tcpc_close:")
-	w("\tstr x0, [sp]") // sockaddr is dead; preserve errno
-	w("\tmov x0, x19")
-	w("\tmov x8, #57") // close
-	w("\tsvc #0")
-	w("\tldr x0, [sp]")
-	w(".Lssa_tcpc_ret:")
-	// x0 is the fd, or -errno from the failed syscall.
-	w("\tadd sp, sp, #16")
-	w("\tldr x19, [sp, #16]")
-	w("\tldp x29, x30, [sp], #32")
-	w("\tret")
-}
-
-// emitTcpAcceptHelper writes tcp_accept(fd) → i32: accept(2) a connection on the
-// listener fd (NULL addr/addrlen — callers don't need the peer address) and
-// return the new connection fd, or -errno. Leaf. x0=listener fd.
-func emitTcpAcceptHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_accept"))
-	w("\tmov x1, #0")   // addr = NULL
-	w("\tmov x2, #0")   // addrlen = NULL
-	w("\tmov x8, #202") // accept
-	w("\tsvc #0")
-	w("\tret")
-}
-
-// emitTcpLocalPortHelper writes tcp_local_port(fd) → i32: getsockname(2) into a
-// frame sockaddr_in, answering the bound port in host order or -errno. The port
-// the kernel chose for a tcp_listen(0) is only readable this way. Leaf.
-// x0=fd.
-func emitTcpLocalPortHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_local_port"))
-	w("\tsub sp, sp, #32") // sockaddr_in at [sp], socklen_t at [sp, #16]
-	w("\tmov w9, #16")
-	w("\tstr w9, [sp, #16]") // addrlen = sizeof(sockaddr_in)
-	w("\tmov x1, sp")
-	w("\tadd x2, sp, #16")
-	w("\tmov x8, #204") // getsockname
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_tcplp_ret")
-	w("\tldrh w0, [sp, #2]") // sin_port, network order
-	w("\trev16 w0, w0")      // ntohs
-	w(".Lssa_tcplp_ret:")
-	w("\tadd sp, sp, #32")
-	w("\tret")
-}
-
-// emitTcpRecvHelper writes tcp_recv(fd, max) → u8[]: read up to max bytes from
-// the socket fd into a fresh u8[] in the __alloc_u8 box shape (16-byte header;
-// cap@-12, rc=1@-8, len@-4). len = the actual byte count; 0 on EOF/error.
-// max <= 0 skips the read and returns the box empty. Leaf: bump-allocates
-// inline (like random_bytes) and read's svc preserves every register but x0,
-// so fd/max/data survive without spills. x0=fd, x1=max.
-func emitTcpRecvHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_recv"))
-	w("\tmov x9, x0") // fd
-	w("\tcmp w1, #0")
-	w("\tcsel w10, w1, wzr, gt") // n = max, clamped to >= 0
-	// A u8[] box: 16-byte header + n data bytes.
-	emitAllocBlock(w, "x4", "x10", 16)
-	w("\tadd x11, x4, #16")      // data ptr (past 16-byte header)
-	w("\tstur w10, [x11, #-12]") // cap = n
-	w("\tmov w7, #1")
-	w("\tstur w7, [x11, #-8]")  // rc = 1
-	w("\tstur wzr, [x11, #-4]") // len = 0 until the read lands
-	w("\tcbz w10, .Lssa_tcpr_ret")
-	// read(fd, data, n)
-	w("\tmov x0, x9")
-	w("\tmov x1, x11")
-	w("\tmov x2, x10")
-	w("\tmov x8, #63") // read
-	w("\tsvc #0")
-	// len = max(result, 0); errors and EOF leave the box empty.
-	w("\tcmp x0, #0")
-	w("\tcsel x0, x0, xzr, ge")
-	w("\tstur w0, [x11, #-4]")
-	w(".Lssa_tcpr_ret:")
-	w("\tmov x0, x11") // return data ptr
-	w("\tret")
-}
-
-// emitTcpSendHelper sends with MSG_NOSIGNAL, returning accepted bytes or -errno.
-// x0=fd, x1=data (single-word string; length at [data-4]).
-func emitTcpSendHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_send"))
-	w("\tldur w2, [x1, #-4]") // byte length
-	w("\tmov x3, #16384")     // MSG_NOSIGNAL
-	w("\tmov x4, #0")
-	w("\tmov x5, #0")
-	w("\tmov x8, #206") // sendto (x0=fd, x1=data already in place)
-	w("\tsvc #0")
-	w("\tret")
-}
-
-// emitUdpSendHelper writes udp_send(host, port, data) → i32: one datagram to a
-// dotted-quad IPv4 literal, the bytes sent or -errno, and -3 for a host that is
-// not four decimal octets. On a datagram socket connect only records the peer,
-// so connect-then-write sends it. The octets are parsed straight into sin_addr.
-// x0=host, w1=port, x2=data; x19 = fd, x20 = port then the result, x21 = data.
-func emitUdpSendHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("udp_send"))
-	w("\tstp x29, x30, [sp, #-64]!")
-	w("\tmov x29, sp")
-	w("\tstp x19, x20, [sp, #16]")
-	w("\tstr x21, [sp, #32]")
-	w("\tmov x20, x1")
-	w("\tmov x21, x2")
-	w("\tldur w10, [x0, #-4]") // host length
-	w("\tmov w11, #0")         // index into host
-	w("\tmov w12, #0")         // the octet so far
-	w("\tmov w13, #0")         // octets completed
-	w("\tmov w14, #0")         // digits in this octet
-	w(".Lssa_udps_scan:")
-	w("\tcmp w11, w10")
-	w("\tb.ge .Lssa_udps_end")
-	w("\tldrb w16, [x0, w11, uxtw]")
-	w("\tcmp w16, #46") // '.'
-	w("\tb.ne .Lssa_udps_digit")
-	w("\tcbz w14, .Lssa_udps_bad")
-	w("\tcmp w13, #3")
-	w("\tb.ge .Lssa_udps_bad")
-	w("\tadd x17, x29, #52")
-	w("\tstrb w12, [x17, w13, uxtw]")
-	w("\tadd w13, w13, #1")
-	w("\tmov w12, #0")
-	w("\tmov w14, #0")
-	w("\tadd w11, w11, #1")
-	w("\tb .Lssa_udps_scan")
-	w(".Lssa_udps_digit:")
-	w("\tsub w16, w16, #48")
-	w("\tcmp w16, #9")
-	w("\tb.hi .Lssa_udps_bad") // unsigned: below '0' wraps high too
-	w("\tmov w17, #10")
-	w("\tmadd w12, w12, w17, w16")
-	w("\tadd w14, w14, #1")
-	w("\tcmp w12, #255")
-	w("\tb.gt .Lssa_udps_bad")
-	w("\tadd w11, w11, #1")
-	w("\tb .Lssa_udps_scan")
-	w(".Lssa_udps_end:")
-	w("\tcmp w13, #3")
-	w("\tb.ne .Lssa_udps_bad")
-	w("\tcbz w14, .Lssa_udps_bad")
-	// sockaddr_in at x29+48 { family=AF_INET, port=htons(port), addr, zero }.
-	w("\tstrb w12, [x29, #55]")
-	w("\tmov w0, #2")
-	w("\tstrh w0, [x29, #48]")
-	w("\trev16 w0, w20")
-	w("\tstrh w0, [x29, #50]")
-	w("\tstr xzr, [x29, #56]")
-	// socket(AF_INET=2, SOCK_DGRAM=2, 0)
-	w("\tmov x0, #2")
-	w("\tmov x1, #2")
-	w("\tmov x2, #0")
-	w("\tmov x8, #198") // socket
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_udps_ret")
-	w("\tmov x19, x0")
-	w("\tadd x1, x29, #48")
-	w("\tmov x2, #16")
-	w("\tmov x8, #203") // connect
-	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_udps_close")
-	w("\tmov x0, x19")
-	w("\tmov x1, x21")
-	w("\tldur w2, [x21, #-4]")
-	w("\tmov x8, #64") // write
-	w("\tsvc #0")
-	w(".Lssa_udps_close:")
-	w("\tmov x20, x0") // the result, kept across close
-	w("\tmov x0, x19")
-	w("\tmov x8, #57") // close
-	w("\tsvc #0")
-	w("\tmov x0, x20")
-	w("\tb .Lssa_udps_ret")
-	w(".Lssa_udps_bad:")
-	w("\tmov x0, #-3")
-	w(".Lssa_udps_ret:")
-	w("\tldr x21, [sp, #32]")
-	w("\tldp x19, x20, [sp, #16]")
-	w("\tldp x29, x30, [sp], #64")
-	w("\tret")
-}
-
-// emitTcpCloseHelper writes tcp_close(fd) → i32: close(2) the fd; returns 0 or
-// -errno. Leaf. x0=fd.
-func emitTcpCloseHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_close"))
-	w("\tmov x8, #57") // close
-	w("\tsvc #0")
-	w("\tret")
-}
-
-// emitTcpPollableHelper writes tcp_pollable(fd) → i32: on native the readiness
-// token for a socket IS its fd (poll(2) takes fds directly), so this is the
-// identity — the fd is already in x0. Leaf.
-func emitTcpPollableHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("tcp_pollable"))
-	w("\tret")
-}
-
 // emitWasmTimerPollableHelper writes wasm_timer_pollable(ns) → i32: on native
 // there's no pollable to make for a deadline (the timeout is poll(2)'s argument),
 // so it returns -1 — an fd poll(2) ignores. Lets std/async's with_deadline append
@@ -4716,7 +4408,6 @@ var heapUsingHelpers = map[string]bool{
 	"read_dir":                        true,
 	"read_dir_all":                    true,
 	"random_bytes":                    true,
-	"tcp_recv":                        true,
 	"poll":                            true,
 	"open_writer":                     true,
 	"__method_Writer_write":           true,
@@ -4906,7 +4597,7 @@ func referencedRuntimeHelpers(progs map[string]*x86.Program) (asm, fern []string
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				if in.Op == x86.Call && !inlinedCall(in) {
-					add(in.Callee)
+					add(ir.CodegenAlias(in.Callee))
 				}
 			}
 		}
@@ -11163,6 +10854,7 @@ var pokeInline = map[string]struct {
 	"__store_i32": {mnem: "str", store: true},
 	"__store_i64": {mnem: "str", wide: true, store: true},
 	"__store_ptr": {mnem: "str", wide: true, store: true},
+	"__store_u8":  {mnem: "strb", store: true},
 	"__ptr_width": {},
 }
 

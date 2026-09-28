@@ -27,7 +27,7 @@ func TestAsyncFetchFutureFanout(t *testing.T) {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
@@ -109,7 +109,7 @@ func TestAsyncFetchFutureLargeBody(t *testing.T) {
 	const bodyLen = 10000
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("no free TCP port: %v", err)
+		t.Fatalf("no free TCP port: %v", err)
 	}
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port

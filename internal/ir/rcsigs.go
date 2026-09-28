@@ -249,6 +249,9 @@ var rcInertBuiltins = map[string]bool{
 	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
 	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
 	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	// The syscall floor hands machine words to the kernel and gets one
+	// back; nothing on either side is a counted Fern object.
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
 	"__popcount32": true, "__popcount64": true, "__round_f64": true,
@@ -299,7 +302,15 @@ var rcInertBuiltins = map[string]bool{
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
 	"proc_waitpid_nohang": true,
-	"sleep_ms":            true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
+	// (path, backlog) / (path) → a descriptor or -errno; the path is read,
+	// not kept. Native-only like `access` below: the `unix` capability
+	// refuses them on both wasm worlds, so they are classified here under
+	// the builtin name rather than as a wasm runtime helper.
+	"unix_listen": true, "unix_connect": true,
+	// The reactor floor and the owned-buffer read: scalars and a borrowed
+	// array the callee writes through, nothing kept.
+	"reactor_new": true, "reactor_ctl": true, "reactor_wait": true, "tcp_recv_into": true,
+	"sleep_ms": true, "sleep_ns": true, "subprocess": true, "timer_fd": true,
 	// (pid) → boolean. A scalar in, a scalar out. Native-only — E066
 	// refuses it on both wasm worlds, which have no process table — so
 	// like `access` it is classified here under the builtin name rather
@@ -532,9 +543,13 @@ var rcInert = map[string]bool{
 	"__fern_string_from_bytes": true, "__fern_tcp_accept": true,
 	"__fern_tcp_close": true, "__fern_tcp_connect": true,
 	"__fern_tcp_listen": true, "__fern_tcp_local_port": true,
+	"__fern_tcp_listen_with": true, "__fern_tcp_socket_ctl": true, "__fern_tcp_connect_with": true,
+	"__fern_reactor_new": true, "__fern_reactor_ctl": true, "__fern_reactor_wait": true, "__fern_tcp_recv_into": true,
 	"__fern_tcp_pollable": true,
 	"__fern_tcp_recv":     true, "__fern_tcp_send": true, "__fern_temp_dir": true,
 	"__fern_trunc_f64": true, "__fern_udp_send": true,
+	"__fern_udp_bind": true, "__fern_udp_connect": true,
+	"__fern_udp_sendto": true, "__fern_udp_recvfrom": true, "__fern_udp_close": true,
 	"__fern_wasm_block": true,
 	"__fern_wasm_poll":  true, "__fern_wasm_pollable_drop": true,
 	"__fern_wasm_timer_pollable": true, "__fern_write": true,
@@ -542,6 +557,7 @@ var rcInert = map[string]bool{
 	"__fern_writer_truncate": true,
 	"__fern_writer_write":    true, "__http_entry": true, "__load_i32": true,
 	"__load_i64": true, "__load_ptr": true, "__load_u8": true, "__memcpy": true,
+	"__store_u8": true, "__str_bytes": true, "__arr_set_len": true,
 	"__memset": true, "__method_string_as_bytes": true,
 	"__network_handle": true, "__ptr_width": true, "__slice_idx": true,
 	"__slice_idx_1": true, "__slice_idx_4": true, "__slice_idx_8": true,

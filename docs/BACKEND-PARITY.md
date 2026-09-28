@@ -109,24 +109,139 @@ isolation (docs/TOOLCHAIN-SELF-HOSTING.md).
 
 ## Internal networking syscall floor
 
-The self-host runtime's `__syscall6` (#9853, #4451) passes a syscall number
-and six machine-word operands. It is an internal runtime intrinsic, registered
-beside `__syscall3` through `__syscall5`, rather than a public language builtin.
-It adds no public capability or platform-table entry. Networking APIs built on
-it still need their own capability and target classifications in both compilers.
+`__syscall3` through `__syscall6` (#9853, #4451) pass a syscall number and
+three to six machine-word operands and return the kernel's word, negative
+errno on failure on every target. `__store_u8(addr, v)` writes the low byte
+of `v`. Both compilers lower the same names, so a socket primitive is one
+Fern body per compiler rather than assembly per backend. They are runtime
+intrinsics with a `__` prefix, not public builtins: `internal/platforms`
+gates them under the `syscall` capability only the hosted-native profile
+grants, they carry no package capability, and networking APIs built on them
+still need their own classifications.
 
-| Target | `__syscall6` |
-| --- | --- |
-| x86-64-linux | `syscall`, sixth argument in `r9` |
-| arm64-linux | `svc #0`, sixth argument in `x5` |
-| arm64-darwin | `svc #0x80`, sixth argument in `x5`, negative errno on failure |
-| wasm32-wasi | Rejected by the self-host wasm drivers; use WASI imports |
-| wasm32-wasi-http | No raw syscalls; self-host target remains unavailable (#6636) |
-| interp / Go frontend | Internal self-host intrinsic, not a public builtin |
+| Target | Go compiler | self-host |
+| --- | --- | --- |
+| x86-64-linux, stack machine | inline `syscall`, sixth argument in `r9` | `syscall`, sixth argument in `r9` |
+| x86-64-linux, `-backend ssa` | `fn___syscallN` helper: shifts the C-ABI registers one down, seventh operand from the stack | same |
+| arm64-linux, both backends | `svc #0`, number in `x8` | `svc #0`, sixth argument in `x5` |
+| arm64-darwin | `svc #0x80`, number in `x16`, carry-flagged errno negated | `svc #0x80`, negative errno on failure |
+| wasm32-wasi | E066: the target has no `syscall` capability | rejected by the self-host wasm drivers |
+| interp | never reached: refused with the target, not at run time | — |
 
-File-backed mapping tests read distinct bytes at a nonzero offset, then unmap
-and close. The offset exercises the sixth argument; a bad descriptor checks
-the error result. The Darwin test executes in the Apple Silicon lane.
+`FERN_SANDBOX=1` on x86-64 records a floor call whose number is a literal
+like any other syscall, and refuses a program whose number is a run-time
+operand, which the seccomp allowlist cannot cover.
+
+On the Go compiler `tcp_listen`, `tcp_listen_with`, `tcp_connect`,
+`tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`,
+`tcp_socket_ctl`, `tcp_recv`, `tcp_send`, `udp_send`, `udp_bind`,
+`udp_connect`, `udp_sendto` and `udp_recvfrom` are one Fern body
+each in `internal/fernrt` over this floor, on x86-64-linux, arm64-linux and
+arm64-darwin and on both backends of each ISA (the sockaddr's leading
+`sin_len` byte, the option numbers and `MSG_NOSIGNAL` are the Darwin
+differences); wasm keeps its wasi:sockets bodies, and the interpreter its
+Go ones. The bytes floor the last three are written on, `__str_bytes` and
+`__arr_set_len`, is provided on every native backend, on wasm and by the
+self-host (`docs/RUNTIME-IN-FERN.md`); the interpreter has no floor, as it
+has none of the raw floor.
+
+`tcp_listen_with(port, backlog, reuse_port)` and `tcp_socket_ctl(fd, op,
+arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
+`shutdown(2)` with `arg` its how, 5 the result of a connect under way) are
+the socket controls of #9853; std/net wraps them. On wasm, op 1 and op 3 answer `-ENOTSUP` (58 in the WASI
+numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
+blocking mode to turn off, and `reuse_port` is ignored: a port is one
+socket's there. Every other op and the backlog behave the same on every
+target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
+1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
+both compilers' wasm socket bodies read the byte the result's shape names,
+so a refused bind or dial reports its errno rather than whatever the area
+held.
+
+The datagram sockets (#9853) are `udp_bind(host_be, port)` (a socket bound
+to the IPv4 address packed in network order, 0 for every address and port
+0 for one the host picks, or -errno), `udp_connect(fd, host_be, port)`
+(fix the peer: 0 or -errno), `udp_sendto(fd, host_be, port, data)` (one
+datagram to host:port, or to the peer when both are 0: the bytes accepted,
+or -errno) and `udp_recvfrom(fd, buf, from)` (one datagram into the `u8[]`
+`buf`, up to its length, the sender's four address bytes and then its port,
+high byte first, into a `from` of six bytes or more: the byte count, or
+-errno). `tcp_close` and `tcp_local_port` take a datagram socket too, and
+std/net wraps the four as `udp_socket`, `set_peer`, `send_to`, `send`,
+`recv_from`, `recv`, `local_port` and `close`. The same on every target,
+with these divergences: on wasm a datagram "fd" is the tcp record with a
+kind word of 2 or 3 at offset 12, `tcp_socket_ctl` on one answers
+`-ENOTSUP` for every op (wasi:sockets 0.2 has no keep-alive, shutdown or
+blocking mode on a udp socket), a `udp_connect` that the host refuses
+leaves the socket without streams until the next one succeeds, and
+`udp_recvfrom` blocks on the incoming stream's pollable where the natives
+block in recvfrom(2), so `set_nonblocking` has no udp arm there; on Darwin
+a `udp_sendto` naming an address on a connected socket is refused with
+`EISCONN` where Linux sends it, so a connected socket sends with a zero
+address on every target; and the interpreter keeps a raw descriptor per
+datagram socket, so its errnos are the host's like the natives'.
+
+`tcp_connect_with(host_be, port, nonblocking)` is `tcp_connect`, or with
+`nonblocking` a non-blocking socket whose connect is only started: the
+descriptor comes back while the connect is under way (-errno only when it
+could not start), and control op 5 says how it ended: 0 once a peer is
+attached, `-EINPROGRESS` while none is and no error is pending, else the
+`-errno` it failed with, read once through `SO_ERROR`. On wasm the started
+connect is the record with kind 4 at offset 12 (start-connect done,
+finish-connect not yet), op 5 runs finish-connect (a `would-block` is
+`-EINPROGRESS`, 26 in the WASI numbering) and on success gives the record
+its streams; `tcp_close` on such a record drops the socket alone. The
+interpreter dials through the net package before answering, so its op 5
+is 0 at once and a refused dial is reported by `tcp_connect_with` itself.
+Waiting for a started connect is a loop over op 5 today: the readiness
+builtins watch readability only; the reactor floor below watches writability too.
+std/net wraps the three as `connect`, `connect_start` and `connect_result`.
+
+`unix_listen(path, backlog)` and `unix_connect(path)` are the Unix-domain
+sockets: a stream listener at a filesystem path and a connection to one,
+each a descriptor or -errno (-ENAMETOOLONG for a path longer than the
+address holds, 107 bytes on Linux and 103 on Darwin, before any socket
+exists; a held path is -EADDRINUSE, and the socket file is not unlinked
+first), which `tcp_accept`, `tcp_recv`, `tcp_send` and `tcp_close` take.
+Fern bodies on both compilers (Darwin leads the address with sun_len) and
+the net package in the interpreter. Native only: the `unix` capability is
+in no wasi profile, so E066 refuses them on both wasm worlds at check time,
+and std/net's `listen_unix`, `connect_unix` and `accept` wrap them.
+
+The **reactor floor** is a readiness set that outlives one wait:
+`reactor_new()` (epoll on Linux, kqueue on Darwin, a table of wasi:io
+pollables on wasm, an epoll or kqueue set over the handles' descriptors in
+the interpreter), `reactor_ctl(r, op, fd, arg)` (op 1 watches `fd` for the
+interest in `arg`, 1 readable and 2 writable, op 2 stops watching it, op 3
+closes the set) and `reactor_wait(r, events, timeout_ms)`, which fills
+`events` with (fd, readiness) pairs, readiness 1 readable, 2 writable and 4
+an error or hang-up, and answers the pair count, 0 on the timeout (-1 waits
+without one), or -errno. Fern bodies on both compilers natively; on wasm a
+watch subscribes the pollables a record's kind names (a listener or a
+connect under way through tcp-socket.subscribe, a connection through its
+input and output streams, a datagram socket through its datagram streams)
+and a wait polls them with a timer for a finite timeout. Two rules hold on
+every target: a host may report readiness spuriously (wasmtime does after a
+read that did not drain the socket), so a reader reads until -EAGAIN; and a
+socket is unwatched before it is closed, since on wasm the pollables a watch
+holds are children of its streams. Behind it, `tcp_recv_into(fd, buf)` is
+the owned-buffer read: the bytes read into the caller's `u8[]`, 0 at EOF,
+-EAGAIN (wasi's 6) when nothing is queued and the socket is non-blocking,
+which on wasm is every socket, else -errno. A signal is a readiness event
+too: `reactor_ctl` op 4 watches signal `fd` and answers a descriptor op 5
+wants back, and the set reports a delivery as the pair (-signal, 1). On
+Linux the signal is blocked and read through a signalfd the set holds
+beside -signal in its event's data word; on Darwin it is ignored, so its
+default action cannot end the process, and kqueue's EVFILT_SIGNAL records
+each delivery; the interpreter turns os/signal deliveries into bytes on a
+pipe the set watches; wasm, which has no signals, answers -ENOTSUP. The
+Driver seam wraps the floor as `watch`, `unwatch`, `wait`, `watch_signal`,
+`unwatch_signal` and `close` (std/async), std/sim scripts readiness for
+its leg with `ready_at`, and the serve loops run on it.
+
+The probe maps a file at a nonzero offset, reads distinct bytes back, unmaps
+and closes, pins the errno of a bad descriptor, and round-trips bytes through
+the byte store. The Darwin legs run in the Apple Silicon lane.
 
 The self-host's `poll(fds, timeout_ms)` now reaches `kqueue`/`kevent` on
 arm64-darwin, replacing its unconditional `-1` stub. It ignores negative fds
@@ -138,7 +253,8 @@ The Go bootstrap Darwin helper uses the same reverse registration and
 `EV_RECEIPT` approach, preserving the lowest caller index for duplicate fds
 and allowing valid readiness alongside failed registrations. Bootstrap flat
 and SSA helpers also reclaim their temporary poll storage on every path.
-Persistent worker-owned reactors remain separate P0 work.
+The persistent reactor is the `reactor_*` floor above; `poll` remains the
+one-shot wait the async combinators use.
 
 Both WebAssembly compilers implement compatibility `poll` timeouts by adding
 an owned monotonic-clock timer to the borrowed pollable list. A timer-only

@@ -14,6 +14,7 @@ import "./ssasem";
 import "./ssaunits";
 import "./ownership";
 import "./util";
+import "./seminline";
 
 // One body's production. A TEMPLATE declaration — one spelling type variables
 // — has no body of its own: it is produced once per instantiation its callers
@@ -4462,6 +4463,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     var v: i32 = ssaunits.value_mode();
     var b: i32 = ssaunits.borrow_mode();
     var gids: typeinfo.Type = typeinfo.TypeArray { elem: t_i64(), view: false };
+    var bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
     var fds: typeinfo.Type = typeinfo.TypeArray { elem: t_i32(), view: false };
     var win: typeinfo.Type = t_io_result(typeinfo.TypeStruct { name: "WinSize", args: [] });
     return [
@@ -4481,6 +4483,19 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
         ssasem.Contract { name: "udp_send", params: [t_string(), t_i32(), t_string()], modes: [b, v, b], result: t_i32() },
         ssasem.Contract { name: "tcp_recv", params: [t_i32(), t_i32()], modes: [v, v], result: typeinfo.TypeArray { elem: t_u8(), view: false } },
         ssasem.Contract { name: "tcp_pollable", params: [t_i32()], modes: [v], result: t_i32() },
+        ssasem.Contract { name: "tcp_listen_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_bind", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_connect", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "udp_sendto", params: [t_i32(), t_i32(), t_i32(), t_string()], modes: [v, v, v, b], result: t_i32() },
+        ssasem.Contract { name: "udp_recvfrom", params: [t_i32(), bytes, bytes], modes: [v, b, b], result: t_i32() },
+        ssasem.Contract { name: "tcp_connect_with", params: [t_i32(), t_i32(), t_bool()], modes: [v, v, v], result: t_i32() },
+        ssasem.Contract { name: "unix_listen", params: [t_string(), t_i32()], modes: [b, v], result: t_i32() },
+        ssasem.Contract { name: "unix_connect", params: [t_string()], modes: [b], result: t_i32() },
+        ssasem.Contract { name: "reactor_new", params: [], modes: [], result: t_i32() },
+        ssasem.Contract { name: "reactor_ctl", params: [t_i32(), t_i32(), t_i32(), t_i32()], modes: [v, v, v, v], result: t_i32() },
+        ssasem.Contract { name: "reactor_wait", params: [t_i32(), typeinfo.TypeArray { elem: t_i32(), view: false }, t_i32()], modes: [v, b, v], result: t_i32() },
+        ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
         ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "signal_disposition", params: [t_i32()], modes: [v], result: t_i32() },
@@ -4717,6 +4732,9 @@ function load_store_contracts(): ssasem.Contract[] {
         ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
         ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
         ssasem.Contract { name: "__load_ptr", params: [t_usize()], modes: [v], result: t_usize() },
+        ssasem.Contract { name: "__store_u8", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
+        ssasem.Contract { name: "__str_bytes", params: [t_string(), t_usize()], modes: [v, v], result: t_usize() },
+        ssasem.Contract { name: "__arr_set_len", params: [typeinfo.TypeArray { elem: t_u8(), view: false }, t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__store_i32", params: [t_usize(), t_i32()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__store_i64", params: [t_usize(), t_i64()], modes: [v, v], result: t_void() },
         ssasem.Contract { name: "__store_ptr", params: [t_usize(), t_usize()], modes: [v, v], result: t_void() }
@@ -5203,7 +5221,7 @@ pub function build_module(mod: parser.Module): Built {
         names = names.append(r.name);
         at = at + 1;
     }
-    var all: Produced[] = anchor_module(close_module(util.append_all(decls, instances), names), names);
+    var all: Produced[] = inline_leaves(anchor_module(close_module(util.append_all(decls, instances), names), names), names, mod.funcs);
     decls = [];
     instances = [];
     i = 0;
@@ -5217,6 +5235,40 @@ pub function build_module(mod: parser.Module): Built {
         i = i + 1;
     }
     return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(mod.funcs, mod.impls, util.append_all(decls, instances)) };
+}
+
+// Tiny scalar leaves spliced into their callers (seminline). A declaration
+// marked @noinline stays a call, and so does every instance. `FERN_SEM_INLINE=`
+// (set but empty) turns the pass off, for comparing a build against itself.
+function inline_leaves(all: Produced[], names: string[], decls: parser.FuncDecl[]): Produced[] {
+    if (!inline_on()) { return all; }
+    var funcs: ssasem.Func[] = [];
+    var inlinable: boolean[] = [];
+    var rewrite: boolean[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var p: Produced = all[i];
+        var usable: boolean = p.ok && !p.template && !p.bodyless;
+        funcs = funcs.append(p.func);
+        rewrite = rewrite.append(usable);
+        inlinable = inlinable.append(usable && i < decls.len() && !decls[i].no_inline);
+        i = i + 1;
+    }
+    var out: ssasem.Func[] = seminline.inline_leaves(funcs, names, inlinable, rewrite);
+    var result: Produced[] = [];
+    i = 0;
+    while (i < all.len()) {
+        result = result.append(Produced { ...all[i], func: out[i] });
+        i = i + 1;
+    }
+    return result;
+}
+
+function inline_on(): boolean {
+    match (env("FERN_SEM_INLINE")) {
+        Some(v) => { return v.len() > 0; },
+        None => { return true; }
+    }
 }
 
 // The implementations a dyn call on `method` over `traits` reaches: the

@@ -914,7 +914,7 @@ func goldenDiff(want, got string) string {
 		len(w), len(g), at+1, window(w), window(g))
 }
 
-const semsourceRCProgram = `
+const semsourceRCProgram = `import "core/map";
 @noinline function pick(k: i32): i32[] {
     var rows: i32[][] = [[1, 2], [3, 4], [5, 6]];
     var chosen: i32[] = rows[0];
@@ -3845,11 +3845,16 @@ const semsourceRCWant = "1\n4\n5\n-3\n-2\n2\n0\n1\n5\n5\n12\n1\n8\n12\n0\n3\n3\n
 const semsourceRCDriver = `import "./semsource"; import "./ssarc"; import "./ssaunits"; import "./ssa"; import "./ssasem";
 import "./parser"; import "./lexer"; import "./irlower"; import "./ir";
 import "./ircore"; import "./checker"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./util";
+import "./modloader"; import "./flatten"; import "./treeshake";
 function main(): i32 {
     var av = args();
     var src: string = "";
     match (read_file(av[2])) { Ok(text) => { src = text; }, Err(_) => { return 2; } }
-    var parsed = parser.parse_module(lexer.tokenize(src));
+    var entry = parser.parse_module(lexer.tokenize(src));
+    // The program's imports resolve against the stdlib root (av[3], with its
+    // trailing slash), merge in and are tree-shaken as the CLI does them: a
+    // routed map calls core/map's functions, which the program has to carry.
+    var parsed = treeshake.treeshake(flatten.bundle(entry, modloader.load_imports(modloader.no_overlay(), av[3], entry)));
     // The typed lowering reads typed; the AST lowering reads its erasure.
     var typed = irlower.lift_lambdas_typed(checker.annotate_module(parser.register_struct_method_generics(parser.register_map_method_generics(parser.register_array_method_generics(parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) })))));
     var mod = parser.erase_str_module(typed);
@@ -3973,6 +3978,17 @@ func inScratchDir(t *testing.T, run *exec.Cmd, target string) *exec.Cmd {
 	return run
 }
 
+// semsourceStdlibRoot is the directory the semsource driver resolves a
+// program's imports against, with the trailing slash modloader joins on.
+func semsourceStdlibRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root + "/"
+}
+
 func TestSelfHostSemanticSourceRC(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
@@ -3984,13 +4000,14 @@ func TestSelfHostSemanticSourceRC(t *testing.T) {
 		t.Fatal(err)
 	}
 	driver := buildSelfHostBin(t, gcc, dir, "semsource_rc.fern", "semsource-rc")
+	stdlibRoot := semsourceStdlibRoot(t)
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "x86-64-sanitize", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			emitTarget, mode := target, "FERN_LEAKCHECK=1"
 			if target == "x86-64-sanitize" {
 				emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 			}
-			cmd := runX86_64Bin(runner, driver, emitTarget, program)
+			cmd := runX86_64Bin(runner, driver, emitTarget, program, stdlibRoot)
 			cmd.Env = append(os.Environ(), mode)
 			var diagnostics bytes.Buffer
 			cmd.Stderr = &diagnostics

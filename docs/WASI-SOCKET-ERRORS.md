@@ -26,8 +26,8 @@ recover their original detail:
 | temporary-resolver-failure | EAGAIN |
 | permanent-resolver-failure | EIO |
 
-These are the legacy integer APIs. The closed `NetError` API, owned socket
-resources and nonblocking reactor remain P0 work under #9853.
+These are the legacy integer APIs; std/net's closed `NetError` and the
+reactor floor (docs/BACKEND-PARITY.md) are built over them.
 
 Setup failure now drops any socket created by that operation. UDP send errors
 also drop the datagram streams before their parent socket. Failed socket

@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// udp_send has a gate of its own, so a datagram-only program links none of
-// the TCP runtime.
+// udp_send is its own Fern body (internal/fernrt), so a datagram-only
+// program links none of the TCP runtime.
 func TestUdpSendLinksNoTcpRuntime(t *testing.T) {
 	asm := compile(t, `function main(): i32 { return udp_send("127.0.0.1", 9, "x"); }`)
-	helperBody(t, asm, "__fern_udp_send")
+	helperBody(t, asm, "__fn___fern_udp_send")
 	if strings.Contains(asm, "__fern_tcp_") {
 		t.Error("a udp_send-only program links the TCP runtime")
 	}

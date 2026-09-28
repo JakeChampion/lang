@@ -168,6 +168,47 @@ function main(): i32 {
 }
 `
 
+// routedMapStringValuesSrc: string value columns hold their strings in the
+// slots, so an overwrite, a delete, an alias's copy and the last drop each
+// release exactly the values they own, and a get hands out its own reference.
+const routedMapStringValuesSrc = `import "core/map";
+import "std/i32";
+
+function build(n: i32): Map[string, string] {
+    var m: Map[string, string] = Map {};
+    var i: i32 = 0;
+    while (i < n) { m = m.insert("k" + i.to_string(), "v" + (i * 3).to_string()); i = i + 1; }
+    return m;
+}
+
+function main(): i32 {
+    var m: Map[string, string] = build(300);
+    m = m.insert("k7", "over" + "written");
+    var alias: Map[string, string] = m;
+    alias = alias.insert("k8", "alias" + "only");
+    var out: string = m.get_or("k7", "none") + " " + alias.get_or("k8", "none") + " " + m.get_or("k8", "none");
+    out = out + " " + m.get_or("zz", "miss" + "ed");
+    match (m.get("k9")) { Some(v) => { out = out + " " + v; }, None => { out = out + " none"; } }
+    var r: (Map[string, string], boolean) = m.without("k10");
+    var m2: Map[string, string] = r.0;
+    out = out + " " + r.1.to_string() + " " + m.has("k10").to_string() + " " + m2.has("k10").to_string();
+    var total: i32 = 0;
+    for (k, v) in m2 { total = total + k.len() + v.len(); }
+    var vs: string[] = m2.values();
+    out = out + " " + total.to_string() + " " + vs.len().to_string();
+    var by_id: Map[i32, string] = Map {};
+    var j: i32 = 0;
+    while (j < 50) { by_id = by_id.insert(j % 10, "n" + j.to_string()); j = j + 1; }
+    var r2: (Map[i32, string], boolean) = by_id.without(3);
+    by_id = r2.0;
+    out = out + " " + by_id.get_or(4, "") + " " + by_id.len().to_string();
+    var e: Map[string, string] = m.cleared();
+    out = out + " " + e.len().to_string();
+    print(out);
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -186,6 +227,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"negative_keys", routedMapNegativeKeysSrc, "-150 -147 2847 false"},
 		{"cow", routedMapCowSrc, "14 1000 true false 100 100 99"},
 		{"u32_bool", routedMapU32BoolSrc, "true true 2 12"},
+		{"string_values", routedMapStringValuesSrc, "overwritten aliasonly v24 missed v27 true true false 2254 299 n44 9 0"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {

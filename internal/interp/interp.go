@@ -11,6 +11,7 @@ package interp
 
 import (
 	"bytes"
+	"context"
 	cryptorand "crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -523,6 +524,15 @@ type Interp struct {
 	tcpListeners  map[int64]tcpListenerHandle
 	tcpConns      map[int64]tcpConnHandle
 	tcpNextHandle int64
+	// udpSocks maps a datagram socket's handle to its raw descriptor
+	// (udp.go); handles are numbered from tcpNextHandle like the rest.
+	udpSocks map[int64]int
+	// tcpNonblocking holds the connections tcp_socket_ctl put into
+	// non-blocking mode, which tcp_recv honours with a zero deadline.
+	tcpNonblocking map[int64]bool
+	// reactors holds the readiness sets reactor_new made (reactor.go).
+	reactors    map[int64]*reactor
+	reactorNext int64
 	// Args is what the `args()` builtin returns, in source-program
 	// order (argv[0] first). REPL / test callers can override this
 	// to feed scripted argv without going through os.Args.
@@ -1373,8 +1383,22 @@ func New() *Interp {
 	i.Builtins["tcp_listen"] = &Builtin{Fn: builtinTcpListen}
 	i.Builtins["tcp_accept"] = &Builtin{Fn: builtinTcpAccept}
 	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
+	i.Builtins["tcp_listen_with"] = &Builtin{Fn: builtinTcpListenWith}
+	i.Builtins["tcp_connect"] = &Builtin{Fn: builtinTcpConnect}
+	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
+	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
+	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
+	i.Builtins["reactor_new"] = &Builtin{Fn: builtinReactorNew}
+	i.Builtins["reactor_ctl"] = &Builtin{Fn: builtinReactorCtl}
+	i.Builtins["reactor_wait"] = &Builtin{Fn: builtinReactorWait}
+	i.Builtins["tcp_recv_into"] = &Builtin{Fn: builtinTcpRecvInto}
+	i.Builtins["udp_bind"] = &Builtin{Fn: builtinUdpBind}
+	i.Builtins["udp_connect"] = &Builtin{Fn: builtinUdpConnect}
+	i.Builtins["udp_sendto"] = &Builtin{Fn: builtinUdpSendto}
+	i.Builtins["udp_recvfrom"] = &Builtin{Fn: builtinUdpRecvfrom}
 	i.Builtins["tcp_close"] = &Builtin{Fn: builtinTcpClose}
 	i.Builtins["tcp_pollable"] = &Builtin{Fn: builtinTcpPollable}
 	i.Builtins["wasm_pollable_drop"] = &Builtin{Fn: builtinWasmPollableDrop}
@@ -1403,7 +1427,7 @@ func builtinTcpListen(i *Interp, args []Value) (Value, error) {
 	}
 	ln, err := tcpNetListen("tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
 	if err != nil {
-		return Number(-1), nil
+		return negErrno(err), nil
 	}
 	if i.tcpListeners == nil {
 		i.tcpListeners = map[int64]tcpListenerHandle{}
@@ -1456,7 +1480,9 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 		return arrayOf(), nil
 	}
 	buf := make([]byte, int(max))
-	n, err := conn.Read(buf)
+	// A non-blocking socket reads what is there and answers empty
+	// otherwise, which is what a native read's -EAGAIN clamps to.
+	n, err := readSocket(conn, buf, i.tcpNonblocking[int64(id)])
 	if err != nil || n <= 0 {
 		return arrayOf(), nil
 	}
@@ -1508,7 +1534,173 @@ func builtinTcpClose(i *Interp, args []Value) (Value, error) {
 		delete(i.tcpListeners, int64(id))
 		return Number(0), nil
 	}
+	if r, ok := i.udpClose(int64(id)); ok {
+		return r, nil
+	}
 	return Number(-1), nil
+}
+
+// soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
+// the BSDs: 15 on Linux, 0x200 on Darwin.
+var soReusePort = func() int {
+	if runtime.GOOS == "darwin" {
+		return 0x200
+	}
+	return 15
+}()
+
+// builtinTcpListenWith is the interpreter's `tcp_listen_with(port, backlog,
+// reuse_port)`: SO_REUSEPORT goes on the socket before the bind, as the
+// native helper sets it; the backlog is Go's own (somaxconn), since the net
+// package does not take one.
+// negErrno is the -errno a socket builtin answers for err: the errno it
+// wraps, or -1 when it wraps none.
+func negErrno(err error) Value {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return Number(-int64(errno))
+	}
+	return Number(-1)
+}
+
+func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_listen_with: expected 3 args, got %d", len(args))
+	}
+	port, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_listen_with: expected number port arg, got %T", args[0])
+	}
+	reuse, ok := args[2].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[2])
+	}
+	lc := net.ListenConfig{}
+	if reuse {
+		lc.Control = func(_, _ string, c syscall.RawConn) error {
+			var serr error
+			if err := c.Control(func(fd uintptr) {
+				serr = syscall.SetsockoptInt(int(fd), solSocket, soReusePort, 1)
+			}); err != nil {
+				return err
+			}
+			return serr
+		}
+	}
+	ln, err := lc.Listen(context.Background(), "tcp", fmt.Sprintf("0.0.0.0:%d", int(port)))
+	if err != nil {
+		return negErrno(err), nil
+	}
+	if i.tcpListeners == nil {
+		i.tcpListeners = map[int64]tcpListenerHandle{}
+	}
+	i.tcpNextHandle++
+	id := i.tcpNextHandle
+	i.tcpListeners[id] = ln
+	return Number(id), nil
+}
+
+// builtinTcpConnect is the interpreter's `tcp_connect(host_be, port)`: the
+// packed network-order IPv4 address the native helpers take, dialled
+// through Go's net package. A connection handle, or -1.
+// builtinTcpConnectWith is `tcp_connect_with(host_be, port, nonblocking)`.
+// The interpreter has no non-blocking dial: it connects before answering,
+// so control op 5 reports the result at once and a refused dial is
+// reported here rather than there.
+func builtinTcpConnectWith(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_connect_with: expected 3 args, got %d", len(args))
+	}
+	return builtinTcpConnect(i, args[:2])
+}
+
+func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("tcp_connect: expected 2 args, got %d", len(args))
+	}
+	host, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_connect: expected number host arg, got %T", args[0])
+	}
+	port, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_connect: expected number port arg, got %T", args[1])
+	}
+	h := uint32(host)
+	ip := net.IPv4(byte(h), byte(h>>8), byte(h>>16), byte(h>>24))
+	conn, err := net.Dial("tcp", net.JoinHostPort(ip.String(), fmt.Sprint(int(port))))
+	if err != nil {
+		return negErrno(err), nil
+	}
+	if i.tcpConns == nil {
+		i.tcpConns = map[int64]tcpConnHandle{}
+	}
+	i.tcpNextHandle++
+	id := i.tcpNextHandle
+	i.tcpConns[id] = conn
+	return Number(id), nil
+}
+
+// builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
+// over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
+// the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both.
+// 0, -1 for a handle that is not a connection, -22 for an unknown op.
+func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_socket_ctl: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_socket_ctl: expected number fd arg, got %T", args[0])
+	}
+	op, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_socket_ctl: expected number op arg, got %T", args[1])
+	}
+	arg, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
+	}
+	if op < 1 || op > 5 {
+		return Number(-22), nil
+	}
+	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
+		return r, nil
+	}
+	conn, ok := i.tcpConns[int64(id)].(*net.TCPConn)
+	if !ok {
+		return Number(-1), nil
+	}
+	var err error
+	switch op {
+	case 5:
+		// A connection here is always complete: tcp_connect_with dials
+		// through the net package, which blocks until it is.
+	case 1:
+		err = conn.SetNoDelay(arg != 0)
+	case 2:
+		err = conn.SetKeepAlive(arg != 0)
+	case 3:
+		if i.tcpNonblocking == nil {
+			i.tcpNonblocking = map[int64]bool{}
+		}
+		i.tcpNonblocking[int64(id)] = arg != 0
+	case 4:
+		switch arg {
+		case 0:
+			err = conn.CloseRead()
+		case 1:
+			err = conn.CloseWrite()
+		default:
+			if err = conn.CloseRead(); err == nil {
+				err = conn.CloseWrite()
+			}
+		}
+	}
+	if err != nil {
+		return Number(-1), nil
+	}
+	return Number(0), nil
 }
 
 // builtinWasmPollableDrop is the interpreter's `wasm_pollable_drop(p)` — a
@@ -1577,6 +1769,9 @@ func builtinTcpLocalPort(i *Interp, args []Value) (Value, error) {
 	id, ok := args[0].(Number)
 	if !ok {
 		return nil, fmt.Errorf("tcp_local_port: expected number arg, got %T", args[0])
+	}
+	if r, ok := i.udpLocalPort(int64(id)); ok {
+		return r, nil
 	}
 	var addr net.Addr
 	if ln, ok := i.tcpListeners[int64(id)]; ok {

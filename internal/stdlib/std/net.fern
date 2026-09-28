@@ -2,7 +2,7 @@
 // networking primitive reports (#9853, the P0 floor of the networking
 // plan in #9851).
 //
-// Three types, nothing else yet:
+// Three types:
 //
 //   - `IpAddr` — `V4(bytes)` / `V6(bytes)`, 4 or 16 bytes in network
 //     order. Build one with `ipv4(a, b, c, d)`, `ipv6(bytes)` or
@@ -18,12 +18,14 @@
 //     `internal/stdlib/net_errno_test.go` pins the three tables to
 //     `internal/strerror`'s row for row, so a number cannot drift.
 //
-// The socket verbs themselves (`listen`, `connect`, `accept`, `recv`,
-// `send`, `shutdown`, the socket options, UDP and Unix-domain sockets)
-// arrive with the primitives that make them honest on every address family
-// (#9853, the `std/net` redesign); until then `std/tcp` and `std/fetch` are
-// the socket surface and `packed_v4()` bridges an `IpAddr` to the packed
-// IPv4 argument `tcp_connect` and `fetch.ipv4` take.
+// The socket controls (`listen_with`, the options, `shutdown`) and the
+// datagram sockets (`udp_socket`, `send_to`, `recv_from`, …) are typed
+// faces over the descriptor builtins, further down. The stream verbs on a
+// TCP connection, Unix-domain sockets and IPv6 listeners arrive with the
+// primitives that make them honest on every address family (#9853, the
+// `std/net` redesign); until then `std/tcp` and `std/fetch` are the TCP
+// surface and `packed_v4()` bridges an `IpAddr` to the packed IPv4
+// argument `tcp_connect` and `fetch.ipv4` take.
 //
 // The predicates (`is_loopback`, `is_private`, `is_link_local`,
 // `is_multicast`, `is_unspecified`) and `to_canonical()` are the vocabulary
@@ -722,6 +724,245 @@ pub function (e: NetError) eq(other: NetError): boolean {
     var i: i32 = __net_error_index(e);
     if (i != __net_error_index(other)) { return false; }
     return i >= 0 || e.errno() == other.errno();
+}
+
+// ---------------------------------------------------------------------------
+// Socket controls
+//
+// Typed faces over the descriptor builtins `tcp_listen_with` and
+// `tcp_socket_ctl` (#9853): a negative errno becomes the `NetError` it
+// names. The descriptors are the same `i32` the `tcp_*` builtins and
+// `std/tcp` use, so a listener from `listen_with` goes to `tcp_accept` and
+// an accepted or dialled socket to any control here.
+//
+// wasi:sockets 0.2 has no Nagle switch and no blocking mode to turn off, so
+// on wasm `set_nodelay` and `set_nonblocking` answer `Other(58)`
+// (`ENOTSUP`) rather than claiming a setting the host does not have, and
+// `reuse_port` is ignored: a port is one socket's there.
+
+// ListenOptions — what `listen_with` asks of the listener: the accept
+// queue depth, and whether other listeners may share the port
+// (`SO_REUSEPORT`, the kernel balancing accepted connections across them).
+pub struct ListenOptions {
+    backlog: i32,
+    reuse_port: boolean,
+}
+
+// `listen_options()` — what `tcp_listen` uses: a backlog of 128 and the
+// port held by one listener.
+pub function listen_options(): ListenOptions {
+    return ListenOptions { backlog: 128, reuse_port: false };
+}
+
+// `listen_with(port, opts)` — a listening IPv4 socket on `port` (0 lets the
+// host pick, and `tcp_local_port` reads it back), or the error the bind or
+// listen reported.
+pub function listen_with(port: i32, opts: ListenOptions): Result[i32, NetError] {
+    var fd: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
+    if (fd < 0) { return Err(error_from_errno(fd)); }
+    return Ok(fd);
+}
+
+// Shutdown — the half of a connection `shutdown` closes: `Read` stops
+// receiving, `Write` sends the end of stream the peer reads as EOF, `Both`
+// does both.
+pub enum Shutdown {
+    Read,
+    Write,
+    Both,
+}
+
+// `set_nodelay(sock, on)` — send segments as they are written instead of
+// waiting to coalesce them (`TCP_NODELAY`).
+pub function set_nodelay(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 1, on);
+}
+
+// `set_keepalive(sock, on)` — probe an idle connection so a vanished peer
+// is noticed (`SO_KEEPALIVE`).
+pub function set_keepalive(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 2, on);
+}
+
+// `set_nonblocking(sock, on)` — make `tcp_recv` answer the empty array at
+// once when nothing is queued instead of waiting (`O_NONBLOCK`).
+pub function set_nonblocking(sock: i32, on: boolean): Result[(), NetError] {
+    return __socket_ctl(sock, 3, on);
+}
+
+// `shutdown(sock, how)` — close one or both directions while keeping the
+// descriptor; `tcp_close` still releases it.
+pub function shutdown(sock: i32, how: Shutdown): Result[(), NetError] {
+    var arg: i32 = 2;
+    match (how) {
+        Read => { arg = 0; },
+        Write => { arg = 1; },
+        Both => { arg = 2; },
+    }
+    return __socket_result(tcp_socket_ctl(sock, 4, arg));
+}
+
+function __socket_ctl(sock: i32, op: i32, on: boolean): Result[(), NetError] {
+    var arg: i32 = 0;
+    if (on) { arg = 1; }
+    return __socket_result(tcp_socket_ctl(sock, op, arg));
+}
+
+function __socket_result(r: i32): Result[(), NetError] {
+    if (r < 0) { return Err(error_from_errno(r)); }
+    return Ok(());
+}
+
+function __socket_count(r: i32): Result[i32, NetError] {
+    if (r < 0) { return Err(error_from_errno(r)); }
+    return Ok(r);
+}
+
+// ---------------------------------------------------------------------------
+// Datagram sockets
+//
+// Typed faces over `udp_bind`, `udp_connect`, `udp_sendto` and
+// `udp_recvfrom`, on the same `i32` descriptors as the rest. The
+// primitives take an IPv4 address packed in network order, so an IPv6
+// `SocketAddr` is refused here with `EAFNOSUPPORT` until they take one.
+
+// `address_family_errno()` — `EAFNOSUPPORT` as this target numbers it: what
+// a socket verb answers for an address family the primitives do not take.
+pub function address_family_errno(): i32 {
+    if (target_os() == "darwin") { return 47; }
+    if (target_os() == "wasi") { return 5; }
+    return 97;
+}
+
+function __packed_v4(addr: SocketAddr): Result[i32, NetError] {
+    match (addr.ip.packed_v4()) {
+        Some(packed) => { return Ok(packed); },
+        None => { return Err(NetError.Other(address_family_errno())); },
+    }
+}
+
+// `udp_socket(addr)` — a datagram socket bound to `addr` (port 0 lets the
+// host pick, and `local_port` reads it back), or the error the bind
+// reported. It receives from any peer until `set_peer` fixes one.
+pub function udp_socket(addr: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(addr)) {
+        Ok(packed) => { return __socket_count(udp_bind(packed, addr.port)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `set_peer(sock, peer)` — fix the peer a datagram socket sends to with
+// `send` and receives from (`connect(2)` on a datagram socket).
+pub function set_peer(sock: i32, peer: SocketAddr): Result[(), NetError] {
+    match (__packed_v4(peer)) {
+        Ok(packed) => { return __socket_result(udp_connect(sock, packed, peer.port)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `send_to(sock, data, to)` — one datagram to `to`: the bytes accepted, or
+// the error the send reported.
+pub function send_to(sock: i32, data: string, to: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(to)) {
+        Ok(packed) => { return __socket_count(udp_sendto(sock, packed, to.port, data)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `send(sock, data)` — one datagram to the peer `set_peer` fixed.
+pub function send(sock: i32, data: string): Result[i32, NetError] {
+    return __socket_count(udp_sendto(sock, 0, 0, data));
+}
+
+// `recv_from(sock, buf)` — one datagram read into `buf`, up to its length
+// (a longer datagram keeps its first bytes): the byte count and the
+// sender, or the error the receive reported. A non-blocking socket with
+// nothing queued answers `WouldBlock`.
+pub function recv_from(sock: i32, buf: u8[]): Result[(i32, SocketAddr), NetError] {
+    var from: u8[] = __zero_bytes(6);
+    var n: i32 = udp_recvfrom(sock, buf, from);
+    if (n < 0) { return Err(error_from_errno(n)); }
+    var ip: IpAddr = ipv4(from[0] as i32, from[1] as i32, from[2] as i32, from[3] as i32);
+    return Ok((n, socket_addr(ip, ((from[4] as i32) << 8) | (from[5] as i32))));
+}
+
+// `recv(sock, buf)` — `recv_from` without the sender.
+pub function recv(sock: i32, buf: u8[]): Result[i32, NetError] {
+    var none: u8[] = [];
+    return __socket_count(udp_recvfrom(sock, buf, none));
+}
+
+// ---------------------------------------------------------------------------
+// Connecting
+//
+// Typed faces over `tcp_connect_with` and control op 5 of `tcp_socket_ctl`.
+
+// `connect(addr)` — a connection to `addr`, or the error the dial reported.
+pub function connect(addr: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(addr)) {
+        Ok(packed) => { return __socket_count(tcp_connect_with(packed, addr.port, false)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `connect_start(addr)` — a non-blocking socket whose connect to `addr` is
+// under way: the socket, or the error that stopped the connect from
+// starting. `connect_result` says how it ended; until then the socket is
+// not one to send on.
+pub function connect_start(addr: SocketAddr): Result[i32, NetError] {
+    match (__packed_v4(addr)) {
+        Ok(packed) => { return __socket_count(tcp_connect_with(packed, addr.port, true)); },
+        Err(e) => { return Err(e); },
+    }
+}
+
+// `connect_result(sock)` — how a started connect ended: `Ok(())` once the
+// socket is connected, `Err(InProgress)` while it is still under way, and
+// otherwise the error it failed with (once; the socket is then only good
+// for `close`). The interpreter connects before `connect_start` answers,
+// so there it is `Ok(())` at once.
+pub function connect_result(sock: i32): Result[(), NetError] {
+    return __socket_result(tcp_socket_ctl(sock, 5, 0));
+}
+
+// `accept(sock)` — the next connection a listener has queued, or the error
+// the accept reported.
+pub function accept(sock: i32): Result[i32, NetError] {
+    return __socket_count(tcp_accept(sock));
+}
+
+// ---------------------------------------------------------------------------
+// Unix-domain sockets
+//
+// Native only: neither WASI world has a filesystem namespace for socket
+// endpoints, so a program that names these does not compile for wasm.
+
+// `listen_unix(path, backlog)` — a stream socket listening at the filesystem
+// path with that accept queue, or the error the bind or listen reported:
+// `AddrInUse` while a socket file is there (remove it first when it is a
+// stale one), `Other(ENAMETOOLONG)` for a path longer than the address
+// holds (107 bytes on Linux, 103 on Darwin). `accept`, `tcp_recv`,
+// `tcp_send` and `close` take the sockets.
+pub function listen_unix(path: string, backlog: i32): Result[i32, NetError] {
+    return __socket_count(unix_listen(path, backlog));
+}
+
+// `connect_unix(path)` — a stream socket connected to the listener at the
+// filesystem path, or the error the dial reported (`Other(ENOENT)` when
+// nothing is there).
+pub function connect_unix(path: string): Result[i32, NetError] {
+    return __socket_count(unix_connect(path));
+}
+
+// `local_port(sock)` — the port a socket is bound to, which is how a
+// socket bound to port 0 learns the one the host picked.
+pub function local_port(sock: i32): Result[i32, NetError] {
+    return __socket_count(tcp_local_port(sock));
+}
+
+// `close(sock)` — release a socket of either kind.
+pub function close(sock: i32): Result[(), NetError] {
+    return __socket_result(tcp_close(sock));
 }
 
 impl cmp.Eq for NetError { }

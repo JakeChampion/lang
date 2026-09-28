@@ -52,6 +52,37 @@ stable op ID alongside the existing registry.
 These tests prove the syscall floor needed by the networking runtime. They
 do not establish socket correctness, leak freedom or a performance result.
 
+The Go compiler's copy of that floor (`__syscall3` … `__syscall6`,
+`__store_u8`) is gated by `TestNativeSyscallFloor` in `internal/e2e`, one leg
+per native backend (x86-64 and arm64, stack machine and `-backend ssa`),
+`TestArm64DarwinNativeSyscallFloor` in the macOS lane, and
+`TestSyscallFloorRefusedOnWasm`, which wants the E066 refusal to name the
+callee. `TestSelfHostSyscallFloorX86_64` / `…Arm64` run the same probe
+through the self-host driver. `TestRawSyscallRefusedUnderSandbox` in
+`internal/codegen/x86_64` pins that `FERN_SANDBOX=1` records a literal
+syscall number and refuses a run-time one rather than emitting a filter
+that kills the program at its first call; the `sockets` case of
+`TestSeccompDoesNotBreakWorkingPrograms` runs the Fern-bodied socket
+helpers under the filter. The socket helpers themselves are gated by the
+tests that were already on the builtins (`TestTcpLocalPortRoundTrip` on
+every native leg, `TestArm64TcpListen`, the `Serve*` and `Fetch*` tests,
+the Darwin lane) and by `TestEveryHelperLowersForEveryTarget` and
+`TestHelpersCallOnlyTheFloorOrEachOther` in `internal/fernrt`.
+The probe's last-byte read is also the regression test for the SSA lift
+masking usize arithmetic to 32 bits; `TestLiftPointerWidthArithmeticIsAnAddress`
+in `internal/ssa` pins the lift half on its own.
+
+`TestBytesFloor` runs `e2eharness.BytesFloorProbe` on the same four native
+legs, `TestArm64DarwinBytesFloor` on Apple Silicon and `TestBytesFloorWasm`
+under wasmtime: a byte array filled through its data pointer and shortened
+by `__arr_set_len`, and an inline and a heap string read through
+`__str_bytes` with scratch to spill into and without. The self-host twins
+are `TestSelfHostBytesFloorX86_64` and `TestSelfHostBytesFloorArm64`, on a
+literal array since the self-host keeps a byte array one word per element.
+The bodies written on the floor, `tcp_recv`, `tcp_send` and `udp_send`, are
+gated by every socket, serve, fetch and udp test that was already on the
+builtins, on every backend.
+
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with
 inherited pipes and a loopback TCP listener on Apple Silicon. It checks ready,
 timed-out, empty, negative, invalid and duplicate descriptors, the lowest
@@ -59,7 +90,7 @@ ready index, and zero/infinite timeouts. Every case requires balanced
 `FERN_LEAKCHECK` counts and zero live bytes; descriptor reuse checks that
 the helper closes each temporary kqueue. It runs under the macOS lane's
 `TestSelfHostArm64Darwin.*` selector. This is the compatibility `poll` helper;
-P0's persistent worker-owned reactor remains separate work.
+the persistent reactor has its own gates below.
 
 ## std/net addresses and errors
 
@@ -77,7 +108,74 @@ Apple Silicon. `TestNetErrnoTablesMatchStrerror` and
 `TestNetErrorVariantsFollowErrnoList` (`internal/stdlib`) read the module
 as data and pin its Linux, Darwin and WASI errno lists to
 `internal/strerror` row for row, and the `NetError` variant order to the
-errno-name list. These gates cover text and tables only: no socket is
+errno-name list.
+
+`TestSocketCtl{Interp,X86_64,Arm64,Wasm}` run six probes over loopback,
+two on the socket controls, two on the datagram sockets and two on the
+started connect:
+`e2eharness.SocketCtlProbe` on the raw `tcp_listen_with` /
+`tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
+listener on Linux, no-delay and keep-alive, a non-blocking read that
+answers empty, a write-side shutdown the peer reads as EOF, the `-EINVAL`
+of an unknown op, and the wasm `-ENOTSUP` answers), and
+`e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
+`set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
+`AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
+the closed port report; `e2eharness.UdpSocketProbe` on the raw `udp_bind`,
+`udp_sendto`, `udp_recvfrom` and `udp_connect` (two sockets on host-picked
+ports, a datagram whose bytes and sender the receiver reads back, a reply
+through a connected socket, a short buffer that truncates, the refused
+second bind of a held port, the would-block of a non-blocking receive, and
+the close of both), and `e2eharness.NetUdpProbe` through std/net's
+`udp_socket`, `send_to`, `recv_from`, `set_peer`, `send`, `recv`,
+`local_port` and `close`, plus the `AddrInUse`, the refused IPv6 address
+and the `WouldBlock`; `e2eharness.ConnectProbe` on `tcp_connect_with` and
+control op 5 (a started connect settled by asking until it is no longer
+`-EINPROGRESS`, then accepted and used both ways, and the
+`-ECONNREFUSED` a connect to the closed port ends with, whether it fails
+as it starts or once it settles), and `e2eharness.NetConnectProbe` through
+`connect_start`, `connect_result` and `connect`. All six check the
+received bytes, not only their count. `TestUnixSocket{Interp,X86_64,Arm64}`,
+`TestArm64DarwinUnixSocket`, `TestSelfHostUnixSocket` and its Darwin twin
+run `e2eharness.UnixSocketProbe` and `NetUnixProbe` over a socket file
+under /tmp (a listener, a connect, both directions through the tcp verbs,
+the refused second listener, the `ENOENT` of a removed path and the
+`ENAMETOOLONG` of a path too long for the address); `TestWASMUnixSocketRefused`
+pins the E066 the `unix` capability draws on wasm32-wasi.
+`TestReactorFloor{Interp,X86_64,Arm64,Wasm}`, `TestArm64DarwinReactorFloor`,
+`TestSelfHostReactorFloor` (x86-64, arm64 and wasm) and its Darwin twin run
+`e2eharness.ReactorProbe`: a readiness set watching a listener and a
+connection, the waits that report the accept, the bytes, the writable side
+and the peer's close, `tcp_recv_into`'s bytes and its -EAGAIN when nothing
+is queued, the quiet timeout, and the -EINVAL of a refused op or event
+buffer; a wait is checked for the pair it must contain, since a host may
+report readiness spuriously. `TestReactorSignal{Interp,X86_64,Arm64,Wasm}`,
+`TestArm64DarwinReactorSignal`, `TestSelfHostReactorSignal` and its Darwin
+twin run `e2eharness.ReactorSignalProbe`: SIGUSR1 watched, delivered by a
+child shell (subprocess on the interpreter, fork and exec natively) and
+reported as (-signal, 1) twice over, unwatched and watched again, and the
+-ENOTSUP wasm answers. `TestSimReactor{Interp,X86_64}` pin the sim leg of
+the Driver's reactor half (`e2eharness.SimReactorProbe`: the virtual clock
+advancing to a scripted readiness or the timeout, interest bits selecting
+it, an unwatch dropping it). The serve loops run on the reactor, so every
+serve, fetch and handler-census gate below exercises it.
+`TestSelfHostSocketCtl` compiles them with the production self-host
+driver for x86-64, arm64 and wasm under strict IR with complete semantic
+lowering required (it is what caught the self-host `tcp_recv` body
+adopting its buffer before the copy loop, #10486);
+`TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
+on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
+by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
+`TestSelfHostHttpHandlerServesWithOptionsX86_64` serve through
+`tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
+option reached the kernel by binding a second `SO_REUSEPORT` socket to the
+served port while the loop answers. A wasi:cli/run
+component reports only 0 or 1, so the wasm legs read the probe's "ok" on
+stdout instead of the exit code. `TestWasmSocketSetupReclaimsOnError` and
+its self-host twin write each wasi:sockets result's error-code at the byte
+the canonical ABI names, so a helper reading the wrong one fails there
+rather than reporting whatever the return area held. The std/net address
+gates above cover text and tables only: no socket is
 opened, so they say nothing about what a primitive reports at runtime.
 
 ## HTTP Content-Length parsing
@@ -103,7 +201,7 @@ lowest index. A failed registration must not hide a ready descriptor or block
 on another idle one, even with an infinite timeout. Repeated calls must balance
 allocations and frees, leave zero live bytes and produce no RC underflow. These gates
 cover temporary poll buffers; they do not establish leak freedom for a whole
-HTTP server or replace the persistent-reactor work in #9853.
+HTTP server.
 
 ## WASI poll storage
 
@@ -140,7 +238,7 @@ census; this does not claim zero live WebAssembly linear memory.
 The native handler fixture catches missing builtin contracts or ambiguous
 deadline operand widths that otherwise move the handler back to AST ownership.
 It does not establish bootstrap compiler leak freedom, zero allocations per
-request, persistent-reactor behavior or throughput.
+request or throughput.
 
 ## WASI socket lifecycles
 

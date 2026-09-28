@@ -106,24 +106,26 @@ func buildNetworkHandleBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
-// emitErrnoNegReturn loads the socket error code from retptr+4 and returns
-// its negative Preview 1 errno. Used after every wasi:sockets call that lands a
-// result<_, error-code> at retptr: byte 0 holds the discriminant
-// and byte 4 holds the error-code variant value (a u8 enum).
-// Discriminant zero is unknown, not success. Translate before negating.
+// emitErrnoNegReturn loads the socket error code from retptr+errAt and
+// returns its negative Preview 1 errno. Used after every wasi:sockets call
+// that lands a result<..., error-code> at retptr: byte 0 holds the
+// discriminant and the error-code (a u8 enum) sits at the payload offset
+// the canonical ABI gives the result's widest case: errAt is 1 for a
+// `result<_, error-code>` (bind, listen, connect-start, the socket
+// controls), 4 when the ok case is a handle, a tuple of handles or an
+// address, and 8 for a u64 count. Discriminant zero is unknown, not
+// success. Translate before negating.
 //
 // Stack on entry: empty. Stack on exit: function has returned.
-func emitErrnoNegReturn(body []byte, retptrLocal uint32, idxs map[string]uint32) []byte {
-	return emitErrnoNegReturnReclaim(body, retptrLocal, 0, idxs)
+func emitErrnoNegReturn(body []byte, retptrLocal, errAt uint32, idxs map[string]uint32) []byte {
+	return emitErrnoNegReturnReclaim(body, retptrLocal, errAt, 0, idxs)
 }
 
 // Save the errno on the operand stack before free overwrites the return area.
-func emitErrnoNegReturnReclaim(body []byte, retptrLocal uint32, size int32, idxs map[string]uint32) []byte {
+func emitErrnoNegReturnReclaim(body []byte, retptrLocal, errAt uint32, size int32, idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstLocalGet(body, retptrLocal)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Add(body)
-	body = memory.InstI32Load8U(body, 0, 0)
+	body = memory.InstI32Load8U(body, 0, errAt)
 	body = inst.InstCall(body, idxs["__fern_wasi_socket_errno"])
 	body = numeric.InstI32Sub(body)
 	if size != 0 {
@@ -176,7 +178,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	fail := func(body []byte) []byte {
 		body = inst.InstLocalGet(body, 1)
 		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
-		return emitErrnoNegReturnReclaim(body, 2, 16, idxs)
+		return emitErrnoNegReturnReclaim(body, 2, 1, 16, idxs)
 	}
 
 	var body []byte
@@ -194,7 +196,7 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturnReclaim(body, 2, 16, idxs)
+	body = emitErrnoNegReturnReclaim(body, 2, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4]
 	body = inst.InstLocalGet(body, 2)
@@ -283,10 +285,36 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// emitIsUdpRecord pushes whether the socket record in local `rec` is a
+// datagram socket's: kind 2 or 3 (wasi_udp.go).
+func emitIsUdpRecord(body []byte, rec uint32) []byte {
+	body = inst.InstLocalGet(body, rec)
+	body = memory.InstI32Load(body, 2, 12)
+	body = inst.InstI32Const(body, udpRecordBare)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstI32Const(body, 2)
+	return numeric.InstI32LtU(body)
+}
+
+// tcpRecordConnecting marks a connection record whose connect
+// tcp_connect_with only started: the socket at +0, no streams, until
+// control op 5 finishes it and the record becomes a connection (1).
+const tcpRecordConnecting = 4
+
 // buildTcpConnectBody assembles __fern_tcp_connect — the outbound
-// client.
+// client: __fern_tcp_connect_with without the non-blocking flag.
+func buildTcpConnectBody(idxs map[string]uint32) []byte {
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstCall(body, idxs["__fern_tcp_connect_with"])
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 0, encode.ValtypeI32), body)
+}
+
+// buildTcpConnectWithBody assembles __fern_tcp_connect_with.
 //
-// Signature: (host_be: i32, port: i32) → i32
+// Signature: (host_be: i32, port: i32, nonblocking: i32) → i32
 //
 // host_be is the IPv4 address packed a | b<<8 | c<<16 | d<<24 (the
 // std/fetch `ipv4` convention), unpacked here into the four octets of
@@ -297,10 +325,14 @@ func buildTcpListenBody(idxs map[string]uint32) []byte {
 // output-stream) — the SAME shape tcp_accept yields, so tcp_recv /
 // tcp_send / tcp_close work on it unchanged — or -errno on failure.
 //
-// Locals (params 0 = host_be, 1 = port):
+// With `nonblocking` the pipeline stops after start-connect and the
+// record goes back marked tcpRecordConnecting; control op 5 runs
+// finish-connect on it.
 //
-//	2: $sock   3: $retptr   4: $struct   5: $pollable
-func buildTcpConnectBody(idxs map[string]uint32) []byte {
+// Locals (params 0 = host_be, 1 = port, 2 = nonblocking):
+//
+//	3: $sock   4: $retptr   5: $struct   6: $pollable
+func buildTcpConnectWithBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	netHandle := idxs["__network_handle"]
 	createSock := idxs["wasi_sockets_create_tcp_socket"]
@@ -322,10 +354,10 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 
 	// After create succeeds, every failed setup step owns this socket,
 	// including a zero-valued resource handle.
-	fail := func(body []byte) []byte {
-		body = inst.InstLocalGet(body, 2)
+	fail := func(body []byte, errAt uint32) []byte {
+		body = inst.InstLocalGet(body, 3)
 		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
-		return emitErrnoNegReturnReclaim(body, 3, 16, idxs)
+		return emitErrnoNegReturnReclaim(body, 4, errAt, 16, idxs)
 	}
 
 	var body []byte
@@ -333,27 +365,27 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	// $retptr = alloc(16).
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, 3)
+	body = inst.InstLocalSet(body, 4)
 
 	// create-tcp-socket(ipv4=0, retptr).
 	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstCall(body, createSock)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturnReclaim(body, 3, 16, idxs)
+	body = emitErrnoNegReturnReclaim(body, 4, 4, 16, idxs)
 	body = inst.InstEnd(body)
 	// $sock = mem[retptr + 4].
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 2)
+	body = inst.InstLocalSet(body, 3)
 
 	// start-connect(self=$sock, network, disc=0 (ipv4), port,
 	//   4 ipv4 octets from host_be, 6 padding slots, retptr).
-	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, netHandle)
 	body = inst.InstI32Const(body, 0) // disc = ipv4
 	body = inst.InstLocalGet(body, 1) // port
@@ -367,62 +399,76 @@ func buildTcpConnectBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0) // pad 4
 	body = inst.InstI32Const(body, 0) // pad 5
 	body = inst.InstI32Const(body, 0) // pad 6
-	body = inst.InstLocalGet(body, 3) // retptr
+	body = inst.InstLocalGet(body, 4) // retptr
 	body = inst.InstCall(body, startConnect)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = fail(body)
+	body = fail(body, 1)
+	body = inst.InstEnd(body)
+
+	// Non-blocking: the record goes back with the connect under way and
+	// control op 5 finishes it.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 3)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstI32Const(body, tcpRecordConnecting)
+	body = memory.InstI32Store(body, 2, 12)
+	body = inst.InstLocalGet(body, 4)
+	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
 	// subscribe($sock) → $pollable; block until connected; drop it.
-	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, 3)
 	body = inst.InstCall(body, subscribe)
-	body = inst.InstLocalSet(body, 5)
-	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalSet(body, 6)
+	body = inst.InstLocalGet(body, 6)
 	body = inst.InstCall(body, pollBlock)
-	body = inst.InstLocalGet(body, 5)
+	body = inst.InstLocalGet(body, 6)
 	body = inst.InstCall(body, pollDrop)
 
 	// finish-connect(self, retptr).
-	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstCall(body, finishConnect)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = fail(body)
+	body = fail(body, 4)
 	body = inst.InstEnd(body)
 
 	// Reuse the 16-byte return area as the owned socket record.
 	// finish-connect's Ok payload is tuple<input @ retptr+4,
 	// output @ retptr+8>.
-	body = inst.InstLocalGet(body, 3)
-	body = inst.InstLocalTee(body, 4)
-	body = inst.InstLocalGet(body, 2) // $sock
-	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalTee(body, 5)
+	body = inst.InstLocalGet(body, 3) // $sock
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0) // input-stream @ retptr+4
 	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Add(body)
 	body = memory.InstI32Load(body, 2, 0) // output-stream @ retptr+8
 	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1) // streams-present, independent of handle values
 	body = memory.InstI32Store(body, 2, 12)
-	body = inst.InstLocalGet(body, 4)
+	body = inst.InstLocalGet(body, 5)
 
-	// Four i32 locals after the two params: $sock, $retptr, $struct, $pollable.
+	// Four i32 locals after the three params: $sock, $retptr, $struct, $pollable.
 	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
@@ -473,19 +519,32 @@ func buildTcpLocalPortBody(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 1)
 
-	// $retptr = alloc(36); local-address($sock, $retptr).
+	// $retptr = alloc(36); local-address($sock, $retptr), through the
+	// udp method when the record is a datagram socket's.
 	body = inst.InstI32Const(body, 36)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
-	body = inst.InstLocalGet(body, 1)
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, localAddress)
+	query := func(body []byte, method uint32) []byte {
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalGet(body, 2)
+		return inst.InstCall(body, method)
+	}
+	if udpLocalAddress, ok := idxs["wasi_sockets_udp_local_address"]; ok {
+		body = emitIsUdpRecord(body, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = query(body, udpLocalAddress)
+		body = inst.InstElse(body)
+		body = query(body, localAddress)
+		body = inst.InstEnd(body)
+	} else {
+		body = query(body, localAddress)
+	}
 
 	// Err arm: return -errno.
 	body = inst.InstLocalGet(body, 2)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturnReclaim(body, 2, 36, idxs)
+	body = emitErrnoNegReturnReclaim(body, 2, 4, 36, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok arm: the port, a u16 at retptr+8 in linear-memory order.
@@ -559,7 +618,7 @@ func buildTcpAcceptBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 3)
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = emitErrnoNegReturnReclaim(body, 3, 16, idxs)
+	body = emitErrnoNegReturnReclaim(body, 3, 4, 16, idxs)
 	body = inst.InstEnd(body)
 
 	// Ok payload at retptr+4: (tcp-socket, input-stream, output-stream).
@@ -869,26 +928,286 @@ func emitStreamErrorDrop(body []byte, idxs map[string]uint32, ret uint32) []byte
 // with live children ("resource has children" error), so the
 // stream slots must be released before their owning socket.
 //
-// Offset 12 records whether the socket owns streams. Every u32 resource
-// handle, including zero, is valid; handle values cannot encode absence.
+// Offset 12 records whether the socket owns streams (1; a listener is 0 and
+// a connect under way 4), and marks a datagram socket (wasi_udp.go), whose
+// resources drop through the udp imports.
+// Every u32 resource handle, including zero, is valid; handle values
+// cannot encode absence.
 func buildTcpCloseBody(idxs map[string]uint32) []byte {
 	var body []byte
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 12)
-	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 4)
-	body = inst.InstCall(body, idxs["wasi_io_input_stream_drop"])
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 8)
-	body = inst.InstCall(body, idxs["wasi_io_output_stream_drop"])
-	body = inst.InstEnd(body)
-	body = inst.InstLocalGet(body, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+	tcp := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstCall(body, idxs["wasi_io_input_stream_drop"])
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 8)
+		body = inst.InstCall(body, idxs["wasi_io_output_stream_drop"])
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		return inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+	}
+	if udpClose, ok := idxs["__fern_udp_close"]; ok {
+		body = emitIsUdpRecord(body, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstCall(body, udpClose)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
+	body = tcp(body)
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, idxs["__free"])
 	body = inst.InstI32Const(body, 0)
 	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 0, encode.ValtypeI32), body)
+}
+
+// buildTcpListenWithBody assembles __fern_tcp_listen_with: the listener
+// __fern_tcp_listen builds, with set-listen-backlog-size(backlog) between
+// the bind and the listen. reuse_port has no wasi:sockets control and is
+// not read; on this target a port is one socket's.
+//
+// Signature: (port, backlog, reuse_port: i32) → i32.
+//
+// Locals (after the three params):
+//
+//	3: $sock   4: $retptr (16 bytes, becomes the record)
+func buildTcpListenWithBody(idxs map[string]uint32) []byte {
+	alloc := idxs["__fern_alloc"]
+	netHandle := idxs["__network_handle"]
+	createSock := idxs["wasi_sockets_create_tcp_socket"]
+	startBind := idxs["wasi_sockets_tcp_start_bind"]
+	finishBind := idxs["wasi_sockets_tcp_finish_bind"]
+	setBacklog := idxs["wasi_sockets_tcp_set_listen_backlog_size"]
+	startListen := idxs["wasi_sockets_tcp_start_listen"]
+	finishListen := idxs["wasi_sockets_tcp_finish_listen"]
+	const sock, retptr = 3, 4
+
+	fail := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, sock)
+		body = inst.InstCall(body, idxs["wasi_sockets_tcp_socket_drop"])
+		return emitErrnoNegReturnReclaim(body, retptr, 1, 16, idxs)
+	}
+	// checkErr bails to fail when the disc byte at retptr is nonzero.
+	checkErr := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, retptr)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = fail(body)
+		return inst.InstEnd(body)
+	}
+
+	var body []byte
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, retptr)
+
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, createSock)
+	body = inst.InstLocalGet(body, retptr)
+	body = memory.InstI32Load8U(body, 0, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = emitErrnoNegReturnReclaim(body, retptr, 4, 16, idxs)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalSet(body, sock)
+
+	body = inst.InstLocalGet(body, sock)
+	body = inst.InstCall(body, netHandle)
+	body = inst.InstI32Const(body, 0) // ipv4
+	body = inst.InstLocalGet(body, 0) // port
+	for i := 0; i < 10; i++ {
+		body = inst.InstI32Const(body, 0) // 0.0.0.0 and the six pad slots
+	}
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, startBind)
+	body = checkErr(body)
+
+	body = inst.InstLocalGet(body, sock)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, finishBind)
+	body = checkErr(body)
+
+	body = inst.InstLocalGet(body, sock)
+	body = inst.InstLocalGet(body, 1)
+	body = convert.InstI64ExtendI32U(body)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, setBacklog)
+	body = checkErr(body)
+
+	body = inst.InstLocalGet(body, sock)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, startListen)
+	body = checkErr(body)
+
+	body = inst.InstLocalGet(body, sock)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, finishListen)
+	body = checkErr(body)
+
+	// The 16-byte area becomes the owned record: (sock, 0, 0, 0).
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstLocalGet(body, sock)
+	body = memory.InstI32Store(body, 2, 0)
+	for _, off := range []uint32{4, 8, 12} {
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store(body, 2, off)
+	}
+	body = inst.InstLocalGet(body, retptr)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
+}
+
+// buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
+// or listener record. op 2 (keep-alive) and op 4 (shutdown) are the two
+// controls wasi:sockets 0.2 has; op 1 (no-delay) and op 3 (non-blocking)
+// have none and answer -ENOTSUP (58), so a caller learns the host owns
+// Nagle and the blocking mode rather than believing it set them. Any other
+// op is -EINVAL (28).
+//
+// Signature: (conn, op, arg: i32) → i32.
+//
+// Locals (after the three params): 3: $retptr (4 bytes)
+func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
+	const retptr = 3
+	// The result<_, error-code> at retptr: 0, or -errno with the area freed.
+	answer := func(body []byte) []byte {
+		body = inst.InstLocalGet(body, retptr)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = emitErrnoNegReturnReclaim(body, retptr, 1, 4, idxs)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 4)
+		body = inst.InstCall(body, idxs["__free"])
+		body = inst.InstI32Const(body, 0)
+		return inst.InstReturn(body)
+	}
+	opIs := func(body []byte, op int32) []byte {
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI32Const(body, op)
+		body = numeric.InstI32Eq(body)
+		return inst.InstIfStart(body, inst.BlocktypeEmpty)
+	}
+
+	var body []byte
+	// op 1 and 3: no control on this target.
+	body = opIs(body, 1)
+	body = inst.InstI32Const(body, -58)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = opIs(body, 3)
+	body = inst.InstI32Const(body, -58)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	// A datagram record (wasi_udp.go) has neither control either.
+	body = emitIsUdpRecord(body, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -58)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// op 5: the result of a connect. A connection is complete; a
+	// connecting record runs finish-connect, which answers would-block
+	// (code 8) while the connect is under way, reported as -EINPROGRESS
+	// (26), and on Ok hands over the streams.
+	body = opIs(body, 5)
+	{
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 12)
+		body = inst.InstI32Const(body, tcpRecordConnecting)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, -28)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, idxs["__fern_alloc"])
+		body = inst.InstLocalSet(body, retptr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstCall(body, idxs["wasi_sockets_tcp_finish_connect"])
+		body = inst.InstLocalGet(body, retptr)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, retptr)
+		body = memory.InstI32Load8U(body, 0, 4)
+		body = inst.InstI32Const(body, 8)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, -26)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, idxs["__free"])
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = emitErrnoNegReturnReclaim(body, retptr, 4, 16, idxs)
+		body = inst.InstEnd(body)
+		for _, off := range []uint32{4, 8} {
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, retptr)
+			body = memory.InstI32Load(body, 2, off)
+			body = memory.InstI32Store(body, 2, off)
+		}
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 12)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 16)
+		body = inst.InstCall(body, idxs["__free"])
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, idxs["__fern_alloc"])
+	body = inst.InstLocalSet(body, retptr)
+
+	// op 2: set-keep-alive-enabled(sock, arg != 0, retptr).
+	body = opIs(body, 2)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32Ne(body)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, idxs["wasi_sockets_tcp_set_keep_alive_enabled"])
+	body = answer(body)
+	body = inst.InstEnd(body)
+
+	// op 4: shutdown(sock, arg, retptr).
+	body = opIs(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstCall(body, idxs["wasi_sockets_tcp_shutdown"])
+	body = answer(body)
+	body = inst.InstEnd(body)
+
+	body = inst.InstLocalGet(body, retptr)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, idxs["__free"])
+	body = inst.InstI32Const(body, -28)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
 }

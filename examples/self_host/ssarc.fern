@@ -174,7 +174,7 @@ function walked(t: typeinfo.Type): boolean {
 function release_name(t: typeinfo.Type): string {
     if (ssasem.is_view(t)) { return "__fern_str_view_free"; }
     if (ssasem.is_string(t)) { return "__fern_str_free"; }
-    if (routed_map(t) && ssasem.is_string(ssasem.map_key(t))) { return "__map_drop_strkey_impl"; }
+    if (routed_map(t) && (ssasem.is_string(ssasem.map_key(t)) || ssasem.is_string(ssasem.map_value(t)))) { return "__map_drop_strcols_impl"; }
     if (routed_map(t)) { return "__map_drop_impl"; }
     if (ssasem.is_map(t)) { return map_release_name(t); }
     if (routed_iter(t)) { return "__mapiter_drop_impl"; }
@@ -1505,7 +1505,7 @@ function types_error(f: ssasem.Func): string {
 }
 
 function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irlower.StructTab): string {
-    var why: string = ssaunits.verify(f, modes, p);
+    var why: string = ssaunits.verify_planned(f, modes, p);
     if (why != "") { return why; }
     why = types_error(f);
     if (why != "") { return why; }
@@ -1633,6 +1633,7 @@ function integer_kind(op: string, operand: typeinfo.Type): string {
 // name — its operands do.
 function operand_width(f: ssasem.Func, ins: ssa.SInst): i32 {
     if (ssasem.is_wide(f.values[ins.args[0]])) { return 64; }
+    if (ssasem.is_usize(f.values[ins.args[0]])) { return ir.width_ptr(); }
     return 0;
 }
 
@@ -1718,9 +1719,15 @@ function scalar(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irl
     if (ins.kind_tag == 9) { r = emit(r, ir.op_bin(integer_kind(ins.str, f.values[ins.args[0]]), w, false)); }
     else { r = emit(r, ir.op_bin("sub", w, false)); }
     // The 64-bit operators are already full-width, so only a narrower result
-    // can leave the range its type names.
-    if (!wraps(ins.str) || ssasem.is_wide(f.values[ins.result])) { return r; }
+    // can leave the range its type names. An address is the register's own
+    // width too: wrapping one sign-extended `base + n` from 32 bits, which
+    // faulted on any mapping above 2 GiB (#10454).
+    if (!wraps(ins.str) || register_width(f.values[ins.result])) { return r; }
     return emit(r, ir.op_int_cast(wrap_kind(f.values[ins.result])));
+}
+
+function register_width(t: typeinfo.Type): boolean {
+    return ssasem.is_wide(t) || ssasem.is_usize(t);
 }
 
 // The mask a NARROW destination applies to a narrow operand: the byte's 255,
@@ -1935,15 +1942,16 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
 // module, so under them every map stays on the runtime.
 function routed_map(t: typeinfo.Type): boolean {
     if (!ssasem.is_map(t)) { return false; }
-    return routed_key(ssasem.map_key(t)) && routed_column(ssasem.map_value(t)) && map_routing_on();
+    return routed_key(ssasem.map_key(t)) && routed_key(ssasem.map_value(t)) && map_routing_on();
 }
 
 function routed_iter(t: typeinfo.Type): boolean {
     if (!semtypes.is_map_iter(t)) { return false; }
-    return routed_key(semtypes.map_iter_key(t)) && routed_column(semtypes.map_iter_value(t)) && map_routing_on();
+    return routed_key(semtypes.map_iter_key(t)) && routed_key(semtypes.map_iter_value(t)) && map_routing_on();
 }
 
-// A string key column holds one unit of each key, as the runtime's does.
+// A string column, of keys or values, holds one unit of each string, as the
+// runtime's does.
 function routed_key(t: typeinfo.Type): boolean {
     return routed_column(t) || ssasem.is_string(t);
 }
@@ -1979,7 +1987,7 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     if (k == ssasem.map_new() || k == ssasem.map_cleared()) {
         if (k == ssasem.map_new()) { r = emit(r, ir.op_load_local(ins.args[0])); } else { r = emit(r, ir.op_const_i32(8)); }
         r = emit(r, ir.op_const_i32(routed_key_tag(ssasem.map_key(f.values[ins.result]))));
-        r = emit(r, ir.op_const_i32(0));
+        r = emit(r, ir.op_const_i32(routed_val_tag(ssasem.map_value(f.values[ins.result]))));
         return emit(r, ir.op_call_direct("map_new_impl", 3));
     }
     if (k == ssasem.map_insert()) { return routed_insert(r, f, ins); }
@@ -1992,10 +2000,22 @@ function routed_map_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     if (k == ssasem.map_values()) { return routed_column_read(r, ssasem.map_value(t), ir.op_ptr_width()); }
     r = routed_slot(r, ins.args[1], ssasem.map_key(t));
     if (k == ssasem.map_has()) { return emit(r, ir.op_call_direct("__map_has_impl", 2)); }
-    if (k == ssasem.map_get()) { return emit(r, ir.op_call_direct("__map_get_impl", 2)); }
+    var counted: boolean = ssasem.is_string(ssasem.map_value(t));
+    if (k == ssasem.map_get()) {
+        r = emit(r, ir.op_call_direct("__map_get_impl", 2));
+        if (!counted) { return r; }
+        return retain_hit_payload(r, ins);
+    }
     r = routed_slot(r, ins.args[2], ssasem.map_value(t));
     r = emit(r, ir.op_call_direct("__map_get_or_impl", 3));
+    if (counted) { return emit(r, ir.op_call_direct("__fern_rc_inc", 1)); }
     return from_address(r, ssasem.map_value(t));
+}
+
+// core/map's valKind: 5 a string, 0 a scalar held in the slot itself.
+function routed_val_tag(t: typeinfo.Type): i32 {
+    if (ssasem.is_string(t)) { return 5; }
+    return 0;
 }
 
 // core/map's keyKind: 1 a string, 0 a scalar held in the slot itself.
@@ -2038,7 +2058,7 @@ function routed_cursor(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
         return routed_from_slot(r, semtypes.map_iter_key(t));
     }
     r = emit(r, ir.op_call_direct("__mapiter_value_impl", 1));
-    return from_address(r, semtypes.map_iter_value(t));
+    return routed_from_slot(r, semtypes.map_iter_value(t));
 }
 
 // An insert consumes the receiver's unit. core/map copies a shared map and
@@ -2079,39 +2099,46 @@ function routed_insert(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
 
 // `without` answers the map and whether the key was there. The receiver is
 // made the frame's alone first, by core/map's own copy-on-write, and the
-// delete then runs on it in place. A string column's removed key is the
+// delete then runs on it in place. A string column's removed entry is the
 // map's unit, which core/map's delete drops from the column without
 // releasing, so it is read out first and released after.
 function routed_delete(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     var t: typeinfo.Type = f.values[ins.args[0]];
     var box: i32 = scratch_base(f);
     var found: i32 = box + 1;
-    var old: i32 = box + 2;
+    var old_key: i32 = box + 2;
+    var old_val: i32 = box + 3;
     var counted_key: boolean = ssasem.is_string(ssasem.map_key(t));
-    r = reserve(r, old + 1);
+    var counted_val: boolean = ssasem.is_string(ssasem.map_value(t));
+    r = reserve(r, old_val + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
     r = emit(r, ir.op_store_local(box));
     r = release_if_copied(r, ins.args[0], box);
-    if (counted_key) {
-        r = emit(r, ir.op_load_local(box));
-        r = routed_slot(r, ins.args[1], ssasem.map_key(t));
-        r = emit(r, ir.op_call_direct("__map_key_of", 2));
-        r = emit(r, ir.op_store_local(old));
-    }
+    if (counted_key) { r = removed_slot(r, t, ins, box, "__map_key_of", old_key); }
+    if (counted_val) { r = removed_slot(r, t, ins, box, "__map_lookup_val", old_val); }
     r = emit(r, ir.op_load_local(box));
     r = routed_slot(r, ins.args[1], ssasem.map_key(t));
     r = emit(r, ir.op_call_direct("__map_delete_impl", 2));
     r = emit(r, ir.op_store_local(found));
-    if (counted_key) {
+    if (counted_key || counted_val) {
         r = emit(r, ir.op_load_local(found));
         r = emit(r, ir.op_if(0));
-        r = helper(r, old, "__fern_str_free");
+        if (counted_key) { r = helper(r, old_key, "__fern_str_free"); }
+        if (counted_val) { r = helper(r, old_val, "__fern_str_free"); }
         r = emit(r, ir.op_end());
     }
     r = emit(r, ir.op_load_local(box));
     r = emit(r, ir.op_load_local(found));
     return emit(r, ir.op_tuple_make_k(2, tuple_kinds(f.values[ins.result])));
+}
+
+// The slot `reader` finds in `box` for the deleted key, kept in `into`.
+function removed_slot(own r: irlower.LowerResult, t: typeinfo.Type, ins: ssa.SInst, box: i32, reader: string, into: i32): irlower.LowerResult {
+    r = emit(r, ir.op_load_local(box));
+    r = routed_slot(r, ins.args[1], ssasem.map_key(t));
+    r = emit(r, ir.op_call_direct(reader, 2));
+    return emit(r, ir.op_store_local(into));
 }
 
 function release_if_copied(own r: irlower.LowerResult, receiver: i32, handle: i32): irlower.LowerResult {
@@ -2140,6 +2167,12 @@ function column_flag(elem: typeinfo.Type): i32 {
 function map_get(own r: irlower.LowerResult, ins: ssa.SInst, kkind: i32, eq: string, counted: boolean, widekind: i32): irlower.LowerResult {
     r = emit(r, ir.op_map_get(kkind, eq, widekind));
     if (!counted) { return r; }
+    return retain_hit_payload(r, ins);
+}
+
+// The Option a counted column's get answers owns a unit of its payload on a
+// hit, which the map copied out of its column without one.
+function retain_hit_payload(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
     r = emit(r, ir.op_store_local(ins.result));
     r = emit(r, ir.op_load_local(ins.result));
     r = emit(r, ir.op_opt_tag());
@@ -3287,6 +3320,19 @@ function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowe
     if (ins.str == "tcp_pollable") { return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) }; }
     if (ins.str == "tcp_close") { return Lowered { found: true, r: emit(r, ir.op_tcp_close()) }; }
     if (ins.str == "udp_send") { return Lowered { found: true, r: emit(r, ir.op_udp_send()) }; }
+    if (ins.str == "tcp_listen_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_listen_with()) }; }
+    if (ins.str == "tcp_socket_ctl") { return Lowered { found: true, r: emit(r, ir.op_tcp_socket_ctl()) }; }
+    if (ins.str == "udp_bind") { return Lowered { found: true, r: emit(r, ir.op_udp_bind()) }; }
+    if (ins.str == "udp_connect") { return Lowered { found: true, r: emit(r, ir.op_udp_connect()) }; }
+    if (ins.str == "udp_sendto") { return Lowered { found: true, r: emit(r, ir.op_udp_sendto()) }; }
+    if (ins.str == "udp_recvfrom") { return Lowered { found: true, r: emit(r, ir.op_udp_recvfrom()) }; }
+    if (ins.str == "tcp_connect_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect_with()) }; }
+    if (ins.str == "unix_listen") { return Lowered { found: true, r: emit(r, ir.op_unix_listen()) }; }
+    if (ins.str == "unix_connect") { return Lowered { found: true, r: emit(r, ir.op_unix_connect()) }; }
+    if (ins.str == "reactor_new") { return Lowered { found: true, r: emit(r, ir.op_reactor_new()) }; }
+    if (ins.str == "reactor_ctl") { return Lowered { found: true, r: emit(r, ir.op_reactor_ctl()) }; }
+    if (ins.str == "reactor_wait") { return Lowered { found: true, r: emit(r, ir.op_reactor_wait()) }; }
+    if (ins.str == "tcp_recv_into") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv_into()) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
     if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }
@@ -3373,6 +3419,38 @@ function box_free(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResu
     return emit(r, ir.op_free());
 }
 
+// __store_u8(addr, v): the raw byte store at a constant zero offset. Its
+// offset sits between the two operands, so they are re-read round it.
+function store_u8(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_raw_store8());
+}
+
+// __str_bytes(s, scratch): the string's data pointer, slot 0 of its box, as
+// __raw_data reads it. A self-host string is never inline, so the scratch
+// operand is dropped unread.
+function str_bytes(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_raw_load_ptr());
+}
+
+// __arr_set_len(a, n): the length is slot 0 of the box.
+function arr_set_len(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerResult {
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_drop());
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    return emit(r, ir.op_raw_store_ptr());
+}
+
 // The raw-memory escape hatches. The byte load has no op of its own: it is the
 // two-operand raw load at a constant zero offset, which is also what keeps the
 // address at full pointer width.
@@ -3400,6 +3478,9 @@ function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__load_i32") { return Lowered { found: true, r: emit(r, ir.op_load_i32()) }; }
     if (ins.str == "__load_i64") { return Lowered { found: true, r: emit(r, ir.op_load_i64()) }; }
     if (ins.str == "__load_ptr") { return Lowered { found: true, r: emit(r, ir.op_load_ptr()) }; }
+    if (ins.str == "__store_u8") { return Lowered { found: true, r: store_u8(r, ins) }; }
+    if (ins.str == "__str_bytes") { return Lowered { found: true, r: str_bytes(r, ins) }; }
+    if (ins.str == "__arr_set_len") { return Lowered { found: true, r: arr_set_len(r, ins) }; }
     if (ins.str == "__store_i32") { return Lowered { found: true, r: emit(r, ir.op_store_i32()) }; }
     if (ins.str == "__store_i64") { return Lowered { found: true, r: emit(r, ir.op_store_i64()) }; }
     if (ins.str == "__store_ptr") { return Lowered { found: true, r: emit(r, ir.op_store_ptr()) }; }
@@ -3840,7 +3921,7 @@ function bare_flags(f: ssasem.Func, modes: i32[], plan: ssaunits.Plan, first: i3
     var borrows: boolean = false;
     for m in modes { if (m == ssaunits.borrow_mode()) { borrows = true; } }
     if (!borrows) { return ""; }
-    var a: ssasem.Analysis = ssasem.analyze(f);
+    var a: ssasem.Analysis = plan.analysis;
     if (!a.ok) { return ""; }
     var flags: string = "";
     var any: boolean = false;

@@ -818,7 +818,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// bytes, so export it whenever such a wrapper is present.
 	// TCP receive and polling also return canonical lists, including in raw
 	// core modules composed by an external host.
-	if opts.ForceMemorySection || len(externWrappers) > 0 || exportsNeedGuestAlloc(prog) || helpers.set["__fern_tcp_recv"] || helpers.set["__fern_wasm_poll"] {
+	if opts.ForceMemorySection || len(externWrappers) > 0 || exportsNeedGuestAlloc(prog) || helpers.set["__fern_tcp_recv"] || helpers.set["__fern_tcp_recv_into"] || helpers.set["__fern_reactor_wait"] || helpers.set["__fern_wasm_poll"] {
 		if idx, ok := funcIdx["cabi_realloc"]; ok {
 			m.ExportNames = append(m.ExportNames, "cabi_realloc")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
@@ -2860,15 +2860,17 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	// TCP. Each builtin maps to a runtime helper in wasi_tcp.go;
 	// the helpers wrap wasi:sockets + wasi:io directly. See
 	// `scanRuntimeHelpers` / `scanImports` for the dep wiring.
-	"tcp_listen":     "__fern_tcp_listen",
-	"tcp_accept":     "__fern_tcp_accept",
-	"tcp_local_port": "__fern_tcp_local_port",
-	"tcp_connect":    "__fern_tcp_connect",
-	"tcp_pollable":   "__fern_tcp_pollable",
-	"tcp_recv":       "__fern_tcp_recv",
-	"tcp_send":       "__fern_tcp_send",
-	"tcp_close":      "__fern_tcp_close",
-	"udp_send":       "__fern_udp_send",
+	"tcp_listen":      "__fern_tcp_listen",
+	"tcp_accept":      "__fern_tcp_accept",
+	"tcp_local_port":  "__fern_tcp_local_port",
+	"tcp_connect":     "__fern_tcp_connect",
+	"tcp_pollable":    "__fern_tcp_pollable",
+	"tcp_recv":        "__fern_tcp_recv",
+	"tcp_send":        "__fern_tcp_send",
+	"tcp_close":       "__fern_tcp_close",
+	"tcp_listen_with": "__fern_tcp_listen_with",
+	"tcp_socket_ctl":  "__fern_tcp_socket_ctl",
+	"udp_send":        "__fern_udp_send",
 
 	// Map / MapIter dispatch is target-independent — it is a fact about where
 	// core/map.fern puts its `_impl` functions — so it lives in ir.CodegenAliases

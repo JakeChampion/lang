@@ -75,6 +75,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.BlockWrite = true
 		case m == "wasi:io/streams@0.2.0" && n == "[method]input-stream.blocking-read":
 			req.BlockRead = true
+		case m == "wasi:io/streams@0.2.0" && (n == "[method]input-stream.subscribe" || n == "[method]output-stream.subscribe" || n == "[method]input-stream.read"):
+			req.StreamReactor = true
 		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]input-stream":
 			req.DropInput = true
 		case m == "wasi:io/streams@0.2.0" && n == "[resource-drop]output-stream":
@@ -132,13 +134,16 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			req.Args = true
 		case m == "wasi:cli/environment@0.2.0" && n == "get-environment":
 			req.Env = true
-		case m == "wasi:sockets/tcp@0.2.0" && n == "[method]tcp-socket.start-connect":
+		case m == "wasi:sockets/tcp@0.2.0" && (n == "[method]tcp-socket.start-connect" || n == "[method]tcp-socket.finish-connect"):
 			// Outbound client: pulls in the connect variant of the tcp
 			// instance type (start-connect / finish-connect appended).
 			req.Tcp = true
 			req.TcpConnect = true
 		case strings.HasPrefix(m, "wasi:sockets/tcp"):
 			req.Tcp = true // wasi:sockets/tcp@ + tcp-create-socket@
+		case m == "wasi:sockets/udp@0.2.0" && n == "[method]incoming-datagram-stream.receive":
+			req.Udp = true
+			req.UdpRecv = true
 		case strings.HasPrefix(m, "wasi:sockets/udp"):
 			req.Udp = true
 		case m == "wasi:sockets/instance-network@0.2.0":

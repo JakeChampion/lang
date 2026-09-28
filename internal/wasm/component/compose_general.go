@@ -68,6 +68,10 @@ type gComposer struct {
 	// call so ensureIoPoll (idempotent, possibly reached via a socket
 	// dependency) builds the right shape regardless of call order.
 	needPoll bool
+	// needStreamReactor puts the input-stream and output-stream
+	// subscribe methods, and so the pollable, and the non-blocking read
+	// in the streams instance type; ensureIoPoll must have run first.
+	needStreamReactor bool
 	// needConnect selects the outbound-client tcp instance type
 	// (start-connect / finish-connect appended). Set from
 	// ComposeRequest.TcpConnect before ensureTcp.
@@ -109,6 +113,8 @@ func (g *gComposer) ensureIoStreams(needIn, needOut bool) {
 	errAlias := g.ensureIoError()
 	var body []byte
 	switch {
+	case g.needStreamReactor:
+		body = WasiIoStreamsReadWriteReactorInstanceTypeBody(errAlias, g.surfaced["pollable"])
 	case needIn && needOut:
 		body = WasiIoStreamsReadWriteInstanceTypeBody(errAlias)
 	case needOut:

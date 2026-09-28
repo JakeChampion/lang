@@ -42,7 +42,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `held` marks an element read that takes a unit of its own at the read
 // (held_elements); the physical lowering retains what it read.
 // `literal` marks the values that can only hold a string literal (`literals`).
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], analysis: ssasem.Analysis }
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
 // A callee parameter whose buffer the callee may grow in place: `field` is the
@@ -188,7 +188,7 @@ pub function grow_table(keys: string[], funcs: ssasem.Func[], plans: Plan[]): Gr
     return table;
 }
 
-function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [] }; }
+function bad(why: string): Plan { return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], analysis: ssasem.refused_analysis(why) }; }
 pub function refused(why: string): Plan { return bad(why); }
 function rejected(why: string): Ledger { return Ledger { ok: false, why: why, bits: [] }; }
 function step(block: i32, point: i32, target: i32): Step { return Step { block: block, point: point, target: target, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; }
@@ -1414,8 +1414,9 @@ function insert_sorted(own xs: i32[], v: i32): i32[] {
 }
 
 pub function plan(f: ssasem.Func, modes: i32[]): Plan {
-    var analysis: ssasem.Analysis = ssasem.analyze(f);
-    if (!analysis.ok) { return bad(analysis.why); }
+    var semantic: ssasem.Analysis = ssasem.analyze(f);
+    if (!semantic.ok) { return bad(semantic.why); }
+    var analysis: ssasem.Analysis = semantic;
     var why: string = contract_error(f, modes);
     if (why != "") { return bad(why); }
     var owned: boolean[] = owned_values(f, modes);
@@ -1491,7 +1492,7 @@ pub function plan(f: ssasem.Func, modes: i32[]): Plan {
     var literal: boolean[] = literals(f);
     why = view_retain_error(f, steps, literal);
     if (why != "") { return bad(why); }
-    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs) };
+    return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), analysis: semantic };
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
@@ -1742,8 +1743,19 @@ function same_takes(a: i32[], b: i32[]): boolean {
 }
 
 pub function verify(f: ssasem.Func, modes: i32[], p: Plan): string {
+    return verify_analyzed(f, modes, p, ssasem.analyze(f));
+}
+
+// verify_planned checks `p` against the analysis it was planned from, for a
+// caller that lowers the very `f` it planned: analyze is a function of `f`
+// alone, so a second run would only repeat the first.
+pub function verify_planned(f: ssasem.Func, modes: i32[], p: Plan): string {
+    return verify_analyzed(f, modes, p, p.analysis);
+}
+
+function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem.Analysis): string {
     if (!p.ok || p.why != "") { return "missing successful unit plan"; }
-    var analysis: ssasem.Analysis = ssasem.analyze(f);
+    var analysis: ssasem.Analysis = semantic;
     if (!analysis.ok) { return analysis.why; }
     var why: string = contract_error(f, modes);
     if (why != "") { return why; }

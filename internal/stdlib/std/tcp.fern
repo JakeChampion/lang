@@ -12,24 +12,31 @@
 // the host kills the process (no clean-shutdown channel
 // exposed yet).
 //
+// The loop is a reactor (#9853): one readiness set from the Driver seam
+// (`async.real_driver()`: epoll, kqueue or wasi pollables) watches the
+// listener and every open connection, so many slow clients are read
+// side by side and a request is answered as soon as its bytes are in.
 // Per-connection lifecycle:
-//   1. tcp_recv up to 8192 bytes (matches http_parse_request's
-//      header-size cap) plus body bytes via a follow-up recv
-//      loop driven by Content-Length — the whole read bounded
-//      by a per-request deadline (default 10 s; see
-//      `tcp_serve_deadline` / `tcp_recv_deadline`) so a
-//      slow-loris client can't pin the accept loop.
-//   2. http_parse_request — return None ⇒ close the socket
-//      without a response (HTTP/1.1 §10 explicitly allows
+//   1. accept when the listener is readable, switch the connection to
+//      non-blocking and watch it for reads; its read deadline (default
+//      10 s; `tcp_serve_deadline` / `ServeOptions.recv_deadline`) is the
+//      slow-loris guard: a connection past it is closed without a
+//      response, and the wait's timeout is the earliest one due.
+//   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
+//      appending to the connection's request bytes (headers must fit in
+//      8 KiB, the body in 1 MiB, http_parse_request's caps).
+//   3. http_parse_request — return None ⇒ keep reading, or on EOF close
+//      the socket without a response (HTTP/1.1 §10 explicitly allows
 //      server-side reset on malformed input).
-//   3. handler(req) returns the HttpResponse.
-//   4. http_serialize_response → tcp_send → tcp_close.
+//   4. handler(req) returns the HttpResponse.
+//   5. http_serialize_response → tcp_send; what the kernel does not take
+//      stays with the connection, watched for writability until it
+//      drains → unwatch → tcp_close.
 //
-// arm64 wires this through real Linux sockets via the
-// existing __fern_tcp_* syscall helpers. The wasm side gates
-// tcp_* on wasi:sockets at module instantiation; CLI-mode
-// programs that call tcp_serve need a host-pre-opened socket
-// (`wasmtime run -S tcp=y`).
+// The native targets wire this through the Fern-bodied __fern_tcp_* and
+// __fern_reactor_* helpers over the syscall floor. The wasm side gates
+// tcp_* on wasi:sockets at module instantiation; CLI-mode programs that
+// call tcp_serve need a host-pre-opened socket (`wasmtime run -S tcp=y`).
 //
 // `__port_from_env(name, fallback)` is the convenience helper
 // the auto-`main`-from-`handle()` synthesis uses so handler-
@@ -40,7 +47,9 @@
 // declares `import "std/tcp";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5).
 
+import "std/async";
 import "std/http";
+import "std/time";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
@@ -51,24 +60,47 @@ import "core/int";
 // This is the slow-loris guard — without it one client trickling bytes
 // pins the single-threaded accept loop forever. `tcp_serve_deadline`
 // takes a caller-chosen value.
-function __recv_deadline_default(): i32 {
-    return 10000;
+function __recv_deadline_default(): Duration {
+    return time.duration_seconds(10 as i64);
 }
 
 pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
-    return tcp_serve_deadline(port, handler, __recv_deadline_default());
+    return tcp_serve_opts(port, serve_options(), handler);
 }
 
-// tcp_serve_deadline(port, handler, recv_deadline_ms) — `tcp_serve`
-// with an explicit per-request read deadline (milliseconds). A client
-// that hasn't delivered a complete request within the window is
-// disconnected without a response and the loop moves on.
-pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline_ms: i32): i32 {
-    var listener: i32 = tcp_listen(port);
+// ServeOptions — what a serve loop asks of its listener and of each
+// connection: the accept queue depth, whether other listeners may share
+// the port (`SO_REUSEPORT`, the kernel balancing accepted connections
+// across them; ignored on wasm, where a port is one socket's), and the
+// per-request read deadline `tcp_serve_deadline` describes.
+pub struct ServeOptions {
+    backlog: i32,
+    reuse_port: boolean,
+    recv_deadline: Duration,
+}
+
+// serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
+// by one listener, and the 10 s read deadline.
+pub function serve_options(): ServeOptions {
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default() };
+}
+
+// tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
+// the read deadline chosen by the caller.
+pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop(listener, handler, recv_deadline_ms);
+    return __serve_loop(listener, handler, opts.recv_deadline);
+}
+
+// tcp_serve_deadline(port, handler, recv_deadline) — `tcp_serve`
+// with an explicit per-request read deadline. A client that hasn't
+// delivered a complete request within the window is disconnected
+// without a response and the loop moves on.
+pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
+    return tcp_serve_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, handler);
 }
 
 // tcp_serve_with(port, init, handler) — serve with a caller-owned
@@ -100,22 +132,28 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 // every refork. State that must outlive a crash belongs in a store the
 // handler reaches through `plat`.
 pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
-    return tcp_serve_with_deadline(port, init, handler, __recv_deadline_default());
+    return tcp_serve_with_opts(port, serve_options(), init, handler);
 }
 
-// tcp_serve_with_deadline(port, init, handler, recv_deadline_ms) —
-// `tcp_serve_with` with an explicit per-request read deadline, the same
-// slow-loris guard `tcp_serve_deadline` applies.
-pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline_ms: i32): i32 {
-    var listener: i32 = tcp_listen(port);
+// tcp_serve_with_opts(port, opts, init, handler) — `tcp_serve_with` with
+// the listener and the read deadline chosen by the caller.
+pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop_with(listener, init, handler, recv_deadline_ms);
+    return __serve_loop_with(listener, init, handler, opts.recv_deadline);
 }
 
-// tcp_recv_deadline(fd, max, deadline_ms) — recv up to `max` bytes,
-// waiting at most `deadline_ms` for the socket to become readable.
+// tcp_serve_with_deadline(port, init, handler, recv_deadline) —
+// `tcp_serve_with` with an explicit per-request read deadline, the same
+// slow-loris guard `tcp_serve_deadline` applies.
+pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
+    return tcp_serve_with_opts(port, ServeOptions { ...serve_options(), recv_deadline: recv_deadline }, init, handler);
+}
+
+// tcp_recv_deadline(fd, max, deadline) — recv up to `max` bytes,
+// waiting at most `deadline` for the socket to become readable.
 // Returns `Some(chunk)` — the raw bytes, `u8[]`, empty at EOF — when the
 // read completed in time, `None` when the deadline passed first. This is
 // the recv-with-deadline primitive the serve loop and std/fetch's
@@ -132,8 +170,8 @@ pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpReq
 // readiness is unavailable here, and the call degrades to a plain
 // blocking recv — preserving interp behavior at the cost of the
 // deadline.
-pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[u8[]] {
-    var wait_ms: i32 = deadline_ms;
+pub function tcp_recv_deadline(fd: i32, max: i32, deadline: Duration): Option[u8[]] {
+    var wait_ms: i32 = deadline.as_millis() as i32;
     if (wait_ms < 1) { wait_ms = 1; }
     var ns_per_ms: i64 = 1000000;
     var start_ns: i64 = monotonic_ns();
@@ -160,69 +198,165 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[u8[]
     return Some(tcp_recv(fd, max));
 }
 
-// __read_request(fd, recv_deadline_ms) — drain one connection up to the
-// first parse-success. `None` means no complete request arrived (EOF,
-// the read deadline elapsed, or the size cap was hit); the caller closes
-// the socket without a response, which HTTP/1.1 §10 allows on malformed
-// input.
-//
-// Per-request allocations (recv buffers, the parsed HttpRequest) are
-// reclaimed by reference counting as their last references drop at the
-// end of the caller's iteration. Note: RC cannot collect reference
-// cycles, so a handler that builds a cycle per request leaks until
-// process exit (see docs/CYCLE-COLLECTION-ANALYSIS.md).
-function __read_request(fd: i32, recv_deadline_ms: i32): Option[HttpRequest] {
-    var buf: string = "";
-    var read_start_ns: i64 = monotonic_ns();
-    var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
+// __eagain() — EAGAIN as this target numbers it: what a non-blocking read
+// answers while nothing is queued. wasm's reads never block and use the
+// same answer.
+function __eagain(): i32 {
+    if (target_os() == "darwin") { return 35; }
+    if (target_os() == "wasi") { return 6; }
+    return 11;
+}
+
+// __recv_scratch() — the loop's one read buffer, filled per readable
+// connection and copied out; owned by the loop, never by a request.
+function __recv_scratch(): u8[] {
+    var buf: u8[] = [];
+    var i: i32 = 0;
+    while (i < 4096) {
+        buf = buf.append(0 as u8);
+        i = i + 1;
+    }
+    return buf;
+}
+
+// __Conns — the open connections of a serve loop, by position: the
+// descriptor, the request bytes read so far, the response bytes the
+// kernel has not taken yet ("" while the request is being read), and the
+// monotonic time its deadline falls due (the read deadline, then the
+// same span again for the write).
+struct __Conns { fds: i32[], bufs: string[], pending: string[], deadlines: i64[] }
+
+function __conns_index(c: __Conns, fd: i32): i32 {
+    var i: i32 = 0;
+    while (i < c.fds.len()) {
+        if (c.fds[i] == fd) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(""), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline) };
+}
+
+function __conns_remove(c: __Conns, at: i32): __Conns {
+    var fds: i32[] = [];
+    var bufs: string[] = [];
+    var pending: string[] = [];
+    var deadlines: i64[] = [];
+    var i: i32 = 0;
+    while (i < c.fds.len()) {
+        if (i != at) {
+            fds = fds.append(c.fds[i]);
+            bufs = bufs.append(c.bufs[i]);
+            pending = pending.append(c.pending[i]);
+            deadlines = deadlines.append(c.deadlines[i]);
+        }
+        i = i + 1;
+    }
+    return __Conns { fds: fds, bufs: bufs, pending: pending, deadlines: deadlines };
+}
+
+// __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
+// earliest read deadline (0 once one is due), or -1 with nothing open.
+function __conns_timeout(c: __Conns, now: i64): i32 {
+    var best: i64 = -1 as i64;
+    for d in c.deadlines {
+        if (best < (0 as i64) || d < best) { best = d; }
+    }
+    if (best < (0 as i64)) { return -1; }
+    if (best <= now) { return 0; }
+    var ms: i64 = (best - now + (999999 as i64)) / 1000000;
+    if (ms > (2147483647 as i64)) { return 2147483647; }
+    return ms as i32;
+}
+
+// __serve_accept(drv, listener, c, deadline) — one accepted connection,
+// non-blocking and watched for reads; a refused watch closes it again.
+// wasm has no non-blocking mode to switch on and its reads never block.
+function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, recv_deadline: Duration): __Conns {
+    var fd: i32 = tcp_accept(listener);
+    if (fd < 0) { return c; }
+    tcp_socket_ctl(fd, 3, 1);
+    if (drv.watch(fd, 1) < 0) {
+        tcp_close(fd);
+        return c;
+    }
+    return __conns_add(c, fd, monotonic_ns() + recv_deadline.as_nanos());
+}
+
+// __serve_close(drv, c, at) — the connection at `at` unwatched, closed
+// and forgotten.
+function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
+    drv.unwatch(c.fds[at]);
+    tcp_close(c.fds[at]);
+    return __conns_remove(c, at);
+}
+
+// __serve_read(c, at, scratch) — the readable connection at `at` read
+// until nothing is queued: `(conns, done, request)`, where `done` says
+// the connection is finished (a complete request to answer, EOF, an
+// error, or the size cap) and `request` is the complete request when
+// there is one.
+function __serve_read(c: __Conns, at: i32, scratch: u8[]): (__Conns, boolean, Option[HttpRequest]) {
+    var buf: string = c.bufs[at];
     while (true) {
-        // Per-request read deadline (slow-loris guard): the whole
-        // request must arrive within `recv_deadline_ms` or the
-        // connection is dropped without a response.
-        var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000i64) as i32;
-        if (remaining_ms <= 0) {
-            return None;
+        var n: i32 = tcp_recv_into(c.fds[at], scratch);
+        if (n == 0 - __eagain()) {
+            return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, false, None);
         }
-        var chunk: u8[] = [];
-        var timed_out: boolean = false;
-        match (tcp_recv_deadline(fd, 4096, remaining_ms)) {
-            Some(c) => { chunk = c; },
-            None => { timed_out = true; },
-        }
-        if (timed_out) {
-            return None;
-        }
-        if (chunk.len() == 0) {
-            // EOF before request complete.
-            return None;
+        if (n <= 0) {
+            return (c, true, None);
         }
         // The one remaining wire-bytes-to-string bridge: the request
         // buffer is text-typed only because `http_parse_request` and
-        // `HttpRequest.body` still are. Bridging per CHUNK rather than
-        // per parse attempt keeps the accumulation a single memcpy of
-        // the growing buffer, as it was when tcp_recv returned a
-        // string. Retired when the HTTP message layer goes byte-based
-        // (#5714).
-        buf = buf + string_from_bytes_unchecked(chunk);
+        // `HttpRequest.body` still are. Retired when the HTTP message
+        // layer goes byte-based (#5714).
+        buf = buf + string_from_bytes_unchecked(scratch.take(n));
         // Hard cap to keep slow / hostile clients from pinning
         // unbounded memory. Headers must fit in the first 8 KiB; body
         // capped at 1 MiB. Matches http_parse_request's internal caps.
         if (buf.len() > 8192 + 1048576) {
-            return None;
+            return (c, true, None);
         }
         match (http.http_parse_request(buf)) {
-            Some(parsed) => {
-                return Some(parsed);
-            },
+            Some(parsed) => { return (c, true, Some(parsed)); },
             None => {
-                // Either still partial — keep recv'ing — or
-                // definitively malformed. In either case the next
-                // iteration recv's more bytes; the cap above is what
-                // ends a request that never completes.
+                // Still partial, or definitively malformed: more bytes
+                // decide, the deadline or the cap ends it.
             }
         }
     }
-    return None;
+    return (c, true, None);
+}
+
+// __serve_send(drv, c, at, payload, deadline) — the response written to
+// the connection at `at`: `(conns, done)`, done when the kernel took it
+// all or refused it. A short write keeps the rest as the connection's
+// pending bytes, watches it for writability instead of reads and gives
+// it `deadline` to drain; the loop finishes the write on later waits.
+function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: string, deadline: Duration): (__Conns, boolean) {
+    var n: i32 = tcp_send(c.fds[at], payload);
+    if (n >= payload.len()) { return (c, true); }
+    if (n < 0 && n != 0 - __eagain()) { return (c, true); }
+    var rest: string = payload;
+    if (n > 0) { rest = slice_unchecked(payload, n, payload.len()).to_owned(); }
+    drv.watch(c.fds[at], 2);
+    return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, false);
+}
+
+// __serve_expire(drv, c, now) — every connection whose deadline is due
+// closed, without a response or with the rest of one unsent.
+function __serve_expire[D: async.Driver](drv: D, c: __Conns, now: i64): __Conns {
+    var i: i32 = 0;
+    while (i < c.fds.len()) {
+        if (c.deadlines[i] <= now) {
+            c = __serve_close(drv, c, i);
+        } else {
+            i = i + 1;
+        }
+    }
+    return c;
 }
 
 // __host_platform — the bag the accept loops hand every handler: the host
@@ -233,38 +367,61 @@ function __host_platform(): Platform {
     return Platform { version: 1, mode: 0, sink: cell_new("") };
 }
 
-// __serve_loop — the HTTP/1.1 accept loop factored out of
-// `tcp_serve` so `tcp_serve_supervised` can run the same loop
-// against a listener fd it does NOT create: the supervising
-// parent owns the listening socket (created before the first
-// fork, inherited by every worker), so the kernel backlog —
-// and any pending connections in it — survives a worker death.
-// Loops forever under normal operation; the i32 return only
-// materialises for the type system (no clean-shutdown channel
-// exposed yet). `recv_deadline_ms` bounds each connection's
+// __serve_loop — the HTTP/1.1 reactor loop factored out of `tcp_serve`
+// so `tcp_serve_supervised` can run the same loop against a listener fd
+// it does NOT create: the supervising parent owns the listening socket
+// (created before the first fork, inherited by every worker), so the
+// kernel backlog — and any pending connections in it — survives a worker
+// death. Loops forever under normal operation; the i32 return only
+// materialises for the type system (no clean-shutdown channel exposed
+// yet), except that a listener the reactor cannot watch returns its
+// -errno like a failed bind. `recv_deadline` bounds each connection's
 // request read (see `tcp_serve_deadline`).
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline_ms: i32): i32 {
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline: Duration): i32 {
     var plat: Platform = __host_platform();
+    var drv: async.RealDriver = async.real_driver();
+    var watched: i32 = drv.watch(listener, 1);
+    if (watched < 0) { return watched; }
+    var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
+    var scratch: u8[] = __recv_scratch();
     while (true) {
-        var fd: i32 = tcp_accept(listener);
-        if (fd < 0) {
-            // Transient accept failure (EINTR-style) — keep
-            // looping. Permanent failures (listener closed by
-            // the kernel, FD exhaustion) will repeat the same
-            // -errno on every iteration; that needs operator
-            // action, and the lang-side response is
-            // the same as success here.
-            continue;
+        var events: i32[] = drv.wait(64, __conns_timeout(conns, monotonic_ns()));
+        var k: i32 = 0;
+        while (k + 1 < events.len()) {
+            var fd: i32 = events[k];
+            k = k + 2;
+            if (fd == listener) {
+                conns = __serve_accept(drv, listener, conns, recv_deadline);
+                continue;
+            }
+            var at: i32 = __conns_index(conns, fd);
+            if (at < 0) { continue; }
+            if (conns.pending[at].len() > 0) {
+                var sent: (__Conns, boolean) = __serve_send(drv, conns, at, conns.pending[at], recv_deadline);
+                conns = sent.0;
+                if (sent.1) { conns = __serve_close(drv, conns, at); }
+                continue;
+            }
+            var read: (__Conns, boolean, Option[HttpRequest]) = __serve_read(conns, at, scratch);
+            conns = read.0;
+            var done: boolean = read.1;
+            match (read.2) {
+                Some(req) => {
+                    var resp: HttpResponse = handler(req, plat);
+                    var sent: (__Conns, boolean) = __serve_send(drv, conns, at, http.http_serialize_response(resp), recv_deadline);
+                    conns = sent.0;
+                    done = sent.1;
+                },
+                None => {}
+            }
+            if (done) { conns = __serve_close(drv, conns, at); }
         }
-        match (__read_request(fd, recv_deadline_ms)) {
-            Some(req) => {
-                var resp: HttpResponse = handler(req, plat);
-                tcp_send(fd, http.http_serialize_response(resp));
-            },
-            None => {}
-        }
-        tcp_close(fd);
+        conns = __serve_expire(drv, conns, monotonic_ns());
     }
+    // A bounded loop (the census fixtures) hands the listener back with
+    // nothing watching it: on wasm a socket still subscribed cannot close.
+    drv.unwatch(listener);
+    drv.close();
     return 0;
 }
 
@@ -272,24 +429,53 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // value through the handler chain. The state lives in the loop frame,
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline_ms: i32): i32 {
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline: Duration): i32 {
     var st: S = init;
     var plat: Platform = __host_platform();
+    var drv: async.RealDriver = async.real_driver();
+    var watched: i32 = drv.watch(listener, 1);
+    if (watched < 0) { return watched; }
+    var conns: __Conns = __Conns { fds: [], bufs: [], pending: [], deadlines: [] };
+    var scratch: u8[] = __recv_scratch();
     while (true) {
-        var fd: i32 = tcp_accept(listener);
-        if (fd < 0) {
-            continue;
+        var events: i32[] = drv.wait(64, __conns_timeout(conns, monotonic_ns()));
+        var k: i32 = 0;
+        while (k + 1 < events.len()) {
+            var fd: i32 = events[k];
+            k = k + 2;
+            if (fd == listener) {
+                conns = __serve_accept(drv, listener, conns, recv_deadline);
+                continue;
+            }
+            var at: i32 = __conns_index(conns, fd);
+            if (at < 0) { continue; }
+            if (conns.pending[at].len() > 0) {
+                var sent: (__Conns, boolean) = __serve_send(drv, conns, at, conns.pending[at], recv_deadline);
+                conns = sent.0;
+                if (sent.1) { conns = __serve_close(drv, conns, at); }
+                continue;
+            }
+            var read: (__Conns, boolean, Option[HttpRequest]) = __serve_read(conns, at, scratch);
+            conns = read.0;
+            var done: boolean = read.1;
+            match (read.2) {
+                Some(req) => {
+                    var next: (S, HttpResponse) = handler(st, req, plat);
+                    st = next.0;
+                    var sent: (__Conns, boolean) = __serve_send(drv, conns, at, http.http_serialize_response(next.1), recv_deadline);
+                    conns = sent.0;
+                    done = sent.1;
+                },
+                None => {}
+            }
+            if (done) { conns = __serve_close(drv, conns, at); }
         }
-        match (__read_request(fd, recv_deadline_ms)) {
-            Some(req) => {
-                var next: (S, HttpResponse) = handler(st, req, plat);
-                st = next.0;
-                tcp_send(fd, http.http_serialize_response(next.1));
-            },
-            None => {}
-        }
-        tcp_close(fd);
+        conns = __serve_expire(drv, conns, monotonic_ns());
     }
+    // A bounded loop (the census fixtures) hands the listener back with
+    // nothing watching it: on wasm a socket still subscribed cannot close.
+    drv.unwatch(listener);
+    drv.close();
     return 0;
 }
 
@@ -323,7 +509,8 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
 pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     // Listener FIRST, in the parent — the whole design hinges on
     // workers inheriting this fd rather than owning it.
-    var listener: i32 = tcp_listen(port);
+    var opts: ServeOptions = serve_options();
+    var listener: i32 = tcp_listen_with(port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }

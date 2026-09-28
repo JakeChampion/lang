@@ -1052,14 +1052,95 @@ serializer.
 - **Wire format:** `http_parse_request(buf): Option[HttpRequest]`,
   `http_serialize_response(resp): string`
 
+### `std/net`
+
+IP addresses, socket addresses, and the typed error every networking
+primitive reports (#9853). `IpAddr` is `V4(bytes)` / `V6(bytes)` in network
+order, built with `ipv4(a, b, c, d)`, `ipv6(bytes)` or `ip_parse(text)` and
+rendered by `to_string()` in the RFC 5952 canonical form; `SocketAddr` is an
+address and a port, parsed by `socket_addr_parse` from `a.b.c.d:port` and
+the bracketed `[v6]:port` form. The predicates (`is_loopback`,
+`is_private`, `is_link_local`, `is_multicast`, `is_unspecified`) unwrap an
+IPv4-mapped IPv6 address first; `packed_v4()` bridges an `IpAddr` to the
+packed IPv4 argument `tcp_connect` takes.
+
+`NetError` is a closed enum (`AddrInUse`, `ConnectionRefused`,
+`WouldBlock`, … and `Other(errno)`); `error_from_errno(n)` maps the errno a
+builtin returns, negated or not, onto it using the Linux, Darwin or WASI
+numbering `target_os()` names, and `errno()` is the inverse.
+`internal/stdlib/net_errno_test.go` pins the three tables to
+`internal/strerror`.
+
+The socket controls are typed faces over the descriptor builtins
+`tcp_listen_with` and `tcp_socket_ctl`, on the same `i32` descriptors the
+`tcp_*` builtins and `std/tcp` use:
+
+- `listen_with(port, opts)` — a listener with `ListenOptions { backlog,
+  reuse_port }` (`listen_options()` is `tcp_listen`'s 128 and one
+  listener per port), or the `NetError` the bind or listen reported.
+- `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
+  `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
+  `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
+  answers the empty array at once when nothing is queued.
+- `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
+  shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
+
+On wasm, `set_nodelay` and `set_nonblocking` answer `Other(58)` (`ENOTSUP`):
+wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
+
+The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
+`udp_sendto` and `udp_recvfrom`, on the same descriptors:
+
+- `udp_socket(addr)` — a socket bound to a `SocketAddr` (port 0 lets the
+  host pick), receiving from any peer until `set_peer(sock, peer)` fixes
+  one. An IPv6 address is refused with `Other(address_family_errno())`
+  until the primitives take one.
+- `send_to(sock, data, to)` and `send(sock, data)` — one datagram to `to`,
+  or to the fixed peer: the bytes accepted.
+- `recv_from(sock, buf)` and `recv(sock, buf)` — one datagram into the
+  caller's `u8[]`, up to its length: the byte count, with the sender as a
+  `SocketAddr` from `recv_from`. A non-blocking socket with nothing queued
+  answers `WouldBlock`.
+- `local_port(sock)` and `close(sock)` — the bound port, and the release,
+  of a socket of either kind.
+
+Unix-domain sockets, native only (no WASI world has a filesystem namespace
+for sockets, so a program naming them does not compile for wasm):
+`listen_unix(path, backlog)` is a stream listener at the path (`AddrInUse`
+while a socket file is there, `Other(ENAMETOOLONG)` past 107 bytes on
+Linux and 103 on Darwin), `connect_unix(path)` a connection to it
+(`Other(ENOENT)` when nothing is there), and `accept(sock)` the next queued
+connection of any listener.
+
+Connecting: `connect(addr)` is a connection to a `SocketAddr` or the error
+the dial reported; `connect_start(addr)` is a non-blocking socket whose
+connect is under way, and `connect_result(sock)` says how it ended,
+`Ok(())` once connected, `Err(InProgress)` while still under way, else the
+failure (`ConnectionRefused` for a closed port). The interpreter connects
+before `connect_start` answers, so there the result is `Ok(())` at once.
+
+The stream verbs on a TCP connection (`recv` / `send` over owned buffers),
+Unix-domain sockets and IPv6 listeners arrive with the primitives that make
+them honest on every address family; until then `std/tcp` is the accept
+loop and `std/fetch` the client.
+
 ### `std/tcp`
 
-- `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
+- `tcp_serve(port, handler)` — HTTP/1.1 serve loop. Calls
   `handler(req: HttpRequest, plat: Platform): HttpResponse` once
   per accepted connection, constructing the `Platform` bag it
-  passes. Each connection's request read is bounded by a 10 s
-  deadline (the slow-loris guard).
-- `tcp_serve_deadline(port, handler, recv_deadline_ms)` —
+  passes. The loop is a reactor: one readiness set from the Driver
+  seam watches the listener and every open connection, so slow
+  clients are read side by side, and each connection's request read
+  is bounded by a 10 s deadline (the slow-loris guard). A response the
+  kernel does not take whole stays with its connection, watched for
+  writability until it drains within the same span.
+- `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
+  `ServeOptions { backlog, reuse_port, recv_deadline }`
+  (`serve_options()` is 128, one listener per port, and the 10 s
+  deadline): the accept queue depth, port sharing between listeners
+  (`SO_REUSEPORT`, ignored on wasm), and the read deadline.
+- `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
   disconnected without a response.
@@ -1069,13 +1150,13 @@ serializer.
   it returns is what the next request receives. The loop's frame
   owns it, so it lasts as long as the process — this is how a
   handler keeps a cache or a counter, the language having no
-  module-level mutable state. `tcp_serve_with_deadline` adds the
-  explicit read deadline.
+  module-level mutable state. `tcp_serve_with_opts` takes the
+  `ServeOptions`, `tcp_serve_with_deadline` the read deadline alone.
 - `tcp_serve_supervised(port, handler)` — crash-only serving: the
   accept loop runs in a forked worker the parent reforks on
   death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
   a refork resets the loop frame.
-- `tcp_recv_deadline(fd, max, deadline_ms): Option[u8[]]` —
+- `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
@@ -1109,7 +1190,7 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
   `fetch_get(host_be, port, path)`, `get_url("http://…")` — send
   and read the whole response ("" on failure).
 - **Deadline-bounded:** `fetch_raw_deadline` /
-  `fetch_get_deadline(host_be, port, path, deadline_ms):
+  `fetch_get_deadline(host_be, port, path, deadline):
   Option[string]` — `Some(response)` in time, `None` when the
   upstream was too slow (connect/send failure is `Some("")`,
   mirroring `fetch_raw`).
@@ -1193,9 +1274,26 @@ old `concurrent { … }` / `await` keyword surface.
   `on_incomplete`.
 - `race(fs, none_val)` — return on the FIRST to finish as `(index,
   value)`; `(-1, none_val)` if none can progress.
-- `with_deadline(ms, fs)` — await all with a timeout, yielding
+- `with_deadline(deadline, fs)` — await all within a `Duration`, yielding
   `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
   one abandoned at the deadline.
+- `Driver` (trait) and `real_driver()` — the waiting seam every
+  combinator's `*_on(drv, …)` sibling takes (`docs/DST-PLATFORM-BRIEF.md`):
+  `poll_ready`, `now_ns`, `timer` and `drop_token` are the one-shot waits,
+  and `watch(fd, interest)`, `unwatch(fd)`, `wait(max, timeout_ms)` and
+  `close()` are the reactor, a readiness set that outlives one wait
+  (interest and readiness bits 1 readable, 2 writable, readiness 4 an
+  error or hang-up; `wait` is the (fd, readiness) pairs of up to `max`
+  ready descriptors, empty on the timeout). The real driver's reactor is
+  the `reactor_*` floor, made on the first watch; `std/sim`'s answers from
+  the readiness a test scripts with `ready_at(fd, at_ms, bits)`, its
+  virtual clock advancing to the earliest one an interest selects. A host
+  may report readiness spuriously, so a reader reads until -EAGAIN, and a
+  descriptor is unwatched before it is closed. `watch_signal(sig)` makes a
+  signal a readiness event, reported as the pair (-sig, 1) and no longer
+  ending the process (-ENOTSUP on wasm), `unwatch_signal(sig)` restores
+  its default; in the sim `ready_at(-sig, at_ms, 1)` scripts a delivery.
+  `std/tcp`'s serve loops run on it.
 
 ### `std/platform`
 

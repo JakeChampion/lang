@@ -1,24 +1,30 @@
 package wasi:sockets@0.2.0;
 
-// Vendored subset of wasi:sockets/udp@0.2.0 — only the methods the
-// wasm backend emits for its send-only datagram client
-// (internal/codegen/wasmbin/wasi_udp.go): bind the socket, open a
-// stream connected to the remote, wait for a send permit
-// (check-send / subscribe), and send one outgoing-datagram. The
-// `incoming-datagram-stream` half of `stream`'s result is created
-// and immediately dropped (we never receive), so it is declared as
-// a bare resource. The full API adds receive, address/hop-limit
-// accessors, etc.; we lower Fern's narrower fire-and-forget pattern.
+// Vendored subset of wasi:sockets/udp@0.2.0 — the methods the wasm
+// backend emits for the datagram sockets (internal/codegen/wasmbin/
+// wasi_udp.go): bind the socket and read its address back, open the
+// stream pair (to any peer, or connected to one), receive with a
+// readiness subscription, wait for a send permit (check-send /
+// subscribe) and send outgoing-datagrams. The full API adds the
+// hop-limit and buffer-size accessors and the remote-address query.
 interface udp {
     use wasi:io/poll@0.2.0.{pollable};
     use network.{network, error-code, ip-socket-address};
+
+    record incoming-datagram {
+        data: list<u8>,
+        remote-address: ip-socket-address,
+    }
 
     record outgoing-datagram {
         data: list<u8>,
         remote-address: option<ip-socket-address>,
     }
 
-    resource incoming-datagram-stream;
+    resource incoming-datagram-stream {
+        receive: func(max-results: u64) -> result<list<incoming-datagram>, error-code>;
+        subscribe: func() -> pollable;
+    }
 
     resource outgoing-datagram-stream {
         check-send: func() -> result<u64, error-code>;
@@ -31,5 +37,6 @@ interface udp {
         finish-bind: func() -> result<_, error-code>;
         %stream: func(remote-address: option<ip-socket-address>)
             -> result<tuple<incoming-datagram-stream, outgoing-datagram-stream>, error-code>;
+        local-address: func() -> result<ip-socket-address, error-code>;
     }
 }
