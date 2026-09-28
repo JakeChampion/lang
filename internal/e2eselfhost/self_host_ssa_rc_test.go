@@ -1219,6 +1219,17 @@ function main(): i32 {
     // own a map would key as the fall-through leaf does.
     if (ssasem.type_key(mapTy) == ssasem.type_key(typeinfo.TypeBool { tag: 0 })) { return 144; }
     if (ssasem.type_key(mapTy) == ssasem.type_key(strMapTy)) { return 145; }
+    // A dyn type keys by its trait set, so two dyn types, and an array of
+    // either, never share a release with each other or with a leaf; the set's
+    // written spelling is escaped into symbol characters, one way only.
+    var dynA: typeinfo.Type = typeinfo.TypeDyn { traits: "Aa" };
+    var dynPair: typeinfo.Type = typeinfo.TypeDyn { traits: "Pair[i32, u32]" };
+    var boolTy: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+    if (ssasem.type_key(dynA) == ssasem.type_key(typeinfo.TypeDyn { traits: "Bb" })) { return 230; }
+    if (ssasem.type_key(dynA) == ssasem.type_key(boolTy)) { return 231; }
+    if (ssasem.type_key(typeinfo.TypeArray { elem: dynA, view: false }) == ssasem.type_key(typeinfo.TypeArray { elem: boolTy, view: false })) { return 232; }
+    if (ssasem.type_key(dynPair) != "$dyn$Pair_5bi32_2c_20u32_5d") { eprint(ssasem.type_key(dynPair)); return 233; }
+    if (ssasem.type_key(typeinfo.TypeDyn { traits: "error.Error" }) == ssasem.type_key(typeinfo.TypeDyn { traits: "error__Error" })) { return 234; }
     return 0;
 }
 `
