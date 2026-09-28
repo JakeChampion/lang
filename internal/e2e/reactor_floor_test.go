@@ -67,14 +67,26 @@ func TestReactorFloorWasm(t *testing.T) {
 		t.Fatal(err)
 	}
 	component := filepath.Join(dir, "probe.component.wasm")
-	if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-o", component, src).CombinedOutput(); err != nil {
+	// Under the leak census: the probe's would-block and end-of-stream
+	// reads are the empty lists the host lowers through cabi_realloc, and
+	// a zero-size block taken there is a count nothing gives back (#10608).
+	compile := exec.Command(fern, "-target", "wasm32-wasi", "-o", component, src)
+	compile.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+	if out, err := compile.CombinedOutput(); err != nil {
 		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
 	}
-	out, err := exec.Command("wasmtime", "run", "-S", "inherit-network", component).CombinedOutput()
+	run := exec.Command("wasmtime", "run", "-S", "inherit-network", component)
+	var stdout, stderr strings.Builder
+	run.Stdout, run.Stderr = &stdout, &stderr
+	err := run.Run()
 	if _, exited := err.(*exec.ExitError); err != nil && !exited {
-		t.Fatalf("wasmtime run: %v\n%s", err, out)
+		t.Fatalf("wasmtime run: %v\n%s%s", err, stdout.String(), stderr.String())
 	}
-	if got := strings.TrimSpace(string(out)); got != "ok" {
-		t.Fatalf("wasm: want \"ok\" on stdout; first failing check: %s", got)
+	if got := strings.TrimSpace(stdout.String()); got != "ok" {
+		t.Fatalf("wasm: want \"ok\" on stdout; first failing check: %s\n%s", got, stderr.String())
+	}
+	allocs, frees, live := leakSummaryIn(t, stderr.String())
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Fatalf("wasm: allocs=%d frees=%d live_bytes=%d: the floor's empty reads left something behind", allocs, frees, live)
 	}
 }

@@ -62,11 +62,12 @@ func TestSelfHostConstAggregateArm64PIE(t *testing.T) {
 		// leave the address stale, so the call faulted under a slide.
 		{"function_value_constant",
 			`function dbl(x: i32): i32 { return x * 2; } function inc(x: i32): i32 { return x + 1; } @noinline function pick(k: i32): (i32) => i32 { if (k > 0) { return dbl; } return inc; } function main(): i32 { var f: (i32) => i32 = pick(1); var g: (i32) => i32 = pick(0); return f(20) + g(1); }`, 42},
-		// All three static kinds in one pool: an empty array, which holds no
-		// address and sits outside the walked regions, a record constant and a
-		// function value, each in the region its layout is walked by.
+		// All three static kinds in one pool: arrays of scalars, empty and not,
+		// which hold no address and sit outside the walked regions, a record
+		// constant and a function value, each in the region its layout is
+		// walked by.
 		{"every_static_kind",
-			`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function dbl(x: i32): i32 { return x * 2; } @noinline function pick(): (i32) => i32 { return dbl; } function main(): i32 { var ps: P[] = []; ps = ps.append(mk()); var f: (i32) => i32 = pick(); return f(ps[0].a) + ps[0].b + ps.len(); }`, 20},
+			`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function dbl(x: i32): i32 { return x * 2; } @noinline function pick(): (i32) => i32 { return dbl; } @noinline function ks(): i32[] { return [3, 1, 4]; } function main(): i32 { var ps: P[] = []; ps = ps.append(mk()); var f: (i32) => i32 = pick(); return f(ps[0].a) + ps[0].b + ps.len() + ks()[2]; }`, 24},
 	}
 
 	for _, target := range []string{"arm64-linux", "arm64-android"} {

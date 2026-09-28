@@ -28,8 +28,10 @@ import (
 // meaningful across capacity schedules and header changes. Both numbers are
 // pinned per cell in testdata/selfhost-alloc-count-matrix.txt, which makes the
 // file a standing statement of where the two compilers still disagree and why —
-// today that is the SSO gap alone (native x86-64 keeps a string of 7 bytes or
-// fewer inline in the value; the self-host heap-allocates every string).
+// today the SSO gap (native x86-64 keeps a string of 7 bytes or fewer inline
+// in the value; the self-host heap-allocates every string) and the
+// self-append chain (native grows a unique accumulator in place, #5637; the
+// self-host allocates at every `+`, #10532).
 //
 // `TestX86_64AllocScaling` bounds a RATIO inside one compiler and so is blind
 // to a constant factor between two; this is the cross-compiler half.
@@ -146,6 +148,26 @@ function main(): i32 {
 		{name: "capture_free_fn_value", rounds: rounds, src: `struct H { f: (i32) => i32 }
 function dbl(x: i32): i32 { return x * 2; }
 function round(i: i32): i32 { var h: H = H { f: dbl }; return h.f(i); }
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 97;
+}
+`},
+		// A self-append chain, the shape std/http's serialiser is built from
+		// (`hdr_block = hdr_block + name + ": " + value + "\r\n"`). Native
+		// grows a uniquely-held accumulator in place through
+		// `__fern_str_append` (#5637) and allocates only when the size class
+		// changes; the self-host allocates a fresh box at every `+` (#10532).
+		{name: "str_self_append_chain", rounds: rounds, src: `function piece(i: i32): string { if (i % 2 == 0) { return "abcdefghij"; } return "klmnopqrst"; }
+function round(i: i32): i32 {
+    var s: string = piece(i);
+    s = s + piece(i + 1) + ": " + piece(i + 2) + "\r\n";
+    s = s + piece(i + 3) + ": " + piece(i + 4) + "\r\n";
+    return s.len() + i;
+}
 function main(): i32 {
     var t: i32 = 0;
     var r: i32 = 0;

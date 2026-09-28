@@ -16506,7 +16506,7 @@ func (b *builder) callBody(n *ast.Call) error {
 				argTempSlots = append(argTempSlots, slot)
 				argTempTypes = append(argTempTypes, tt)
 				argTempGuarded = append(argTempGuarded, guardArgTemp)
-				argTempIdentityDec = append(argTempIdentityDec, boxTemp)
+				argTempIdentityDec = append(argTempIdentityDec, guardArgTemp)
 				b.pushOperandDrop(slot, tt)
 				continue
 			}
@@ -16946,8 +16946,11 @@ func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
 // return-transfer inc, which is why boxTempUnderPointerResult admits only
 // user functions: a backend-provided helper returning its receiver in place
 // carries no inc and the dec would over-release (#8755). A consumed-threaded
-// array is handed back bare and its callee consumed the slot's unit, so its
-// identity case stays a no-op.
+// array position owes the same dec: its callee's bare `return a` carries
+// the transfer inc whether the parameter was rebound or not (an in-place
+// push keeps the pointer too), and the ownership flag only adds a release
+// of the callee's own unit behind it, so the temp comes back one count
+// heavier than the binding needs (#10617).
 func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guarded []bool, identityDec []bool, resultType ast.Type) {
 	needGuard := false
 	for i := range slots {
