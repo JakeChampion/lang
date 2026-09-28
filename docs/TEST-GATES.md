@@ -209,7 +209,8 @@ rather than the loop.
 `TestSelfHostSocketCtl` compiles them with the production self-host
 driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
-adopting its buffer before the copy loop, #10486);
+adopting its buffer before the copy loop, #10486; the rest of that idiom
+in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
@@ -275,6 +276,45 @@ the production self-host compiler. They verify every HTTP response, require
 the compiler to produce every reachable declaration through semantic lowering,
 and require equal allocations/frees with zero live bytes. Linux x86-64, ARM64
 and native Darwin run the same fixture; QEMU is permitted for correctness.
+`TestHTTPHandlerCensus`, `TestArm64DarwinHTTPHandlerCensus` and
+`TestWasmHTTPHandlerCensus` are the Go compiler's twins over the same fixture
+(x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
+wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
+
+`TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
+and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
+and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
+`e2eharness.HTTPKeepAliveRequests` (#9854), over a loop whose cap is 200
+requests per connection and whose read deadline is 300 ms: a pipeline
+of 200 requests in one write, answered in order across several waits (the
+loop's burst is 32 per event, so the rest come from the backlog) and closed
+by the cap; an HTTP/1.0 request and a `Connection: close` request each
+ending their own connection; a pipeline of 33 requests whose peer
+half-closes behind them, one more than the burst so the last is answered
+from the backlog after the end of stream was read, and must say `close`;
+a complete request with the start of another behind it, which the read
+deadline must close rather than the idle span; a pipeline of 33 requests
+whose handlers (pure work, since a handler may not sleep around its
+Platform bag) together outlast that deadline, all of which must be
+answered (the deadline bounds the wait for the peer, not the handlers);
+a pipelined request answered to a peer that has reset the connection,
+whose failed write must close it before the request behind it is answered
+(the handler reports that request on stderr, which fails the run); and an
+HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+checked, every close the server owes is read as EOF (a connection the
+server merely left open fails), and the census must balance. The bounded
+loop these and the census twins run stops only once every connection is
+gone: a persistent connection outlives its response until the client's
+close arrives, and on wasm an open connection owns a heap record, so a
+loop stopped on the count alone left the last one to the exit sweep and
+read as a leak. Blind to the idle timeout, which no client here waits out.
+
+`TestReactorFloorWasm` runs `e2eharness.ReactorProbe` under the leak
+census: its would-block and end-of-stream reads are the empty lists the
+host lowers through `cabi_realloc`, and a zero-size request answered with
+a block from the allocator was a count nothing gave back, on both
+compilers' wasm runtimes (#10608). The natives take no such list and
+their legs stay count-free.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected
@@ -399,6 +439,30 @@ self-host compilation, including QEMU. `Arm64DarwinTCPLifecycleCensus`
 tests cover native Darwin with both compilers. These tests measure primitive
 ownership; they do not prove bounded HTTP handlers, zero-allocation framing,
 or native throughput. The Wasm lifecycle census is a separate gate.
+
+## Runtime bodies adopting a raw block before their last read of it
+
+`TestSelfHostRawOwnerAfterLastRead` compiles one program with the
+production self-host driver for x86-64 and arm64 under `FERN_LEAKCHECK`
+and requires every answer plus a balanced count. The runtime bodies in
+`asmcore.fern` give a `__raw_alloc` block back by binding a string over it
+that nothing reads, and the semantic lowering releases such an owner at
+its own step, so a body that bound it before its last raw read of the
+block read memory the freelist had handed out again (#10486). The program
+picks the sizes so the released block is the one the next allocation
+pops: `remove_dir_all` over a directory whose one child has a name of 1
+to 20 bytes (its child path shared the path buffer's class, and the final
+rmdir named the child, so the directory stayed behind), `read_file_bytes`
+at every length from 1 to 80, the `NotFound` path of `read_file`,
+`open_reader` and `remove_file` at every length from 1 to 40, `cpu_count`
+and `getgroups`. The fs reclaim gates
+(`TestSelfHostFsPathBufferReclaimX86_64`,
+`TestSelfHostFsErrorPathBufferReclaimX86_64`) run the same leaves through
+the `asm_ir_run` driver, whose AST lowering releases at scope exit and
+reads a param passed to any call as escaping: a body has to hold on both,
+which is why `__fern_path_copy` indexes its owner rather than taking its
+pointer. Blind to a body whose late read has no observable answer at the
+sizes chosen, and to the wasm bodies, which are `wasm_ir.fern`'s own.
 
 ## Generated digest sources
 

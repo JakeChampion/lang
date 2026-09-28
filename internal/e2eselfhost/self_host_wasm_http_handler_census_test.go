@@ -11,6 +11,16 @@ import (
 )
 
 func TestSelfHostWasmHTTPHandlerCensus(t *testing.T) {
+	checkSelfHostWasmHTTPHandlerCensus(t, e2eharness.RunWasiHTTPHandlerCensus, 32)
+}
+
+// The persistent-connection twin (#9854) against real wasi:sockets.
+func TestSelfHostWasmHTTPKeepAlive(t *testing.T) {
+	checkSelfHostWasmHTTPHandlerCensus(t, e2eharness.RunWasiHTTPKeepAlive, e2eharness.KeepAliveCycle)
+}
+
+func checkSelfHostWasmHTTPHandlerCensus(t *testing.T, client func(*testing.T, string, int) string, rounds int) {
+	t.Helper()
 	for _, tool := range []string{"wasm-tools", "wasmtime"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " not on PATH")
@@ -31,7 +41,7 @@ func TestSelfHostWasmHTTPHandlerCensus(t *testing.T) {
 		t.Fatalf("build compiler: %v\n%s", err, out)
 	}
 	src, wat := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wat")
-	if err := os.WriteFile(src, []byte(e2eharness.WasiHTTPHandlerCensusSource(t, "../..", 32)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.WasiHTTPHandlerCensusSource(t, "../..", rounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdlib, err := filepath.Abs("../stdlib")
@@ -61,7 +71,7 @@ func TestSelfHostWasmHTTPHandlerCensus(t *testing.T) {
 			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
 		}
 	}
-	out := e2eharness.RunWasiHTTPHandlerCensus(t, component, 32)
+	out := client(t, component, rounds)
 	allocs, frees, live := leakSummaryOf(t, "WASI HTTP handler", out)
 	t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
 	if allocs != frees || live != 0 {

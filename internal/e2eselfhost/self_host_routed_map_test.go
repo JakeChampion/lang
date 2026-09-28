@@ -531,7 +531,7 @@ func routedMapRun(t *testing.T, fernBin, stdlibRoot, src, target string, env ...
 		if _, err := exec.LookPath("wasmtime"); err != nil {
 			t.Fatal("wasmtime not on PATH")
 		}
-		run = exec.Command("wasmtime", "run", out)
+		run = exec.Command("wasmtime", "run", "--dir", dir+"::.", out)
 	}
 	var stdout, stderr strings.Builder
 	run.Stdout = &stdout

@@ -12301,8 +12301,7 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     if (cid.name == "__str_bytes" && c.args.len() == 2) {
         var sb: LowerState = lower_expr(c.args[0], s);
         if (!sb.ok) { return sb; }
-        sb = sb.emit(ir.op_const_i32(0));
-        sb = sb.emit(ir.op_raw_load_ptr());
+        sb = sb.emit(ir.op_str_data());
         sb = lower_expr(c.args[1], sb);
         if (!sb.ok) { return sb; }
         return sb.emit(ir.op_drop());
@@ -13068,14 +13067,13 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
     }
     // __raw_data(s) — a live string's DATA pointer (#2649), the inverse of
     // __raw_string and the last thing blocking tcp_send. It needs no op of its
-    // own: a string value already IS its box pointer, and the data word is slot
-    // 0 of that box, so this is raw_load_ptr(s, 0) — the same read __raw_string
-    // wrote. Only the checker had to be convinced the string is addressable.
+    // own: a string value already IS its box pointer, and str_data reads the
+    // bytes' address off it. Only the checker had to be convinced the string
+    // is addressable.
     if (cid.name == "__raw_data" && c.args.len() == 1) {
         var rd0: LowerState = lower_expr(c.args[0], s);
         if (!rd0.ok) { return rd0; }
-        var rd1: LowerState = rd0.emit(ir.op_const_i32(0));
-        return rd1.emit(ir.op_raw_load_ptr());
+        return rd0.emit(ir.op_str_data());
     }
     // __raw_array(ptr) — the type-only bridge back to a typed array (#2649),
     // the array sibling of __raw_string. It emits NOTHING: the data pointer
@@ -83407,6 +83405,58 @@ function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string
     return out.append("RETRE:" + site);
 }
 
+// reassigned_from_handback: some `name = f(..)` rebinds `name` to the result of
+// a call that hands a borrowed argument back uncounted (`handback`), so `name`
+// then holds a borrow of that argument rather than a box of its own.
+function reassigned_from_handback(stmts: ast.Stmt[], name: string, handback: string[]): boolean {
+    for st in stmts { if (stmt_reassigns_handback(st, name, handback)) { return true; } }
+    return false;
+}
+function stmt_reassigns_handback(st: ast.Stmt, name: string, handback: string[]): boolean {
+    match (st) {
+        ast.StmtAssign(a) => { return a.target == name && call_hands_back(a.value, handback); },
+        ast.StmtIf(f) => { return reassigned_from_handback(f.then_body, name, handback) || reassigned_from_handback(f.else_body, name, handback); },
+        ast.StmtWhile(w) => { return reassigned_from_handback(w.body, name, handback); },
+        ast.StmtFor(fo) => { return reassigned_from_handback(fo.body, name, handback); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (reassigned_from_handback(arm.body, name, handback)) { return true; } }
+            return false;
+        },
+        ast.StmtDefer(d) => { return stmt_reassigns_handback(d.action, name, handback); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function call_hands_back(e: ast.Expr, handback: string[]): boolean {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(cid) = c.callee {
+            var ai: i32 = 0;
+            while (ai < c.args.len()) {
+                if (util.index_of_str(handback, cid.name + "|" + util.i32_to_string(ai)) >= 0
+                    && handback_arg_borrowed(c.args[ai], handback)) { return true; }
+                ai = ai + 1;
+            }
+        }
+    }
+    return false;
+}
+
+// handback_arg_borrowed: the value at a handback position is one something
+// else still holds — a local, an element or field read, or another such
+// handback. A fresh value (a literal, a construction, a producer call) comes
+// back owned by nobody else, so its result is a box of its own.
+function handback_arg_borrowed(e: ast.Expr, handback: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(_) => { return true; },
+        ast.ExprIndex(_) => { return true; },
+        ast.ExprFieldAccess(_) => { return true; },
+        ast.ExprCall(_) => { return call_hands_back(e, handback); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function reclaimable_fresh_struct(asrows: string[], body: ast.Stmt[], borrowable: string[], fresh: string[], handback: string[], msites: string[], plan_fe: string[], plan_on: boolean, recv_borrow: string[], structs: StructTab, out: string[]): string[] {
 var cyn: string[] = [];
 if (!plan_on) { cyn = cond_yielded_names(body); }
@@ -83473,7 +83523,10 @@ while (i < fresh.len()) {
         st_esc_ok = util.index_of_str(plan_fe, fresh[i]) >= 0
             && !struct_box_sink_stored_stmts(body, fnm, structs, asrows, msites);
     }
-    else { st_esc_ok = !body_unsafe_for_alias(cond_credit_body(body, fnm, cyn), fnm, borrowable, recv_borrow, sal); }
+    else {
+        st_esc_ok = !body_unsafe_for_alias(cond_credit_body(body, fnm, cyn), fnm, borrowable, recv_borrow, sal)
+            && !reassigned_from_handback(body, fnm, handback);
+    }
     // The bare-assigned-SOURCE refusal is lifted for a counted alias reassign.
     // Its header named the precondition itself — "family knowledge until
     // assignments carry the co-extensive retain" — and lower_stmt_assign now

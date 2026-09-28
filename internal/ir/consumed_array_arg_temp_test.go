@@ -156,3 +156,38 @@ func TestConsumedArrayArgTempIsStashedAndGuarded(t *testing.T) {
 		}
 	}
 }
+
+// The callee can hand the temp straight back — its loop never ran, or its
+// push kept the pointer — and its bare `return out` carries the return
+// transfer inc either way, so the identity case owes one flat dec: without
+// it `grow([1, 2, 3], false)` stranded its literal on every call, and the
+// serve loop's `__with_backlog(conns, drv.wait(...))` stranded the wait's
+// event list on every wait (#10617).
+func TestConsumedArrayArgTempIdentityCasePaysTheTransferDec(t *testing.T) {
+	const src = `
+function grow(a: i32[], more: boolean): i32[] { if (more) { a = a.append(7); } return a; }
+function main(): i32 {
+    var e: i32[] = grow([1, 2, 3], false);
+    return e.len();
+}`
+	for _, ptrW := range []int{4, 8} {
+		p := lowerSourceWith(t, src, ptrW)
+		fn := findFunc(p, "main")
+		var sawElse, decAfterElse bool
+		for _, op := range fn.Ops {
+			switch op.Kind {
+			case OpElse:
+				sawElse = true
+			case OpRcDec:
+				if sawElse {
+					decAfterElse = true
+				}
+			}
+		}
+		if !sawElse || !decAfterElse {
+			t.Errorf("ptrW=%d: the identity arm of the guarded temp drop has no flat dec "+
+				"(else=%v dec=%v), so a temp the callee hands straight back keeps the "+
+				"return transfer's count; ops:\n%s", ptrW, sawElse, decAfterElse, p)
+		}
+	}
+}

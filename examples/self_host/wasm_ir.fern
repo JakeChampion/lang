@@ -214,12 +214,14 @@ pub function sleep_scratch_bytes(): i32 { return 88; }
 // ip_flat_addr is the 48-byte wasi:sockets ip-socket-address record
 // $__fern_ip_flat writes: the family discriminant and the eleven payload
 // words each bind, connect and stream pushes. ip_box_addr and ip_box2_addr
-// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot) for
-// the bodies that still take a packed IPv4 address (tcp_connect, udp_send)
-// and bind to 0.0.0.0. Scratch rather than heap: a socket body consumes them
-// before it returns, none holds one across a call into another socket body,
-// and an allocation here is one more `__heap_alloc_count()` tick per call,
-// which the guest storage probes pin at exactly one.
+// are two 24-byte `u8[]` boxes (len, cap, the four octets one per slot;
+// no rc/bsz header below the pointer, since nothing counts or releases a
+// scratch box and only $__fern_ip_flat reads one) for the bodies that still
+// take a packed IPv4 address (tcp_connect, udp_send) and bind to 0.0.0.0.
+// Scratch rather than heap: a socket body consumes them before it returns,
+// none holds one across a call into another socket body, and an allocation
+// here is one more `__heap_alloc_count()` tick per call, which the guest
+// storage probes pin at exactly one.
 pub function ip_flat_addr(): i32 { return (sleep_scratch_addr() + sleep_scratch_bytes() + 7) / 8 * 8; }
 pub function ip_box_addr(): i32 { return ip_flat_addr() + 48; }
 pub function ip_box2_addr(): i32 { return ip_box_addr() + 24; }
@@ -228,9 +230,8 @@ pub function ip_box2_addr(): i32 { return ip_box_addr() + 24; }
 // scratch sits below it, rounded up to 8 so the i64 slots in that scratch stay
 // aligned. Named rather than inlined because const_str emits offsets RELATIVE
 // to it (#5331 step 1), so the two must agree by construction — and because
-// every slot added below has moved it (24 -> 32 -> 40 -> 128), which every
-// literal offset and both derived bases (fl_base / heap_base) follow
-// automatically.
+// every slot added below moves it, which every literal offset and both
+// derived bases (fl_base / heap_base) follow automatically.
 pub function str_region_base(): i32 { return (ip_box2_addr() + 24 + 7) / 8 * 8; }
 
 // fn_table_base is where a unit's funcref-table region starts. The elem
@@ -4915,6 +4916,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 79) {  // ptr_width
         // () -> heap-pointer width in bytes. 4 on wasm32 (NOT 8).
         parts = parts.append("    i32.const 4\n");
+    } else if (o.kind_tag == 345) {  // str_data
+        // stack: block ptr -> its bytes, which follow the length at +0.
+        parts = parts.append("    i32.const 4\n    i32.add\n");
     } else if (o.kind_tag == 18) {  // load_local
         parts = parts.append("    local.get " + util.i32_to_string(o.i32_imm) + "\n");
     } else if (o.kind_tag == 19) {  // store_local
@@ -9218,11 +9222,16 @@ pub function optarrarr_free_func(heap_base: i32): string {
 }
 // cabi_realloc_helper emits the canonical-ABI realloc the runtime calls when
 // lowering the lists returned by get-directories / blocking-read: align the
-// bump pointer to `align`, then bump by `new_size`.
+// bump pointer to `align`, then bump by `new_size`. A zero-size request (an
+// empty list is lowered through realloc too) answers the aligned pointer
+// without taking a block: the host writes nothing there, and the guest
+// frees no empty list, so a block taken here would be counted and never
+// given back.
 pub function cabi_realloc_helper(): string {
     var o: string = "";
     o = o + "  (func $cabi_realloc (param $op i32) (param $os i32) (param $al i32) (param $ns i32) (result i32)\n";
     o = o + "    (global.set $heap (i32.and (i32.add (global.get $heap) (i32.sub (local.get $al) (i32.const 1))) (i32.sub (i32.const 0) (local.get $al))))\n";
+    o = o + "    (if (i32.eqz (local.get $ns)) (then (return (global.get $heap))))\n";
     o = o + "    (call $__fern_alloc (local.get $ns)))\n";
     o = o + "  (export \"cabi_realloc\" (func $cabi_realloc))\n";
     return o;
