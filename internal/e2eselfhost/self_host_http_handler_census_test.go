@@ -16,17 +16,33 @@ func TestSelfHostHTTPHandlerCensus(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
 	}
-	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"})
+	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"}, e2eharness.RunHTTPHandlerCensus, 32)
+}
+
+// The persistent-connection twin (#9854): HTTPKeepAliveRequests against the
+// same bounded loop, compiled by the self-host compiler.
+func TestSelfHostHTTPKeepAlive(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("requires Linux native targets")
+	}
+	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"}, e2eharness.RunHTTPKeepAlive, 36)
+}
+
+func TestSelfHostArm64DarwinHTTPKeepAlive(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("requires native Apple Silicon")
+	}
+	checkSelfHostHTTPHandlerCensus(t, []string{"arm64-darwin"}, e2eharness.RunHTTPKeepAlive, 36)
 }
 
 func TestSelfHostArm64DarwinHTTPHandlerCensus(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires native Apple Silicon")
 	}
-	checkSelfHostHTTPHandlerCensus(t, []string{"arm64-darwin"})
+	checkSelfHostHTTPHandlerCensus(t, []string{"arm64-darwin"}, e2eharness.RunHTTPHandlerCensus, 32)
 }
 
-func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string) {
+func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string, client func(*testing.T, *exec.Cmd, int) string, rounds int) {
 	t.Helper()
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
@@ -39,7 +55,7 @@ func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string) {
 		t.Fatalf("build compiler: %v\n%s", err, out)
 	}
 	src := filepath.Join(dir, "server.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.HTTPHandlerCensusSource(t, "../..", 32)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.HTTPHandlerCensusSource(t, "../..", rounds)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdlib, err := filepath.Abs("../stdlib")
@@ -67,7 +83,7 @@ func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string) {
 				t.Fatalf("build: %v\n%s", err, report)
 			}
 			requireCompleteHTTPSemanticLowering(t, report)
-			out := e2eharness.RunHTTPHandlerCensus(t, run(bin), 32)
+			out := client(t, run(bin), rounds)
 			allocs, frees, live := leakSummaryOf(t, "HTTP handler", out)
 			t.Logf("allocs=%d frees=%d live_bytes=%d", allocs, frees, live)
 			if allocs != frees || live != 0 {

@@ -1053,8 +1053,16 @@ serializer.
   reads a request as it came off the wire and keeps owned copies of what a
   handler reads (the method, the path, each header, the body), so the wire
   buffer is the connection's to reuse; `http_parse_request(buf: string)` is
-  the same parse over text, one copy dearer. `http_serialize_response(resp):
-  string`.
+  the same parse over text, one copy dearer.
+  `http_parse_request_framed(buf: u8[]): Option[HttpFramed]` is the parse a
+  persistent connection needs: `HttpFramed { request, len, keep_alive }`
+  says how many bytes the request occupied at the head of the buffer (so
+  the next pipelined request can be found behind it) and whether the
+  connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
+  close`, HTTP/1.0 only with `Connection: keep-alive`).
+  `http_serialize_response(resp): string` writes `Connection: close`;
+  `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
+  `close` as the serve loop decided.
 
 ### `std/net`
 
@@ -1136,18 +1144,26 @@ loop and `std/fetch` the client.
 
 - `tcp_serve(port, handler)` — HTTP/1.1 serve loop. Calls
   `handler(req: HttpRequest, plat: Platform): HttpResponse` once
-  per accepted connection, constructing the `Platform` bag it
-  passes. The loop is a reactor: one readiness set from the Driver
-  seam watches the listener and every open connection, so slow
-  clients are read side by side, and each connection's request read
-  is bounded by a 10 s deadline (the slow-loris guard). A response the
-  kernel does not take whole stays with its connection, watched for
-  writability until it drains within the same span.
+  per request, constructing the `Platform` bag it passes. The loop
+  is a reactor: one readiness set from the Driver seam watches the
+  listener and every open connection, so slow clients are read side
+  by side, and each connection's request read is bounded by a 10 s
+  deadline (the slow-loris guard). A response the kernel does not
+  take whole stays with its connection, watched for writability
+  until it drains within the same span. Connections persist (RFC
+  9112 §9.3: HTTP/1.1 unless the request says `Connection: close`,
+  HTTP/1.0 only when it says `Connection: keep-alive`), requests
+  pipelined on one connection are answered in order from the same
+  readable event, and every response names the outcome in its
+  `Connection` header.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
-  `ServeOptions { backlog, reuse_port, recv_deadline }`
-  (`serve_options()` is 128, one listener per port, and the 10 s
-  deadline): the accept queue depth, port sharing between listeners
-  (`SO_REUSEPORT`, ignored on wasm), and the read deadline.
+  `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
+  keep_alive_requests }` (`serve_options()` is 128, one listener per
+  port, the 10 s deadline, 130 s and 1000): the accept queue depth,
+  port sharing between listeners (`SO_REUSEPORT`, ignored on wasm),
+  the read deadline, how long an idle persistent connection waits
+  for its next request, and how many requests one connection may
+  carry before its last response says `Connection: close`.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is

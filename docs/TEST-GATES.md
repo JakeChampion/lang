@@ -280,6 +280,29 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 `TestWasmHTTPHandlerCensus` are the Go compiler's twins over the same fixture
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
+
+`TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
+and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
+and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
+`e2eharness.HTTPKeepAliveRequests` (#9854): pipelined pairs on one
+connection, an HTTP/1.0 request asking to keep it, the fourth request
+reaching the loop's per-connection cap of four and answered with
+`Connection: close`, then an HTTP/1.0 request and a `Connection: close`
+request each ending their own connection. Every response's `Connection` is
+checked, every close the server owes is read as EOF (a connection the
+server merely left open fails), and the census must balance. The bounded
+loop these and the census twins run stops only once every connection is
+gone: a persistent connection outlives its response until the client's
+close arrives, and on wasm an open connection owns a heap record, so a
+loop stopped on the count alone left the last one to the exit sweep and
+read as a leak. Blind to the idle timeout, which no client here waits out.
+
+`TestReactorFloorWasm` runs `e2eharness.ReactorProbe` under the leak
+census: its would-block and end-of-stream reads are the empty lists the
+host lowers through `cabi_realloc`, and a zero-size request answered with
+a block from the allocator was a count nothing gave back, on both
+compilers' wasm runtimes (#10608). The natives take no such list and
+their legs stay count-free.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected

@@ -90,6 +90,63 @@ function test_refusals_agree(): test.TestOutcome {
     return test.pass();
 }
 
+// The framing a persistent connection reads off the parse: the bytes the
+// request occupies, and whether the connection outlives it (RFC 9112
+// §9.3).
+function framed(wire: string): Option[http.HttpFramed] {
+    return http.http_parse_request_framed(wire.bytes());
+}
+
+function test_framed_length_covers_headers_and_body(): test.TestOutcome {
+    var wire: string = wire_post() + "GET /next HTTP/1.1\r\n\r\n";
+    match (framed(wire)) {
+        Some(f) => {
+            if (f.request.path != "/echo") { return test.fail("the first request was not framed first"); }
+            return test.assert_eq(f.len, wire_post().len());
+        },
+        None => { return test.fail("parse failed"); }
+    }
+    return test.fail("unreachable");
+}
+
+function persists(wire: string): Option[boolean] {
+    match (framed(wire)) {
+        Some(f) => { return Some(f.keep_alive); },
+        None => { return None; }
+    }
+    return None;
+}
+
+function test_framed_persistence_follows_the_version_and_connection(): test.TestOutcome {
+    var cases: string[] = [
+        "GET / HTTP/1.1\r\nHost: h\r\n\r\n",
+        "GET / HTTP/1.1\r\nConnection: close\r\n\r\n",
+        "GET / HTTP/1.1\r\nConnection: Keep-Alive, Upgrade\r\n\r\n",
+        "GET / HTTP/1.0\r\nHost: h\r\n\r\n",
+        "GET / HTTP/1.0\r\nConnection: keep-alive\r\n\r\n",
+        "GET / HTTP/1.0\r\nConnection: close\r\n\r\n",
+    ];
+    var want: boolean[] = [true, false, true, false, true, false];
+    var i: i32 = 0;
+    while (i < cases.len()) {
+        match (persists(cases[i])) {
+            Some(k) => { if (k != want[i]) { return test.fail("persistence wrong for: " + cases[i]); } },
+            None => { return test.fail("refused: " + cases[i]); }
+        }
+        i = i + 1;
+    }
+    return test.pass();
+}
+
+function test_serialize_names_the_connection(): test.TestOutcome {
+    var r: HttpResponse = http.http_response_ok("ok");
+    var kept: string = http.http_serialize_response_conn(r, true);
+    if (!kept.contains("\r\nConnection: keep-alive\r\n")) { return test.fail("a persisting response did not say keep-alive: " + kept); }
+    var closed: string = http.http_serialize_response_conn(r, false);
+    if (!closed.contains("\r\nConnection: close\r\n")) { return test.fail("a closing response did not say close: " + closed); }
+    return test.assert_eq(http.http_serialize_response(r), closed);
+}
+
 function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
     var wire: u8[] = wire_post().bytes();
     match (http.http_parse_request_bytes(wire)) {
@@ -115,6 +172,9 @@ function main(): i32 {
     r = r.it("bare request has no headers", test_bare_request_has_no_headers);
     r = r.it("header without colon is skipped", test_header_without_colon_is_skipped);
     r = r.it("refusals agree", test_refusals_agree);
+    r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
+    r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);
+    r = r.it("serialize names the connection", test_serialize_names_the_connection);
     r = r.it("parse holds no view into the wire", test_parse_holds_no_view_into_the_wire);
     return r.finish();
 }

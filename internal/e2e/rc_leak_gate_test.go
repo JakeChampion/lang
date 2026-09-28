@@ -66,8 +66,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// in these tables at all (absent means zero) and #8434 is closed. The
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"option_of_array":                  32,
-	"pair_form_enum_temp_as_argument":  288,
 	"pair_form_payload_borrowing_call": 128,
 	"stdlib_json_cursor_idiom":         928,
 	"stdlib_json_roundtrip":            496,
@@ -93,8 +91,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// in these tables at all (absent means zero) and #8434 is closed. The
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"option_of_array":                  32,
-	"pair_form_enum_temp_as_argument":  288,
 	"pair_form_payload_borrowing_call": 128,
 	"stdlib_json_cursor_idiom":         1104,
 	"stdlib_json_roundtrip":            576,
@@ -136,8 +132,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
 	"map_keys_values_header_churn_free":              16000,
-	"option_of_array":                                32,
-	"pair_form_enum_temp_as_argument":                160,
 	"pair_form_payload_borrowing_call":               128,
 	"stdlib_json_cursor_idiom":                       800,
 	"stdlib_json_roundtrip":                          448,

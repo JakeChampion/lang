@@ -79,7 +79,11 @@ function main(): i32 {
         if (tcp_socket_ctl(a, 3, 1) != 0) { return fail(21); }
     }
     // Reading until -EAGAIN is what clears a readiness the host reported
-    // spuriously, so the idle wait after it must be quiet.
+    // spuriously, so the idle wait after it must be quiet. A serve loop
+    // drains every readable event this way, so the empty read must also
+    // leave nothing behind: the wasm leg runs under the leak census, which
+    // is what catches the empty list the host materialises through
+    // cabi_realloc (#10608).
     if (tcp_recv_into(a, buf) != 0 - eagain()) { return fail(22); }
     if (reactor_wait(r, events, 20) != 0) { return fail(23); }
     if (tcp_send(a, "yo") != 2) { return fail(29); }
