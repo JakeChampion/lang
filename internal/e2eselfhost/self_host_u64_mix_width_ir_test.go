@@ -2,8 +2,8 @@ package e2eselfhost
 
 import "testing"
 
-// u64MixWidthIRCases pin a u32 scalar leaf consumed in a u64 arithmetic context
-// (`s64u + u`) to the self-host IR path on x86-64, arm64 + wasm. This is the unsigned
+// u64MixWidthIRCases pin a u32 (or u8) scalar leaf consumed in a u64 arithmetic
+// context (`s64u + u`) to the self-host IR path on x86-64, arm64 + wasm. This is the unsigned
 // mirror of the i64 mixed-width family: u64 is the ONLY context an unsigned
 // 32-bit leaf can appear, since the checker forbids i64 + u32 (E009). The i32
 // ident widening (is_i32_scalar_slot) wrongly REJECTED a u32 scalar: some
@@ -23,38 +23,57 @@ var u64MixWidthIRCases = []struct {
 	{"u32-loop", `function main(): i32 { var s: u64 = 0; var u: u32 = 7; for i in 0..3 { s = s + u; } return s as i32; }`},
 	// u32 in a multiply inside the u64 context. 0 + 6*6 = 36.
 	{"u32-mul", `function main(): i32 { var u: u32 = 6; var s: u64 = 0; return (s + u * u) as i32; }`},
-	// u64 + u32 struct field. 30 + 12 = 42.
+	// An all-constant record is a static box (#10446) whose u32 words are the
+	// literal's text, not a zero (#10490, #10535): u64 + u32 field with the
+	// field on either side, a u32 among i32 and boolean fields, and two records
+	// differing only in a u32 field, which are two boxes (#10501). 30 + 12 = 42.
 	{"u32-field", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; return (s + p.x) as i32; }`},
-	// An all-constant record is a static box (#10446); its u32 words are the
-	// literal's text, not a zero (#10490). A value past 2^31, a hex literal, and
-	// a u32 among i32 and boolean fields. 4000000000 - 3999999958 = 42.
-	{"u32-field-static-high", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 4000000000 }; var s: u64 = 0; return ((s + p.x) - 3999999958) as i32; }`},
-	{"u32-field-static-hex", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 0x1E }; var s: u64 = 12; return (s + p.x) as i32; }`},
+	{"u32-field-lhs", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; return (p.x + s) as i32; }`},
 	{"u32-field-static-mixed", `struct P { a: i32, x: u32, on: boolean } function main(): i32 { var p: P = P { a: 0 - 5, x: 40, on: true }; var s: u64 = 7; if (p.on) { return (s + p.x) as i32 + p.a; } return 0; }`},
-	// Two records differing only in a u32 field are two boxes (#10501). 30 + 12 = 42.
 	{"u32-field-static-distinct", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 30 }; var q: P = P { x: 12 }; var s: u64 = 0; return (s + p.x + q.x) as i32; }`},
+	// A u32 literal past 2^31 or in hex is not a static word, so its record is
+	// on the heap, as is one built from a parameter. 4000000000 - 3999999958 = 42.
+	{"u32-field-heap-high", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 4000000000 }; var s: u64 = 0; return ((s + p.x) - 3999999958) as i32; }`},
+	{"u32-field-heap-hex", `struct P { x: u32 } function main(): i32 { var p: P = P { x: 0x1E }; var s: u64 = 12; return (s + p.x) as i32; }`},
+	{"u32-field-heap-param", `struct P { x: u32 } @noinline function mk(v: u32): P { return P { x: v }; } function main(): i32 { var p: P = mk(12); var s: u64 = 30; return (s + p.x) as i32; }`},
+	{"u32-field-heap-param-high", `struct P { x: u32 } @noinline function mk(v: u32): P { return P { x: v }; } function main(): i32 { var p: P = mk(4000000000); var s: u64 = 0; return ((p.x + s) - 3999999958) as i32; }`},
 	// u64 + u32 tuple element. 30 + 12 = 42.
 	{"u32-tuple", `function main(): i32 { var t: (u32, u32) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
+	// A u8 local, field, tuple element or variant payload widens like a u32
+	// one, into a u64 or a u32. 255 - 213 = 42; 4000000000 + 200 - 4000000158 = 42.
+	{"u8-ident", `function main(): i32 { var b: u8 = 12; var s: u64 = 30; return (s + b) as i32; }`},
+	{"u8-ident-u32-high", `function main(): i32 { var b: u8 = 200; var s: u32 = 4000000000; return ((s + b) - 4000000158) as i32; }`},
+	{"u8-field-u32", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u32 = 30; return (s + p.x) as i32; }`},
+	{"u8-payload", `@noinline function f(b: u8): Result[u64, string] { return Ok(b); } function main(): i32 { match (f(42)) { Ok(v) => { return v as i32; }, Err(_) => { return 1; } } }`},
+	{"u8-field", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; return (s + p.x) as i32; }`},
+	{"u8-field-lhs-bound", `struct P { x: u8 } function main(): i32 { var p: P = P { x: 12 }; var s: u64 = 30; var r: u64 = p.x + s; return r as i32; }`},
+	{"u8-field-heap-max", `struct P { x: u8 } @noinline function mk(v: u8): P { return P { x: v }; } function main(): i32 { var p: P = mk(255); var s: u64 = 0; return ((s + p.x) - 213) as i32; }`},
+	{"u8-tuple", `function main(): i32 { var t: (u8, u8) = (12, 7); var s: u64 = 30; return (s + t.0) as i32; }`},
 	// u64 + u32[] element across a reduction. 10+20+30 = 60.
 	{"u32-arr", `function main(): i32 { var a: u32[] = [10,20,30]; var s: u64 = 0; for i in 0..3 { s = s + a[i]; } return s as i32; }`},
-	// Regression: the i64 + i32 family is unchanged by the u32 admission. 40 + 2 = 42.
+	// Regression: the i64 + i32 family is unchanged by the u32 admission, and a
+	// negative i32 field still sign-extends. 40 + 2 = 42; 50 - 8 = 42.
 	{"i64-i32-keep", `function main(): i32 { var i: i32 = 2; var s: i64 = 40; return (s + i) as i32; }`},
+	{"i64-i32-field-neg", `struct P { x: i32 } @noinline function mk(v: i32): P { return P { x: v }; } function main(): i32 { var p: P = mk(0 - 8); var s: i64 = 50; return (s + p.x) as i32; }`},
 }
 
 // TestSelfHostU64MixWidthIR compiles each case with the self-host CLI for
-// x86-64, arm64 and wasm and checks the exit code against the interpreter.
+// x86-64, arm64 and wasm under both lowerings, with an IR bail an error, and
+// checks the exit code against the interpreter.
 func TestSelfHostU64MixWidthIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
 	for _, tc := range u64MixWidthIRCases {
 		src := tc.main + "\n"
 		want := interpExit(t, interpBin, src)
-		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-			t.Run(target+"/"+tc.name, func(t *testing.T) {
-				if stderr, code := cli.exitOf(t, src, target); code != want {
-					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
-				}
-			})
+		for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				t.Run(lw.name+"/"+target+"/"+tc.name, func(t *testing.T) {
+					if stderr, code := cli.exitOf(t, src, target, lw.env, "FERN_STRICT_IR=1"); code != want {
+						t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)
+					}
+				})
+			}
 		}
 	}
 }
