@@ -47,15 +47,15 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	cases = append(cases, arrayClaimCase{"empty-variant", `enum E { Full(i32[]), Empty }
-@noinline function take(e: E): i32[] {
-    match (e) { Full(xs) => { return xs; }, Empty => { return [0]; } }
+@noinline function take(e: E, z: i32): i32[] {
+    match (e) { Full(xs) => { return xs; }, Empty => { return [z]; } }
 }
-@noinline function exercise(): i32 {
-    var e = E.Empty; var xs = take(e); var churn = [91];
-    if (xs.len() != 1 || xs[0] != 0 || churn[0] != 91) { return 2; } return 0;
+@noinline function exercise(i: i32): i32 {
+    var e = E.Empty; var xs = take(e, i); var churn = [i + 91];
+    if (xs.len() != 1 || xs[0] != i || churn[0] != i + 91) { return 2; } return 0;
 }
 function main(): i32 {
-    var i = 0; while (i < 32) { var r = exercise(); if (r != 0) { return r; } i = i + 1; }
+    var i = 0; while (i < 32) { var r = exercise(i); if (r != 0) { return r; } i = i + 1; }
     if (__rc_underflow_count() != 0) { return 99; } return 0;
 }`, true})
 	return cases
