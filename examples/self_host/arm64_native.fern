@@ -2087,6 +2087,7 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
         || arm64_vfp3_entry(mnem) >= 0 || arm64_vfp2_entry(mnem) >= 0
         || arm64_vfpcmpzero_entry(mnem) >= 0 || arm64_vshift_entry(mnem) >= 0
         || arm64_vpermute_opc(mnem) >= 0 || arm64_vpolylong_entry(mnem) >= 0
+        || arm64_pairlong_entry(mnem) >= 0
         || arm64_gas_is_shll(mnem) || arm64_gas_is_narrow(mnem) || arm64_gas_is_vecext(mnem);
 }
 
@@ -2147,6 +2148,13 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
         // The operation lives in the size field here; the opcode is always 3.
         return Arm64Asm { ...a, code: arm64_vec3same(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
             arm64_gas_vreg_any(ops[2]), 3, arm64_vec_entry_op(logic), arm64_gas_arr_q(lc), arm64_vec_entry_u(logic)) };
+    }
+    var pl: i32 = arm64_pairlong_entry(mnem);
+    if (pl >= 0) {
+        if (ops.len() != 2) { return a; }
+        var pc: i32 = arm64_gas_vreg_arrof(ops[1]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(pl), arm64_gas_arr_size(pc), arm64_gas_arr_q(pc), arm64_vec_entry_u(pl)) };
     }
     var misc: i32 = arm64_v2misc_entry(mnem);
     if (misc >= 0) {
@@ -3006,6 +3014,21 @@ function arm64_gas_bad_across(mnem: string, ops: string[]): string {
     return "";
 }
 
+// arm64_gas_bad_pairlong vets the widening pairwise adds. The encoding names
+// only the SOURCE arrangement, so the destination must be the one it implies:
+// one element size up, half the lanes, the same register width. A 64-bit
+// element has no wider one to pair into.
+function arm64_gas_bad_pairlong(mnem: string, ops: string[]): string {
+    if (ops.len() != 2) { return mnem + ":arity"; }
+    var dst: i32 = arm64_gas_vreg_arrof(ops[0]);
+    var src: i32 = arm64_gas_vreg_arrof(ops[1]);
+    if (dst < 0) { return arm64_gas_trim(ops[0]); }
+    if (src < 0) { return arm64_gas_trim(ops[1]); }
+    if (arm64_gas_arr_size(src) > 2) { return mnem + ":arr"; }
+    if (arm64_gas_arr_size(dst) != arm64_gas_arr_size(src) + 1 || arm64_gas_arr_q(dst) != arm64_gas_arr_q(src)) { return mnem + ":dst"; }
+    return "";
+}
+
 // arm64_gas_bad_vecgen vets the general Advanced SIMD families: the operands
 // must share one arrangement, that arrangement must be one the op's encoding
 // has, and a compare-against-zero's `#0` must be exactly zero — the immediate
@@ -3016,6 +3039,7 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
     if (pmbad != "-") { return pmbad; }
     var nwbad: string = arm64_gas_bad_narrowwide(mnem, ops);
     if (nwbad != "-") { return nwbad; }
+    if (arm64_pairlong_entry(mnem) >= 0) { return arm64_gas_bad_pairlong(mnem, ops); }
     var fpbad: string = arm64_gas_bad_vecfp(mnem, ops);
     if (fpbad != "-") { return fpbad; }
     var three: i32 = arm64_v3int_entry(mnem);

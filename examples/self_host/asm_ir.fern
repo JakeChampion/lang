@@ -1339,6 +1339,49 @@ function fc_pio2_reduce(prefix: string): string {
         + ".L" + prefix + "_red:\n";
 }
 
+// __fern_sum_bytes(box) -> i32: every byte of the string added into a 32-bit
+// sum that wraps, the kernel native's emitSumBytesRuntime runs. psadbw against
+// a zero register sums each 8-byte half of a 16-byte block into a 64-bit lane
+// and paddq keeps both lanes, so no lane can wrap before the string ends; the
+// fold adds them once and `movd` keeps the low 32 bits. The scalar tail takes
+// the last 0..15 bytes, and the whole of a string shorter than a block.
+// %rdi is the string BOX: [data@0, len@8].
+function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("    .section .text\n");
+    s = s.write("    .globl __fern_sum_bytes\n");
+    s = s.write("    .type __fern_sum_bytes, @function\n");
+    s = s.write("__fern_sum_bytes:\n");
+    s = s.write("    movq 8(%rdi), %rcx\n");
+    s = s.write("    movq (%rdi), %rdi\n");
+    s = s.write("    leaq (%rdi,%rcx), %r9\n");
+    s = s.write("    pxor %xmm2, %xmm2\n");
+    s = s.write("    pxor %xmm3, %xmm3\n");
+    s = s.write(".Lsum_bytes_vec:\n");
+    s = s.write("    movq %r9, %rax\n");
+    s = s.write("    subq %rdi, %rax\n");
+    s = s.write("    cmpq $16, %rax\n");
+    s = s.write("    jl .Lsum_bytes_fold\n");
+    s = s.write("    movdqu (%rdi), %xmm0\n");
+    s = s.write("    psadbw %xmm3, %xmm0\n");
+    s = s.write("    paddq %xmm0, %xmm2\n");
+    s = s.write("    addq $16, %rdi\n");
+    s = s.write("    jmp .Lsum_bytes_vec\n");
+    s = s.write(".Lsum_bytes_fold:\n");
+    s = s.write("    pshufd $0xee, %xmm2, %xmm1\n");
+    s = s.write("    paddq %xmm1, %xmm2\n");
+    s = s.write("    movd %xmm2, %eax\n");
+    s = s.write(".Lsum_bytes_tail:\n");
+    s = s.write("    cmpq %r9, %rdi\n");
+    s = s.write("    jae .Lsum_bytes_ret\n");
+    s = s.write("    movzbl (%rdi), %r8d\n");
+    s = s.write("    addl %r8d, %eax\n");
+    s = s.write("    addq $1, %rdi\n");
+    s = s.write("    jmp .Lsum_bytes_tail\n");
+    s = s.write(".Lsum_bytes_ret:\n");
+    s = s.write("    ret\n");
+    return s;
+}
+
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
 // the string box folded into the running CRC-32 that cksum(1) prints (poly
 // 0x04C11DB7, MSB first, unreflected, no final complement).
@@ -5377,34 +5420,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 253) {  // sum_bytes
         // operand stack [box] -> every byte of the string added into a
-        // 32-bit accumulator that wraps.
-        //
-        // SCALAR (§3.4 step 1). The SSE2 sequence this wants is psadbw
-        // against a zeroed register plus paddq, both already inside the
-        // declared Haswell baseline; the ordering rule puts the scalar
-        // lowering in every backend before any of them is vectorised.
-        //
-        // movzbl is the whole of the sign question: a byte is unsigned, so
-        // 0xff contributes 255. The accumulate is `addl`, which writes the
-        // low 32 bits and zeroes the top, so the wrap is the register width
-        // and the pushed value is already the i32 the op promises.
-        //
-        // One operand, not two: the cursor is an INDEX in %rdx and the sum
-        // lives in %r10, so the body stays inside the registers this backend
-        // has free.
-        var slo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var sb_loop: string = slo.name;
-        var slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-        var sb_done: string = slo2.name;
-        s = slo2.state;
-        s = s.write("    popq %rax\n");
-        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
-        s = s.write(sb_loop + ":\n");
-        s = s.write("    cmpq %r8, %rdx\n    jge " + sb_done + "\n");
-        s = s.write("    movzbl (%rax,%rdx), %r9d\n    addl %r9d, %r10d\n");
-        s = s.write("    addq $1, %rdx\n    jmp " + sb_loop + "\n");
-        s = s.write(sb_done + ":\n    pushq %r10\n");
+        // 32-bit accumulator that wraps. A call to the SSE2 helper, emitted
+        // once under the "sum_bytes" need; the sum is sign-extended into the
+        // slot, since a wrapped sum is a negative i32.
+        s = s.need("sum_bytes");
+        s = s.write("    popq %rdi\n    call __fern_sum_bytes\n");
+        s = s.write("    movslq %eax, %rax\n    pushq %rax\n");
         return s;
     }
     if (o.kind_tag == 309) {  // crc32_cksum
@@ -9419,6 +9440,9 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // `call __fern_crc32_cksum` with no definition anywhere in the link.
     if (s.has_need("crc32_cksum")) {
         s = emit_rt_crc32_cksum(s);
+    }
+    if (s.has_need("sum_bytes")) {
+        s = emit_rt_sum_bytes(s);
     }
     // Heap-event diagnostics (#6068): the __fern_hev_* hooks the runtime above
     // calls, plus the leakcheck counters and exit-time report. Deliberately NOT
