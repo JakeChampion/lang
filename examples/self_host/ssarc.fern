@@ -3881,9 +3881,16 @@ function tier_prefixes(): string[] { return ["ACNT:", "SCNT:", "ECNT:", "DCNT:",
 
 function counted_rows(rows: string[], name: string, tiers: string[]): string[] {
     var out: string[] = [];
+    var plain: boolean = !util.contains(name, "|");
+    var prefixes: string[] = tier_prefixes();
     for row in rows {
         var mine: boolean = false;
-        for prefix in tier_prefixes() { if (util.str_has_prefix(row, prefix + name + "|")) { mine = true; } }
+        if (plain) {
+            var at: i32 = row_name_at(row, name);
+            mine = at >= 0 && at + name.len() < row.len() && prefix_listed(row, at, prefixes);
+        } else {
+            for prefix in prefixes { if (util.str_has_prefix(row, prefix + name + "|")) { mine = true; } }
+        }
         if (!mine) { out = out.append(row); }
     }
     for prefix in tier_prefixes() {
@@ -4084,12 +4091,38 @@ function keyed_row(row: string, prefix: string, name: string): boolean {
 
 function without_rows(rows: string[], name: string, prefixes: string[]): string[] {
     var out: string[] = [];
+    var plain: boolean = !util.contains(name, "|");
     for row in rows {
         var drop: boolean = false;
-        for prefix in prefixes { if (keyed_row(row, prefix, name)) { drop = true; } }
+        if (plain) { drop = prefix_listed(row, row_name_at(row, name), prefixes); }
+        else { for prefix in prefixes { if (keyed_row(row, prefix, name)) { drop = true; } } }
         if (!drop) { out = out.append(row); }
     }
     return out;
+}
+
+// row_name_at: where `name` starts in `row` when the text before the row's
+// first `|` ends with it, or -1. For a name and prefixes with no `|`, a row is
+// keyed `prefix + name` exactly when the text before that position is
+// `prefix`, which reads the row in place instead of building every key.
+function row_name_at(row: string, name: string): i32 {
+    var bar: i32 = 0;
+    while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
+    var at: i32 = bar - name.len();
+    if (at < 0) { return 0 - 1; }
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (row[at + i] != name[i]) { return 0 - 1; }
+        i = i + 1;
+    }
+    return at;
+}
+
+// prefix_listed: `row`'s first `at` bytes are one of `prefixes`.
+function prefix_listed(row: string, at: i32, prefixes: string[]): boolean {
+    if (at < 0) { return false; }
+    for prefix in prefixes { if (prefix.len() == at && util.str_has_prefix(row, prefix)) { return true; } }
+    return false;
 }
 
 // A frame view's three words sit above every other slot, which is only known
