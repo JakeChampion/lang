@@ -73,7 +73,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// returned the temp unchanged, so the guard declined the drop and the
 	// result's own reference keeps rhsTainted's conservative call-result
 	// taint. 256 B before the release landed.
-	"consumed_array_arg_temp_released_and_guarded": 128,
 }
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{
@@ -95,7 +94,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"stdlib_json_cursor_idiom":         1104,
 	"stdlib_json_roundtrip":            576,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
-	"consumed_array_arg_temp_released_and_guarded": 128,
 }
 
 // The wasm table (#7912). Same corpus, same families — the map and
@@ -121,7 +119,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 // here too — a case that cannot run cannot be weighed.
 var rcCorpusLeakBaselineWasm = map[string]int64{
 	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
-	"consumed_array_arg_temp_released_and_guarded":  128,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,

@@ -94,6 +94,24 @@ function main(): i32 {
     }
     return t - 540;
 }`},
+		// A fresh array handed to a callee that reassigns and returns its
+		// parameter comes back one count heavy when the callee hands it
+		// straight back (no rebind, or a push that kept the pointer): the
+		// bare return carries the transfer inc. The serve loop's
+		// `__with_backlog(conns, drv.wait(...))` is this shape on every wait.
+		{"fresh-array-returned-unchanged-by-a-threading-callee", 40, `function grow(a: i32[], more: boolean): i32[] { if (more) { a = a.append(7); } return a; }
+function mk(n: i32): i32[] { var v: i32[] = []; var i: i32 = 0; while (i < n) { v = v.append(i); i = i + 1; } return v; }
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 10) {
+        var a: i32[] = grow([1, 2, 3], i % 2 == 0);
+        var b: i32[] = grow(mk(2), i % 3 == 0);
+        t = t + a.len() + b.len();
+        i = i + 1;
+    }
+    return t - 19;
+}`},
 	}
 	for _, c := range cases {
 		t.Run("x86_64-sanitize/"+c.name, func(t *testing.T) {
