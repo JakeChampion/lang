@@ -15,7 +15,9 @@ import (
 // A response larger than a socket's send buffer on a non-blocking
 // connection: the serve loop keeps what the kernel did not take, watches
 // the connection for writability and finishes the write on later waits,
-// so the client reads the whole body (#9853, the write side).
+// so the client reads the whole body (#9853, the write side). The client
+// asks for the connection to close and reads to end of stream, so the
+// loop must also hold the close until the deferred write has drained.
 const serveLargeResponseSrc = `
 import "std/http";
 import "std/string";
@@ -34,7 +36,7 @@ func readWholeResponse(t *testing.T, addr string) (string, string) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer conn.Close()
-	if _, err := conn.Write([]byte("GET /big HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+	if _, err := conn.Write([]byte("GET /big HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(20 * time.Second))

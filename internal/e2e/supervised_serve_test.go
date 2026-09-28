@@ -186,7 +186,9 @@ func httpRoundTrip(t *testing.T, addr, path string, timeout time.Duration) strin
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(timeout))
-	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n", path)
+	// The read runs to end of stream, which a persistent connection
+	// never gives, so the request asks for the close.
+	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", path)
 	if _, err := conn.Write([]byte(req)); err != nil {
 		// Write can race the worker death on /boom — treat as
 		// "no response", same as a read-side reset.

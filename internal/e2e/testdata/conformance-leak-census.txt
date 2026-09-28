@@ -185,7 +185,7 @@ audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
 audit_std_json                                       13
-audit_std_numeric                                    2
+audit_std_numeric                                    0
 audit_std_path_numeric                               0
 audit_std_string                                     0
 audit_std_textfmt                                    0
@@ -275,7 +275,7 @@ enum_array_match                                     0
 enum_array_with                                      0
 enum_consume_rebind_alias                            0
 enum_payload                                         0
-enum_payload_aliases_container                       35
+enum_payload_aliases_container                       0
 enum_reuse_churn                                     0
 enum_shares_a_struct_name                            0
 enum_str                                             0
@@ -439,7 +439,7 @@ match_struct_pattern                                 0
 match_wildcard                                       0
 math_range                                           0
 method_type_arg_names_the_method                     0
-mock_platform_log                                    2
+mock_platform_log                                    0
 module_scoped_variant                                0
 multi_file                                           0
 multi_hop_alias                                      0
@@ -635,7 +635,7 @@ trait_method_bound_wins                              0
 trmc_map                                             0
 try_op_in_closure                                    0
 try_binding_takes_its_success_payload                0
-try_result_struct_payload                            1
+try_result_struct_payload                            0
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
 tuple_binder_shadows_outer_var                       0
@@ -666,7 +666,7 @@ u8_method_module                                     0
 underscore_discard                                   0
 union_eval                                           0
 union_lambda_param                                   0
-url_codec                                            1
+url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0
 user_enum_mixed                                      0
