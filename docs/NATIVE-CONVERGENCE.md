@@ -194,8 +194,9 @@ UNVERIFIABLE rather than guessing.
    **Criterion: `make distcheck` green.** Every other precondition got a
    mechanical definition and went green; this one said "at parity" and left the
    rest to prose, so the gate can only ever print UNVERIFIABLE no matter how
-   much work lands. `distcheck` is the measurement that fits: stage1 compiling
-   `fern.fern` byte-identically is the whole compiler's own source, the one
+   much work lands. `distcheck` is the measurement that fits: the self-built
+   compiler compiling `fern.fern` byte-identically (stage2 == stage3) is the
+   whole compiler's own source, the one
    configuration nothing else gates — the per-module fixpoint compiles it eight
    units per process, and §2's suites oracle behaviour, not reclaim. It is
    also §3a's precondition 1 for retiring the backends, so the two stop being

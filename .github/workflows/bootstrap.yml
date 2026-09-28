@@ -36,10 +36,10 @@ name: Bootstrap
 #            `make distcheck` and upload STAGE2 — the self-built fixed point,
 #            whose bytes any correct compiler of this source reproduces — so
 #            the pin a refresh leaves behind is a self-built binary and
-#            `make bootstrap` never needs a native-built stage0. The first
-#            pin published this way still has one native-built generation in
-#            it (stage2 is stage1's output, stage1 is the native candidate's);
-#            the one after it has none.
+#            `make bootstrap` never needs a native-built stage0. Producing
+#            the next pin still seeds this native candidate, so each pin has
+#            one native-built generation in it (stage2 is stage1's output,
+#            stage1 is the candidate's).
 #            arm64-darwin uploads the candidate: its stage2 exhausts the arena
 #            compiling the compiler (#8479), so the fixed point is not
 #            reachable there yet.
@@ -168,7 +168,7 @@ jobs:
           STAGE0=build/candidate make distcheck
           cp build/bootstrap/stage2 build/candidate
 
-      - name: package the candidate as this host's stage0
+      - name: package this host's stage0 (stage2 on Linux, the candidate on darwin)
         run: |
           mkdir -p dist
           gzip -n -9 -c build/candidate > "dist/fern-selfhost-${{ matrix.host }}.gz"
