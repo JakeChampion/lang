@@ -44,8 +44,13 @@ counted-handback member whose return retains. The plan refuses `b` already.
 ## Change
 
 `reassigned_from_handback` reports a `name = f(..)` rebind where `f` hands an
-argument back uncounted. The plan-off branch of `reclaimable_fresh_struct` now
-refuses such a local, as the plan does.
+argument back uncounted and that argument is borrowed: a local, an element or
+field read, or another such handback (`handback_arg_borrowed`). The plan-off
+branch of `reclaimable_fresh_struct` now refuses such a local. This is the
+plan's own rule for a call result (`rc_fe_rhs_tainted`): a handback of a fresh
+value, such as `b = idg(mkp(j + 1))`, owns what comes back, so both routes keep
+its credit. The `handback_fresh` case pins that. Refusing on the position alone
+leaked it (20 / 10), which review on the PR caught.
 
 ## Measured (x86-64, AST lowering, plan off)
 
@@ -53,6 +58,7 @@ refuses such a local, as the plan does.
 |---|---|---|
 | `row_handout` | balanced census, sanitizer use-after-free | balanced, sanitizer clean |
 | `option_match_return` | 60 / 20 | 60 / 20, pinned (`condPlanOffCensus`) |
+| `handback_fresh` (new case) | balanced | balanced |
 | every other case | balanced | balanced |
 
 The plan-on legs of the suite, and the other plan-off legs

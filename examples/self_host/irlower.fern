@@ -83408,8 +83408,8 @@ function reclaimable_returned_rebind(body: ast.Stmt[], fnm: string, site: string
 }
 
 // reassigned_from_handback: some `name = f(..)` rebinds `name` to the result of
-// a call that hands an argument back uncounted (`handback`), so `name` then
-// holds a borrow of that argument rather than a box of its own.
+// a call that hands a borrowed argument back uncounted (`handback`), so `name`
+// then holds a borrow of that argument rather than a box of its own.
 function reassigned_from_handback(stmts: ast.Stmt[], name: string, handback: string[]): boolean {
     for st in stmts { if (stmt_reassigns_handback(st, name, handback)) { return true; } }
     return false;
@@ -83435,10 +83435,26 @@ function call_hands_back(e: ast.Expr, handback: string[]): boolean {
         if let ast.ExprIdent(cid) = c.callee {
             var ai: i32 = 0;
             while (ai < c.args.len()) {
-                if (util.index_of_str(handback, cid.name + "|" + util.i32_to_string(ai)) >= 0) { return true; }
+                if (util.index_of_str(handback, cid.name + "|" + util.i32_to_string(ai)) >= 0
+                    && handback_arg_borrowed(c.args[ai], handback)) { return true; }
                 ai = ai + 1;
             }
         }
+    }
+    return false;
+}
+
+// handback_arg_borrowed: the value at a handback position is one something
+// else still holds — a local, an element or field read, or another such
+// handback. A fresh value (a literal, a construction, a producer call) comes
+// back owned by nobody else, so its result is a box of its own.
+function handback_arg_borrowed(e: ast.Expr, handback: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(_) => { return true; },
+        ast.ExprIndex(_) => { return true; },
+        ast.ExprFieldAccess(_) => { return true; },
+        ast.ExprCall(_) => { return call_hands_back(e, handback); },
+        _ => { return false; }
     }
     return false;
 }
