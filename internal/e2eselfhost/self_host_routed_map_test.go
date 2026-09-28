@@ -385,6 +385,30 @@ function main(): i32 {
 }
 `
 
+// routedMapStringArrayValuesSrc: a string[] value is a box whose release also
+// releases every string it holds.
+const routedMapStringArrayValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    var m: Map[string, string[]] = Map {};
+    var i: i32 = 0;
+    while (i < 40) { m = m.insert("k" + (i % 9).to_string(), ["a" + i.to_string(), "b", "c" + (i * 2).to_string()]); i = i + 1; }
+    var alias: Map[string, string[]] = m;
+    alias = alias.insert("k1", ["over" + "ride"]);
+    var r: (Map[string, string[]], boolean) = m.without("k2");
+    var m2: Map[string, string[]] = r.0;
+    var total: i32 = 0;
+    for (k, v) in m2 { total = total + v.len() + v[0].len(); }
+    for v in alias.values() { total = total + v[v.len() - 1].len(); }
+    var hit: string[] = m.get_or("k3", []);
+    var miss: string[] = m.get_or("zz", ["x" + "y"]);
+    var got: string = "none";
+    match (alias.get("k1")) { Some(v) => { got = v[0]; }, None => {} }
+    print(total.to_string() + " " + hit[0] + " " + miss[0] + " " + got + " " + m2.len().to_string() + " " + r.1.to_string());
+    return 0;
+}
+`
+
 func TestSelfHostRoutedScalarMaps(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -409,6 +433,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"dyn_values", routedMapDynValuesSrc, "716"},
 		{"two_dyn_values", routedMapTwoDynValuesSrc, "27"},
 		{"generic_dyn_values", routedMapGenericDynValuesSrc, "62"},
+		{"string_array_values", routedMapStringArrayValuesSrc, "80 a39 xy override 8 true"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 	}
 	for _, c := range cases {
