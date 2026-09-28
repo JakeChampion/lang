@@ -263,7 +263,7 @@ derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
 derive_from_json                                     23
-derive_from_json_i64                                 11
+derive_from_json_i64                                 10
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -345,7 +345,7 @@ hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
 http_content_type                                    0
-http_cookies                                         7
+http_cookies                                         0
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
