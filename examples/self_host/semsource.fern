@@ -4057,11 +4057,31 @@ function implements_traits(impls: parser.ImplInfo[], n: string, traits: string[]
     for tr in traits {
         var found: boolean = false;
         for imp in impls {
-            if (util.base_type_name(imp.trait_name) == util.base_type_name(tr) && util.base_type_name(imp.impl_type) == n) { found = true; }
+            if (impl_is_trait(imp, tr) && util.base_type_name(imp.impl_type) == n) { found = true; }
         }
         if (!found) { return false; }
     }
     return true;
+}
+
+// Whether `imp` implements the trait a dyn set names as `tr`. A generic trait
+// the set pins by position (`Pair[i32, u32]`) is only the instantiation the
+// impl names; one pinned by associated type (`Iter[Item = i32]`), or not at
+// all, is any impl of the trait.
+function impl_is_trait(imp: parser.ImplInfo, tr: string): boolean {
+    if (util.base_type_name(imp.trait_name) != util.base_type_name(tr)) { return false; }
+    if (!util.contains(tr, "[") || util.contains(tr, "=")) { return true; }
+    return without_spaces(imp.trait_ref) == without_spaces(tr);
+}
+
+function without_spaces(t: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if ((t[i] as i32) != 32) { out = out + slice_unchecked(t, i, i + 1); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // The function types a type carries, itself included, through the containers
