@@ -1994,8 +1994,9 @@ the table. The 6,865 MB #9365 measured on `lexer.fern` is gone with the
 mixing: that figure was a mixed module, and no body is mixed now. Read the
 last two rows together: the compiler this path builds runs the whole tree in
 **a twelfth of the memory** the AST-lowered one does, at the same speed. That
-is the goal-2 gap (`make distcheck` OOM-killed at 13.9 GB, `docs/BOOTSTRAP.md`)
-closed from the other side — not by porting the AST lowering's ownership
+is the goal-2 gap (`make distcheck`, OOM-killed at 13.9 GB until it reached a
+byte-identical stage3 at 5.7 GB on 2026-09-28, `docs/BOOTSTRAP.md`) closed
+from the other side — not by porting the AST lowering's ownership
 analysis, but by the lowering that replaces it.
 
 What the substitution still costs is the BUILD: the semantic self-build ran

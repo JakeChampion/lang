@@ -64,14 +64,11 @@ fetch the notes ref first, so they need the remote; nothing else is hosted.
 ## `make bootstrap`: the Go-less build, and `make distcheck`
 
 `make bootstrap` (pinned stage0 compiling the whole compiler, then the smoke
-test) is **~90 s and 4.0 GB peak RSS** on the 4-core x86-64 container (measured
-2026-09-02), plus a one-time ~4 MB download. `make distcheck` — the compiler it
-built recompiling itself — is **OOM-killed after ~155 s at 13.9 GB** on this
-tree: the self-built compiler frees a third of what the native-built one does.
-That is the known goal-2 gap, not a machine problem; `docs/BOOTSTRAP.md` has the
-numbers and `docs/rc-log/2026-09-02-param-strarr-elem-counted-share.md` the
-leaking sites in order. Do not run it alongside anything else heavy on a 16 GB
-box — two of them do not fit.
+test) is **~5 min and 6.1 GB peak RSS** on the 4-core x86-64 container (measured
+2026-09-28), plus a one-time ~4 MB download. `make distcheck` — the compiler it
+built recompiling itself, and that compiler doing it once more — adds **209 s +
+137 s at 5.7 GB peak** and reaches a byte-identical stage3. `docs/BOOTSTRAP.md`
+has the table. Do not run it alongside anything else heavy on a 16 GB box.
 
 ## Fastest self-host loop: `make selfhost-cli`
 

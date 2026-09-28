@@ -10,26 +10,35 @@ name: Bootstrap
 # binary without the Go toolchain or the native backends
 # (docs/NATIVE-CONVERGENCE.md §3a precondition 1).
 #
-# `make distcheck` — stage1 recompiling the compiler, byte-identical — is NOT
-# run here: the self-host-built compiler cannot yet compile the compiler on a
-# 16 GB host (docs/BOOTSTRAP.md has the measurement). It is a local target
-# until it goes green; when it does, add it to `verify` below.
+# `make distcheck` — the compiler stage1 built recompiling the compiler, and
+# the result doing it once more, byte-identical (stage2 == stage3) — runs on
+# both Linux hosts. It is the whole-compiler fixpoint, the configuration no
+# per-module fixpoint reaches, and docs/NATIVE-CONVERGENCE.md's criterion
+# for the native freeze: tools/freeze_gate.sh reads this file to see it wired.
 #
 # Two jobs, two triggers:
 #
-#   verify   pull request / push to main, via ci.yml — `make bootstrap`
-#            against the CURRENT pin, on both Linux hosts. No Go setup, on purpose: a step that quietly needed
+#   verify   pull request / push to main, via ci.yml — `make bootstrap` and
+#            `make distcheck` against the CURRENT pin, on both Linux hosts.
+#            No Go setup, on purpose: a step that quietly needed
 #            it would defeat what the job proves. Runs when the compiler's
 #            source, the stdlib it compiles against, or the bootstrap itself
 #            changes. Red means either the current source uses something the
 #            pinned stage0 does not know — the failure says so, and the fix
-#            is a refresh — or the compiler it built does not work.
+#            is a refresh — or the compiler it built does not work, or the
+#            compiler does not reproduce itself.
 #
 #   publish  workflow_dispatch with publish=true — builds a NEW stage0 for
 #            all three hosts and releases it. Each host builds a candidate
-#            with the native toolchain (`make selfhost-cli`), proves the
+#            with the native toolchain (`make selfhost-cli`) and proves the
 #            candidate compiles the current compiler and that the result runs
-#            (STAGE0=candidate make bootstrap), and uploads the candidate.
+#            (STAGE0=candidate make bootstrap). The Linux hosts go on to
+#            `make distcheck` and upload STAGE2 — the self-built fixed point,
+#            whose bytes any correct compiler of this source reproduces — so
+#            the pin's provenance no longer runs through the native backends.
+#            arm64-darwin uploads the candidate: its stage2 exhausts the arena
+#            compiling the compiler (#8479), so the fixed point is not
+#            reachable there yet.
 #            The release job tags an immutable `stage0-<date>-<sha7>` release
 #            with the three gzipped binaries and a ready-to-commit
 #            stage0.lock; committing that lock is the refresh
@@ -72,13 +81,16 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: arm64-linux }
     name: verify-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
-    # One whole-compiler compile at ~2.5 min and 4 GB on a 4-core x86-64 host
-    # (measured 2026-09-01), plus the download and the smoke test.
-    timeout-minutes: 20
+    # Three whole-compiler compiles: 307 s + 209 s + 137 s at up to 6.1 GB on a
+    # 4-core 16 GB x86-64 host (measured 2026-09-28, docs/BOOTSTRAP.md), plus
+    # the download and the smoke test.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: make bootstrap (pinned stage0 -> stage1, smoke-tested, installed)
         run: make bootstrap
+      - name: make distcheck (stage1 -> stage2 -> stage3, stage2 == stage3)
+        run: make distcheck
 
   # The freshly built arm64 candidate compiling the whole compiler. `verify`
   # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
@@ -89,8 +101,9 @@ jobs:
     name: candidate-arm64-linux
     runs-on: ubuntu-24.04-arm
     # 24 s to build the candidate, 47 s for it to compile the compiler, on this
-    # runner (measured 2026-09-05 from the publish job's own steps).
-    timeout-minutes: 20
+    # runner (measured 2026-09-05 from the publish job's own steps), then two
+    # more whole-compiler compiles for the fixed point.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -103,6 +116,10 @@ jobs:
 
       - name: the candidate compiles the current compiler, and that compiler works
         run: STAGE0=build/candidate make bootstrap
+
+      # The same steps the publish job runs on this host, so a PR sees them.
+      - name: the compiler it built reproduces itself (stage2 == stage3)
+        run: STAGE0=build/candidate make distcheck
 
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
@@ -138,6 +155,14 @@ jobs:
 
       - name: the candidate compiles the current compiler, and that compiler works
         run: STAGE0=build/candidate make bootstrap
+
+      # Linux hosts pin the self-built fixed point rather than the native-built
+      # candidate. arm64-darwin cannot yet (#8479), so it keeps the candidate.
+      - name: the compiler it built reproduces itself (stage2 == stage3); stage2 becomes the pin
+        if: matrix.host != 'arm64-darwin'
+        run: |
+          STAGE0=build/candidate make distcheck
+          cp build/bootstrap/stage2 build/candidate
 
       - name: package the candidate as this host's stage0
         run: |
@@ -192,7 +217,7 @@ jobs:
         run: |
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "stage0 $tag" \
-            --notes "Self-host compiler snapshot for \`make bootstrap\`, built from $GITHUB_SHA by the native toolchain on each of the three bootstrap hosts and checked there to compile the compiler at that commit. Pin it by committing \`stage0.lock\` to \`bootstrap/stage0.lock\` — see docs/BOOTSTRAP.md." \
+            --notes "Self-host compiler snapshot for \`make bootstrap\`, built from $GITHUB_SHA: on the Linux hosts the self-built fixed point (stage2 == stage3 of \`make distcheck\`), on arm64-darwin the native-built candidate, each checked on its host to compile the compiler at that commit. Pin it by committing \`stage0.lock\` to \`bootstrap/stage0.lock\` — see docs/BOOTSTRAP.md." \
             dist/fern-selfhost-x86-64-linux.gz dist/fern-selfhost-arm64-linux.gz dist/fern-selfhost-arm64-darwin.gz dist/stage0.lock
           {
             echo "## stage0 published: \`$tag\`"

@@ -697,8 +697,8 @@ current shape.** Two stages as below, with two changes
 from this sketch: the snapshot is a native binary per
 host published as a release asset and pinned by sha256
 in `bootstrap/stage0.lock` (wasm is ruled out for now,
-§7), and `make distcheck` is red until the self-built
-compiler can compile the compiler.
+§7), and `make distcheck` compares stage2 with stage3,
+since the pin's code generation predates the source's.
 
 Lock in the bootstrap shape:
 
@@ -751,8 +751,8 @@ fern-impl is a `-self-host` opt-in for testers.
 **`make bootstrap` runs on PRs** touching the compiler
 source, the stdlib or the bootstrap itself
 (`.github/workflows/bootstrap.yml`, both Linux hosts,
-no Go installed). `make distcheck` waits on goal 2 —
-`docs/BOOTSTRAP.md`.
+no Go installed), and `make distcheck` runs in the same
+job — `docs/BOOTSTRAP.md`.
 
 Once the fern-impl is feature-complete:
 
