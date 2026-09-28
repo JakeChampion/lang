@@ -32,8 +32,8 @@ gives identical output, and stage 3 = stage 4.
 
 The larger lowering also costs the compiler allocations while it works.
 `scripts/selfhost-alloc-bench`, which builds the compiler with the native
-one and compiles `checker.fern`, counts 90,770,386 allocations against
-main's 90,179,559 (+0.66%). Each literal compare now lowers to about fourteen
+one and compiles `checker.fern`, counts 80,683,342 allocations against
+main's 80,068,641 (+0.77%), with main at 97f4e040e. Each literal compare now lowers to about fourteen
 IR operations instead of three, and every later pass carries them. The
 instruction counts above already include that cost.
 
