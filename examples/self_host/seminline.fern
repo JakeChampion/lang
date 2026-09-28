@@ -3,10 +3,11 @@
 // A leaf here computes only on scalars and tuples of them, reading a record
 // parameter's scalar fields at most, and calls nothing. Splicing it moves no
 // count: every value it makes is a word or a fresh tuple the splice then takes
-// apart, and a field read is planned in the caller like any other. A tuple built and only read, which is
-// what a spliced `(ok, value)` return becomes, is never allocated: each read
-// takes the element straight from the construction, through the phi that
-// joins several returns, and a construction nothing reads is dropped.
+// apart, and a field read is planned in the caller like any other. A tuple
+// built and only read, which is what a spliced `(ok, value)` return becomes,
+// is never allocated: each read takes the element straight from the
+// construction, through the phi that joins several returns, and a
+// construction nothing reads is dropped.
 import "./ssa";
 import "./ssasem";
 import "./typeinfo";
@@ -85,7 +86,7 @@ function leaf(f: ssasem.Func): boolean {
         for ins in b.insts {
             if (!leaf_kind(ins.kind_tag)) { return false; }
             if (ins.kind_tag == ssasem.record_get() && !scalar(f.values[ins.result])) { return false; }
-            if (ins.kind_tag == 6) {
+            if (ins.kind_tag == ssasem.param()) {
                 if (record(f.values[ins.result])) { record_params = record_params + 1; }
             } else { n = n + 1; }
         }
@@ -150,7 +151,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
     var v: i32 = 0;
     while (v < callee.graph.nvals) { vmap = vmap.append(base + v); v = v + 1; }
     for cb in callee.graph.blocks {
-        for ins in cb.insts { if (ins.kind_tag == 6) { vmap = vmap.with(ins.result, call.args[ins.imm]); } }
+        for ins in cb.insts { if (ins.kind_tag == ssasem.param()) { vmap = vmap.with(ins.result, call.args[ins.imm]); } }
     }
     var ids: i32[] = [];
     for cb in callee.graph.blocks { ids = ids.append(cb.id); }
@@ -163,7 +164,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
         var cb: ssa.SBlock = callee.graph.blocks[j];
         var insts: ssa.SInst[] = [];
         for ins in cb.insts {
-            if (ins.kind_tag == 6) { continue; }
+            if (ins.kind_tag == ssasem.param()) { continue; }
             var args: i32[] = [];
             for a in ins.args { args = args.append(vmap[a]); }
             insts = insts.append(ssa.SInst { ...ins, result: vmap[ins.result], args: args });
