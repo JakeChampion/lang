@@ -52,19 +52,32 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), keep_alive_requests: 4 });
+    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });
 }
 `
 }
 
+// KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
+// sends; a bounded loop driven by it is bounded to a multiple.
+const KeepAliveCycle = 238
+
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
-// loop over as few connections as its per-connection cap of 4 allows:
-// pipelined pairs on a connection that persists, HTTP/1.0 and
-// `Connection: close` requests that end theirs, and the cap's fourth
-// response saying close. Every response is checked, and every close the
-// server owes is read as EOF.
+// loop whose per-connection cap is 200 and whose request read deadline is
+// one second: a pipeline of 200 requests on one connection, answered in
+// order across several waits and closed by the cap; HTTP/1.0 and
+// `Connection: close` requests that end theirs; a pipeline of 33 requests
+// whose peer half-closes behind them, one more than the loop's burst so
+// the last is answered from the backlog after the end of stream has been
+// read, and must say close; a complete request followed by the start of
+// another, whose connection the read deadline closes; and an HTTP/1.0
+// keep-alive request followed by an HTTP/1.1 one on the same connection.
+// Every response is checked, and every close the server owes is read as
+// EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
+	if rounds%KeepAliveCycle != 0 {
+		t.Fatalf("rounds = %d, want a multiple of %d", rounds, KeepAliveCycle)
+	}
 	dial := func() net.Conn {
 		conn, err := net.DialTimeout("tcp4", addr, 5*time.Second)
 		if err != nil {
@@ -109,61 +122,93 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		conn.Close()
 	}
-	sent := 0
-	for sent < rounds {
-		// Four requests on one connection: a pipelined pair, a third, and a
-		// fourth that reaches the cap and is answered with close.
+	write := func(conn net.Conn, s string) {
+		t.Helper()
+		if _, err := io.WriteString(conn, s); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+	}
+	halfClose := func(conn net.Conn) {
+		t.Helper()
+		if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+	}
+	for sent := 0; sent < rounds; sent += KeepAliveCycle {
+		// 200 requests pipelined in one write: more than one event's burst,
+		// so the rest are answered from the backlog on later waits, and the
+		// 200th reaches the cap and is answered with close.
 		conn := dial()
 		r := bufio.NewReader(conn)
-		if _, err := io.WriteString(conn, "GET /a HTTP/1.1\r\nHost: localhost\r\n\r\nGET /b HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
-			conn.Close()
-			t.Fatal(err)
+		var pipeline strings.Builder
+		for i := 0; i < 200; i++ {
+			fmt.Fprintf(&pipeline, "GET /p%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
-		read(conn, r, "pipelined first", "keep-alive")
-		read(conn, r, "pipelined second", "keep-alive")
-		if _, err := io.WriteString(conn, "GET /c HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"); err != nil {
-			conn.Close()
-			t.Fatal(err)
+		write(conn, pipeline.String())
+		for i := 0; i < 199; i++ {
+			read(conn, r, fmt.Sprintf("pipelined %d", i), "keep-alive")
 		}
-		read(conn, r, "HTTP/1.0 keep-alive", "keep-alive")
-		if _, err := io.WriteString(conn, "GET /d HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
-			conn.Close()
-			t.Fatal(err)
-		}
-		read(conn, r, "the fourth, at the cap", "close")
+		read(conn, r, "the 200th, at the cap", "close")
 		eof(conn, r, "after the cap")
-		sent += 4
-		if sent >= rounds {
-			break
-		}
 		// One HTTP/1.0 request with no Connection header, closed after it.
 		conn = dial()
 		r = bufio.NewReader(conn)
-		if _, err := io.WriteString(conn, "GET /e HTTP/1.0\r\nHost: localhost\r\n\r\n"); err != nil {
-			conn.Close()
-			t.Fatal(err)
-		}
+		write(conn, "GET /e HTTP/1.0\r\nHost: localhost\r\n\r\n")
 		read(conn, r, "HTTP/1.0", "close")
 		eof(conn, r, "after HTTP/1.0")
-		sent++
-		if sent >= rounds {
-			break
-		}
 		// One HTTP/1.1 request asking for close, closed after it.
 		conn = dial()
 		r = bufio.NewReader(conn)
-		if _, err := io.WriteString(conn, "GET /f HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
-			conn.Close()
-			t.Fatal(err)
-		}
+		write(conn, "GET /f HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
-		sent++
+		// A pipeline of 33 requests whose peer half-closes behind them. The
+		// server may or may not read the end of stream with the first 32
+		// (that is a race on the wire), but the 33rd is answered from the
+		// backlog on a later wait, once the end of stream has certainly
+		// arrived, so its response must say close, since the close follows
+		// it; the 32 before it persist either way.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		pipeline.Reset()
+		for i := 0; i < 33; i++ {
+			fmt.Fprintf(&pipeline, "GET /q%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
+		}
+		write(conn, pipeline.String())
+		halfClose(conn)
+		for i := 0; i < 32; i++ {
+			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
+		}
+		read(conn, r, "half-closed pipeline, last", "close")
+		eof(conn, r, "after the half-closed pipeline")
+		// A complete request with the start of another behind it: answered,
+		// then closed by the one-second read deadline the partial request
+		// keeps, not left waiting under the idle span.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /j HTTP/1.1\r\nHost: localhost\r\n\r\nGET /k HT")
+		read(conn, r, "before a partial request", "keep-alive")
+		started := time.Now()
+		eof(conn, r, "the partial request's deadline")
+		if waited := time.Since(started); waited > 4*time.Second {
+			t.Fatalf("the partial request was closed after %v, not by the one-second read deadline", waited)
+		}
+		// An HTTP/1.0 request asking to keep the connection, then an
+		// HTTP/1.1 request on it; the client ends this one.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /l HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+		read(conn, r, "HTTP/1.0 keep-alive", "keep-alive")
+		write(conn, "GET /m HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		read(conn, r, "after HTTP/1.0 keep-alive", "keep-alive")
+		conn.Close()
 	}
 }
 
 // RunHTTPKeepAlive is RunHTTPHandlerCensus with HTTPKeepAliveRequests as
-// the client, over a loop bounded to a multiple of six requests.
+// the client, over a loop bounded to a multiple of KeepAliveCycle.
 func RunHTTPKeepAlive(t *testing.T, command *exec.Cmd, rounds int) string {
 	t.Helper()
 	return runBoundedHTTPServer(t, command, func(addr string) { HTTPKeepAliveRequests(t, addr, rounds) })
@@ -248,7 +293,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), keep_alive_requests: 4 });"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -257,7 +302,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     var port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), keep_alive_requests: 4 });
+    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_seconds(1 as i64), keep_alive_requests: 200 });
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)
@@ -293,8 +338,8 @@ func runBoundedWasiHTTPServer(t *testing.T, component string, client func(addr s
 	defer func() {
 		if !waited {
 			cancel()
-			_ = cmd.Wait()
-			t.Logf("server stderr: %s", &stderr)
+			werr := cmd.Wait()
+			t.Logf("server exit: %v; stderr: %s", werr, &stderr)
 		}
 	}()
 	reader := bufio.NewReader(stdout)

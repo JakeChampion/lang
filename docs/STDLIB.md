@@ -1059,7 +1059,15 @@ serializer.
   says how many bytes the request occupied at the head of the buffer (so
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
-  close`, HTTP/1.0 only with `Connection: keep-alive`).
+  close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
+  read as a comma-separated token list and only a whole token counts;
+  any other version is answered and closed).
+  `http_parse_request_framed_from(buf, from)` is the same parse over
+  `buf[from, len)`, so a loop answering pipelined requests moves an
+  offset instead of copying the buffer forward, with `len` counted from
+  `from`. Whitespace between a header name and its colon refuses the
+  request (RFC 9112 §5.1), since dropping the line would strand a body
+  for the next parse.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
   `close` as the serve loop decided.
@@ -1153,9 +1161,15 @@ loop and `std/fetch` the client.
   until it drains within the same span. Connections persist (RFC
   9112 §9.3: HTTP/1.1 unless the request says `Connection: close`,
   HTTP/1.0 only when it says `Connection: keep-alive`), requests
-  pipelined on one connection are answered in order from the same
-  readable event, and every response names the outcome in its
-  `Connection` header.
+  pipelined on one connection are answered in order, 32 per readiness
+  event before the loop returns to the wait (the rest are answered on
+  the next wait, which returns at once, so one pipeline cannot hold
+  the other connections off the reactor), and every response names
+  the outcome in its `Connection` header: once the peer's end of
+  stream has been read, the last buffered request's response says
+  `close`, since the close follows it. A partial request behind a complete one keeps
+  the read deadline its first bytes armed; only an empty buffer waits
+  under the idle span.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
   keep_alive_requests }` (`serve_options()` is 128, one listener per
@@ -1163,7 +1177,8 @@ loop and `std/fetch` the client.
   port sharing between listeners (`SO_REUSEPORT`, ignored on wasm),
   the read deadline, how long an idle persistent connection waits
   for its next request, and how many requests one connection may
-  carry before its last response says `Connection: close`.
+  carry before its last response says `Connection: close` (a value
+  below 1 behaves as 1).
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is

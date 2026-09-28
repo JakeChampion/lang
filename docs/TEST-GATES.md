@@ -284,11 +284,17 @@ wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 `TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
 and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
 and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
-`e2eharness.HTTPKeepAliveRequests` (#9854): pipelined pairs on one
-connection, an HTTP/1.0 request asking to keep it, the fourth request
-reaching the loop's per-connection cap of four and answered with
-`Connection: close`, then an HTTP/1.0 request and a `Connection: close`
-request each ending their own connection. Every response's `Connection` is
+`e2eharness.HTTPKeepAliveRequests` (#9854), over a loop whose cap is 200
+requests per connection and whose read deadline is one second: a pipeline
+of 200 requests in one write, answered in order across several waits (the
+loop's burst is 32 per event, so the rest come from the backlog) and closed
+by the cap; an HTTP/1.0 request and a `Connection: close` request each
+ending their own connection; a pipeline of 33 requests whose peer
+half-closes behind them, one more than the burst so the last is answered
+from the backlog after the end of stream was read, and must say `close`;
+a complete request with the start of another behind it, which the read
+deadline must close rather than the idle span; and an HTTP/1.0 keep-alive
+request followed by an HTTP/1.1 one. Every response's `Connection` is
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is

@@ -25,14 +25,14 @@ func TestSelfHostHTTPKeepAlive(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
 	}
-	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"}, e2eharness.RunHTTPKeepAlive, 36)
+	checkSelfHostHTTPHandlerCensus(t, []string{"x86-64-linux", "arm64-linux"}, e2eharness.RunHTTPKeepAlive, e2eharness.KeepAliveCycle)
 }
 
 func TestSelfHostArm64DarwinHTTPKeepAlive(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("requires native Apple Silicon")
 	}
-	checkSelfHostHTTPHandlerCensus(t, []string{"arm64-darwin"}, e2eharness.RunHTTPKeepAlive, 36)
+	checkSelfHostHTTPHandlerCensus(t, []string{"arm64-darwin"}, e2eharness.RunHTTPKeepAlive, e2eharness.KeepAliveCycle)
 }
 
 func TestSelfHostArm64DarwinHTTPHandlerCensus(t *testing.T) {
