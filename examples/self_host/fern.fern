@@ -2499,11 +2499,11 @@ function run(): i32 {
         }
         out_asm = string_from_bytes_unchecked(util.to_u8(comp));
     } else if (target == "wasm32-wasi-http" && emit_text) {
-        // The handler's reactor core in text form: the component-mode core
-        // (its WASI through preview-2 imports) exporting the handler.
-        out_asm = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
+        out_asm = emitforms.wasm_http_core(full, sub);
     } else if (target == "wasm32-wasi-http" && emit == "core-module") {
-        out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub))));
+        var hwat: string = emitforms.wasm_http_core(full, sub);
+        if (hwat.len() == 0) { return 2; }
+        out_asm = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
     } else if (target == "wasm32-wasi-http") {
         // A wasi:http/incoming-handler component of the proxy world.
         var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);

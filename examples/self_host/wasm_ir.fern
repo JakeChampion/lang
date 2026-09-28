@@ -14088,25 +14088,51 @@ function called_names(mod: parser.Module): Map[string, boolean] {
 // can't satisfy. Shape codes:
 //   0 no-I/O · 1 stdout · 2 fs-read · 3 fs-write · 4 fs-rw · 5 random
 //   6 env · 7 args · 8 clock(wall) · 9 clock(mono) · 13 stderr · 14 exit
-pub function component_shape(mod: parser.Module): i32 {
+// HostNeeds is what a program asks of its WASI host, one flag per category
+// the component framings distinguish.
+struct HostNeeds { io: boolean, rd: boolean, wr: boolean, env: boolean, args: boolean, rnd: boolean, clkw: boolean, clkm: boolean, ep: boolean, ex: boolean }
+
+function host_needs(mod: parser.Module): HostNeeds {
     var calls: Map[string, boolean] = called_names(mod);
-    var io: boolean = calls.has("print") || calls.has("write")
-        || calls.has("putchar") || calls.has("stdout");
-    var rd: boolean = calls.has("read_file") || calls.has("read_file_bytes");
-    var wr: boolean = calls.has("write_file");
-    var env: boolean = calls.has("env");
-    var args: boolean = calls.has("args");
     // Building a Map imports get-random-u64 with no explicit random call in the
     // program: core/map draws its per-process string-hash seed from the same
     // CSPRNG. module_uses_random counts that seed on the lowered side, where it
     // decides the core module's import, so this classification must agree — a
     // framing chosen without it cannot satisfy the import the core declares.
-    var rnd: boolean = calls.has("random_bytes") || calls.has("random_i32")
-        || calls.has("__map_hash_seed");
-    var clkw: boolean = calls.has("now_unix_ms") || calls.has("now_ns");
-    var clkm: boolean = calls.has("monotonic_ns");
-    var ep: boolean = calls.has("eprint") || calls.has("stderr");
-    var ex: boolean = calls.has("exit");
+    return HostNeeds {
+        io: calls.has("print") || calls.has("write") || calls.has("putchar") || calls.has("stdout"),
+        rd: calls.has("read_file") || calls.has("read_file_bytes"),
+        wr: calls.has("write_file"),
+        env: calls.has("env"),
+        args: calls.has("args"),
+        rnd: calls.has("random_bytes") || calls.has("random_i32") || calls.has("__map_hash_seed"),
+        clkw: calls.has("now_unix_ms") || calls.has("now_ns"),
+        clkm: calls.has("monotonic_ns"),
+        ep: calls.has("eprint") || calls.has("stderr"),
+        ex: calls.has("exit"),
+    };
+}
+
+// component_needs_host reports whether a program reaches its WASI host at
+// all: false is the no-I/O component core, whose only imports are the
+// program's own externs.
+pub function component_needs_host(mod: parser.Module): boolean {
+    var n: HostNeeds = host_needs(mod);
+    return n.io || n.rd || n.wr || n.env || n.args || n.rnd || n.clkw || n.clkm || n.ep || n.ex;
+}
+
+pub function component_shape(mod: parser.Module): i32 {
+    var n: HostNeeds = host_needs(mod);
+    var io: boolean = n.io;
+    var rd: boolean = n.rd;
+    var wr: boolean = n.wr;
+    var env: boolean = n.env;
+    var args: boolean = n.args;
+    var rnd: boolean = n.rnd;
+    var clkw: boolean = n.clkw;
+    var clkm: boolean = n.clkm;
+    var ep: boolean = n.ep;
+    var ex: boolean = n.ex;
     // Count distinct non-stdout WASI categories. Single-category programs and
     // a fixed set of two-category fs-paired combos have a wrapped wasi:cli/run
     // shape; anything else is rejected.

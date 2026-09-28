@@ -12,10 +12,12 @@ import (
 // wasiHttpRouterSrc is the handler the wasm32-wasi-http gates serve: it
 // routes on path and method, reads the body, reads a request header, and
 // sets response headers — every part of the request and response the entry
-// marshals through the host.
+// marshals through the host. std/tcp is what the native compiler's
+// synthesised main needs to build the same program.
 const wasiHttpRouterSrc = `
 import "std/http";
 import "std/headers";
+import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         return http.http_response_ok("world")

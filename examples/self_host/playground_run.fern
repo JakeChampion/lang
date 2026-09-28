@@ -220,11 +220,11 @@ function run(): i32 {
         }
         ai = ai + 1;
     }
-    if (!(target == "wasm32-wasi" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
-        eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi x86-64-linux)\n");
+    if (!(target == "wasm32-wasi" || target == "wasm32-wasi-http" || target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin")) {
+        eprint("fern: unknown -target: " + target + " (want one of: arm64-darwin arm64-linux wasm32-wasi wasm32-wasi-http x86-64-linux)\n");
         return 2;
     }
-    if (target == "wasm32-wasi") {
+    if (platforms.for_target(target).isa == "wasm32") {
         if (form.len() == 0) { form = "wat"; }
         if (!(form == "wat" || form == "core-module" || form == "component")) {
             eprint("fern: unknown -emit: " + form + " (want wat, core-module or component)\n");
@@ -312,9 +312,11 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
         out = asm_arm64_ir.darwinize(asm_arm64_ir.emit_module_or_error_sub(full, true, sub));
     } else if (target == "wasm32-wasi-http") {
         if (form == "wat") {
-            out = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
+            out = emitforms.wasm_http_core(full, sub);
         } else if (form == "core-module") {
-            out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub))));
+            var hwat: string = emitforms.wasm_http_core(full, sub);
+            if (hwat.len() == 0) { return 2; }
+            out = string_from_bytes_unchecked(util.to_u8(watbin.wat_to_binary(hwat)));
         } else {
             var hc: wit_compose.Composed = emitforms.wasm_http_component(full, sub);
             if (hc.bytes.len() == 0) {

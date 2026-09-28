@@ -80,6 +80,15 @@ pub function http_refused(why: string): string {
     return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why + "\n";
 }
 
+// wasm_http_core is the handler's reactor core in text form: the component
+// core, with the host runtime (stdio, clocks, entropy) only when the program
+// reaches the host — a handler that only answers imports nothing beyond
+// wasi:http/types and wasi:io/streams, which is all the playground's browser
+// host implements.
+pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
+    return wasm_ir.emit_module_mode_or_error_sub(full, true, wasm_ir.component_needs_host(full), sub);
+}
+
 // wasm_http_component is the wasi:http/incoming-handler component for `full`
 // (a program carrying HTTP_ENTRY_STUB): the component-mode core, its WASI
 // through preview-2 imports, composed against the proxy world by the
@@ -87,7 +96,7 @@ pub function http_refused(why: string): string {
 // emitter's own refusal, already reported; a non-empty `refused` names the
 // import the world does not declare.
 pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
-    var wat: string = wasm_ir.emit_module_mode_or_error_sub(full, true, true, sub);
+    var wat: string = wasm_http_core(full, sub);
     if (wat.len() == 0) { return wit_compose.Composed { bytes: [], refused: "" }; }
     var core: i32[] = watbin.wat_to_binary(wat);
     var tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
