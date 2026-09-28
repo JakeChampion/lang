@@ -48,13 +48,15 @@ function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
-// scalar, one i32-shaped word for everything else. Only wasm packs the narrow
-// slot; the register backends give every element eight bytes and ignore the
-// width. The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take
-// the same ones; a float shares the width and differs in the load and store
-// wasm selects, the f32 occupying the f64's slot.
+// scalar, one byte for a u8, one i32-shaped word for everything else. The
+// register backends pack a u8 array a byte an element (ir.packed) and give
+// every other element eight bytes; wasm reads 8 as its narrow 4-byte slot.
+// The `_i64` forms name the SLOT, not the sign, so an i64 and a u64 take the
+// same ones; a float shares the width and differs in the load and store wasm
+// selects, the f32 occupying the f64's slot.
 function elem_width(t: typeinfo.Type): i32 {
     if (ssasem.is_wide(t) || ssasem.is_float(t)) { return 64; }
+    if (ssasem.is_u8(t)) { return 8; }
     return 32;
 }
 
@@ -84,6 +86,7 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
 function arr_push_op(elem: typeinfo.Type): ir.Op {
     if (ssasem.is_wide(elem)) { return ir.op_arr_push_owned_i64(); }
     if (ssasem.is_float(elem)) { return ir.op_arr_push_owned_f64(); }
+    if (ssasem.is_u8(elem)) { return ir.packed(ir.op_arr_push_owned()); }
     return ir.op_arr_push_owned();
 }
 
@@ -94,6 +97,7 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
 function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
     if (ssasem.is_wide(elem)) { return ir.op_arr_push_i64(); }
     if (ssasem.is_float(elem)) { return ir.op_arr_push_f64(); }
+    if (ssasem.is_u8(elem)) { return ir.packed(ir.op_arr_push()); }
     return ir.op_arr_push();
 }
 // The types whose stack representation needs no declaration looked up: a
@@ -2097,7 +2101,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
     if (ins.kind_tag == ssasem.arr_slice()) { return arr_slice(r, elem_type(f.values[ins.result])); }
-    if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.op_str_bytes()); }
+    if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.packed(ir.op_str_bytes())); }
     if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) { return emit(r, ir.op_str_index_nc()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
     if (ssasem.is_map_op(ins.kind_tag)) { return map_op(r, ins, f); }
@@ -2145,8 +2149,16 @@ function map_op(own r: irlower.LowerResult, ins: ssa.SInst, f: ssasem.Func): irl
     }
     if (ins.kind_tag == ssasem.map_has()) { return emit(r, ir.op_map_has(kkind, eq)); }
     if (ins.kind_tag == ssasem.map_get()) { return map_get(r, ins, kkind, eq, vkind != 0, map_widekind(t)); }
-    if (ins.kind_tag == ssasem.map_keys()) { return emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)))); }
-    if (ins.kind_tag == ssasem.map_values()) { return emit(r, ir.op_map_values(column_flag(ssasem.map_value(t)), map_widekind(t))); }
+    if (ins.kind_tag == ssasem.map_keys()) {
+        r = emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t))));
+        if (ssasem.is_u8(ssasem.map_key(t))) { return packed_snapshot(r, f); }
+        return r;
+    }
+    if (ins.kind_tag == ssasem.map_values()) {
+        r = emit(r, ir.op_map_values(column_flag(ssasem.map_value(t)), map_widekind(t)));
+        if (ssasem.is_u8(ssasem.map_value(t))) { return packed_snapshot(r, f); }
+        return r;
+    }
     if (ins.kind_tag == ssasem.map_delete()) {
         return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), kkind != 1, vkind));
     }
@@ -2406,6 +2418,45 @@ function release_if_copied(own r: irlower.LowerResult, receiver: i32, handle: i3
 // retain, 0 a column of scalars that holds no references. The raw alias (1)
 // every other element type would take is unreachable: semsource refuses those
 // columns rather than hand the frame elements the map still owns.
+// The runtime map's snapshot of a u8 column is a word array, where a u8[]
+// this lowering reads is packed (ir.packed), so it is copied into one and
+// released: fresh, it holds the only unit of itself and no counted element.
+function packed_snapshot(own r: irlower.LowerResult, f: ssasem.Func): irlower.LowerResult {
+    var src: i32 = scratch_base(f);
+    var dst: i32 = src + 1;
+    var index: i32 = src + 2;
+    r = reserve(r, index + 1);
+    r = emit(r, ir.op_store_local(src));
+    r = emit(r, ir.op_load_local(src));
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.packed(ir.op_alloc_u8()));
+    r = emit(r, ir.op_store_local(dst));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_store_local(index));
+    r = emit(r, ir.op_block(0));
+    r = emit(r, ir.op_loop(0));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_load_local(src));
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.op_bin("ge_s", 0, false));
+    r = emit(r, ir.op_brif(1));
+    r = emit(r, ir.op_load_local(dst));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_load_local(src));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_arr_get_nc(32));
+    r = emit(r, ir.op_arr_set(8));
+    r = emit(r, ir.op_load_local(index));
+    r = emit(r, ir.op_const_i32(1));
+    r = emit(r, ir.op_bin("add", 0, false));
+    r = emit(r, ir.op_store_local(index));
+    r = emit(r, ir.op_br(0));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_end());
+    r = helper(r, src, "__fern_rc_dec");
+    return emit(r, ir.op_load_local(dst));
+}
+
 function column_flag(elem: typeinfo.Type): i32 {
     if (ssasem.reference(elem)) { return 2; }
     return 0;
@@ -3386,7 +3437,7 @@ function call_site(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): 
     if (ins.str == "__memchr") { return emit(r, ir.op_memchr()); }
     if (ins.str == "write") { return emit(r, ir.op_print_str()); }
     if (ins.str == "exit") { return emit(r, ir.op_exit()); }
-    if (ins.str == "string_from_bytes_unchecked") { return emit(r, ir.op_str_from_bytes()); }
+    if (ins.str == "string_from_bytes_unchecked") { return emit(r, ir.packed(ir.op_str_from_bytes())); }
     if (ins.str == "f64_bits") { return emit(r, ir.op_f64_bits()); }
     if (ins.str == "f64_from_bits") { return emit(r, ir.op_f64_from_bits()); }
     return builtin_site(r, ins);
@@ -3457,7 +3508,7 @@ function handle_method(name: string): string {
 function union_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "env") { return Lowered { found: true, r: emit(r, ir.op_env()) }; }
     if (ins.str == "read_file") { return Lowered { found: true, r: emit(r, ir.op_read_file()) }; }
-    if (ins.str == "read_file_bytes") { return Lowered { found: true, r: emit(r, ir.op_read_file_bytes()) }; }
+    if (ins.str == "read_file_bytes") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_read_file_bytes())) }; }
     if (ins.str == "read_dir") { return Lowered { found: true, r: emit(r, ir.op_read_dir()) }; }
     if (ins.str == "read_dir_all") { return Lowered { found: true, r: emit(r, ir.op_read_dir_all()) }; }
     if (ins.str == "stat") { return Lowered { found: true, r: emit(r, ir.op_stat()) }; }
@@ -3495,7 +3546,7 @@ function value_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered
 // it — a contract alone would reach the backends as a call to a symbol no
 // runtime defines.
 function host_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
-    if (ins.str == "random_bytes") { return Lowered { found: true, r: emit(r, ir.op_random_bytes()) }; }
+    if (ins.str == "random_bytes") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_random_bytes())) }; }
     if (ins.str == "random_i32") { return Lowered { found: true, r: emit(r, ir.op_random_i32()) }; }
     if (ins.str == "monotonic_ns") { return Lowered { found: true, r: emit(r, ir.op_monotonic_ns()) }; }
     if (ins.str == "now_unix_ms") { return Lowered { found: true, r: emit(r, ir.op_now_unix_ms()) }; }
@@ -3574,23 +3625,23 @@ function os_floor_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
 
 function os_floor_process_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "tcp_send") { return Lowered { found: true, r: emit(r, ir.op_tcp_send()) }; }
-    if (ins.str == "tcp_recv") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv()) }; }
+    if (ins.str == "tcp_recv") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv())) }; }
     if (ins.str == "tcp_pollable") { return Lowered { found: true, r: emit(r, ir.op_tcp_pollable()) }; }
     if (ins.str == "tcp_close") { return Lowered { found: true, r: emit(r, ir.op_tcp_close()) }; }
     if (ins.str == "udp_send") { return Lowered { found: true, r: emit(r, ir.op_udp_send()) }; }
-    if (ins.str == "tcp_listen_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_listen_with()) }; }
+    if (ins.str == "tcp_listen_with") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_listen_with())) }; }
     if (ins.str == "tcp_socket_ctl") { return Lowered { found: true, r: emit(r, ir.op_tcp_socket_ctl()) }; }
-    if (ins.str == "udp_bind") { return Lowered { found: true, r: emit(r, ir.op_udp_bind()) }; }
-    if (ins.str == "udp_connect") { return Lowered { found: true, r: emit(r, ir.op_udp_connect()) }; }
-    if (ins.str == "udp_sendto") { return Lowered { found: true, r: emit(r, ir.op_udp_sendto()) }; }
-    if (ins.str == "udp_recvfrom") { return Lowered { found: true, r: emit(r, ir.op_udp_recvfrom()) }; }
-    if (ins.str == "tcp_connect_with") { return Lowered { found: true, r: emit(r, ir.op_tcp_connect_with()) }; }
+    if (ins.str == "udp_bind") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_bind())) }; }
+    if (ins.str == "udp_connect") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_connect())) }; }
+    if (ins.str == "udp_sendto") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_sendto())) }; }
+    if (ins.str == "udp_recvfrom") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_udp_recvfrom())) }; }
+    if (ins.str == "tcp_connect_with") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_connect_with())) }; }
     if (ins.str == "unix_listen") { return Lowered { found: true, r: emit(r, ir.op_unix_listen()) }; }
     if (ins.str == "unix_connect") { return Lowered { found: true, r: emit(r, ir.op_unix_connect()) }; }
     if (ins.str == "reactor_new") { return Lowered { found: true, r: emit(r, ir.op_reactor_new()) }; }
     if (ins.str == "reactor_ctl") { return Lowered { found: true, r: emit(r, ir.op_reactor_ctl()) }; }
     if (ins.str == "reactor_wait") { return Lowered { found: true, r: emit(r, ir.op_reactor_wait()) }; }
-    if (ins.str == "tcp_recv_into") { return Lowered { found: true, r: emit(r, ir.op_tcp_recv_into()) }; }
+    if (ins.str == "tcp_recv_into") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv_into())) }; }
     if (ins.str == "setuid") { return Lowered { found: true, r: emit(r, ir.op_setuid()) }; }
     if (ins.str == "setgid") { return Lowered { found: true, r: emit(r, ir.op_setgid()) }; }
     if (ins.str == "set_priority") { return Lowered { found: true, r: emit(r, ir.op_set_priority()) }; }
@@ -3613,9 +3664,9 @@ function builder_builtin_site(own r: irlower.LowerResult, ins: ssa.SInst): Lower
     if (ins.str == "buf_new") { return Lowered { found: true, r: emit(r, ir.op_buf_new()) }; }
     if (ins.str == "buf_push") { return Lowered { found: true, r: emit(r, ir.op_buf_push()) }; }
     if (ins.str == "buf_push_range") { return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) }; }
-    if (ins.str == "buf_push_mapped") { return Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) }; }
-    if (ins.str == "buf_push_filtered") { return Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) }; }
-    if (ins.str == "buf_push_expanded") { return Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) }; }
+    if (ins.str == "buf_push_mapped") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_mapped())) }; }
+    if (ins.str == "buf_push_filtered") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_filtered())) }; }
+    if (ins.str == "buf_push_expanded") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_expanded())) }; }
     if (ins.str == "buf_push_byte") { return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) }; }
     if (ins.str == "buf_push_u64") { return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) }; }
     if (ins.str == "buf_len") { return Lowered { found: true, r: emit(r, ir.op_buf_len()) }; }
@@ -3714,7 +3765,7 @@ function arr_set_len(own r: irlower.LowerResult, ins: ssa.SInst): irlower.LowerR
 // address at full pointer width.
 function raw_memory_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__alloc") { return Lowered { found: true, r: emit(r, ir.op_alloc()) }; }
-    if (ins.str == "__alloc_u8") { return Lowered { found: true, r: emit(r, ir.op_alloc_u8()) }; }
+    if (ins.str == "__alloc_u8") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_alloc_u8())) }; }
     if (ins.str == "__free") { return Lowered { found: true, r: emit(r, ir.op_free()) }; }
     if (ins.str == "__fern_box_free") { return Lowered { found: true, r: box_free(r, ins) }; }
     if (ins.str == "__ptr_width") { return Lowered { found: true, r: emit(r, ir.op_ptr_width()) }; }
@@ -3797,8 +3848,8 @@ function byte_scan_site(own r: irlower.LowerResult, ins: ssa.SInst): Lowered {
     if (ins.str == "__scale_f64") { return Lowered { found: true, r: emit(r, ir.op_scale_f64()) }; }
     if (ins.str == "__crc32_cksum") { return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) }; }
     if (ins.str == "__ascii_run") { return Lowered { found: true, r: emit(r, ir.op_ascii_run()) }; }
-    if (ins.str == "__scan_set") { return Lowered { found: true, r: emit(r, ir.op_scan_set()) }; }
-    if (ins.str == "__count_runs") { return Lowered { found: true, r: emit(r, ir.op_count_runs()) }; }
+    if (ins.str == "__scan_set") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) }; }
+    if (ins.str == "__count_runs") { return Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) }; }
     if (ins.str == "__bsd_sum") { return Lowered { found: true, r: emit(r, ir.op_bsd_sum()) }; }
     if (ins.str == "__count_byte") { return Lowered { found: true, r: emit(r, ir.op_count_byte()) }; }
     if (ins.str == "__rmemchr") { return Lowered { found: true, r: emit(r, ir.op_rmemchr()) }; }
