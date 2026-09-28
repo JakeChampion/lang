@@ -621,6 +621,31 @@ function x86enc_selftest_12(): i32 {
     return 0;
 }
 
+// Every register name at every width decodes to its number, only at its own
+// width, with or without the %; near-misses are rejected.
+function x86enc_selftest_13(): i32 {
+    var q: string[] = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"];
+    var d: string[] = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"];
+    var w: string[] = ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"];
+    var b: string[] = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"];
+    var i: i32 = 0;
+    while (i < 16) {
+        if (x86_gas_reg64(q[i]) != i || x86_gas_reg64("%" + q[i]) != i || x86_gas_reg(q[i]) != i) { return 145; }
+        if (x86_gas_reg32(d[i]) != i || x86_gas_reg32("%" + d[i]) != i || x86_gas_reg(d[i]) != i) { return 146; }
+        if (x86_gas_reg16(w[i]) != i || x86_gas_reg16("%" + w[i]) != i) { return 147; }
+        if (x86_gas_reg8(b[i]) != i || x86_gas_reg8("%" + b[i]) != i) { return 148; }
+        if (x86_gas_reg64(d[i]) != (0 - 1) || x86_gas_reg32(q[i]) != (0 - 1)) { return 149; }
+        if (x86_gas_reg16(b[i]) != (0 - 1) || x86_gas_reg8(w[i]) != (0 - 1) || x86_gas_reg(w[i]) != (0 - 1)) { return 150; }
+        if (x86_gas_reg_w(b[i], 8) != i || x86_gas_reg_w(w[i], 16) != i || x86_gas_reg_w(d[i], 32) != i || x86_gas_reg_w(q[i], 64) != i) { return 151; }
+        i = i + 1;
+    }
+    var bad: string[] = ["", "%", "r", "e", "ah", "bh", "r7", "r1", "r16", "r08", "r8x", "r15dd", "rsl", "eal", "rip", "%%rax", "raxx", "xmm0"];
+    for tok in bad {
+        if (x86_gas_reg_decode(tok) != (0 - 1)) { return 152; }
+    }
+    return 0;
+}
+
 function main(): i32 {
     var r: i32 = 0;
     r = x86enc_selftest_1(); if (r != 0) { return r; }
@@ -635,6 +660,7 @@ function main(): i32 {
     r = x86enc_selftest_10(); if (r != 0) { return r; }
     r = x86enc_selftest_11(); if (r != 0) { return r; }
     r = x86enc_selftest_12(); if (r != 0) { return r; }
+    r = x86enc_selftest_13(); if (r != 0) { return r; }
     return 0;
 }
 `
