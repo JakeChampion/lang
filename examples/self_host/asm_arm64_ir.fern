@@ -5319,12 +5319,17 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
 // freelist_push emits the push of the block at `ptr` onto the small-tier
 // freelist. `words` holds the block's logical size and comes out as its class,
 // the capacity __fern_capw rounds it to, which is the size __fern_alloc bumped
-// the block at. `base` and `tmp` are scratch. x30 is saved around the call,
-// since several of these sites sit in helpers that return through it.
+// the block at; up to 256 words that is the count itself, so only a larger
+// block makes the call. `base` and `tmp` are scratch. x30 is saved around the
+// call, since several of these sites sit in helpers that return through it.
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, base: string, tmp: string): asmcore.EmitState {
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmp " + words + ", #256\n");
+    s = s.write("    b.ls " + l.name + "\n");
     s = s.write("    stp " + words + ", x30, [sp, #-16]!\n");
     s = s.write("    bl __fern_capw\n");
     s = s.write("    ldp " + words + ", x30, [sp], #16\n");
+    s = s.write(l.name + ":\n");
     s = s.write("    adrp " + base + ", __fern_freelist\n");
     s = s.write("    add " + base + ", " + base + ", :lo12:__fern_freelist\n");
     s = s.write("    ldr " + tmp + ", [" + base + ", " + words + ", lsl #3]\n");
@@ -5464,18 +5469,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .text\n");
     // __fern_capw(words) -> class, in place in its one stack slot: the small
     // tier's size class for a block of `words` 8-byte words, which is also the
-    // capacity __fern_alloc bumps the block at. Exact up to 256 words (2 KiB),
-    // then native's 3-significant-bit capacities, so a buffer that grows a
-    // little at a time finds the block it just freed rather than a new class
-    // per step. Clamped below 65536, where the large tier takes over. Preserves
+    // capacity __fern_alloc bumps the block at. The class is the word count
+    // itself up to 256 words (2 KiB), which every caller tests for inline, so
+    // this is called only past that: native's 3-significant-bit capacities, so
+    // a buffer that grows a little at a time finds the block it just freed
+    // rather than a new class per step. Clamped below 65536, where the large
+    // tier takes over. Preserves
     // every register but x30, which `bl` set.
     s = s.write(".globl __fern_capw\n");
     s = s.write("__fern_capw:\n");
     s = s.write("    stp x9, x10, [sp, #-32]!\n");
     s = s.write("    str x11, [sp, #16]\n");
     s = s.write("    ldr x9, [sp, #32]\n");
-    s = s.write("    cmp x9, #256\n");
-    s = s.write("    b.ls .Lcapw_ret\n");
     s = s.write("    clz x10, x9\n");
     s = s.write("    mov x11, #61\n");
     s = s.write("    sub x10, x11, x10\n");            // msb - 2
@@ -5491,7 +5496,6 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x9, #65535\n");
     s = s.write(".Lcapw_store:\n");
     s = s.write("    str x9, [sp, #32]\n");
-    s = s.write(".Lcapw_ret:\n");
     s = s.write("    ldr x11, [sp, #16]\n");
     s = s.write("    ldp x9, x10, [sp], #32\n");
     s = s.write("    ret\n");
@@ -5513,9 +5517,13 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    b.hs .Lalloc_large\n");
     // The small tier bumps a block at its class's capacity, so any freed block
     // of the class satisfies any request that rounds to it. x30 is in the frame.
+    var l: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = l.state.write("    cmp x3, #256\n");
+    s = s.write("    b.ls " + l.name + "\n");
     s = s.write("    str x3, [sp, #-16]!\n");
     s = s.write("    bl __fern_capw\n");
     s = s.write("    ldr x3, [sp], #16\n");
+    s = s.write(l.name + ":\n");
     s = s.write("    lsl x0, x3, #3\n");              // capacity bytes, for the bump
     s = s.write("    adrp x1, __fern_freelist\n");
     s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
