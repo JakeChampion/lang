@@ -730,6 +730,82 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
     return s;
 }
 
+// __fern_alloc_bytes(%rdi = n) -> a zeroed packed u8[] of n bytes: a box of
+// ceil(n/8) words, whose length word __fern_arr_box writes as that word count
+// and this overwrites with n.
+function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_alloc_bytes:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n");
+    s = s.write("    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    movq %rdi, %r13\n");
+    s = s.write("    call __fern_arr_box\n");
+    s = s.write("    movq %r12, (%rax)\n    movq %rax, %rdx\n    leaq 8(%rax), %rdi\n    movq %r13, %rcx\n");
+    s = s.write("    xorl %eax, %eax\n    rep stosq\n    movq %rdx, %rax\n");
+    s = s.write("    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
+    return s;
+}
+
+// __fern_arr_push_u8 and __fern_arr_push_owned_u8 are __fern_arr_push and
+// __fern_arr_push_owned for a packed u8[] (%rsi's low byte appended): the
+// capacity stays in 8-byte words, so a box has room while len < cap * 8, a
+// grow doubles the words, and the copy moves len bytes.
+function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
+    s = s.write("__fern_arr_push_u8:\n");
+    s = s.write(arr_push_fast_u8(".Larr_push_u8_slow"));
+    s = s.write(".Larr_push_u8_slow:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
+    s = s.write("    movq %rdi, %r12\n    movq %rsi, %r13\n    movq (%r12), %r14\n    movq -16(%r12), %r15\n");
+    if (!rc_free_debug_on()) { s = s.write("    jmp .Larr_push_u8_grow\n"); }
+    s = s.write("    movq -8(%r12), %rcx\n");
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    cmpq $1, %rcx\n    je .Larr_push_u8_rc_ok\n    btq $31, %rcx\n    jc .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
+    s = s.write(".Larr_push_u8_rc_ok:\n");
+    s = s.write("    movq %r15, %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %r14\n    jge .Larr_push_u8_grow\n");
+    s = s.write("    movb %r13b, 8(%r12,%r14)\n    incq %r14\n    movq %r14, (%r12)\n    movq %r12, %rax\n    jmp .Larr_push_u8_ret\n");
+    // A shared receiver with room is copied at its own capacity, as the word
+    // push does, and counted as the cliff it is.
+    s = s.write(".Larr_push_u8_grow:\n");
+    s = s.write("    movq %r15, %rcx\n    movq %r15, %rax\n    shlq $3, %rax\n    cmpq %rax, %r14\n    jl .Larr_push_u8_cliff\n");
+    s = s.write("    testq %rcx, %rcx\n    jne .Larr_push_u8_dbl\n    movq $4, %rcx\n    jmp .Larr_push_u8_cap\n");
+    s = s.write(".Larr_push_u8_cliff:\n");
+    s = s.write("    incq __fern_arr_push_shared(%rip)\n    addq %r14, __fern_arr_push_copied(%rip)\n    jmp .Larr_push_u8_cap\n");
+    s = s.write(".Larr_push_u8_dbl:\n    shlq $1, %rcx\n");
+    s = s.write(".Larr_push_u8_cap:\n    movq %rcx, %rdi\n    call __fern_arr_box\n");
+    s = s.write("    leaq 1(%r14), %rcx\n    movq %rcx, (%rax)\n");
+    s = s.write("    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n    movq %r14, %rcx\n    rep movsb\n");
+    s = s.write("    movb %r13b, 8(%rax,%r14)\n");
+    s = s.write(".Larr_push_u8_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+    s = s.write("__fern_arr_push_owned_u8:\n");
+    s = s.write(arr_push_fast_u8(".Lapou_slow"));
+    s = s.write(".Lapou_slow:\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n");
+    if (rc_free_debug_on()) { s = s.write("    call __fern_arr_push_u8\n"); } else { s = s.write("    call .Larr_push_u8_slow\n"); }
+    s = s.write("    cmpq %rax, %r12\n    je .Lapou_ret\n    cmpq $0x10000, %r12\n    jb .Lapou_ret\n");
+    s = s.write("    movl -8(%r12), %ecx\n");
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n    js .Lapou_ret\n    cmpl $1, %ecx\n    jne .Lapou_ret\n");
+    s = s.write("    movl -16(%r12), %ecx\n    addq $3, %rcx\n    cmpq $65536, %rcx\n    jae .Lapou_large\n");
+    s = s.write(quarantine_rc("-8(%r12)"));
+    s = s.write("    leaq -16(%r12), %rdx\n");
+    s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) { s = freelist_push(s, "%rdx", "%rcx", "%rdi"); }
+    s = s.write(".Lapou_ret:\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+    s = s.write(".Lapou_large:\n");
+    s = s.write(quarantine_rc("-8(%r12)"));
+    s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp .Lapou_ret\n");
+    return s;
+}
+
+// arr_push_fast_u8 is arr_push_fast for a packed u8[]: room is len < cap * 8.
+function arr_push_fast_u8(slow: string): string {
+    if (rc_free_debug_on()) { return ""; }
+    var ok: string = slow + "_ok";
+    return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + slow + "\n"
+        + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + ok + "\n"
+        + "    btq $31, %rcx\n    jnc " + slow + "\n"
+        + ok + ":\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+        + "    movq %rdi, %rax\n    ret\n";
+}
+
 // arr_push_fast is the append both __fern_arr_push and __fern_arr_push_owned
 // start with: a receiver with a free slot that this push may mutate (sole
 // owner, or the bit-31 immortal sentinel) takes the value in place, with no frame
@@ -2003,7 +2079,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "stat", "lstat", "statfs", "access", "read_file",
-        "read_file_bytes", "remove_file", "create_dir_all", "create_dir",
+        "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
         "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
         "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "sync",
@@ -2030,6 +2106,239 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
         "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "subprocess",
         "signal_send", "set_process_group", "set_priority"
     ]);
+}
+
+// emit_buf_table_helpers emits the three buffer pushes that read a u8[]
+// table: a slot table holds entry i in the low byte of the 8-byte slot
+// 8 + i*8, a packed one (the `_u8` helpers) at byte 8 + i. An expanded
+// table's record c is eight entries from entry c*8 either way.
+function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
+    var sfx: string = asmcore.packed_suffix(packed);
+    var lm: string = ".Lbufmap" + sfx;
+    var lf: string = ".Lbuffilt" + sfx;
+    var le: string = ".Lbufexp" + sfx;
+    var sc: string = ",8";
+    var rshift: string = "6";
+    var rbyte: string = "16(%r10,%r8,8), %rax";
+    if (packed) { sc = ""; rshift = "3"; rbyte = "9(%r10,%r8), %rax"; }
+    // __fern_buf_push_mapped(%rdi = H, %rsi = box, %rdx = table): append
+    // table[c] for each byte c of the box's data, or c itself when it is
+    // past the table's length at (table). Entry i of the table is the low
+    // byte of the 8-byte slot 8 + i*8; a table covering every byte value
+    // takes the loop with no length check.
+    s = s.write("__fern_buf_push_mapped" + sfx + ":\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    movq %rdi, %rbx\n");
+    s = s.write("    movq %rsi, %r12\n");
+    s = s.write("    movq %rdx, %r14\n");                  // table
+    s = s.write("    movq 8(%r12), %r13\n");               // n
+    s = s.write("    testq %r13, %r13\n");
+    s = s.write("    jz " + lm + "_done\n");
+    s = s.write("    movq 8(%rbx), %rax\n");
+    s = s.write("    addq %r13, %rax\n");
+    s = s.write("    movq 16(%rbx), %rcx\n");
+    s = s.write("    cmpq %rcx, %rax\n");
+    s = s.write("    jbe " + lm + "_fits\n");
+    s = s.write("    movq %rbx, %rdi\n");
+    s = s.write("    movq %rax, %rsi\n");
+    s = s.write("    call __fern_buf_reserve\n");
+    s = s.write(lm + "_fits:\n");
+    s = s.write("    movq (%r12), %rsi\n");                // src data
+    s = s.write("    movq (%rbx), %rdx\n");
+    s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
+    s = s.write("    movq (%r14), %r9\n");                 // table length
+    s = s.write("    xorq %rcx, %rcx\n");
+    s = s.write("    cmpq $256, %r9\n");
+    s = s.write("    jb " + lm + "_short\n");
+    s = s.write(lm + "_full:\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+    s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
+    s = s.write("    movb %al, (%rdx,%rcx)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    cmpq %r13, %rcx\n");
+    s = s.write("    jb " + lm + "_full\n");
+    s = s.write("    jmp " + lm + "_len\n");
+    s = s.write(lm + "_short:\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+    s = s.write("    cmpq %r9, %rax\n");
+    s = s.write("    jae " + lm + "_keep\n");
+    s = s.write("    movzbq 8(%r14,%rax" + sc + "), %rax\n");
+    s = s.write(lm + "_keep:\n");
+    s = s.write("    movb %al, (%rdx,%rcx)\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    cmpq %r13, %rcx\n");
+    s = s.write("    jb " + lm + "_short\n");
+    s = s.write(lm + "_len:\n");
+    s = s.write("    addq %r13, 8(%rbx)\n");
+    s = s.write(lm + "_done:\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    // __fern_buf_push_filtered(%rdi = H, %rsi = box, %rdx = drop): append
+    // each byte c of the box's data whose drop entry (the low byte of
+    // the 8-byte slot 8 + c*8) is zero, or that is past the table's
+    // length at (drop). Room for the whole box is reserved; the full-table
+    // loop stores every byte and advances the kept count only past a
+    // kept one.
+    s = s.write("__fern_buf_push_filtered" + sfx + ":\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    movq %rdi, %rbx\n");
+    s = s.write("    movq %rsi, %r12\n");
+    s = s.write("    movq %rdx, %r14\n");                  // drop
+    s = s.write("    movq 8(%r12), %r13\n");               // n
+    s = s.write("    testq %r13, %r13\n");
+    s = s.write("    jz " + lf + "_done\n");
+    s = s.write("    movq 8(%rbx), %rax\n");
+    s = s.write("    addq %r13, %rax\n");
+    s = s.write("    movq 16(%rbx), %rcx\n");
+    s = s.write("    cmpq %rcx, %rax\n");
+    s = s.write("    jbe " + lf + "_fits\n");
+    s = s.write("    movq %rbx, %rdi\n");
+    s = s.write("    movq %rax, %rsi\n");
+    s = s.write("    call __fern_buf_reserve\n");
+    s = s.write(lf + "_fits:\n");
+    s = s.write("    movq (%r12), %rsi\n");                // src data
+    s = s.write("    movq (%rbx), %rdx\n");
+    s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
+    s = s.write("    movq (%r14), %r9\n");                 // table length
+    s = s.write("    xorq %rcx, %rcx\n");                  // i
+    s = s.write("    xorq %r8, %r8\n");                    // kept
+    s = s.write("    cmpq $256, %r9\n");
+    s = s.write("    jb " + lf + "_short\n");
+    s = s.write(lf + "_full:\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+    s = s.write("    movzbq 8(%r14,%rax" + sc + "), %r10\n");
+    s = s.write("    movb %al, (%rdx,%r8)\n");
+    s = s.write("    cmpq $1, %r10\n");
+    s = s.write("    adcq $0, %r8\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    cmpq %r13, %rcx\n");
+    s = s.write("    jb " + lf + "_full\n");
+    s = s.write("    jmp " + lf + "_len\n");
+    s = s.write(lf + "_short:\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+    s = s.write("    cmpq %r9, %rax\n");
+    s = s.write("    jae " + lf + "_keep\n");
+    s = s.write("    cmpb $0, 8(%r14,%rax" + sc + ")\n");
+    s = s.write("    jne " + lf + "_next\n");
+    s = s.write(lf + "_keep:\n");
+    s = s.write("    movb %al, (%rdx,%r8)\n");
+    s = s.write("    incq %r8\n");
+    s = s.write(lf + "_next:\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    cmpq %r13, %rcx\n");
+    s = s.write("    jb " + lf + "_short\n");
+    s = s.write(lf + "_len:\n");
+    s = s.write("    addq %r8, 8(%rbx)\n");
+    s = s.write(lf + "_done:\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    // __fern_buf_push_expanded(%rdi = H, %rsi = box, %rdx = table): append
+    // each byte c of the box's data as the record at table[c*8], a length
+    // (above 7 counts as 7) and then the bytes, or c itself when its
+    // record is not wholly inside the table. Entry i of the table is the
+    // low byte of the 8-byte slot 8 + i*8, so byte c's record starts at
+    // table + 8 + c*64. A push of 256 bytes or more through a table of
+    // every record first packs the records into 2 KiB of frame, then
+    // copies each as one eight-byte store, as native's kernel does.
+    s = s.write("__fern_buf_push_expanded" + sfx + ":\n");
+    s = s.write("    pushq %rbp\n");
+    s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    pushq %r14\n");
+    s = s.write("    movq %rdi, %rbx\n");
+    s = s.write("    movq %rsi, %r12\n");
+    s = s.write("    movq %rdx, %r14\n");                  // table
+    s = s.write("    movq 8(%r12), %r13\n");               // n
+    s = s.write("    testq %r13, %r13\n");
+    s = s.write("    jz " + le + "_done\n");
+    s = s.write("    leaq 8(,%r13,8), %rax\n");
+    s = s.write("    addq 8(%rbx), %rax\n");               // a whole record stored per byte
+    s = s.write("    movq 16(%rbx), %rcx\n");
+    s = s.write("    cmpq %rcx, %rax\n");
+    s = s.write("    jbe " + le + "_fits\n");
+    s = s.write("    movq %rbx, %rdi\n");
+    s = s.write("    movq %rax, %rsi\n");
+    s = s.write("    call __fern_buf_reserve\n");
+    s = s.write(le + "_fits:\n");
+    s = s.write("    movq (%r12), %rsi\n");                // src data
+    s = s.write("    movq (%rbx), %rdx\n");
+    s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
+    s = s.write("    movq (%r14), %r9\n");
+    s = s.write("    shrq $3, %r9\n");                     // whole records
+    s = s.write("    xorq %rcx, %rcx\n");
+    s = s.write("    cmpq $256, %r9\n    jb " + le + "_loop\n");
+    s = s.write("    cmpq $256, %r13\n    jb " + le + "_loop\n");
+    s = s.write("    subq $2048, %rsp\n");
+    s = s.write(le + "_pack:\n");
+    s = s.write("    movzbq 8(%r14,%rcx" + sc + "), %rax\n    movb %al, (%rsp,%rcx)\n");
+    s = s.write("    incq %rcx\n    cmpq $2048, %rcx\n    jb " + le + "_pack\n");
+    s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
+    s = s.write(le + "_fast:\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n    movq (%rsp,%rax,8), %r8\n");
+    s = s.write("    movzbq %r8b, %r9\n    cmpq %r10, %r9\n    cmovaq %r10, %r9\n");
+    s = s.write("    shrq $8, %r8\n    movq %r8, (%rdx)\n    addq %r9, %rdx\n");
+    s = s.write("    incq %rcx\n    cmpq %r13, %rcx\n    jb " + le + "_fast\n");
+    s = s.write("    addq $2048, %rsp\n    jmp " + le + "_len\n");
+    s = s.write(le + "_loop:\n");
+    s = s.write("    cmpq %r13, %rcx\n");
+    s = s.write("    jae " + le + "_len\n");
+    s = s.write("    movzbq (%rsi,%rcx), %rax\n");
+    s = s.write("    cmpq %r9, %rax\n");
+    s = s.write("    jae " + le + "_keep\n");
+    s = s.write("    movq %rax, %r10\n");
+    s = s.write("    shlq $" + rshift + ", %r10\n");
+    s = s.write("    addq %r14, %r10\n");                  // the record's slots, less 8
+    s = s.write("    movzbq 8(%r10), %r11\n");             // its length
+    s = s.write("    cmpq $7, %r11\n");
+    s = s.write("    jbe " + le + "_room\n");
+    s = s.write("    movq $7, %r11\n");
+    s = s.write(le + "_room:\n");
+    s = s.write("    xorq %r8, %r8\n");
+    s = s.write(le + "_byte:\n");
+    s = s.write("    cmpq %r11, %r8\n");
+    s = s.write("    jae " + le + "_next\n");
+    s = s.write("    movzbq " + rbyte + "\n");
+    s = s.write("    movb %al, (%rdx)\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write("    incq %r8\n");
+    s = s.write("    jmp " + le + "_byte\n");
+    s = s.write(le + "_keep:\n");
+    s = s.write("    movb %al, (%rdx)\n");
+    s = s.write("    incq %rdx\n");
+    s = s.write(le + "_next:\n");
+    s = s.write("    incq %rcx\n");
+    s = s.write("    jmp " + le + "_loop\n");
+    s = s.write(le + "_len:\n");
+    s = s.write("    subq (%rbx), %rdx\n");                // the new length
+    s = s.write("    movq %rdx, 8(%rbx)\n");
+    s = s.write(le + "_done:\n");
+    s = s.write("    popq %r14\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    popq %rbp\n");
+    s = s.write("    ret\n");
+    return s;
 }
 
 // emit_runtime_memcpy emits `__fern_memcpy(%rdi = dst, %rsi = src, %rdx = n)`
@@ -3529,223 +3838,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    jmp .Lbufrange_copy\n");
         s = s.write(".Lbufrange_done:\n");
         s = s.write("    ret\n");
-        // __fern_buf_push_mapped(%rdi = H, %rsi = box, %rdx = table): append
-        // table[c] for each byte c of the box's data, or c itself when it is
-        // past the table's length at (table). Entry i of the table is the low
-        // byte of the 8-byte slot 8 + i*8; a table covering every byte value
-        // takes the loop with no length check.
-        s = s.write("__fern_buf_push_mapped:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq %rdx, %r14\n");                  // table
-        s = s.write("    movq 8(%r12), %r13\n");               // n
-        s = s.write("    testq %r13, %r13\n");
-        s = s.write("    jz .Lbufmap_done\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r13, %rax\n");
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbufmap_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
-        s = s.write(".Lbufmap_fits:\n");
-        s = s.write("    movq (%r12), %rsi\n");                // src data
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
-        s = s.write("    movq (%r14), %r9\n");                 // table length
-        s = s.write("    xorq %rcx, %rcx\n");
-        s = s.write("    cmpq $256, %r9\n");
-        s = s.write("    jb .Lbufmap_short\n");
-        s = s.write(".Lbufmap_full:\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n");
-        s = s.write("    movzbq 8(%r14,%rax,8), %rax\n");
-        s = s.write("    movb %al, (%rdx,%rcx)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jb .Lbufmap_full\n");
-        s = s.write("    jmp .Lbufmap_len\n");
-        s = s.write(".Lbufmap_short:\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n");
-        s = s.write("    cmpq %r9, %rax\n");
-        s = s.write("    jae .Lbufmap_keep\n");
-        s = s.write("    movzbq 8(%r14,%rax,8), %rax\n");
-        s = s.write(".Lbufmap_keep:\n");
-        s = s.write("    movb %al, (%rdx,%rcx)\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jb .Lbufmap_short\n");
-        s = s.write(".Lbufmap_len:\n");
-        s = s.write("    addq %r13, 8(%rbx)\n");
-        s = s.write(".Lbufmap_done:\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
-        // __fern_buf_push_filtered(%rdi = H, %rsi = box, %rdx = drop): append
-        // each byte c of the box's data whose drop entry (the low byte of
-        // the 8-byte slot 8 + c*8) is zero, or that is past the table's
-        // length at (drop). Room for the whole box is reserved; the full-table
-        // loop stores every byte and advances the kept count only past a
-        // kept one.
-        s = s.write("__fern_buf_push_filtered:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq %rdx, %r14\n");                  // drop
-        s = s.write("    movq 8(%r12), %r13\n");               // n
-        s = s.write("    testq %r13, %r13\n");
-        s = s.write("    jz .Lbuffilt_done\n");
-        s = s.write("    movq 8(%rbx), %rax\n");
-        s = s.write("    addq %r13, %rax\n");
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbuffilt_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
-        s = s.write(".Lbuffilt_fits:\n");
-        s = s.write("    movq (%r12), %rsi\n");                // src data
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
-        s = s.write("    movq (%r14), %r9\n");                 // table length
-        s = s.write("    xorq %rcx, %rcx\n");                  // i
-        s = s.write("    xorq %r8, %r8\n");                    // kept
-        s = s.write("    cmpq $256, %r9\n");
-        s = s.write("    jb .Lbuffilt_short\n");
-        s = s.write(".Lbuffilt_full:\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n");
-        s = s.write("    movzbq 8(%r14,%rax,8), %r10\n");
-        s = s.write("    movb %al, (%rdx,%r8)\n");
-        s = s.write("    cmpq $1, %r10\n");
-        s = s.write("    adcq $0, %r8\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jb .Lbuffilt_full\n");
-        s = s.write("    jmp .Lbuffilt_len\n");
-        s = s.write(".Lbuffilt_short:\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n");
-        s = s.write("    cmpq %r9, %rax\n");
-        s = s.write("    jae .Lbuffilt_keep\n");
-        s = s.write("    cmpb $0, 8(%r14,%rax,8)\n");
-        s = s.write("    jne .Lbuffilt_next\n");
-        s = s.write(".Lbuffilt_keep:\n");
-        s = s.write("    movb %al, (%rdx,%r8)\n");
-        s = s.write("    incq %r8\n");
-        s = s.write(".Lbuffilt_next:\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jb .Lbuffilt_short\n");
-        s = s.write(".Lbuffilt_len:\n");
-        s = s.write("    addq %r8, 8(%rbx)\n");
-        s = s.write(".Lbuffilt_done:\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
-        // __fern_buf_push_expanded(%rdi = H, %rsi = box, %rdx = table): append
-        // each byte c of the box's data as the record at table[c*8], a length
-        // (above 7 counts as 7) and then the bytes, or c itself when its
-        // record is not wholly inside the table. Entry i of the table is the
-        // low byte of the 8-byte slot 8 + i*8, so byte c's record starts at
-        // table + 8 + c*64. A push of 256 bytes or more through a table of
-        // every record first packs the records into 2 KiB of frame, then
-        // copies each as one eight-byte store, as native's kernel does.
-        s = s.write("__fern_buf_push_expanded:\n");
-        s = s.write("    pushq %rbp\n");
-        s = s.write("    movq %rsp, %rbp\n");
-        s = s.write("    pushq %rbx\n");
-        s = s.write("    pushq %r12\n");
-        s = s.write("    pushq %r13\n");
-        s = s.write("    pushq %r14\n");
-        s = s.write("    movq %rdi, %rbx\n");
-        s = s.write("    movq %rsi, %r12\n");
-        s = s.write("    movq %rdx, %r14\n");                  // table
-        s = s.write("    movq 8(%r12), %r13\n");               // n
-        s = s.write("    testq %r13, %r13\n");
-        s = s.write("    jz .Lbufexp_done\n");
-        s = s.write("    leaq 8(,%r13,8), %rax\n");
-        s = s.write("    addq 8(%rbx), %rax\n");               // a whole record stored per byte
-        s = s.write("    movq 16(%rbx), %rcx\n");
-        s = s.write("    cmpq %rcx, %rax\n");
-        s = s.write("    jbe .Lbufexp_fits\n");
-        s = s.write("    movq %rbx, %rdi\n");
-        s = s.write("    movq %rax, %rsi\n");
-        s = s.write("    call __fern_buf_reserve\n");
-        s = s.write(".Lbufexp_fits:\n");
-        s = s.write("    movq (%r12), %rsi\n");                // src data
-        s = s.write("    movq (%rbx), %rdx\n");
-        s = s.write("    addq 8(%rbx), %rdx\n");               // dst = data + len
-        s = s.write("    movq (%r14), %r9\n");
-        s = s.write("    shrq $3, %r9\n");                     // whole records
-        s = s.write("    xorq %rcx, %rcx\n");
-        s = s.write("    cmpq $256, %r9\n    jb .Lbufexp_loop\n");
-        s = s.write("    cmpq $256, %r13\n    jb .Lbufexp_loop\n");
-        s = s.write("    subq $2048, %rsp\n");
-        s = s.write(".Lbufexp_pack:\n");
-        s = s.write("    movzbq 8(%r14,%rcx,8), %rax\n    movb %al, (%rsp,%rcx)\n");
-        s = s.write("    incq %rcx\n    cmpq $2048, %rcx\n    jb .Lbufexp_pack\n");
-        s = s.write("    xorq %rcx, %rcx\n    movq $7, %r10\n");
-        s = s.write(".Lbufexp_fast:\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n    movq (%rsp,%rax,8), %r8\n");
-        s = s.write("    movzbq %r8b, %r9\n    cmpq %r10, %r9\n    cmovaq %r10, %r9\n");
-        s = s.write("    shrq $8, %r8\n    movq %r8, (%rdx)\n    addq %r9, %rdx\n");
-        s = s.write("    incq %rcx\n    cmpq %r13, %rcx\n    jb .Lbufexp_fast\n");
-        s = s.write("    addq $2048, %rsp\n    jmp .Lbufexp_len\n");
-        s = s.write(".Lbufexp_loop:\n");
-        s = s.write("    cmpq %r13, %rcx\n");
-        s = s.write("    jae .Lbufexp_len\n");
-        s = s.write("    movzbq (%rsi,%rcx), %rax\n");
-        s = s.write("    cmpq %r9, %rax\n");
-        s = s.write("    jae .Lbufexp_keep\n");
-        s = s.write("    movq %rax, %r10\n");
-        s = s.write("    shlq $6, %r10\n");
-        s = s.write("    addq %r14, %r10\n");                  // the record's slots, less 8
-        s = s.write("    movzbq 8(%r10), %r11\n");             // its length
-        s = s.write("    cmpq $7, %r11\n");
-        s = s.write("    jbe .Lbufexp_room\n");
-        s = s.write("    movq $7, %r11\n");
-        s = s.write(".Lbufexp_room:\n");
-        s = s.write("    xorq %r8, %r8\n");
-        s = s.write(".Lbufexp_byte:\n");
-        s = s.write("    cmpq %r11, %r8\n");
-        s = s.write("    jae .Lbufexp_next\n");
-        s = s.write("    movzbq 16(%r10,%r8,8), %rax\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write("    incq %r8\n");
-        s = s.write("    jmp .Lbufexp_byte\n");
-        s = s.write(".Lbufexp_keep:\n");
-        s = s.write("    movb %al, (%rdx)\n");
-        s = s.write("    incq %rdx\n");
-        s = s.write(".Lbufexp_next:\n");
-        s = s.write("    incq %rcx\n");
-        s = s.write("    jmp .Lbufexp_loop\n");
-        s = s.write(".Lbufexp_len:\n");
-        s = s.write("    subq (%rbx), %rdx\n");                // the new length
-        s = s.write("    movq %rdx, 8(%rbx)\n");
-        s = s.write(".Lbufexp_done:\n");
-        s = s.write("    popq %r14\n");
-        s = s.write("    popq %r13\n");
-        s = s.write("    popq %r12\n");
-        s = s.write("    popq %rbx\n");
-        s = s.write("    popq %rbp\n");
-        s = s.write("    ret\n");
+        s = emit_buf_table_helpers(s, false);
+        if (s.has_need("buf_u8")) { s = emit_buf_table_helpers(s, true); }
         // __fern_buf_push_byte(%rdi = H, %rsi = x): append the low byte of x,
         // with no frame unless the buffer grows.
         s = s.write("__fern_buf_push_byte:\n");
@@ -4139,6 +4233,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    popq %rax\n");
         s = s.write("    jmp .Lapo_ret\n");
     }
+
+    if (s.has_need("arr_push_u8")) { s = emit_arr_push_u8(s); }
+    if (s.has_need("alloc_bytes")) { s = emit_alloc_bytes(s); }
 
     // Map runtime (transcribed from asm.fern) — only for map-using modules, so a
     // non-map heap program doesn't pull in map_set's __fern_str_eq dependency.
@@ -4924,6 +5021,13 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
     return u;
 }
 
+// set_entry_test tests entry `idx` of the set on %rdx for zero: the low byte
+// of the 8-byte slot 8 + idx*8, or byte 8 + idx of a packed u8[] (ir.packed).
+function set_entry_test(o: ir.Op, idx: string): string {
+    if (ir.is_packed(o)) { return "cmpb $0, 8(%rdx," + idx + ")"; }
+    return "cmpq $0, 8(%rdx," + idx + ",8)";
+}
+
 // emit_str_op emits one string operand-stack op (the bodies factored out of
 // emit_stack_op's dispatch — see ir.is_str_op_kind). Each pops its box
 // operand(s), calls the matching __fern_str_* runtime, and pushes the result;
@@ -5357,13 +5461,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         var k: i32 = 0;
         while (k < 4) {
             s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-            s = s.write("    cmpq $0, 8(%rdx,%r9,8)\n    jne " + hits[k] + "\n");
+            s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
             k = k + 1;
         }
         s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
         s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
         s = s.write("    movzbq (%r10), %r9\n");
-        s = s.write("    cmpq $0, 8(%rdx,%r9,8)\n    jne " + hits[0] + "\n");
+        s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
         s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
         s = s.write(hits[3] + ":\n    addq $1, %r10\n");
         s = s.write(hits[2] + ":\n    addq $1, %r10\n");
@@ -5373,7 +5477,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
         s = s.write("    movzbq (%rax,%rcx), %r10\n");
         s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
-        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    jne " + s_hit + "\n");
+        s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
         s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
         s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
         s = s.write(s_end + ":\n    pushq %r8\n");
@@ -5422,7 +5526,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movzbq (%rax,%rcx), %r10\n");
         s = s.write("    movq $1, %rdi\n");
         s = s.write("    cmpq %rsi, %r10\n    jae " + c_flag + "\n");
-        s = s.write("    cmpq $0, 8(%rdx,%r10,8)\n    sete %dil\n");
+        s = s.write("    " + set_entry_test(o, "%r10") + "\n    sete %dil\n");
         s = s.write(c_flag + ":\n");
         s = s.write("    cmpq %r9, %rdi\n    adcq $0, %r11\n    movq %rdi, %r9\n");
         s = s.write("    addq $1, %rcx\n    jmp " + c_loop + "\n");
@@ -5529,6 +5633,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // (#2649): the box on the stack IS param[0] (at +16 after the call), so call
         // directly, pop the arg, push the result i32[]. mark_str_bytes pulls in
         // heap for the helper's pre-sized box.
+        if (ir.is_packed(o)) {
+            s = s.write("    call __fn___fern_str_bytes_u8\n    addq $8, %rsp\n    pushq %rax\n");
+            return s.need("heap").need("str_bytes_u8");
+        }
         s = s.write("    call __fn___fern_str_bytes\n    addq $8, %rsp\n    pushq %rax\n");
         s = s.mark_str_bytes(); return s;
     }
@@ -6141,11 +6249,13 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var b: string = ssa_src(reg_of, ins.args[1], "%rcx");
     s = ssa_load(reg_of, ins.args[1], b, s);
     if (k == 41 && ins.str == "i32") { return s.write("    movl " + ssa_r32(b) + ", (" + a + ")\n"); }
+    if (k == 41 && ins.str == "u8") { return s.write("    movb " + ssa_r8(b) + ", " + util.i32_to_string(ins.imm) + "(" + a + ")\n"); }
     if (k == 41) { return s.write("    movq " + b + ", " + util.i32_to_string(ins.imm) + "(" + a + ")\n"); }
     if (k == 42) {
         s = s.need("heap");
         if (ins.imm != 1) { s = s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n"); }
-        s = s.write("    movq 8(" + a + "," + b + ",8), " + d + "\n");
+        if (ins.str == "u8") { s = s.write("    movzbl 8(" + a + "," + b + "), " + ssa_r32(d) + "\n"); }
+        else { s = s.write("    movq 8(" + a + "," + b + ",8), " + d + "\n"); }
         return ssa_store(reg_of, ins.result, d, s);
     }
     if (k == 44) {
@@ -6157,7 +6267,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     var c: string = ssa_src(reg_of, ins.args[2], "%rdx");
     s = ssa_load(reg_of, ins.args[2], c, s);
     s = s.need("heap");
-    return s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n    movq " + c + ", 8(" + a + "," + b + ",8)\n");
+    s = s.write("    cmpq (" + a + "), " + b + "\n    jae __fern_oob_abort\n");
+    if (ins.str == "u8") { return s.write("    movb " + ssa_r8(c) + ", 8(" + a + "," + b + ")\n"); }
+    return s.write("    movq " + c + ", 8(" + a + "," + b + ",8)\n");
 }
 
 // ssa_str_call is the stack machine's call of a Fern-compiled runtime helper
@@ -6200,6 +6312,7 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitSt
 
 function ssa_str_target(op: string): string {
     if (op == "str_from_bytes") { return "string_from_bytes"; }
+    if (op == "str_from_bytes_u8") { return "string_from_bytes_u8"; }
     if (op == "read_chunk") { return "reader_read_chunk"; }
     return op;
 }
@@ -6208,7 +6321,7 @@ function ssa_str_target(op: string): string {
 // the heap, "" for an op that is not one; the three that need no heap are
 // named by ssa_host_bare.
 function ssa_host_need(op: string): string {
-    var fs: string[] = ["read_file", "read_file_bytes", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
+    var fs: string[] = ["read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_exec", "remove_dir_all", "remove_file",
         "create_dir_all", "read_dir", "read_dir_all", "env", "stat", "lstat", "subprocess", "writer_write"];
     for x in fs { if (x == op) { return op; } }
     if (op == "read_line") { return "str_read_line"; }
@@ -6227,6 +6340,8 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
     if (op == "str_eq") { return s.mark_str_eq(); }
     if (op == "str_cmp") { return s.mark_str_cmp(); }
     if (op == "arr_slice") { return s.mark_arr_slice(); }
+    if (op == "arr_slice_u8") { return s.need("heap").need("arr_slice_u8"); }
+    if (op == "str_from_bytes_u8") { return s.need("heap").need("str_from_bytes_u8"); }
     if (op == "print_str") { return s.need("str_print"); }
     if (op == "eprint_str") { return s.need("eprint"); }
     s = s.need("heap");
@@ -6307,7 +6422,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
 // treats the op as a call, so the registers the arm writes hold nothing live;
 // its labels take the op's index under the SSA function's prefix.
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-    if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_helper(r.ops[ins.imm].kind_tag), s); }
+    if (asmcore.buf_helper(r.ops[ins.imm].kind_tag) != "") { return ssa_buf_call(ins, reg_of, asmcore.buf_table_helper(r.ops[ins.imm].kind_tag, ir.is_packed(r.ops[ins.imm])), s); }
     s = ssa_x0_forget(s);
     var outer: usize = s.capture;
     var h: usize = buf_new(256);
@@ -6463,6 +6578,7 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.write("    call " + sym + "\n");
     s = s.need("heap");
     s = s.need("buf");
+    if (util.str_has_suffix(sym, "_u8")) { s = s.need("buf_u8"); }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
 }
 
@@ -6498,6 +6614,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
     s = s.need("heap");
     var sym: string = "__fern_alloc";
     if (ins.str == "alloc_u8") { s = s.need("alloc_u8"); sym = "__fern_alloc_u8"; }
+    else if (ins.str == "alloc_u8_u8") { s = s.need("alloc_bytes"); sym = "__fern_alloc_bytes"; }
+    else if (ins.str == "arr_push_owned_u8") { s = s.mark_arr_push().need("arr_push_u8"); sym = "__fern_arr_push_owned_u8"; }
+    else if (ins.str == "arr_push_u8") { s = s.mark_arr_push().need("arr_push_u8"); sym = "__fern_arr_push_u8"; }
     else if (ins.str == "struct_copy") { sym = "__fn___fern_struct_copy"; }
     else if (ins.str == "raw_arr_box") { sym = "__fern_arr_box"; }
     else if (ins.str == "map_new") { s = s.need("maps"); sym = "__fern_map_new"; }
@@ -6516,7 +6635,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitS
         s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort\n");
         s = s.write("    addq $24, %rdi\n");
     }
-    if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) { s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result))); }
+    if (util.str_has_suffix(ins.str, "_u8") && util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) { s = s.write(arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result))); }
+    else if (util.str_has_prefix(ins.str, "arr_push") && ins.result >= 0 && !rc_free_debug_on()) { s = s.write(arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result))); }
     else { s = s.write("    call " + sym + "\n"); }
     if (ins.str == "raw_alloc") { s = s.write("    addq $24, %rax\n"); }
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
@@ -6529,6 +6649,17 @@ function arr_push_inline(sym: string, l: string): string {
         + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
         + "    btq $31, %rcx\n    jnc " + l + "s\n"
         + l + "o:\n    movq %rsi, 8(%rdi,%rdx,8)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+        + "    movq %rdi, %rax\n    jmp " + l + "e\n"
+        + l + "s:\n    call " + sym + "\n" + l + "e:\n";
+}
+
+// arr_push_inline_u8 is arr_push_inline for a packed byte array: its
+// capacity is in 8-byte words, so the room test is against cap * 8.
+function arr_push_inline_u8(sym: string, l: string): string {
+    return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + l + "s\n"
+        + "    movq -8(%rdi), %rcx\n    cmpq $1, %rcx\n    je " + l + "o\n"
+        + "    btq $31, %rcx\n    jnc " + l + "s\n"
+        + l + "o:\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
         + "    movq %rdi, %rax\n    jmp " + l + "e\n"
         + l + "s:\n    call " + sym + "\n" + l + "e:\n";
 }
@@ -7242,8 +7373,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // [n] IS param[0] (+16); call the Fern-compiled __fn___fern_random_bytes
         // (asmcore.rt_src_random_bytes, #2649) via the stack ABI. Mirrors the
         // str_from_bytes / str_split handlers.
-        s = s.write("    call __fn___fern_random_bytes\n    addq $8, %rsp\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("random_bytes");
+        var rb: string = "random_bytes" + asmcore.packed_suffix(ir.is_packed(o));
+        s = s.write("    call __fn___fern_" + rb + "\n    addq $8, %rsp\n    pushq %rax\n");
+        s = s.need("heap"); s = s.need(rb);
     } else if (o.kind_tag == 186) {  // random_i32
         // no operands; the Fern-compiled __fn___fern_random_i32() -> i32 in
         // %rax. Zero args, so the stack ABI needs no push and no cleanup.
@@ -7470,7 +7602,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // [args] with the last on top; pop and re-push reversed, as udp_send
         // does. recvfrom spreads the datagram into the caller's array from a
         // raw buffer, so it needs the heap.
-        var udp_name: string = ir.kind_name(o.kind_tag);
+        var udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
         var udp_argc: i32 = ir.op_pops(o);
         var udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
         var k: i32 = udp_argc - 1;
@@ -7484,8 +7616,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         // [fd, max] with max on top; the stack ABI wants param[0] (fd)
         // lowest, so pop and re-push swapped.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
-        s = s.write("    call __fn___fern_tcp_recv\n    addq $16, %rsp\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("tcp_recv");
+        var tr: string = "tcp_recv" + asmcore.packed_suffix(ir.is_packed(o));
+        s = s.write("    call __fn___fern_" + tr + "\n    addq $16, %rsp\n    pushq %rax\n");
+        s = s.need("heap"); s = s.need(tr);
     } else if (o.kind_tag == 116) {  // tcp_close
         // [fd] IS param[0] already, so the stack ABI needs no marshalling:
         // call, drop the arg slot, push the result. 0 / -errno.
@@ -7758,8 +7891,10 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         k = k - 1;
         s = s.write("    popq " + ssa_arg_regs()[k] + "\n");
     }
-    s = s.write("    call " + asmcore.buf_helper(o.kind_tag) + "\n    pushq %rax\n");
+    var sym: string = asmcore.buf_table_helper(o.kind_tag, ir.is_packed(o));
+    s = s.write("    call " + sym + "\n    pushq %rax\n");
     s = s.need("heap");
+    if (sym != asmcore.buf_helper(o.kind_tag)) { s = s.need("buf_u8"); }
     return s.need("buf");
 }
 
@@ -9576,6 +9711,31 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), all_structs, s);
     }
+    // The packed-byte twins (asmcore.packed_suffix), for a typed program's u8[].
+    if (s.has_need("str_from_bytes_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), all_structs, s);
+    }
+    if (s.has_need("str_bytes_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), all_structs, s);
+    }
+    if (s.has_need("arr_slice_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8("x86_64"), all_structs, s);
+    }
+    if (s.has_need("random_bytes_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_recv_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_u8("x86_64"), all_structs, s);
+    }
+    if (s.has_need("tcp_recv_into_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86_64"), all_structs, s);
+    }
     // random_bytes — now a Fern runtime function (#2649), lowered through the IR
     // pipeline: fill n scratch bytes from getrandom via the __syscall3 sub-floor,
     // spread them into a fresh u8[] box (__raw_arr_box). Heap-dependent (present
@@ -9711,11 +9871,12 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // list grew the last three entries.
     if (s.any_need([
         "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
-        "read_file", "read_file_bytes", "random_i32", "sleep_ms",
+        "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
         "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
         "proc_waitpid_nohang",
         "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
         "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+        "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
         "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
         "rlimit_nofile", "signal_ignore", "signal_default", "signal_mask",
         "signal_disposition", "access",
@@ -9789,7 +9950,8 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
         if (s.has_need("termios_set")) { fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86_64"); }
         if (s.has_need("access")) { fs_src = fs_src + " " + asmcore.rt_src_access("x86_64"); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file("x86_64"); }
-        if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64"); }
+        if (s.has_need("read_file_bytes")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", false); }
+        if (s.has_need("read_file_bytes_u8")) { fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86_64", true); }
         if (s.has_need("remove_file")) { fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86_64"); }
         if (s.has_need("create_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86_64"); }
         if (s.has_need("create_dir")) { fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86_64"); }
@@ -9927,7 +10089,11 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     }
     if (s.has_need("tcp_listen_with")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("tcp_listen_with_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86_64", true), all_structs, s);
     }
     if (s.has_need("tcp_socket_ctl")) {
         s = s.write("    .text\n");
@@ -9935,23 +10101,43 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     }
     if (s.has_need("udp_bind")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("udp_bind_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86_64", true), all_structs, s);
     }
     if (s.has_need("udp_connect")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("udp_connect_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86_64", true), all_structs, s);
     }
     if (s.has_need("udp_sendto")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("udp_sendto_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86_64", true), all_structs, s);
     }
     if (s.has_need("udp_recvfrom")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("udp_recvfrom_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86_64", true), all_structs, s);
     }
     if (s.has_need("tcp_connect_with")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64"), all_structs, s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", false), all_structs, s);
+    }
+    if (s.has_need("tcp_connect_with_u8")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86_64", true), all_structs, s);
     }
     if (s.has_need("unix_listen")) {
         s = s.write("    .text\n");

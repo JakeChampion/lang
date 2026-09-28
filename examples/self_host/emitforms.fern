@@ -18,6 +18,9 @@ import "./semlower";
 import "./util";
 import "./wasm_ir";
 import "./watbin";
+import "./wit_compose";
+import "./wit_decode";
+import "./wit_proxy_world";
 
 // substitution produces the semantic lowering for whichever emit path the
 // target selects, against the SAME normalisation that path gates on — the
@@ -42,6 +45,62 @@ function substitution_of(im: parser.Module): ircore.Sub {
     util.arr_push_cliff_report("sem:gated", 0);
     var sub: ircore.Sub = semlower.substitution(im, lowered.funcs, stab, ircore.wp_fn_sigs(lowered.funcs, stab));
     return ircore.Sub { ...sub, rt_lower: semlower.runtime_bodies };
+}
+
+// HTTP_ENTRY_STUB is the source a `wasm32-wasi-http` compile appends to the
+// entry file: the wasi:http/incoming-handler export, std/wasi_http's `serve`
+// bound to the program's `handle`. Appended rather than prepended so the
+// program's lines keep their numbers in diagnostics.
+pub const HTTP_ENTRY_STUB: string = "\nimport \"std/wasi_http\";\n@export(\"wasi:http/incoming-handler@0.2.0\", \"handle\")\nfunction __wasi_http_handle(request: i32, response_out: i32): void { wasi_http.serve(request, response_out, handle); }\n";
+
+// entry_source is the entry file's text as a compile for `target` reads it:
+// the file, plus the handler export for wasm32-wasi-http.
+pub function entry_source(src: string, target: string): string {
+    if (target != "wasm32-wasi-http") { return src; }
+    return src + HTTP_ENTRY_STUB;
+}
+
+// http_entry_missing is the diagnostic for a wasm32-wasi-http entry that
+// declares no `handle` for the stub to bind, or "" when it does (or the
+// target is another). Checked on the parsed entry so the message names the
+// program, not a line past its end.
+pub function http_entry_missing(entry: parser.Module, target: string): string {
+    if (target != "wasm32-wasi-http") { return ""; }
+    var i: i32 = 0;
+    while (i < entry.funcs.len()) {
+        if (entry.funcs[i].name == "handle" && entry.funcs[i].receiver_type.len() == 0) { return ""; }
+        i = i + 1;
+    }
+    return "fern: -target wasm32-wasi-http: the program declares no `function handle(req: HttpRequest, plat: Platform): HttpResponse` for the host to call\n";
+}
+
+// http_refused is what a caller prints when wasm_http_component's composer
+// refused the core: an import the proxy world does not grant.
+pub function http_refused(why: string): string {
+    return "fern: -target wasm32-wasi-http: the proxy world cannot take this handler: " + why + "\n";
+}
+
+// wasm_http_core is the handler's reactor core in text form: the component
+// core, with the host runtime (stdio, clocks, entropy) only when the program
+// reaches the host — a handler that only answers imports nothing beyond
+// wasi:http/types and wasi:io/streams, which is all the playground's browser
+// host implements.
+pub function wasm_http_core(full: parser.Module, sub: ircore.Sub): string {
+    return wasm_ir.emit_module_mode_or_error_sub(full, true, wasm_ir.component_needs_host(full), sub);
+}
+
+// wasm_http_component is the wasi:http/incoming-handler component for `full`
+// (a program carrying HTTP_ENTRY_STUB): the component-mode core, its WASI
+// through preview-2 imports, composed against the proxy world by the
+// world-driven composer. Empty bytes with an empty `refused` is the
+// emitter's own refusal, already reported; a non-empty `refused` names the
+// import the world does not declare.
+pub function wasm_http_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
+    var wat: string = wasm_http_core(full, sub);
+    if (wat.len() == 0) { return wit_compose.Composed { bytes: [], refused: "" }; }
+    var core: i32[] = watbin.wat_to_binary(wat);
+    var tbody: i32[] = wit_decode.wit_section_body(watbin.blob_to_bytes(wit_proxy_world.proxy_world_payload()), 7);
+    return wit_compose.compose_http(tbody, core);
 }
 
 // COMPONENT_REFUSED is what a caller prints when wasm_component returns no

@@ -4,7 +4,8 @@
   "description": "Scripted browser regressions for the Fern playground.",
   "private": true,
   "scripts": {
-    "test": "playwright test",
+    "build": "../../build.sh",
+    "test": "npm run build && playwright test",
     "install-browsers": "playwright install --with-deps chromium"
   },
   "devDependencies": {

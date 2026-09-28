@@ -52,28 +52,41 @@ func TestSelfHostPlaygroundEmitsWhatTheCLIEmits(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	handlerPath := filepath.Join(t.TempDir(), "handler.fern")
+	if err := os.WriteFile(handlerPath, []byte(wasiHttpRouterSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The wasi:http forms take a handler program: the CLI appends the
+	// incoming-handler export to it (emitforms.HTTP_ENTRY_STUB), and the
+	// driver has to append the same one.
 	cases := []struct {
 		name string
+		src  string
+		path string
 		cli  []string
 		drv  []string
 	}{
-		{"x86-64-linux", []string{"-target", "x86-64-linux", "-emit", "asm"}, []string{"-target", "x86-64-linux"}},
-		{"arm64-linux", []string{"-target", "arm64-linux", "-emit", "asm"}, []string{"-target", "arm64-linux"}},
-		{"arm64-darwin", []string{"-target", "arm64-darwin", "-emit", "asm"}, []string{"-target", "arm64-darwin", "-emit", "asm"}},
-		{"wasm-wat", []string{"-target", "wasm32-wasi", "-emit", "asm"}, nil},
-		{"wasm-core-module", []string{"-target", "wasm32-wasi", "-emit", "core-module"}, []string{"-emit", "core-module"}},
-		{"wasm-component", []string{"-target", "wasm32-wasi"}, []string{"-target", "wasm32-wasi", "-emit", "component"}},
+		{"x86-64-linux", playgroundFormsProgram, srcPath, []string{"-target", "x86-64-linux", "-emit", "asm"}, []string{"-target", "x86-64-linux"}},
+		{"arm64-linux", playgroundFormsProgram, srcPath, []string{"-target", "arm64-linux", "-emit", "asm"}, []string{"-target", "arm64-linux"}},
+		{"arm64-darwin", playgroundFormsProgram, srcPath, []string{"-target", "arm64-darwin", "-emit", "asm"}, []string{"-target", "arm64-darwin", "-emit", "asm"}},
+		{"wasm-wat", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi", "-emit", "asm"}, nil},
+		{"wasm-core-module", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi", "-emit", "core-module"}, []string{"-emit", "core-module"}},
+		{"wasm-component", playgroundFormsProgram, srcPath, []string{"-target", "wasm32-wasi"}, []string{"-target", "wasm32-wasi", "-emit", "component"}},
+		{"http-wat", wasiHttpRouterSrc, handlerPath, []string{"-target", "wasm32-wasi-http", "-emit", "asm"}, []string{"-target", "wasm32-wasi-http"}},
+		{"http-core-module", wasiHttpRouterSrc, handlerPath, []string{"-target", "wasm32-wasi-http", "-emit", "core-module"}, []string{"-target", "wasm32-wasi-http", "-emit", "core-module"}},
+		{"http-component", wasiHttpRouterSrc, handlerPath, []string{"-target", "wasm32-wasi-http"}, []string{"-target", "wasm32-wasi-http", "-emit", "component"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(cli, append(tc.cli, srcPath, stdlib)...)
+			cmd := exec.Command(cli, append(tc.cli, tc.path, stdlib)...)
 			var want, cliErr bytes.Buffer
 			cmd.Stdout = &want
 			cmd.Stderr = &cliErr
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("fern %s: %v\n%s", strings.Join(tc.cli, " "), err, cliErr.String())
 			}
-			got, stderr, code := runPlayground(t, drv, t.TempDir(), playgroundFormsProgram, tc.drv...)
+			got, stderr, code := runPlayground(t, drv, t.TempDir(), tc.src, tc.drv...)
 			if code != 0 {
 				t.Fatalf("playground_run %s exited %d\n%s", strings.Join(tc.drv, " "), code, stderr)
 			}

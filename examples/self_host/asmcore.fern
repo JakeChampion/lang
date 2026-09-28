@@ -312,6 +312,12 @@ pub function buf_helper(kind: i32): string {
     return "";
 }
 
+// The helper for a buffer op over a packed u8[] table (packed_suffix).
+pub function buf_table_helper(kind: i32, packed: boolean): string {
+    if (packed && (kind == 325 || kind == 326 || kind == 328)) { return buf_helper(kind) + "_u8"; }
+    return buf_helper(kind);
+}
+
 pub function buf_arity(kind: i32): i32 {
     if (kind == 293) { return 4; }
     if (kind == 325 || kind == 326 || kind == 328) { return 3; }
@@ -1781,9 +1787,9 @@ pub function rt_src_tcp_connect(t: string): string {
 // a failure); control op 5 reports how it ended. rt_src_tcp_connect stays
 // its own body: a runtime helper here is lowered on its own and cannot
 // name another.
-pub function rt_src_tcp_connect_with(t: string): string {
+pub function rt_src_tcp_connect_with(t: string, packed: boolean): string {
     var fc: string = sysno(t, "fcntl");
-    return "function __fern_tcp_connect_with(addr: i32[], port: i32, nonblocking: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var rc: i32 = 0; if (nonblocking) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; rc = flags; if (flags >= 0) { rc = __syscall3(" + fc + ", fd as i64, 4, (flags | " + sockopt(t, "o_nonblock") + ") as i64) as i32; } } if (rc >= 0) { var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " rc = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; if (nonblocking && rc == 0 - " + sockopt(t, "einprogress") + ") { rc = 0; } } if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
+    return "function __fern_tcp_connect_with" + packed_suffix(packed) + "(addr: i32[], port: i32, nonblocking: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var rc: i32 = 0; if (nonblocking) { var flags: i32 = __syscall3(" + fc + ", fd as i64, 3, 0) as i32; rc = flags; if (flags >= 0) { rc = __syscall3(" + fc + ", fd as i64, 4, (flags | " + sockopt(t, "o_nonblock") + ") as i64) as i32; } } if (rc >= 0) { var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " rc = __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; if (nonblocking && rc == 0 - " + sockopt(t, "einprogress") + ") { rc = 0; } } if (rc < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return rc; } return fd; }";
 }
 
 // rt_src_udp_send backs `udp_send(host, port, data)` (#2649, #6917) → the bytes
@@ -1834,8 +1840,8 @@ function sockopt(t: string, name: string): string {
 }
 
 // The socket primitives that take an address take it as its network-order
-// bytes, a u8[] of 4 (AF_INET) or 16 (AF_INET6) whose slots hold one byte
-// each in the self-host's array layout. af_of_addr answers the family in
+// bytes, a u8[] of 4 (AF_INET) or 16 (AF_INET6): one byte per 8-byte slot, or
+// packed a byte an element for a typed program's `_u8` helpers (packed_suffix). af_of_addr answers the family in
 // `af` from the length of `addr`, returning -EAFNOSUPPORT for another
 // length; sockaddr_of fills the 28-byte block named `buf` with the
 // sockaddr_in or sockaddr_in6 for addr:port and leaves its byte length in
@@ -1844,11 +1850,13 @@ function af_of_addr(t: string): string {
     return "var af: i32 = 2; if (addr.len() == 16) { af = " + sockopt(t, "af_inet6") + "; } else if (addr.len() != 4) { return 0 - " + sockopt(t, "eafnosupport") + "; }";
 }
 
-function sockaddr_of(t: string, buf: string): string {
+function sockaddr_of(t: string, buf: string, packed: boolean): string {
+    var byte: string = "__raw_load_ptr(ap, k + 1) as i32";
+    if (packed) { byte = "__raw_load8(ap, 8 + k)"; }
     var head: string = "__raw_store8(" + buf + ", 0, af); __raw_store8(" + buf + ", 1, 0);";
     if (t == "arm64-darwin") { head = "__raw_store8(" + buf + ", 0, salen); __raw_store8(" + buf + ", 1, af);"; }
     return "var salen: i32 = 16; var at: i32 = 4; if (addr.len() == 16) { salen = 28; at = 8; } var z: i32 = 0; while (z < 28) { __raw_store8(" + buf + ", z, 0); z = z + 1; } " + head
-        + " __raw_store8(" + buf + ", 2, (port >> 8) & 255); __raw_store8(" + buf + ", 3, port & 255); var ap: usize = __raw_arr_ptr(addr); var k: i32 = 0; while (k < addr.len()) { __raw_store8(" + buf + ", at + k, __raw_load_ptr(ap, k + 1) as i32); k = k + 1; }";
+        + " __raw_store8(" + buf + ", 2, (port >> 8) & 255); __raw_store8(" + buf + ", 3, port & 255); var ap: usize = __raw_arr_ptr(addr); var k: i32 = 0; while (k < addr.len()) { __raw_store8(" + buf + ", at + k, " + byte + "); k = k + 1; }";
 }
 
 // rt_src_tcp_listen_with backs `tcp_listen_with(addr, port, backlog,
@@ -1856,8 +1864,8 @@ function sockaddr_of(t: string, buf: string): string {
 // accept queue chosen by the caller and SO_REUSEPORT set before the bind
 // when asked. The option value sits in the same scratch block as the
 // sockaddr, after it.
-pub function rt_src_tcp_listen_with(t: string): string {
-    return "function __fern_tcp_listen_with(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(32); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa") + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+pub function rt_src_tcp_listen_with(t: string, packed: boolean): string {
+    return "function __fern_tcp_listen_with" + packed_suffix(packed) + "(addr: i32[], port: i32, backlog: i32, reuse_port: boolean): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 1, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(32); var r: i32 = 0; if (reuse_port) { __raw_store8(sa, 28, 1); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); r = __syscall5(" + sysno(t, "setsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_reuseport") + ", __raw_addr(sa, 28) as i64, 4) as i32; } " + sockaddr_of(t, "sa", packed) + " if (r >= 0) { r = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; } if (r >= 0) { r = __syscall3(" + sysno(t, "listen") + ", fd as i64, backlog as i64, 0) as i32; } if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
 // rt_src_tcp_socket_ctl backs `tcp_socket_ctl(fd, op, arg)` (#9853): op 1
@@ -1880,29 +1888,42 @@ pub function rt_src_udp_send(t: string): string {
 // internal/fernrt/runtime.fern: a socket bound to addr:port, connect(2)
 // fixing a peer, one sendto(2) to an address or (an empty one) the peer,
 // and one recvfrom(2) into the caller's u8[].
-pub function rt_src_udp_bind(t: string): string {
-    return "function __fern_udp_bind(addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 2, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " var r: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
+pub function rt_src_udp_bind(t: string, packed: boolean): string {
+    return "function __fern_udp_bind" + packed_suffix(packed) + "(addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var fd: i32 = __syscall3(" + sysno(t, "socket") + ", af as i64, 2, 0) as i32; if (fd < 0) { return fd; } var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " var r: i32 = __syscall3(" + sysno(t, "bind") + ", fd as i64, sa as i64, salen as i64) as i32; if (r < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return r; } return fd; }";
 }
 
-pub function rt_src_udp_connect(t: string): string {
-    return "function __fern_udp_connect(fd: i32, addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " return __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; }";
+pub function rt_src_udp_connect(t: string, packed: boolean): string {
+    return "function __fern_udp_connect" + packed_suffix(packed) + "(fd: i32, addr: i32[], port: i32): i32 { " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " return __syscall3(" + sysno(t, "connect") + ", fd as i64, sa as i64, salen as i64) as i32; }";
 }
 
-pub function rt_src_udp_sendto(t: string): string {
+pub function rt_src_udp_sendto(t: string, packed: boolean): string {
     var flags: string = "16384";
     if (t == "arm64-darwin") { flags = "524288"; }
-    return "function __fern_udp_sendto(fd: i32, addr: i32[], port: i32, data: string): i32 { if (addr.len() == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa") + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", sa as i64, salen as i64) as i32; }";
+    return "function __fern_udp_sendto" + packed_suffix(packed) + "(fd: i32, addr: i32[], port: i32, data: string): i32 { if (addr.len() == 0) { return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", 0, 0) as i32; } " + af_of_addr(t) + " var sa: usize = __raw_scratch(28); " + sockaddr_of(t, "sa", packed) + " return __syscall6(" + sysno(t, "sendto") + ", fd as i64, __raw_data(data) as i64, data.len() as i64, " + flags + ", sa as i64, salen as i64) as i32; }";
 }
 
-// The datagram lands in a raw buffer and is spread one byte per slot into
-// the caller's array, the way rt_src_tcp_recv fills a fresh one; the
+// The datagram lands in a raw buffer and is spread into the caller's array
+// (recv_spread), the way rt_src_tcp_recv fills a fresh one; the
 // buffer is adopted by a string only after its last read (#10486). The
 // sender goes into `from` when it has nineteen slots: the family (4 or
 // 6), the address bytes from slot 1, the port at 17 and 18.
-pub function rt_src_udp_recvfrom(t: string): string {
+pub function rt_src_udp_recvfrom(t: string, packed: boolean): string {
     var family: string = "var fam: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8);";
     if (t == "arm64-darwin") { family = "var fam: i32 = __raw_load8(sa, 1);"; }
-    return "function __fern_udp_recvfrom(fd: i32, buf: i32[], from: i32[]): i32 { var max: i32 = buf.len(); var p: usize = __raw_alloc(max + 1); var sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); var n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, __raw_addr(sa, 28) as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } if (n >= 0 && from.len() >= 19) { var f: usize = __raw_arr_ptr(from); var z: i32 = 1; while (z <= 19) { __raw_store_ptr(f, z, 0 as usize); z = z + 1; } " + family + " var n_addr: i32 = 0; var at: i32 = 4; if (fam == 2) { __raw_store_ptr(f, 1, 4 as usize); n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { __raw_store_ptr(f, 1, 6 as usize); n_addr = 16; at = 8; } var k: i32 = 0; while (k < n_addr) { __raw_store_ptr(f, 2 + k, __raw_load8(sa, at + k) as usize); k = k + 1; } __raw_store_ptr(f, 18, __raw_load8(sa, 2) as usize); __raw_store_ptr(f, 19, __raw_load8(sa, 3) as usize); } var p_own: string = __raw_string(p, max + 1); return n; }";
+    return "function __fern_udp_recvfrom" + packed_suffix(packed) + "(fd: i32, buf: i32[], from: i32[]): i32 { var max: i32 = buf.len(); var p: usize = __raw_alloc(max + 1); var sa: usize = __raw_scratch(32); __raw_store8(sa, 28, 28); __raw_store8(sa, 29, 0); __raw_store8(sa, 30, 0); __raw_store8(sa, 31, 0); var n: i32 = __syscall6(" + sysno(t, "recvfrom") + ", fd as i64, p as i64, max as i64, 0, sa as i64, __raw_addr(sa, 28) as i64) as i32; " + recv_spread(packed) + " if (n >= 0 && from.len() >= 19) { var f: usize = __raw_arr_ptr(from); var z: i32 = 1; while (z <= 19) { " + elem_store(packed, "f", "z - 1", "0") + " z = z + 1; } " + family + " var n_addr: i32 = 0; var at: i32 = 4; if (fam == 2) { " + elem_store(packed, "f", "0", "4") + " n_addr = 4; } else if (fam == " + sockopt(t, "af_inet6") + ") { " + elem_store(packed, "f", "0", "6") + " n_addr = 16; at = 8; } var k: i32 = 0; while (k < n_addr) { " + elem_store(packed, "f", "1 + k", "__raw_load8(sa, at + k)") + " k = k + 1; } " + elem_store(packed, "f", "17", "__raw_load8(sa, 2)") + " " + elem_store(packed, "f", "18", "__raw_load8(sa, 3)") + " } var p_own: string = __raw_string(p, max + 1); return n; }";
+}
+
+// recv_spread moves the `n` received bytes at `p` into the caller's `buf`;
+// elem_store stores byte `v` at element `i` of the array whose data pointer is
+// `arr`. A packed array takes the bytes in place, a slot array one per word.
+function recv_spread(packed: boolean): string {
+    if (packed) { return "if (n > 0) { __memcpy(__raw_addr(__raw_arr_ptr(buf), 8), p, n); }"; }
+    return "var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; }";
+}
+
+function elem_store(packed: boolean, arr: string, i: string, v: string): string {
+    if (packed) { return "__raw_store8(" + arr + ", 8 + (" + i + "), " + v + ");"; }
+    return "__raw_store_ptr(" + arr + ", (" + i + ") + 1, (" + v + ") as usize);";
 }
 
 // The reactor floor (#9853): a readiness set that outlives one wait, epoll
@@ -2016,7 +2037,7 @@ pub function rt_src_reactor_wait(t: string): string {
     return "function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 { var cap: i32 = events.len() / 2; if (cap <= 0) { return 0 - 22; } " + wait + " }";
 }
 
-// One read into the caller's array, spread one byte per slot like
+// One read into the caller's slot array, spread one byte per slot like
 // rt_src_tcp_recv; the raw buffer is adopted after its last read (#10486).
 pub function rt_src_tcp_recv_into(t: string): string {
     return "function __fern_tcp_recv_into(fd: i32, buf: i32[]): i32 { var max: i32 = buf.len(); if (max <= 0) { return 0; } var p: usize = __raw_alloc(max); var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, p as i64, max as i64) as i32; var b: usize = __raw_arr_ptr(buf); var i: i32 = 0; while (i < n) { __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize); i = i + 1; } var p_own: string = __raw_string(p, max); return n; }";
@@ -2803,11 +2824,13 @@ pub function rt_src_read_file(t: string): string {
 // rt_src_read_file_bytes backs `read_file_bytes(path)` (read_file's raw sibling)
 // → Result[u8[], IoError]. Same syscall pipeline, grow-to-EOF read loop and
 // error classification as rt_src_read_file, but the success path spreads the raw
-// buffer into a fresh array box (__raw_arr_box, one byte per slot — the
-// self-host u8[] model, like random_bytes). The box is sized to the bytes
+// buffer into a fresh array box (__raw_arr_box, one byte per slot, or packed
+// for the `_u8` twin, like random_bytes). The box is sized to the bytes
 // actually read, not to fstat's hint.
-pub function rt_src_read_file_bytes(t: string): string {
-    return "function __fern_read_file_bytes(path: string): Result[i32[], IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var st: usize = __raw_scratch(160); var src: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, st as i64, 0) as i32; if (src < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - src, __fern_path_copy(pathz_own, plen))); } var size: i32 = __load_i64(__raw_addr(st, " + statoff(t, "size") + ")) as i32; var cap: i32 = size + 1; var buf: usize = __raw_alloc(cap); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= cap) { var nc: i32 = cap * 2; if (nc < 4096) { nc = 4096; } var nb: usize = __raw_alloc(nc); var k: i32 = 0; while (k < got) { __raw_store8(nb, k, __raw_load8(buf, k)); k = k + 1; } var old_own: string = __raw_string(buf, cap); buf = nb; cap = nc; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, got) as i64, (cap - got) as i64) as i32; if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (bad < 0) { var buf_own0: string = __raw_string(buf, cap); return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen))); } var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(buf, j) as usize); j = j + 1; } var buf_own: string = __raw_string(buf, cap); return Ok(__raw_array(b)); }";
+pub function rt_src_read_file_bytes(t: string, packed: boolean): string {
+    var spread: string = "var b: usize = __raw_arr_box(got); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(buf, j) as usize); j = j + 1; }";
+    if (packed) { spread = packed_box("b", "got") + " __memcpy(__raw_addr(b, 8), buf, got);"; }
+    return "function __fern_read_file_bytes" + packed_suffix(packed) + "(path: string): Result[i32[], IoError] { var plen: i32 = path.len(); var pathz: usize = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, 0) as i32; var pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } var st: usize = __raw_scratch(160); var src: i32 = __syscall3(" + sysno(t, "fstat") + ", fd as i64, st as i64, 0) as i32; if (src < 0) { __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Err(__fern_io_error(0 - src, __fern_path_copy(pathz_own, plen))); } var size: i32 = __load_i64(__raw_addr(st, " + statoff(t, "size") + ")) as i32; var cap: i32 = size + 1; var buf: usize = __raw_alloc(cap); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= cap) { var nc: i32 = cap * 2; if (nc < 4096) { nc = 4096; } var nb: usize = __raw_alloc(nc); var k: i32 = 0; while (k < got) { __raw_store8(nb, k, __raw_load8(buf, k)); k = k + 1; } var old_own: string = __raw_string(buf, cap); buf = nb; cap = nc; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, got) as i64, (cap - got) as i64) as i32; if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (bad < 0) { var buf_own0: string = __raw_string(buf, cap); return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen))); } " + spread + " var buf_own: string = __raw_string(buf, cap); return Ok(__raw_array(b)); }";
 }
 
 // rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
@@ -3403,8 +3426,8 @@ pub function (s: EmitState) mark_str_from_bytes(): EmitState {
 
 // rt_src_string_from_bytes backs `string_from_bytes_unchecked(arr)` (#2649) — pack each
 // array element's low byte into a fresh string, via the raw-memory intrinsic
-// floor. The parameter is typed i32[] (all self-host arrays use 8-byte element
-// slots, so a u8[] argument round-trips identically): a[i] reads the slot,
+// floor. The parameter is typed i32[] (a slot u8[] gives each byte an 8-byte
+// element slot, so it round-trips identically; a packed one takes the `_u8` twin): a[i] reads the slot,
 // __raw_store8 keeps its low byte. Heap is its sole dep. Empty array → "".
 pub function rt_src_string_from_bytes(): string {
     return "function __fern_string_from_bytes(a: i32[]): string { var n: i32 = a.len(); var p: usize = __raw_alloc(n); var i: i32 = 0; while (i < n) { __raw_store8(p, i, a[i]); i = i + 1; } return __raw_string(p, n); }";
@@ -3589,6 +3612,48 @@ pub function rt_src_arr_str_join(): string {
 // Bundled rather than need-gated: split is its only caller.
 pub function rt_src_str_split(): string {
     return "function __fern_utf8_step(s: string, i: i32, n: i32): i32 { var b0: i32 = s[i] as i32; var want: i32 = 0; if (b0 < 128) { want = 1; } if (b0 >= 194 && b0 < 224) { want = 2; } if (b0 >= 224 && b0 < 240) { want = 3; } if (b0 >= 240 && b0 < 245) { want = 4; } if (want <= 1) { return 1; } if (i + 1 >= n) { return 1; } var lo: i32 = 128; if (b0 == 224) { lo = 160; } if (b0 == 240) { lo = 144; } var hi: i32 = 191; if (b0 == 237) { hi = 159; } if (b0 == 244) { hi = 143; } var c1: i32 = s[i + 1] as i32; if (c1 < lo) { return 1; } if (c1 > hi) { return 1; } var k2: i32 = 2; while (k2 < want) { if (i + k2 >= n) { return k2; } var ck: i32 = s[i + k2] as i32; if (ck < 128) { return k2; } if (ck > 191) { return k2; } k2 = k2 + 1; } return want; } function __fern_str_split(s: string, sep: string): string[] { var lenS: i32 = s.len(); var lenSep: i32 = sep.len(); var out: string[] = []; if (lenSep == 0) { var k: i32 = 0; while (k < lenS) { var w: i32 = __fern_utf8_step(s, k, lenS); out = out.append(slice_unchecked(s, k, k + w) + \"\"); k = k + w; } return out; } var start: i32 = 0; var i: i32 = 0; while (i + lenSep <= lenS) { var j: i32 = 0; var m: i32 = 1; while (j < lenSep) { if (s[i + j] != sep[j]) { m = 0; j = lenSep; } else { j = j + 1; } } if (m == 1) { out = out.append(slice_unchecked(s, start, i) + \"\"); i = i + lenSep; start = i; } else { i = i + 1; } } out = out.append(slice_unchecked(s, start, lenS) + \"\"); return out; }";
+}
+
+// A u8[] the typed lowering builds is packed a byte an element (ir.packed):
+// its box holds the byte count at slot 0, the bytes from offset 8, and a
+// capacity in 8-byte words, which is what the release sizes the block by.
+// Each helper that makes or reads one has a `_u8` twin for that layout,
+// written on the raw floor so it is the same whichever lowering takes it.
+pub function packed_suffix(packed: boolean): string {
+    if (packed) { return "_u8"; }
+    return "";
+}
+
+// packed_box is the source of a packed byte array of `n` bytes, uninitialised
+// past its length word, bound to `name`.
+function packed_box(name: string, n: string): string {
+    return "var " + name + ": usize = __raw_arr_box((" + n + " + 7) / 8); __store_i64(" + name + ", (" + n + ") as i64);";
+}
+
+pub function rt_src_str_bytes_u8(): string {
+    return "function __fern_str_bytes_u8(s: string): i32[] { var n: i32 = s.len(); " + packed_box("b", "n") + " __memcpy(__raw_addr(b, 8), __raw_data(s), n); return __raw_array(b); }";
+}
+
+pub function rt_src_string_from_bytes_u8(): string {
+    return "function __fern_string_from_bytes_u8(a: i32[]): string { var n: i32 = a.len(); var p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(__raw_arr_ptr(a), 8), n); return __raw_string(p, n); }";
+}
+
+// A packed slice copies the byte range in one move: its byte count is the
+// element count, so the chunking the word slice needs never applies.
+pub function rt_src_arr_slice_u8(t: string): string {
+    return "function __fern_arr_slice_u8(a: i32[], start: i32, end: i32): i32[] { var n: i32 = a.len(); var bad: i32 = 0; if (end < 0) { bad = 1; } if (end > n) { bad = 1; } if (start < 0) { bad = 1; } if (start > end) { bad = 1; } if (bad == 1) { bad = __syscall3(" + sysno(t, "exit") + ", 134, 0, 0) as i32; } var m: i32 = end - start; " + packed_box("p", "m") + " __memcpy(__raw_addr(p, 8), __raw_addr(__raw_arr_ptr(a), 8 + start), m); return __raw_array(p); }";
+}
+
+pub function rt_src_random_bytes_u8(t: string): string {
+    return "function __fern_random_bytes_u8(n: i32): i32[] { if (n < 0) { n = 0; } " + packed_box("b", "n") + " var off: i32 = 0; while (off < n) { var want: i32 = n - off; if (want > 256) { want = 256; } var r: i32 = __syscall3(" + sysno(t, "getrandom") + ", __raw_addr(b, 8 + off) as i64, want as i64, 0) as i32; if (r < 0) { off = n; } else { off = off + want; } } return __raw_array(b); }";
+}
+
+pub function rt_src_tcp_recv_u8(t: string): string {
+    return "function __fern_tcp_recv_u8(fd: i32, max: i32): i32[] { if (max < 0) { max = 0; } " + packed_box("b", "max") + " var n: i32 = 0; if (max > 0) { n = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(b, 8) as i64, max as i64) as i32; } if (n < 0) { n = 0; } __store_i64(b, n as i64); return __raw_array(b); }";
+}
+
+pub function rt_src_tcp_recv_into_u8(t: string): string {
+    return "function __fern_tcp_recv_into_u8(fd: i32, buf: i32[]): i32 { var max: i32 = buf.len(); if (max <= 0) { return 0; } return __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(__raw_arr_ptr(buf), 8) as i64, max as i64) as i32; }";
 }
 
 // rt_src_str_bytes backs `s.bytes()` / `s.as_bytes()` (#2649). Returns an i32[]
@@ -5615,7 +5680,8 @@ pub function const_agg_pack(s: EmitState, packed: string): ConstAggPack {
         return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) };
     }
     var shp: ShapeRefOut = ShapeRefOut { state: s, label: "0" };
-    if (!ir.const_struct_is_array(packed)) { shp = shape_ref(s, ir.const_struct_type(packed)); }
+    if (ir.const_struct_is_bytes(packed)) { shp = ShapeRefOut { state: s, label: "8" }; }
+    else if (!ir.const_struct_is_array(packed)) { shp = shape_ref(s, ir.const_struct_type(packed)); }
     var text: string = shp.label + "|";
     var vals: string[] = ir.const_struct_values(packed);
     var i: i32 = 0;
@@ -5686,6 +5752,8 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "chr" || name == "args" || name == "read_file" || name == "read_file_bytes"
         || name == "random_bytes"
         || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
+        || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
+        || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
         || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
         || name == "str_replace"
@@ -5723,6 +5791,17 @@ pub function runtime_need_deps(name: string): string[] {
         // path) and __fern_map_set calls __fern_arr_push.
         var d: string[] = ["str_eq", "arr_push", "heap"];
         return d;
+    }
+    if (name == "arr_push_u8") {
+        // The packed pushes grow through __fern_arr_box and count the shared
+        // copy in the counters the word push's bundle defines.
+        var du8: string[] = ["arr_push", "heap"];
+        return du8;
+    }
+    if (name == "buf_u8") {
+        // The packed-table pushes append into the buffer bundle's handle.
+        var dbu8: string[] = ["buf", "heap"];
+        return dbu8;
     }
     if (name == "arr_push_owned") {
         // The sole-owner reclaim-on-grow append shares __fern_arr_push's grow path.
@@ -7119,10 +7198,12 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 // never refcounted, and never reused in place. The cap word is still written so
 // nothing that reads a block's size off data-16 sees garbage, even though the
 // sentinel means no free path can reach it.
-// A packed block's kind: 1 an array of scalars, which holds no address; 2 a
-// record, whose first word is its shape pointer; 3 a function value, a
-// one-element array whose element is the body's address.
+// A packed block's kind: 1 an array of scalars, which holds no address (a
+// packed byte array among them, marked `8|`); 2 a record, whose first word is
+// its shape pointer; 3 a function value, a one-element array whose element is
+// the body's address.
 pub function const_agg_kind(packed: string): i32 {
+    if (packed.len() >= 2 && packed[0] == b'8' && packed[1] == b'|') { return 1; }
     if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') { return 1; }
     if (packed.len() > 2 && packed[0] == b'1' && packed[1] == b'|') { return 3; }
     return 2;
@@ -7154,6 +7235,11 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
         while (bar < e.len() && e[bar] != 124) { bar = bar + 1; }   // 124 = '|'
         var shp: string = slice_unchecked(e, 0, bar) + "";
         var vals: string[] = ir.const_struct_values(e);
+        if (shp == "8") {
+            st = emit_const_bytes_block(st, i, vals);
+            i = i + 1;
+            continue;
+        }
         // An array's word 0 is its length, and its capacity is that length, or
         // a push would write into it.
         var cap: i32 = vals.len() + 1;
@@ -7173,6 +7259,26 @@ pub function emit_const_agg_blocks(s: EmitState, first: i32, only: i32): EmitSta
         i = i + 1;
     }
     return st;
+}
+
+// A packed byte constant: its length word, then its bytes padded to whole
+// words, with the capacity in those words as a packed box's is.
+function emit_const_bytes_block(st: EmitState, i: i32, vals: string[]): EmitState {
+    st = st.write("    .quad " + util.i32_to_string((vals.len() + 7) / 8) + "\n");
+    st = st.write("    .quad -1\n");
+    st = st.write(const_agg_label(st, i) + ":\n");
+    st = st.write("    .quad " + util.i32_to_string(vals.len()) + "\n");
+    if (vals.len() > 0) {
+        var line: string = "    .byte ";
+        var vi: i32 = 0;
+        while (vi < vals.len()) {
+            if (vi > 0) { line = line + ", "; }
+            line = line + vals[vi];
+            vi = vi + 1;
+        }
+        st = st.write(line + "\n");
+    }
+    return st.write("    .balign 8\n");
 }
 
 // ShapeRefOut carries the updated state + the label a shape pointer leaqs.
