@@ -163,13 +163,14 @@ function main(): i32 {
     return (__heap_bump_bytes() as i32) - before;
 }`
 	}},
-	// A tuple box bound to a loop-scoped local.
+	// A tuple box bound to a loop-scoped local. It carries an array element
+	// because a scalar tuple is not heap-allocated.
 	{name: "tuple-temp", src: func(n string) string {
 		return `function main(): i32 {
     var before: i32 = (__heap_bump_bytes() as i32);
     var i: i32 = 0;
     var acc: i32 = 0;
-    while (i < ` + n + `) { var t: (i32, i32) = (i, i + 1); acc = acc + t.0 + t.1; i = i + 1; }
+    while (i < ` + n + `) { var t: (i32, i32[]) = (i, [i + 1]); acc = acc + t.0 + t.1[0]; i = i + 1; }
     if (acc < 0) { return 0 - 1; }
     return (__heap_bump_bytes() as i32) - before;
 }`

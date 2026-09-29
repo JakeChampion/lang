@@ -142,9 +142,10 @@ function main(): i32 { var c = cell_new(0); var xs = [1, 2]; var old = xs; xs = 
 	{"own-caller-indirect", `@noinline
 function update(own xs: i32[]): i32[] { xs = xs.with(0, 9); return xs; }
 function main(): i32 { var f = update; var xs = [1, 2]; var old = xs; xs = f(xs); if (xs[0] != 9 || old[0] != 1) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
+	// The first write copies the static literal, so the snapshot follows it.
 	{"own-caller-lifetime-unique-reuse", `@noinline
 function update(own xs: i32[], n: i32): i32[] { xs = xs.with(0, n); return xs; }
-function churn(): i32 { var xs = [1, 2, 3]; var before: i64 = __heap_bump_bytes(); var i = 0; while (i < 32) { xs = update(xs, i); i = i + 1; } if (xs[0] != 31 || xs[1] != 2 || xs[2] != 3) { return 1; } if (__heap_bump_bytes() != before) { return 2; } return 0; }
+function churn(): i32 { var xs = update([1, 2, 3], 0); var before: i64 = __heap_bump_bytes(); var i = 0; while (i < 32) { xs = update(xs, i); i = i + 1; } if (xs[0] != 31 || xs[1] != 2 || xs[2] != 3) { return 1; } if (__heap_bump_bytes() != before) { return 2; } return 0; }
 function main(): i32 { if (churn() != 0 || churn() != 0) { return 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// The function type spells the consuming slot, so `apply` and `update`
 	// agree on who releases the argument — and the caller hands over a value
