@@ -5487,6 +5487,31 @@ function add(a: i32, b: i32): i32 { return a + b; }
 function run(b: Box[i32]): i32 { match (b) { Fn(n, f) => { return f(n); }, Two(g) => { return g(40, 2); }, Empty => { return 0; } } }
 function main(): i32 { return run(Fn(41, inc)) + run(Two(add)) + run(Empty); }
 `},
+	// A view stored into a tuple, an array, a record or a variant while its
+	// binding stays live: the container takes a fresh view of the same bytes,
+	// anchored to the source, rather than retaining the binding's box (#10692).
+	// The junk string after the stores reuses the source's bytes if the anchor
+	// is lost.
+	{name: "a-view-stored-in-a-container-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+struct P { a: i32, s: str }
+function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
+function round(i: i32): i32 {
+    var b: string = mk(i);
+    var u: str = slice_unchecked(b, 2, 30);
+    var t: (i32, str) = (1, u);
+    var xs: str[] = [u];
+    xs = xs.append(u);
+    xs = xs.with(0, u);
+    var p: P = P { a: 2, s: u };
+    var o: Option[str] = Some(u);
+    var k: i32 = 0;
+    match (o) { Some(w) => { k = w.len(); }, None => { k = 0; } }
+    var junk: string = mk(i + 1);
+    return t.0 + t.1.len() + xs.len() + xs[1].len() + p.s.len() + k + u.len() + junk.len() - 150;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
