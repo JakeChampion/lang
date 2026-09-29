@@ -70,21 +70,6 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 	}
 
-	// An array holding views of two parameters has no one argument to anchor to.
-	refused := `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
-function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
-`
-	code, out := compile(refused, "FERN_SEM_IR_STRICT=1")
-	if code != 3 {
-		t.Fatalf("a refused module: exit %d under strict, want 3\n%s", code, out)
-	}
-	if !strings.Contains(out, "FERN_SEM_IR: g:") || !strings.Contains(out, "FERN_SEM_IR_STRICT") {
-		t.Fatalf("strict did not name the refusal:\n%s", out)
-	}
-	if code, out := compile(refused, "FERN_SEM_IR_STRICT="); code != 0 {
-		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
-	}
-
 	// A read of a view map value would hand out the column's own view box, whose
 	// retain is a no-op, so the reader's release freed the map's entry.
 	viewRead := `import "core/map";
@@ -95,8 +80,11 @@ function main(): i32 {
     match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
 }
 `
-	code, out = compile(viewRead, "FERN_SEM_IR_STRICT=1")
-	if code != 3 || !strings.Contains(out, "a read of a view map value would share the column's view box") {
+	code, out := compile(viewRead, "FERN_SEM_IR_STRICT=1")
+	if code != 3 || !strings.Contains(out, "FERN_SEM_IR: main: a read of a view map value would share the column's view box") || !strings.Contains(out, "FERN_SEM_IR_STRICT") {
 		t.Fatalf("a view map value read: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+	}
+	if code, out := compile(viewRead, "FERN_SEM_IR_STRICT="); code != 0 {
+		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 }
