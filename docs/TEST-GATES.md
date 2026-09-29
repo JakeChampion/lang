@@ -325,6 +325,12 @@ host lowers through `cabi_realloc`, and a zero-size request answered with
 a block from the allocator was a count nothing gave back, on both
 compilers' wasm runtimes (#10608). The natives take no such list and
 their legs stay count-free.
+`TestLeakCheckPairPayloadBorrowedArgX86_64` and its arm64 twin run std/http's
+header-loop shape under the natives' leak census: a pair-form match payload
+handed to a callee that only borrows it (`HeaderMap.append`, which retains
+the value it keeps) must still be released by the arm (#10669); the lowering
+side is `TestPairFormPayloadHandedToBorrowingCalleeIsReleased` in
+`internal/ir`.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected
