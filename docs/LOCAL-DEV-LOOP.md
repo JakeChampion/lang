@@ -601,13 +601,17 @@ Nor is it the darwin OUTPUT path: on the same container a self-host-built
 x86-64 compiler compiles `fern.fern` for `arm64-darwin` in 111 s at 5.4 GB,
 exit 0, byte-identical to the native-built compiler's Mach-O, and the
 aarch64 self-host-built compiler does the same under qemu in 525 s at 5.5 GB.
-What is left was the self-host-built compiler running ON XNU, and the
-`macos-15` lane now runs that stage 3 on every round (`macos.yml`, "self-host
-stage 3 on Darwin") with `FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes`
-at each `sem:*` phase and at `darwin:emitted` / `darwinized` / `assembled` /
-`unwind` / `linked` / `image` (`fern.fern`), plus `/usr/bin/time -l` for the
-peak RSS. Its first round (2026-09-29, source at ea943e9) passed: 56 s, 3.8 GB
+What was left was the self-host-built compiler running ON XNU, and on
+2026-09-29 the `macos-15` lane ran that stage 3 (source at ea943e9) with
+`FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes` at each `sem:*` phase and
+at `darwin:emitted` / `darwinized` / `assembled` / `unwind` / `linked` /
+`image` (`fern.fern`), under `/usr/bin/time -l`. It passed: 56 s, 3.8 GB
 maximum RSS, 5.66 GB peak footprint, 5.85 GB bumped, stage2 == stage3, with no
 phase running away (5.12 GB after the semantic lowering, 5.82 GB after the
-assembler). The step is a gate from that round on, and the bootstrap lane's
-darwin distcheck is what retires it.
+assembler). The darwin fixed point is gated by `bootstrap.yml`'s
+`verify-arm64-darwin` since (`make bootstrap` + `make distcheck` from the pin,
+no Go); the readout above is how to measure it by hand if it regresses:
+
+```
+FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/examples/self_host/fern.fern $W/internal/stdlib
+```
