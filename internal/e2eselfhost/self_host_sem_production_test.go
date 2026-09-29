@@ -4353,10 +4353,10 @@ function main(): i32 {
     return fold_line("the quick brown fox jumps over the lazy dog", 10) - 4;
 }
 `},
-	// A view of either of two parameters has no one argument its caller could
-	// keep alive for it, so the function returns a copy of it, which anchors
-	// nothing. (A view of a local is the checker's E065.)
-	{name: "a-view-result-of-either-parameter-is-a-copy", atLeast: 2, noLeak: true, src: `
+	// A view of either of two parameters is anchored to both, so the caller
+	// keeps both arguments alive while it lives. (A view of a local is the
+	// checker's E065.)
+	{name: "a-view-result-of-either-parameter-is-anchored-to-both", atLeast: 2, noLeak: true, src: `
 import "std/i32";
 function either(a: string, b: string, first: boolean): str {
     if (first) { return a; }
@@ -4367,10 +4367,11 @@ function main(): i32 {
     return v.len() - 2;
 }
 `},
-	// The copy through a caller: `through` returns `either`'s result, which
-	// settles once `either` returns copies, and `either` is also handed a copy
-	// back as one of its own arguments.
-	{name: "a-copied-view-result-passes-through-a-caller", atLeast: 3, noLeak: true, src: `
+	// The anchor through a caller: `through` returns `either`'s result, so it
+	// is anchored to both of its own parameters, and `either` is also handed
+	// its own result back as one of its arguments. Returning the view
+	// parameter `b` returns a fresh view of it, since the parameter is lent.
+	{name: "a-view-result-of-two-parameters-passes-through-a-caller", atLeast: 3, noLeak: true, src: `
 import "std/i32";
 function either(a: str, b: str, first: boolean): str {
     if (first) { return slice_unchecked(a, 1, a.len()); }
@@ -4388,6 +4389,74 @@ function main(): i32 {
         i = i + 1;
     }
     return t % 256;
+}
+`},
+	// A value gathering views of two sources is anchored to both: a local
+	// array literal of two strings' slices, an array a callee builds from two
+	// parameters, the issue's `keep` appending a view parameter to an array
+	// parameter, and a view result reading either parameter (#10687). Each
+	// source dies before the value's last read unless it is anchored, and the
+	// junk strings allocated in between then show up in the printed views.
+	{name: "a-value-holding-views-of-two-sources-is-anchored-to-both", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+function keep(v: str, xs: str[]): str[] { return xs.append(v); }
+function pair(a: string, b: string): str[] {
+    var o: str[] = [];
+    o = o.append(slice_unchecked(a, 0, 30));
+    o = o.append(slice_unchecked(b, 2, 32));
+    return o;
+}
+function pick(a: string, b: string, first: boolean): str {
+    var v: str = slice_unchecked(b, 1, 31);
+    if (first) { v = slice_unchecked(a, 0, 30); }
+    return v;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var s1: string = "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string();
+        var s2: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ9876543210" + i.to_string();
+        var local: str[] = [slice_unchecked(s1, 1, 31), slice_unchecked(s2, 3, 33)];
+        var xs: str[] = pair("abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(), "0123456789abcdefghijklmnopqrstuvwxyz" + i.to_string());
+        var ys: str[] = [];
+        ys = keep(slice_unchecked("klmnopqrstuvwxyz0123456789abcdefghij" + i.to_string(), 0, 30), ys);
+        var p: str = pick("qrstuvwxyz0123456789abcdefghijklmnop" + i.to_string(), "QRSTUVWXYZ0123456789ABCDEFGHIJKLMNOP" + i.to_string(), i == 1);
+        var junk: string = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZYYYY" + i.to_string();
+        var junk2: string = "WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWVVVV" + i.to_string();
+        print(local[0]);
+        print(local[1]);
+        print(xs[0]);
+        print(xs[1]);
+        print(ys[0]);
+        print(p);
+        t = t + local[0].len() + xs[1].len() + ys.len() + p.len() + junk.len() + junk2.len();
+        i = i + 1;
+    }
+    return t - 400;
+}
+`},
+	// A view parameter is lent, so storing it in a record, a variant or an
+	// array literal, or returning it, takes a fresh view of its bytes.
+	{name: "a-kept-view-parameter-is-a-fresh-view", atLeast: 5, noLeak: true, src: `
+import "std/i32";
+struct P { a: str, n: i32 }
+function rec(v: str): P { return P { a: v, n: 1 }; }
+function opt(v: str): Option[str] { return Some(v); }
+function arr(v: str): str[] { return [v, v]; }
+function same(v: str): str { return v; }
+function main(): i32 {
+    var s: string = "abcdefgh" + 7.to_string();
+    var p: P = rec(slice_unchecked(s, 1, 4));
+    var o: Option[str] = opt(slice_unchecked(s, 0, 5));
+    var xs: str[] = arr(slice_unchecked(s, 3, 5));
+    var w: str = same(slice_unchecked(s, 4, 9));
+    var n: i32 = 0;
+    match (o) { Some(v) => { n = v.len(); }, None => { n = 100; } }
+    print(p.a);
+    print(xs[1]);
+    print(w);
+    return p.a.len() + n + xs[0].len() + xs.len() + w.len() + p.n;
 }
 `},
 	// An array of views of one parameter is anchored to it as a single view
@@ -5617,6 +5686,28 @@ function main(): i32 {
     var t: i32 = 0; var k: i32 = 1;
     while (k <= 6) { match (step(k, out)) { Some(v) => { t = t + v; }, None => { t = t + 10; } } k = k + 1; }
     return t + out.get() * 7;
+}
+`},
+	// An if/match-expression choosing between an array literal holding a
+	// capturing lambda and a function array the function did not build: a
+	// parameter, a call's result, and a non-generic call of a literal (#10715).
+	// Every function array is on the env-box ABI, so only the literal arm needs
+	// boxing. Answers 44.
+	{name: "an-arm-array-beside-a-parameter-or-call-result", atLeast: 9, noLeak: true, src: `
+function pick(ys: ((i32) => i32)[], c: boolean): i32 {
+    var v1: i32 = 3;
+    var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => x + v1)] } else { ys });
+    return xs[0](1);
+}
+function mk(k: i32): ((i32) => i32)[] { return [((z: i32) => z + k)]; }
+function keep(ys: ((i32) => i32)[]): ((i32) => i32)[] { return ys; }
+function main(): i32 {
+    var v2: i32 = 7;
+    var zs: ((i32) => i32)[] = [((z: i32) => z + 10)];
+    var ws: ((i32) => i32)[] = (if (v2 > 100) { [((x: i32) => x + v2)] } else { mk(20) });
+    var w: i32 = 5;
+    var qs: ((i32) => i32)[] = (match (w) { 5 => keep([((y: i32) => y + v2)]), _ => zs });
+    return pick(zs, true) + pick(zs, false) + ws[0](1) + qs[0](1);
 }
 `},
 }

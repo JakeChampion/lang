@@ -27,16 +27,24 @@ pub struct Func {
     shadows: string[]
 }
 
-// The parameter whose storage a callee's result reads, so a caller keeps that
-// argument alive while the result lives: the callee returns a view of it, or
-// something holding one. `param` is -1 for a result whose views read nothing
-// the caller passed. Read off the whole module (`semsource.anchor_module`).
-pub struct Anchor { name: string, param: i32 }
+// The parameters whose storage a callee's result reads, so a caller keeps
+// each of those arguments alive while the result lives: the callee returns
+// views of them, or something holding some. `params` is empty for a result
+// whose views read nothing the caller passed. Read off the whole module
+// (`semsource.anchor_module`).
+pub struct Anchor { name: string, params: i32[] }
 
-// The anchor of the callee named `name`, -1 for none, or -2 when it has no row.
-pub function anchor_of(anchors: Anchor[], name: string): i32 {
-    for a in anchors { if (a.name == name) { return a.param; } }
-    return 0 - 2;
+// Whether the callee named `name` has a row.
+pub function anchored(anchors: Anchor[], name: string): boolean {
+    for a in anchors { if (a.name == name) { return true; } }
+    return false;
+}
+
+// The parameters the callee named `name` anchors its result to; none when it
+// has no row.
+pub function anchor_params(anchors: Anchor[], name: string): i32[] {
+    for a in anchors { if (a.name == name) { return a.params; } }
+    return [];
 }
 
 // Which environments a function value of a given type can be carrying. A
@@ -66,9 +74,12 @@ pub function find_contract(calls: Contract[], name: string): i32 {
     return 0 - 1;
 }
 
+// `parents` are the values each value is directly anchored to, and
+// `dependencies` their transitive closure, nearest first.
 pub struct Analysis {
     ok: boolean,
     why: string,
+    parents: i32[][],
     dependencies: i32[][],
     flow: ssalive.Flow
 }
@@ -175,7 +186,7 @@ pub function is_map_iter_op(kind: i32): boolean {
 pub function refused_analysis(why: string): Analysis { return failed(why); }
 
 function failed(why: string): Analysis {
-    return Analysis { ok: false, why: why, dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
+    return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], at: [] } };
 }
 
 function empty_dependencies(n: i32): i32[][] {
@@ -1873,23 +1884,27 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     }
     if (projects(d.kind_tag)) { return view_sources(f, defs, anchors, names, d.args[0], out); }
     if (d.kind_tag == call()) {
-        var k: i32 = anchor_of(anchors, d.str);
-        if (k == 0 - 2) {
+        if (!anchored(anchors, d.str)) {
             // Only a view-holding result is ever anchored; an owned one is
             // this frame's storage however the callee settles.
             if (semtypes.holds_view(f.values[v]) && util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
             return ViewSources { ...out, escapes: true };
         }
-        if (k < 0 || k >= d.args.len()) { return out; }
-        return view_sources(f, defs, anchors, names, d.args[k], out);
+        for k in anchor_params(anchors, d.str) {
+            if (k < d.args.len()) { out = view_sources(f, defs, anchors, names, d.args[k], out); }
+        }
+        return out;
     }
     return ViewSources { ...out, escapes: true };
 }
 
-// The anchor a function's result carries: the one parameter every returned
-// view reads, -1 when no returned view reads a parameter, -2 when one escapes
-// its source, and -3 while a callee's anchor is still unknown.
-pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): i32 {
+// The anchor a function's result carries: the parameters its returned views
+// read, none when they read no parameter. `escapes` when one reads storage
+// that is not a parameter's, and `pending` while a callee's anchor is still
+// unknown.
+pub struct ResultAnchor { escapes: boolean, pending: boolean, params: i32[] }
+
+pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): ResultAnchor {
     var defs: ssa.SInst[] = definitions(f);
     var seen: boolean[] = [];
     var i: i32 = 0;
@@ -1898,10 +1913,7 @@ pub function result_anchor(f: Func, anchors: Anchor[], names: string[]): i32 {
     for b in f.graph.blocks {
         if (b.term.kind_tag == 1 && b.term.value >= 0) { acc = view_sources(f, defs, anchors, names, b.term.value, acc); }
     }
-    if (acc.escapes || acc.params.len() > 1) { return 0 - 2; }
-    if (acc.pending) { return 0 - 3; }
-    if (acc.params.len() == 0) { return 0 - 1; }
-    return acc.params[0];
+    return ResultAnchor { escapes: acc.escapes, pending: !acc.escapes && acc.pending, params: acc.params };
 }
 
 // Every value's defining instruction, indexed by value id; a value no
@@ -2016,36 +2028,39 @@ function borrows_storage(ins: ssa.SInst, f: Func): boolean {
     return reference(f.values[ins.args[0]]) && is_usize(f.values[ins.result]);
 }
 
-// The value holding the bytes a value's views read: a view is followed to its
-// source, and a construction or a phi to the one source its operands share. -1
-// when it reads none (a literal, a payload-less variant), -2 when it reads two.
-function bytes_root(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32 {
-    if (v < 0 || v >= defs.len() || seen[v]) { return 0 - 1; }
+// The values holding the bytes a value's views read: a view is followed to its
+// source, and a construction or a phi to the sources of its operands. None
+// when it reads none (a literal, a payload-less variant).
+function bytes_roots(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): i32[] {
+    if (v < 0 || v >= defs.len() || seen[v]) { return []; }
     var d: ssa.SInst = defs[v];
     var next: boolean[] = seen.with(v, true);
     // A retag is the same box, whichever way it goes.
-    if (d.kind_tag == str_as() && d.args.len() == 1) { return bytes_root(f, defs, d.args[0], next); }
-    if (!semtypes.holds_view(f.values[v])) { return v; }
-    if (d.kind_tag == 5) { return 0 - 1; }
-    if (projects(d.kind_tag) && d.args.len() > 0) { return bytes_root(f, defs, d.args[0], next); }
+    if (d.kind_tag == str_as() && d.args.len() == 1) { return bytes_roots(f, defs, d.args[0], next); }
+    if (!semtypes.holds_view(f.values[v])) { return [v]; }
+    if (d.kind_tag == 5) { return []; }
+    if (projects(d.kind_tag) && d.args.len() > 0) { return bytes_roots(f, defs, d.args[0], next); }
     if (d.kind_tag == call()) {
-        var k: i32 = anchor_of(f.anchors, d.str);
-        if (k == 0 - 1) { return 0 - 1; }
-        if (k >= 0 && k < d.args.len()) { return bytes_root(f, defs, d.args[k], next); }
-        return v;
+        if (!anchored(f.anchors, d.str)) { return [v]; }
+        var called: i32[] = [];
+        for k in anchor_params(f.anchors, d.str) {
+            if (k < d.args.len()) { called = union_into(called, bytes_roots(f, defs, d.args[k], next)); }
+        }
+        return called;
     }
-    if (!gathers_views(d.kind_tag)) { return v; }
-    var root: i32 = 0 - 1;
+    if (!gathers_views(d.kind_tag)) { return [v]; }
+    var roots: i32[] = [];
     for a in d.args {
         if (a < 0 || (d.kind_tag != 8 && !semtypes.holds_view(f.values[a]))) { continue; }
         if (counted_view(f, defs, a, next)) { continue; }
-        var r: i32 = bytes_root(f, defs, a, next);
-        if (r == 0 - 2) { return r; }
-        if (r >= 0) {
-            if (root < 0) { root = r; } else if (root != r) { return 0 - 2; }
-        }
+        roots = union_into(roots, bytes_roots(f, defs, a, next));
     }
-    return root;
+    return roots;
+}
+
+function union_into(own out: i32[], more: i32[]): i32[] {
+    for m in more { if (util.index_of_i32(out, m) < 0) { out = out.append(m); } }
+    return out;
 }
 
 // A view whose box is a counted string's own — a string retagged, a literal,
@@ -2070,68 +2085,111 @@ function gathers_views(kind: i32): boolean {
 }
 
 // A value that gathers views is anchored to the bytes they read, which its own
-// operands' anchors stop short of once it holds them.
-function view_roots(f: Func, parents: i32[]): i32[] {
+// operands' anchors stop short of once it holds them: to every source, when
+// they read more than one, so each stays alive until the value's last read.
+function view_roots(f: Func, parents: i32[][]): i32[][] {
     var defs: ssa.SInst[] = definitions(f);
     var none: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { none = none.append(false); i = i + 1; }
-    var out: i32[] = parents;
+    var out: i32[][] = parents;
     for b in f.graph.blocks {
         for ins in b.insts {
             if (ins.result < 0 || !gathers_views(ins.kind_tag) || !semtypes.holds_view(f.values[ins.result])) { continue; }
-            var root: i32 = bytes_root(f, defs, ins.result, none);
-            if (root == 0 - 2) { return []; }
-            if (root >= 0 && root != ins.result) { out = out.with(ins.result, root); }
+            var roots: i32[] = [];
+            for r in bytes_roots(f, defs, ins.result, none) { if (r != ins.result) { roots = roots.append(r); } }
+            if (roots.len() > 0) { out = out.with(ins.result, roots); }
         }
     }
     return out;
 }
 
-function borrow_parents(f: Func): i32[] {
-    var parents: i32[] = [];
+function borrow_parents(f: Func): i32[][] {
+    var parents: i32[][] = [];
     var i: i32 = 0;
-    while (i < f.graph.nvals) { parents = parents.append(0 - 1); i = i + 1; }
+    while (i < f.graph.nvals) { parents = parents.append([]); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts {
             var anchors: boolean = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
             if (anchors || borrows_storage(ins, f)) {
-                parents = parents.with(ins.result, ins.args[0]);
+                parents = parents.with(ins.result, [ins.args[0]]);
             }
-            if (ins.kind_tag == call()) {
-                var k: i32 = anchor_of(f.anchors, ins.str);
-                if (k >= 0 && k < ins.args.len()) { parents = parents.with(ins.result, ins.args[k]); }
+            if (ins.kind_tag == call() && anchored(f.anchors, ins.str)) {
+                var args: i32[] = [];
+                for k in anchor_params(f.anchors, ins.str) {
+                    if (k < ins.args.len() && util.index_of_i32(args, ins.args[k]) < 0) { args = args.append(ins.args[k]); }
+                }
+                if (args.len() > 0) { parents = parents.with(ins.result, args); }
             }
         }
     }
     return view_roots(f, parents);
 }
 
-function analyze_parents(f: Func, parents: i32[]): Analysis {
+// Each value's anchors, transitively and nearest first: a value with one
+// parent has that parent's chain behind it, and one with several has each
+// parent's in turn, a value reached twice listed once. A cycle, which only an
+// unreachable block can form, is refused.
+struct Closure { ok: boolean, dependencies: i32[][] }
+
+function closure(parents: i32[][]): Closure {
+    var n: i32 = parents.len();
     var derived: i32[][] = [];
+    // 0 unvisited, 1 on the walk, 2 done.
+    var state: i32[] = [];
     var i: i32 = 0;
-    while (i < f.graph.nvals) {
-        var chain: i32[] = [];
-        var at: i32 = parents[i];
-        while (at >= 0) {
-            // Unreachable blocks have no dominance obligation, so reject their
-            // possible parent cycles explicitly rather than looping forever.
-            if (at == i || chain.len() >= f.graph.nvals) { return failed("cyclic semantic projection"); }
-            chain = chain.append(at);
-            at = parents[at];
+    while (i < n) { derived = derived.append([]); state = state.append(0); i = i + 1; }
+    var v: i32 = 0;
+    while (v < n) {
+        if (state[v] == 0) {
+            var stack: i32[] = [v];
+            var top: i32 = 1;
+            state = state.with(v, 1);
+            while (top > 0) {
+                var x: i32 = stack[top - 1];
+                var next: i32 = 0 - 1;
+                for p in parents[x] {
+                    if (p < 0 || p >= n || state[p] == 1) { return Closure { ok: false, dependencies: [] }; }
+                    if (state[p] == 0) { next = p; break; }
+                }
+                if (next >= 0) {
+                    state = state.with(next, 1);
+                    if (top < stack.len()) { stack = stack.with(top, next); } else { stack = stack.append(next); }
+                    top = top + 1;
+                    continue;
+                }
+                derived = derived.with(x, chain_of(parents[x], derived));
+                state = state.with(x, 2);
+                top = top - 1;
+            }
         }
-        derived = derived.append(chain);
-        i = i + 1;
+        v = v + 1;
     }
-    var flow: ssalive.Flow = ssadeps.analyze(f.graph, derived);
-    if (!flow.ok) { return failed(flow.why); }
-    return Analysis { ok: true, why: "", dependencies: derived, flow: flow };
+    return Closure { ok: true, dependencies: derived };
 }
 
-// Dependencies are derived from typed operations, not accepted as a sidecar
-// assertion. Copies preserve a borrow's source identity; managed projections
-// borrow their actual container. Construction and phis have no parent anchor:
-// their independent counted supplies are obligations of the later unit pass.
+function chain_of(ps: i32[], derived: i32[][]): i32[] {
+    var out: i32[] = [];
+    if (ps.len() == 1) {
+        out = out.append(ps[0]);
+        for d in derived[ps[0]] { out = out.append(d); }
+        return out;
+    }
+    for p in ps {
+        if (util.index_of_i32(out, p) < 0) { out = out.append(p); }
+        out = union_into(out, derived[p]);
+    }
+    return out;
+}
+
+function analyze_parents(f: Func, parents: i32[][]): Analysis {
+    var c: Closure = closure(parents);
+    if (!c.ok) { return failed("cyclic semantic projection"); }
+    var flow: ssalive.Flow = ssadeps.analyze(f.graph, c.dependencies);
+    if (!flow.ok) { return failed(flow.why); }
+    return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow };
+}
+
 // The callee names this graph names in a call instruction.
 //
 // `ssarc.bracketed` reads the module's grow table only under these names, so
@@ -2153,14 +2211,16 @@ function name_seen(names: string[], name: string): boolean {
     return false;
 }
 
+// Dependencies are derived from typed operations, not accepted as a sidecar
+// assertion. Managed projections borrow their actual container, and a value
+// gathering views borrows the storage they read. Other constructions and phis
+// have no parent: their counted supplies are obligations of the unit pass.
 pub function analyze(f: Func): Analysis {
     var why: string = schema_error(f);
     if (why != "") { return failed(why); }
     why = operations_error(f);
     if (why != "") { return failed(why); }
-    var parents: i32[] = borrow_parents(f);
-    if (parents.len() != f.graph.nvals) { return failed("a value holds views of two sources"); }
-    return analyze_parents(f, parents);
+    return analyze_parents(f, borrow_parents(f));
 }
 
 // ---- self-tail recursion ----------------------------------------------------
@@ -2188,8 +2248,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
     if (f.values.len() < nparams) { return f; }
-    var parents: i32[] = borrow_parents(f);
-    if (parents.len() != f.graph.nvals) { return f; }
+    var parents: i32[][] = borrow_parents(f);
     var tails: i32[] = tail_blocks(f, name, nparams, parents);
     if (tails.len() == 0) { return f; }
     return spliced(f, tails, nparams);
@@ -2206,7 +2265,7 @@ pub function tail_recursion(own f: Func, name: string): Func {
 // Nothing follows such a call, so its result has no other reader: the block
 // ends there. A void body spells the same shape with a statement call and a
 // valueless return.
-function tail_blocks(f: Func, name: string, nparams: i32, parents: i32[]): i32[] {
+function tail_blocks(f: Func, name: string, nparams: i32, parents: i32[][]): i32[] {
     var out: i32[] = [];
     var bi: i32 = 0;
     while (bi < f.graph.blocks.len()) {
@@ -2230,12 +2289,12 @@ function tail_blocks(f: Func, name: string, nparams: i32, parents: i32[]): i32[]
 // that passes a parameter along whole, has no anchor to lose and still
 // rewrites. This declines the ONE block, not the function: a call that stays a
 // call keeps holding what it holds.
-function borrowed_arg(args: i32[], parents: i32[]): boolean {
-    for a in args { if (a >= 0 && a < parents.len() && parents[a] >= 0) { return true; } }
+function borrowed_arg(args: i32[], parents: i32[][]): boolean {
+    for a in args { if (a >= 0 && a < parents.len() && parents[a].len() > 0) { return true; } }
     return false;
 }
 
-function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[]): boolean {
+function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][]): boolean {
     if (b.term.kind_tag != 1 || b.insts.len() == 0) { return false; }
     var last: ssa.SInst = b.insts[b.insts.len() - 1];
     if (last.kind_tag != call() || last.str != name || last.args.len() != nparams) { return false; }

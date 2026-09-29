@@ -817,11 +817,15 @@ function used_after(f: ssasem.Func, a: ssasem.Analysis, bi: i32, pos: i32, w: i3
 }
 
 // The projection of `root` that `w` reaches it through: `w` itself when its
-// parent is the root, else the chain element just before the root.
+// parent is the root, else the chain element just before the root. -1 when a
+// value on the chain is anchored to more than one, since the chain then names
+// no one path.
 function first_hop(a: ssasem.Analysis, w: i32, root: i32): i32 {
+    if (a.parents[w].len() > 1) { return 0 - 1; }
     var prev: i32 = w;
     for dep in a.dependencies[w] {
         if (dep == root) { return prev; }
+        if (a.parents[dep].len() > 1) { return 0 - 1; }
         prev = dep;
     }
     return 0 - 1;
@@ -988,7 +992,7 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 // container. A payload take says the same about an enum box's payload.
 // `reflow` marks a take whose box is released alone (`shell_root`): that box
 // has to die at the read, which the flow derived before the take cannot say.
-struct Units { owned: boolean[], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
+struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean }
 
 // The payload takes are derived FIRST and folded into ownership before the
 // other two run: a taken payload is a unit of this frame's own, and the tuple
@@ -1007,6 +1011,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     }
     var takes: i32[] = tuple_takes(f, a, owned, defs);
     var held: boolean[] = held_elements(f, a, owned, defs);
+    var parents: i32[][] = a.parents;
     var deps: i32[][] = a.dependencies;
     var reflow: boolean = false;
     i = 0;
@@ -1020,33 +1025,43 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
             owned = owned.with(i, true);
             // A view's bytes are its source's, not the box's it came out of, so
             // a taken view stays anchored to what the box was.
+            var up: i32[] = [];
             var chain: i32[] = [];
-            if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) { chain = a.dependencies[defs[i].args[0]]; }
+            if ((takes[i] >= 0 || payloads[i]) && ssasem.is_view(f.values[i])) {
+                up = a.parents[defs[i].args[0]];
+                chain = a.dependencies[defs[i].args[0]];
+            }
+            parents = parents.with(i, up);
             deps = deps.with(i, chain);
         }
         i = i + 1;
     }
-    if (reflow) { deps = through_takes(deps, takes, held, payloads); }
-    return Units { owned: owned, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow };
+    if (reflow) { deps = through_takes(parents, deps, takes, held, payloads); }
+    return Units { owned: owned, parents: parents, deps: deps, takes: takes, held: held, payloads: payloads, reflow: reflow };
 }
 
 // A value read through one that became a unit of its own reaches the storage
-// behind it only through that unit's new chain, so every chain stops at the
-// first such value and continues with its chain.
-function through_takes(deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
+// behind it only through that unit's new chain, so every chain stops at each
+// such value and continues with its chain.
+function through_takes(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[]): i32[][] {
     var out: i32[][] = deps;
     var w: i32 = 0;
     while (w < deps.len()) {
-        var chain: i32[] = [];
-        for d in deps[w] {
-            chain = chain.append(d);
-            if (takes[d] >= 0 || held[d] || payloads[d]) {
-                for e in deps[d] { chain = chain.append(e); }
-                break;
-            }
-        }
-        out = out.with(w, chain);
+        out = out.with(w, reach_through(parents, deps, takes, held, payloads, w, []));
         w = w + 1;
+    }
+    return out;
+}
+
+function reach_through(parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], x: i32, own out: i32[]): i32[] {
+    for p in parents[x] {
+        if (util.index_of_i32(out, p) >= 0) { continue; }
+        out = out.append(p);
+        if (takes[p] >= 0 || held[p] || payloads[p]) {
+            for e in deps[p] { if (util.index_of_i32(out, e) < 0) { out = out.append(e); } }
+        } else {
+            out = reach_through(parents, deps, takes, held, payloads, p, out);
+        }
     }
     return out;
 }
@@ -1059,9 +1074,9 @@ function through_takes(deps: i32[][], takes: i32[], held: boolean[], payloads: b
 function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssasem.Analysis {
     var any: boolean = units.reflow;
     for h in units.held { if (h) { any = true; } }
-    if (!any) { return ssasem.Analysis { ...a, dependencies: units.deps }; }
+    if (!any) { return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps }; }
     var flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
-    return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, dependencies: units.deps, flow: flow };
+    return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow };
 }
 
 // An element read of a type the frame can hold a unit of: a view is lent,
