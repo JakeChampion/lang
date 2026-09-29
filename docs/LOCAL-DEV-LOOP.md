@@ -599,8 +599,9 @@ darwin also sit above 4 GiB; a truncation of one of those still needs the Mac.
 
 Nor is it the darwin OUTPUT path: on the same container a self-host-built
 x86-64 compiler compiles `fern.fern` for `arm64-darwin` in 111 s at 5.4 GB,
-exit 0, byte-identical to the native-built compiler's Mach-O. What is left is
-the self-host-built compiler running ON XNU, and the `macos-15` lane now runs
+exit 0, byte-identical to the native-built compiler's Mach-O, and the
+aarch64 self-host-built compiler does the same under qemu in 525 s at 5.5 GB.
+What is left is the self-host-built compiler running ON XNU, and the `macos-15` lane now runs
 that stage 3 on every round (`macos.yml`, "self-host stage 3 on Darwin") with
 `FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes` at each `sem:*` phase and
 at `darwin:emitted` / `darwinized` / `assembled` / `unwind` / `linked` /
