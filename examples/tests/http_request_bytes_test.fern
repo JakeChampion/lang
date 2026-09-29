@@ -424,10 +424,9 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
         "GET / HTTP/1.1\r\nHost: h\r\nConnection: upgrade , close\r\n\r\n",
         "GET / HTTP/1.0\r\nConnection: keep-alive, close\r\n\r\n",
         "GET / HTTP/1.0\r\nConnection: keep-alive\r\nConnection: close\r\n\r\n",
-        "GET / HTTP/2.0\r\nHost: h\r\n\r\n",
-        "GET / http/1.1\r\nHost: h\r\n\r\n",
+        "GET / HTTP/1.7\r\nHost: h\r\n\r\n",
     ];
-    var want: boolean[] = [true, false, true, false, true, false, true, false, false, false, false, false, false];
+    var want: boolean[] = [true, false, true, false, true, false, true, false, false, false, false, true];
     var i: i32 = 0;
     while (i < cases.len()) {
         match (persists(cases[i])) {
@@ -522,6 +521,70 @@ function test_target_refusals(): test.TestOutcome {
     return test.pass();
 }
 
+// The version is an HTTP-version (RFC 9112 §2.3): another major version is
+// refused with 505, anything else that is not `HTTP/` digit `.` digit with
+// 400, and a higher minor version is read as HTTP/1.1.
+function test_version_rules(): test.TestOutcome {
+    if (status_of("GET / ICE/1.0\r\nHost: h\r\n\r\n") != 400) { return test.fail("another protocol"); }
+    if (status_of("GET / IHTTP/1.0\r\nHost: h\r\n\r\n") != 400) { return test.fail("a protocol that only ends in HTTP"); }
+    if (status_of("GET / http/1.1\r\nHost: h\r\n\r\n") != 400) { return test.fail("the name is case-sensitive"); }
+    if (status_of("GET / HTTP/1.\r\nHost: h\r\n\r\n") != 400) { return test.fail("a missing minor"); }
+    if (status_of("GET / HTTP/11\r\nHost: h\r\n\r\n") != 400) { return test.fail("a missing dot"); }
+    if (status_of("GET / HTTP/1.1 \r\nHost: h\r\n\r\n") != 400) { return test.fail("a byte after the version"); }
+    if (status_of("GET /foo bar/ HTTP/1.1\r\nHost: h\r\n\r\n") != 400) { return test.fail("a space in the target"); }
+    if (status_of("GET /\r\n\r\n") != 400) { return test.fail("no version at all"); }
+    if (status_of("GET / HTTP/2.0\r\nHost: h\r\n\r\n") != 505) { return test.fail("another major version: " + status_of("GET / HTTP/2.0\r\nHost: h\r\n\r\n").to_string()); }
+    if (status_of("GET / HTTP/0.9\r\nHost: h\r\n\r\n") != 505) { return test.fail("HTTP/0.9 named as a version"); }
+    if (status_of("GET / HTTP/1.5\r\n\r\n") != 400) { return test.fail("a higher minor version needs a Host like HTTP/1.1"); }
+    match (http.http_parse_request_framed("GET / HTTP/1.5\r\nHost: h\r\n\r\n".bytes())) {
+        http.Framed(f) => { if (!f.keep_alive) { return test.fail("a higher minor version persists like HTTP/1.1"); } },
+        http.Incomplete => { return test.fail("HTTP/1.5 incomplete"); },
+        http.Continue => { return test.fail("HTTP/1.5 continue"); },
+        http.Malformed(s) => { return test.fail("HTTP/1.5 refused: " + s.to_string()); }
+    }
+    return test.pass();
+}
+
+// Chunk extensions are skipped when well-formed (RFC 9112 §7.1.1) and
+// refused otherwise.
+function test_chunk_extension_grammar(): test.TestOutcome {
+    if (body_of(chunked("5;a\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("a bare name refused"); }
+    if (body_of(chunked("5;a=b;c\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("a value and a second extension refused"); }
+    if (body_of(chunked("5 ; a = b ; c\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("whitespace around the parts refused"); }
+    if (body_of(chunked("5;a=\"q \\\" x;=\";b\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("a quoted value with an escaped quote refused"); }
+    if (!refused(chunked("5;\r\nhello\r\n0\r\n\r\n"))) { return test.fail("a semicolon with no name accepted"); }
+    if (!refused(chunked("5; \r\nhello\r\n0\r\n\r\n"))) { return test.fail("a semicolon, whitespace and no name accepted"); }
+    if (!refused(chunked("5;=b\r\nhello\r\n0\r\n\r\n"))) { return test.fail("a value with no name accepted"); }
+    if (!refused(chunked("5;a=\r\nhello\r\n0\r\n\r\n"))) { return test.fail("an equals sign with no value accepted"); }
+    if (!refused(chunked("5;a b\r\nhello\r\n0\r\n\r\n"))) { return test.fail("two tokens with nothing between accepted"); }
+    if (!refused(chunked("5;a=\"open\r\nhello\r\n0\r\n\r\n"))) { return test.fail("an unterminated quoted value accepted"); }
+    if (!refused(chunked("5;a=\"\\\"\r\nhello\r\n0\r\n\r\n"))) { return test.fail("a quoted value ending in an escape accepted"); }
+    if (!refused(chunked("5;a=\"x\"y\r\nhello\r\n0\r\n\r\n"))) { return test.fail("bytes after a quoted value accepted"); }
+    if (!refused(chunked("5 \r\nhello\r\n0\r\n\r\n"))) { return test.fail("whitespace after the size with no extension accepted"); }
+    if (!refused(chunked("5;a \r\nhello\r\n0\r\n\r\n"))) { return test.fail("whitespace after the last extension accepted"); }
+    return test.pass();
+}
+
+// One empty line before the request line is ignored (RFC 9112 §2.2) and
+// counted in the framed length; a second is refused.
+function test_empty_line_before_the_request(): test.TestOutcome {
+    var wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
+    match (http.http_parse_request_framed(wire.bytes())) {
+        http.Framed(f) => {
+            if (f.request.path != "/a") { return test.fail("path: " + f.request.path); }
+            if (f.len != wire.len()) { return test.fail("the empty line is not in the framed length: " + f.len.to_string()); }
+        },
+        http.Incomplete => { return test.fail("incomplete"); },
+        http.Continue => { return test.fail("continue"); },
+        http.Malformed(s) => { return test.fail("refused: " + s.to_string()); }
+    }
+    if (status_of("\r\n\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n") != 400) { return test.fail("two empty lines accepted"); }
+    if (status_of("\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n") != 400) { return test.fail("a bare LF before the request accepted"); }
+    if (framing_of("\r") != 1) { return test.fail("a lone CR is not incomplete"); }
+    if (framing_of("\r\n") != 1) { return test.fail("an empty line alone is not incomplete"); }
+    return test.pass();
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request bytes");
     r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
@@ -537,6 +600,9 @@ function main(): i32 {
     r = r.it("expect continue", test_expect_continue);
     r = r.it("target is normalised", test_target_is_normalised);
     r = r.it("target refusals", test_target_refusals);
+    r = r.it("version rules", test_version_rules);
+    r = r.it("chunk extension grammar", test_chunk_extension_grammar);
+    r = r.it("empty line before the request", test_empty_line_before_the_request);
     r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
     r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
     r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);

@@ -1069,7 +1069,7 @@ serializer.
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
   close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
   read as a comma-separated token list and only a whole token counts;
-  any other version is answered and closed).
+  a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
   offset instead of copying the buffer forward, with `len` counted from
@@ -1085,7 +1085,9 @@ serializer.
   (`%2F` hides a segment from the path's grammar), or the path climbs above
   the root (`/../x`: a client resolves that before sending). There is no
   lenient mode: a request line whose method is not a
-  token or whose target or version is empty (§3), a header line without
+  token or whose version is not `HTTP/` a digit `.` a digit (§2.3; a
+  major version other than 1 is refused with 505 rather than read under
+  HTTP/1's framing), a header line without
   a colon or whose name is not a token (so whitespace before the colon,
   §5.1, and obs-fold, §5.2, both refuse), a value holding a control byte
   other than HTAB (RFC 9110 §5.5), a bare CR or LF (§2.2),
@@ -1101,8 +1103,13 @@ serializer.
   413 for a body past its cap, 414 for a request line past its cap, 417
   for an `Expect` other than `100-continue`, 431
   for a header block past its byte or field cap or chunk framing past its
-  budget, 501 for a transfer coding the parser cannot decode. A chunked body (§7.1, HTTP/1.1 only) is
-  decoded into `request.body`: chunk extensions are skipped, trailers are
+  budget, 501 for a transfer coding the parser cannot decode, 505 for
+  another major version. One empty line before the request line is
+  ignored, as §2.2 asks, and counted in `len`; a second is refused. A
+  chunked body (§7.1, HTTP/1.1 only) is decoded into `request.body`:
+  chunk extensions are skipped when well-formed (§7.1.1: a `;`, a name
+  token, at most one `=` with a token or quoted-string value, whitespace
+  only before the `;` and around the `=`) and refused otherwise, trailers are
   read under the header rules into `request.trailers`, kept apart from
   the headers (nothing knows their semantics, so none may merge,
   RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to

@@ -85,6 +85,7 @@ function __status_text_5xx(code: i32): string {
     if (code == 502) { return "Bad Gateway"; }
     if (code == 503) { return "Service Unavailable"; }
     if (code == 504) { return "Gateway Timeout"; }
+    if (code == 505) { return "HTTP Version Not Supported"; }
     return "";
 }
 
@@ -655,7 +656,7 @@ function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i3
     }
     var size: (i32, i32, i32) = __chunk_size(buf, at, crlf, room);
     if (size.0 != 0) { return (size.0, 0, 0); }
-    if (!__chunk_ext_only(buf, size.2, crlf)) { return (400, 0, 0); }
+    if (!__chunk_exts_ok(buf, size.2, crlf)) { return (400, 0, 0); }
     return (2, crlf, size.1);
 }
 
@@ -675,12 +676,71 @@ function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) 
     return (0, size, i);
 }
 
-// `__chunk_ext_only(buf, from, end)` — whether buf[from, end) is empty
-// or, past optional whitespace, a chunk extension (§7.1.1).
-function __chunk_ext_only(buf: u8[], from: i32, end: i32): boolean {
+// `__chunk_exts_ok(buf, from, end)` — whether buf[from, end), what
+// follows a chunk's size, is chunk extensions (RFC 9112 §7.1.1): each a
+// `;`, a name token, and at most one `=` with a token or a quoted string
+// for its value, with whitespace allowed only before a `;` and around an
+// `=`, so none may trail the size or the last extension. Nothing reads an
+// extension, so a well-formed one is skipped; an ill-formed one is refused
+// rather than guessed at.
+function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
     var i: i32 = from;
-    while (i < end && (buf[i] == (32 as u8) || buf[i] == (9 as u8))) { i = i + 1; }
-    return i == end || buf[i] == (59 as u8);
+    while (i < end) {
+        var semi: i32 = __bws_end(buf, i, end);
+        if (semi >= end || buf[semi] != (59 as u8)) { return false; }
+        i = __bws_end(buf, semi + 1, end);
+        var name_end: i32 = __token_end(buf, i, end);
+        if (name_end == i) { return false; }
+        i = name_end;
+        var eq: i32 = __bws_end(buf, name_end, end);
+        if (eq < end && buf[eq] == (61 as u8)) {
+            i = __chunk_ext_val_end(buf, __bws_end(buf, eq + 1, end), end);
+            if (i < 0) { return false; }
+        }
+    }
+    return true;
+}
+
+// `__bws_end(buf, from, end)` — the offset past the SP and HTAB at `from`.
+function __bws_end(buf: u8[], from: i32, end: i32): i32 {
+    var i: i32 = from;
+    while (i < end && __is_ows(buf[i])) { i = i + 1; }
+    return i;
+}
+
+// `__token_end(buf, from, end)` — the offset past the tchars at `from`.
+function __token_end(buf: u8[], from: i32, end: i32): i32 {
+    var i: i32 = from;
+    while (i < end && __is_tchar(buf[i])) { i = i + 1; }
+    return i;
+}
+
+// `__chunk_ext_val_end(buf, from, end)` — the offset past a chunk
+// extension's value at `from`, a token or a quoted string (RFC 9110
+// §5.6.4: qdtext or a `\`-escaped byte, between two `"`), or -1 when
+// neither is there whole.
+function __chunk_ext_val_end(buf: u8[], from: i32, end: i32): i32 {
+    if (from >= end) { return -1; }
+    if (buf[from] != (34 as u8)) {
+        var tok: i32 = __token_end(buf, from, end);
+        if (tok == from) { return -1; }
+        return tok;
+    }
+    var i: i32 = from + 1;
+    while (i < end) {
+        var b: u8 = buf[i];
+        if (b == (34 as u8)) { return i + 1; }
+        if (b == (92 as u8)) { i = i + 1; }
+        if (i >= end || !__is_quoted_byte(buf[i])) { return -1; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// `__is_quoted_byte(b)` — a byte a quoted string may hold, as itself or
+// after a `\`: HTAB, SP, a visible byte or obs-text.
+function __is_quoted_byte(b: u8): boolean {
+    return b == (9 as u8) || (b >= (32 as u8) && b != (127 as u8));
 }
 
 // `__chunked_trailers(buf, at, budget, spans)` — the trailer section that
@@ -862,6 +922,8 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
 // from `from`.
 pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     var n: i32 = buf.len();
+    var start: i32 = from;
+    from = __past_empty_line(buf, from);
     var first_crlf: i32 = __request_line_end(buf, from);
     if (first_crlf == -2) { return Malformed(414); }
     var headers_end: i32 = __header_block_end(buf, from);
@@ -876,8 +938,8 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     }
     if (!__crlf_terminated(buf, from, scanned)) { return Malformed(400); }
     // The request line (RFC 9112 §3): a method token, a space, a
-    // non-empty target, a space, a non-empty version. It is refused as
-    // soon as its CRLF has arrived, before the rest of the block.
+    // request-target, a space, an HTTP-version. It is refused as soon as
+    // its CRLF has arrived, before the rest of the block.
     var sp1: i32 = -1;
     var sp2: i32 = -1;
     var path: string = "";
@@ -885,7 +947,9 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         sp1 = __find_byte(buf, from, first_crlf, 32 as u8);
         if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed(400); }
         sp2 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
-        if (sp2 < 0 || sp2 == sp1 + 1 || sp2 + 1 == first_crlf) { return Malformed(400); }
+        if (sp2 < 0 || sp2 == sp1 + 1) { return Malformed(400); }
+        var version_status: i32 = __version_status(buf, sp2 + 1, first_crlf);
+        if (version_status != 0) { return Malformed(version_status); }
         match (http_request_target(__bytes_string(buf, from, sp1), __bytes_string(buf, sp1 + 1, sp2))) {
             Ok(p) => { path = p; },
             Err(status) => { return Malformed(status); }
@@ -911,7 +975,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         Ok(h) => { req_headers = h; },
         Err(status) => { return Malformed(status); }
     }
-    var version: string = __bytes_string(buf, sp2 + 1, first_crlf);
+    var version: string = __version_of(buf, sp2 + 1);
     var refused: i32 = __header_rules(req_headers, version);
     if (refused > 0) { return Malformed(refused); }
     var framing: __BodyFraming = Length(0);
@@ -928,7 +992,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         headers: req_headers,
         trailers: body.3,
     };
-    return Framed(HttpFramed { request: request, len: body.2 - from, keep_alive: __persists(version, req_headers) });
+    return Framed(HttpFramed { request: request, len: body.2 - start, keep_alive: __persists(version, req_headers) });
 }
 
 // `http_request_target(method, target)` — the request-target (RFC 9112
@@ -1134,15 +1198,58 @@ function __joined_segments(segments: string[], depth: i32, trailing: boolean): s
     return out;
 }
 
+// `__past_empty_line(buf, from)` — `from` past one CRLF at it: a server
+// ignores at least one empty line before a request-line (RFC 9112 §2.2),
+// since a client may send one after a body. A second is the request
+// line's to refuse.
+function __past_empty_line(buf: u8[], from: i32): i32 {
+    if (from + 1 < buf.len() && buf[from] == (13 as u8) && buf[from + 1] == (10 as u8)) { return from + 2; }
+    return from;
+}
+
+// `__version_status(buf, from, end)` — 0 when buf[from, end) is an
+// HTTP-version (RFC 9112 §2.3: `HTTP/`, a digit, `.`, a digit, in that
+// case), 400 when it is not, 505 for a major version other than 1: this
+// parser speaks HTTP/1, and cannot promise to read the framing of another
+// major version (RFC 9110 §15.6.6).
+function __version_status(buf: u8[], from: i32, end: i32): i32 {
+    if (end - from != 8 || !__bytes_are(buf, from, "HTTP/")) { return 400; }
+    if (!__is_digit(buf[from + 5]) || buf[from + 6] != (46 as u8) || !__is_digit(buf[from + 7])) { return 400; }
+    if (buf[from + 5] != (49 as u8)) { return 505; }
+    return 0;
+}
+
+// `__version_of(buf, from)` — the version the rules read, for a version
+// `__version_status` passed: `HTTP/1.0` for itself, and every other minor
+// as `HTTP/1.1`, the highest this parser knows (§2.3).
+function __version_of(buf: u8[], from: i32): string {
+    if (buf[from + 7] == (48 as u8)) { return "HTTP/1.0"; }
+    return "HTTP/1.1";
+}
+
+function __is_digit(b: u8): boolean {
+    return b >= (48 as u8) && b <= (57 as u8);
+}
+
+// `__bytes_are(buf, from, want)` — whether the bytes at `from` start with
+// `want`.
+function __bytes_are(buf: u8[], from: i32, want: string): boolean {
+    if (from + want.len() > buf.len()) { return false; }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (buf[from + i] != want[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 // __persists(version, h) — whether the connection outlives this
 // request: a `Connection` header carrying `close` ends an HTTP/1.1
 // connection where one carrying `keep-alive` extends an HTTP/1.0 one.
 // The header is a comma-separated token list, and only a whole token
-// counts: `x-close` neither closes nor keeps. A version that is neither
-// `HTTP/1.1` nor `HTTP/1.0` is answered and closed; nothing here
-// negotiates one.
+// counts: `x-close` neither closes nor keeps. `version` is one of the two
+// `__version_of` gives.
 function __persists(version: string, h: HeaderMap): boolean {
-    if (version != "HTTP/1.1" && version != "HTTP/1.0") { return false; }
     var close: boolean = false;
     var keep: boolean = false;
     for v in h.get_all("connection") {
