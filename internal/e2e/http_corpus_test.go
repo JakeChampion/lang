@@ -24,6 +24,8 @@ func TestHTTPCorpus(t *testing.T) {
 	cases := e2eharness.HTTPCorpusCases(t, "testdata/http-corpus")
 	src := e2eharness.HTTPCorpusSource(cases)
 	got := dynInterpStdout(t, src) + "\n"
+	// CI-DARK: FERN_HTTP_CORPUS_DUMP — a regeneration tool, not coverage:
+	// it prints the verdicts to re-record the pins and compares nothing.
 	if os.Getenv("FERN_HTTP_CORPUS_DUMP") == "1" {
 		fmt.Print(got)
 		t.Skip("dumped the corpus verdicts; not comparing")
