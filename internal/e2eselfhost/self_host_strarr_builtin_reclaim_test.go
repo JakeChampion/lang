@@ -1,12 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -58,7 +53,7 @@ import (
 // witnesses; the half they rest on is the one the `SARR:` class already carries,
 // unchanged.
 
-const strArrBuiltinPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
+const strArrBuiltinPrelude = "import \"std/string\";\n" + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
 
 // strArrBuiltinHeap wraps a `round` body in the churn/heap-delta harness, with
@@ -242,10 +237,10 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
     return parts[0];
 }
 function churn(src: string): i32 {
-    var a: string = slice_unchecked(src, 1, 9);
-    var b: string = slice_unchecked(src, 2, 10);
-    var c: string = slice_unchecked(src, 3, 11);
-    var d: string = slice_unchecked(src, 4, 12);
+    var a: str = slice_unchecked(src, 1, 9);
+    var b: str = slice_unchecked(src, 2, 10);
+    var c: str = slice_unchecked(src, 3, 11);
+    var d: str = slice_unchecked(src, 4, 12);
     return a.len() + b.len() + c.len() + d.len();
 }
 function round(pre: string): i32 {
@@ -300,31 +295,14 @@ func strArrBuiltinSources(wasm bool) []struct{ name, src string } {
 	return out
 }
 
-// TestSelfHostStrArrBuiltinReclaimIRX86_64 is the x86-64 leg. The heap ceilings
-// here do not move with this change — see the header on why the register half is
-// a separate piece of work — so this leg pins the CORRECTNESS set, and above all
-// the type gate, which faults here as a value corruption without it.
+// TestSelfHostStrArrBuiltinReclaimIRX86_64 is the x86-64 leg. It pins the
+// heap ceilings and the correctness set, and above all the type gate, which
+// faults here as a value corruption without it.
 func TestSelfHostStrArrBuiltinReclaimIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strArrBuiltinSources(false) {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 0 {
 				t.Errorf("%s = %d, want 0 (%s)", tc.name, code, strArrBuiltinExitHint)
 			}
 		})
@@ -334,62 +312,23 @@ func TestSelfHostStrArrBuiltinReclaimIRX86_64(t *testing.T) {
 // TestSelfHostStrArrBuiltinReclaimIRArm64 is the arm64 leg, the register path's
 // twin and the project's default target.
 func TestSelfHostStrArrBuiltinReclaimIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strArrBuiltinSources(false) {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 0 {
 				t.Errorf("%s = %d, want 0 (%s)", tc.name, code, strArrBuiltinExitHint)
 			}
 		})
 	}
 }
 
-// TestSelfHostStrArrBuiltinReclaimWasmIR is the leg this change is for: every
-// heap case fails with 98 on the parent, where the element copies are stranded.
+// TestSelfHostStrArrBuiltinReclaimWasmIR is the wasm leg, with the wasm ceilings.
 func TestSelfHostStrArrBuiltinReclaimWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping builtin string[] reclaim wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strArrBuiltinSources(true) {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, strings.ReplaceAll(tc.name, "/", "_")+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != 0 {
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != 0 {
 				t.Errorf("%s = %d, want 0 (%s)", tc.name, got, strArrBuiltinExitHint)
 			}
 		})
