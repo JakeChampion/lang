@@ -1171,12 +1171,20 @@ The socket controls are typed faces over the descriptor builtins
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
   `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
   `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
-  answers the empty array at once when nothing is queued.
+  answers the empty array at once when nothing is queued, and a
+  non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
+  no room.
+- `send_queue(sock)` — how many bytes handed to the socket the peer has
+  not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
+  `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
+  got with what was written, which is what a minimum data rate on a
+  response is judged by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
   shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
 
-On wasm, `set_nodelay` and `set_nonblocking` answer `Other(58)` (`ENOTSUP`):
-wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
+On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
+`Other(58)` (`ENOTSUP`): wasi:sockets 0.2 has neither control and no
+reading of the queue, and `reuse_port` is ignored there.
 
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
 `udp_sendto` and `udp_recvfrom`, on the same descriptors:
