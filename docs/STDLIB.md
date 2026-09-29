@@ -1234,18 +1234,21 @@ loop and `std/fetch` the client.
   `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, body_min_rate,
-  body_rate_grace, keep_alive_idle, keep_alive_requests }`
-  (`serve_options()` is 128, one listener per port, the 10 s deadline,
-  240 bytes per second after 5 s, 130 s and 1000): the accept queue
+  body_rate_grace, keep_alive_idle, keep_alive_requests,
+  max_connections }` (`serve_options()` is 128, one listener per port,
+  the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
+  1024): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm), the read deadline, the least rate a request body must keep
   arriving at once its header block is in (after the grace, the body may
   take as long as its bytes buy at that rate beyond the read deadline, so
   a large upload that keeps flowing is read and a trickle is closed; 0
   turns the rate off), how long an idle persistent connection waits for
-  its next request, and how many requests one connection may carry
-  before its last response says `Connection: close` (a value below 1
-  behaves as 1).
+  its next request, how many requests one connection may carry before
+  its last response says `Connection: close` (a value below 1 behaves as
+  1), and how many connections the loop holds open at once: at the cap
+  the listener is not read, so further connections wait in its accept
+  queue (`backlog` deep, the kernel refusing past it) until one closes.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is

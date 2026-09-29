@@ -331,7 +331,9 @@ the server cannot meet, answered 417; an HTTP/1.0 keep-alive request
 followed by an HTTP/1.1 one; a body delivered in pieces over twice the
 read deadline but well above the minimum body rate, answered with its
 echo, and one trickled below the rate, closed at the read deadline
-without a response. Every response's `Connection` and
+without a response; and, with the loop capped at two open connections,
+a third connection's request unanswered until one of the two closes.
+Every response's `Connection` and
 `Date` are
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
