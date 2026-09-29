@@ -89,7 +89,7 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// in these tables at all (absent means zero) and #8434 is closed. The
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
-	"stdlib_json_cursor_idiom": 320,
+	"stdlib_json_cursor_idiom": 288,
 	"stdlib_json_roundtrip":    576,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 }
@@ -127,7 +127,7 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// call-argument projection joined them as a case rather than a pin: it
 	// leaked only the undropped tuple box, which no fixture had ever covered.
 	"map_keys_values_header_churn_free":              16000,
-	"stdlib_json_cursor_idiom":                       288,
+	"stdlib_json_cursor_idiom":                       256,
 	"stdlib_json_roundtrip":                          448,
 	"string_pushed_then_returned_bare_stays_refused": 320,
 }
