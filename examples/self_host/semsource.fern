@@ -3027,6 +3027,16 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
     return s;
 }
 
+// A match whose arms are all `_` tests nothing about its scrutinee, so it
+// needs no union: the parser leaves one on a scalar undesugared, since only a
+// literal arm routes a match through its if-chain.
+function only_wildcards(m: ast.StmtMatch): boolean {
+    for a in m.arms {
+        if let ast.PatWildcard(_) = a.pattern {} else { return false; }
+    }
+    return m.arms.len() > 0;
+}
+
 // The arms of a match, tested in order, each ending on the join; `ty` is the
 // value a value block's arms carry to it, unchecked for a statement.
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
@@ -3035,7 +3045,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     s = scrut.s;
     if (!s.ok) { return Chain { ...none, arms: Arms { ...none.arms, s: s } }; }
     var owner: string = union_name(s.values[scrut.id]);
-    if (owner == "" || union_layout(s, owner) == 0) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
+    if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
     var closes: i32 = 0 - 1;
     if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
     s = learn_escaping(m, s, s.values[scrut.id], owner);

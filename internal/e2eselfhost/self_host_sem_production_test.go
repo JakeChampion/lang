@@ -481,6 +481,22 @@ function main(): i32 {
     return s.len() * 100 + (s[0] as i32);
 }
 `},
+	// A match whose only arm is `_` stays a match on a scalar (only a literal
+	// arm desugars it), and it tests nothing, so it needs no union. The heap
+	// string scrutinee is still released.
+	{name: "a-wildcard-only-match-on-a-scalar", atLeast: 3, noLeak: true, src: `
+function label(n: i32): string {
+    if (n > 3) { return "big" + "-past-the-sso-inline-threshold"; }
+    return "small" + "-past-the-sso-inline-threshold";
+}
+function pick(n: i32): i32 {
+    var t: i32 = 0;
+    match (n > 3) { _ => { t = n; } }
+    match (label(n)) { _ => { t = t + 1; } }
+    return t;
+}
+function main(): i32 { return pick(5) * 10 + pick(2); }
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
