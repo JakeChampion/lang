@@ -105,6 +105,25 @@ function id[T](a: T): T { return a; }
 function pass[T](a: T): T { return id[T](a); }
 function main(): i32 { return at([10, 20, 30], 2) + pass(5); }
 `, 35},
+	// A MODULE-level name is not a type variable either, in the index and
+	// the field-access positions alike: a const read as an index, an enum
+	// qualifying a variant, a struct qualifying an associated call (#10427).
+	{"module-const-shadows-type-param-index", `const T: i32 = 2;
+function at[T](xs: T[]): T { return xs[T]; }
+function main(): i32 { return at([5, 6, 7, 8]); }
+`, 7},
+	{"module-enum-shadows-type-param-qualifier", `enum T { Red, Blue }
+function pick[T](n: T): i32 {
+    match (T.Red) { Red => { return 1; }, Blue => { return 2; } }
+    return 0;
+}
+function main(): i32 { return pick(1); }
+`, 1},
+	{"module-struct-shadows-type-param-assoc-call", `struct T { x: i32 }
+impl T { function get(): i32 { return 1; } }
+function pick[T](n: T): i32 { return T.get(); }
+function main(): i32 { return pick(1); }
+`, 1},
 	// Out of the value's scope, `T.default()` names the type variable again.
 	{"type-param-object-after-shadow-scope", `import "core/cmp";
 function mk[T: cmp.Default](x: T): T {
