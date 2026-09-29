@@ -69,6 +69,7 @@ import "std/u64";
 import "std/float";
 import "std/array";
 import "std/string";
+import "std/headers";
 // `assert_json_eq` parses both sides and walks the JsonValue
 // trees in order-independent fashion (JObject keys can come
 // out of `Map.keys()` in any order). Std/json is already a
@@ -2821,6 +2822,44 @@ pub function assert_is_some_eq_string(opt: Option[string], expected: string): Te
                         expected + "\")");
         }
     }
+}
+
+// =================== HTTP ASSERTIONS ===================
+//
+// For a handler under test: hand it a request from `http.request` and a
+// `MockPlatform`'s bag, then read the response back with these. Each
+// names what it asked and quotes what it found.
+
+// `assert_status(resp, expected)` — the response's status.
+pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome {
+    if (resp.status == expected) { return Pass; }
+    return Fail("assert_status: got " + resp.status.to_string() + ", expected " + expected.to_string());
+}
+
+// `assert_header(resp, name, expected)` — the response carries `name`
+// (in any case) with exactly `expected`; a missing header fails too.
+pub function assert_header(resp: HttpResponse, name: string, expected: string): TestOutcome {
+    match (resp.headers.get(name)) {
+        Some(v) => {
+            if (v == expected) { return Pass; }
+            return Fail("assert_header: " + name + " is \"" + v + "\", expected \"" + expected + "\"");
+        },
+        None => { return Fail("assert_header: no " + name + " header, expected \"" + expected + "\""); }
+    }
+}
+
+// `assert_no_header(resp, name)` — the response carries no `name`.
+pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
+    match (resp.headers.get(name)) {
+        Some(v) => { return Fail("assert_no_header: " + name + " is \"" + v + "\", expected no " + name + " header"); },
+        None => { return Pass; }
+    }
+}
+
+// `assert_body(resp, expected)` — the response's body, as text.
+pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
+    if (resp.body == expected) { return Pass; }
+    return Fail("assert_body: got \"" + resp.body + "\", expected \"" + expected + "\"");
 }
 
 // =================== RESULT ASSERTIONS ===================

@@ -1035,6 +1035,14 @@ serializer.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
+- **Request builder:** `request(method, path)` is a request to hand a
+  handler in a test (no headers, no body), and `(req).with_header(name,
+  value)`, `(req).with_body(body)` (with the `Content-Length` a client
+  sends) and `(req).with_json(body)` (`Content-Type: application/json`
+  too) build it up; it reads the way a served request does. With a
+  `MockPlatform`'s bag and `std/test`'s `assert_status` /
+  `assert_header` / `assert_no_header` / `assert_body`, a handler is
+  tested without a socket (`examples/tests/http_request_builder_test.fern`).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
@@ -1697,6 +1705,11 @@ stay bare.
   cover `boolean` and `string` directly (both are `cmp.Eq +
   cmp.Display`). String-specific sugar: `assert_empty_string`,
   `assert_non_empty_string`
+- **HTTP:** `assert_status(resp, status)`, `assert_header(resp, name,
+  value)` (the name in any case; a missing header fails too),
+  `assert_no_header(resp, name)`, `assert_body(resp, text)` — a
+  handler's response, built from `http.request(method, path)` and a
+  `MockPlatform`'s bag
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
 - **Substring (case-insensitive):** `assert_eq_string_ci`,

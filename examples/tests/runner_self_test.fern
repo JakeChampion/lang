@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http";
 // examples/tests/runner_self_test.fern — meta-test of the
 // `std/test` runner itself. Verifies that:
 //   - passing assertions return Pass
@@ -422,8 +423,55 @@ function test_unique_one_nan_passes(): test.TestOutcome {
     return expect_pass(test.assert_unique([1.0, nan_f64(), 2.0]));
 }
 
+// HTTP assertions: a response built by std/http's constructors.
+function http_resp(): HttpResponse {
+    return http.http_response_ok("hello").with_header("X-Kind", "greeting");
+}
+
+function test_assert_status_pass(): test.TestOutcome {
+    return expect_pass(test.assert_status(http_resp(), 200));
+}
+
+function test_assert_status_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_status(http_resp(), 404), "assert_status: got 200, expected 404");
+}
+
+function test_assert_header_pass(): test.TestOutcome {
+    return expect_pass(test.assert_header(http_resp(), "x-kind", "greeting"));
+}
+
+function test_assert_header_fail(): test.TestOutcome {
+    var wrong: test.TestOutcome = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
+    match (wrong) { Fail(m) => { return test.fail(m); }, Pass => {} }
+    return expect_fail_containing(test.assert_header(http_resp(), "X-Other", "x"), "assert_header: no X-Other header");
+}
+
+function test_assert_no_header_pass(): test.TestOutcome {
+    return expect_pass(test.assert_no_header(http_resp(), "X-Other"));
+}
+
+function test_assert_no_header_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_no_header(http_resp(), "x-kind"), "assert_no_header: x-kind is \"greeting\"");
+}
+
+function test_assert_body_pass(): test.TestOutcome {
+    return expect_pass(test.assert_body(http_resp(), "hello"));
+}
+
+function test_assert_body_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("runner self-test");
+    r = r.it("assert_status pass", test_assert_status_pass);
+    r = r.it("assert_status fail names both", test_assert_status_fail);
+    r = r.it("assert_header pass", test_assert_header_pass);
+    r = r.it("assert_header fail quotes the value or names the miss", test_assert_header_fail);
+    r = r.it("assert_no_header pass", test_assert_no_header_pass);
+    r = r.it("assert_no_header fail quotes the value", test_assert_no_header_fail);
+    r = r.it("assert_body pass", test_assert_body_pass);
+    r = r.it("assert_body fail quotes both", test_assert_body_fail);
     r = r.it("assert_true pass", test_assert_true_pass);
     r = r.it("assert_true fail message", test_assert_true_fail);
     r = r.it("assert_false pass", test_assert_false_pass);

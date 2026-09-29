@@ -1386,8 +1386,8 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	}
 	// 53 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 53") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 53 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 61") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 61 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
@@ -3857,6 +3857,24 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 21", "# fail 0", "1..21"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/http_request_builder_test.fern` pins the handler test
+// seam (#9854): a request from `http.request` with its body methods, a
+// `MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the
+// response back.
+func TestRunnerHttpRequestBuilderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_request_builder_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP request builder", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
