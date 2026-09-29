@@ -11,16 +11,16 @@ import (
 
 // FileBodyServerSource is a server on `port` whose handler answers the
 // file at `path` on /file and a file that does not exist on /missing,
-// both through `http_response_file`: the handler names the file and the
+// both through `file`: the handler names the file and the
 // serve loop reads it as it writes the response, or answers 404 in its
 // place.
 func FileBodyServerSource(port int, path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/file") { return http.http_response_file(%q).with_content_type("text/plain"); }
-    if (req.path == "/missing") { return http.http_response_file(%q + ".missing"); }
-    return http.http_response_ok("ok");
+    if (req.path == "/file") { return http.file(%q).with_content_type("text/plain"); }
+    if (req.path == "/missing") { return http.file(%q + ".missing"); }
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve(%d, handle);

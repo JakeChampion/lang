@@ -15,7 +15,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 
 function serve(req: HttpRequest): Result[HttpResponse, http.HttpError] {
     var name: string = lookup(req.path)?;
-    return Ok(http.http_response_ok(name));
+    return Ok(http.ok(name));
 }
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
@@ -57,7 +57,7 @@ function test_problem_without_detail(): test.TestOutcome {
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
     var v: JsonValue = json.json_parse_result(text)?;
-    return Ok(http.http_response_ok("parsed"));
+    return Ok(http.ok("parsed"));
 }
 
 function test_json_error_answers_400(): test.TestOutcome {
@@ -82,7 +82,7 @@ function test_string_error_answers_500_without_the_message(): test.TestOutcome {
 
 function counted(n: i32, ok: boolean): (i32, Result[HttpResponse, http.HttpError]) {
     if (!ok) { return (n, Err(http.fail(409, "conflict"))); }
-    return (n + 1, Ok(http.http_response_ok("counted")));
+    return (n + 1, Ok(http.ok("counted")));
 }
 
 function test_respond_with_keeps_the_state(): test.TestOutcome {

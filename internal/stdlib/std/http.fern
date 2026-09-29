@@ -84,55 +84,62 @@ pub function http_is_error(code: i32): boolean {
     return code >= 400 && code <= 599;
 }
 
-// `http_response_ok(body)` — 200 OK with the given body.
-// `http_response_text(status, body)` — explicit status code.
-// `http_response_not_found()` — common 404 builder.
+// `ok(body)` — 200 OK with the given body.
+// `text(status, body)` — explicit status code.
+// `not_found()` — common 404 builder.
 // Saves the `HttpResponse { status: 200, body: ... }` boiler-
 // plate at every handler call site.
-pub function http_response_ok(body: string): HttpResponse {
+pub function ok(body: string): HttpResponse {
     return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-pub function http_response_text(status: i32, body: string): HttpResponse {
+pub function text(status: i32, body: string): HttpResponse {
     return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-pub function http_response_not_found(): HttpResponse {
+pub function not_found(): HttpResponse {
     return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new() };
 }
 
-// `http_response_bad_request(body)` — 400 with the given
+// `bad_request(body)` — 400 with the given
 // body. Common shape for validation-failure responses.
-pub function http_response_bad_request(body: string): HttpResponse {
+pub function bad_request(body: string): HttpResponse {
     return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-// `http_response_internal_error(body)` — 500. The default
+// `internal_error(body)` — 500. The default
 // body shape for unhandled / unexpected exceptions in a
 // handler.
-pub function http_response_internal_error(body: string): HttpResponse {
+pub function internal_error(body: string): HttpResponse {
     return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new() };
 }
 
-// `http_response_redirect(location)` — 302 Found with the
+// `redirect(location)` — 302 Found with the
 // redirect target both in the body (for clients that ignore
 // headers) and as a real `Location:` header.
-pub function http_response_redirect(location: string): HttpResponse {
+pub function redirect(location: string): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("Location", location);
     return HttpResponse { status: 302, body: BodyText(location), headers: h };
 }
 
-// `http_response_no_content()` — 204 No Content, empty
+// `no_content()` — 204 No Content, empty
 // body. The standard "I handled it, nothing to say"
 // response for DELETE / PUT / etc.
-pub function http_response_no_content(): HttpResponse {
+pub function no_content(): HttpResponse {
     return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new() };
+}
+
+// `created(body)` — 201 Created with the given body: what a POST that
+// made something answers, the new resource's address in the body or
+// set on `Location` by the caller.
+pub function created(body: string): HttpResponse {
+    return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new() };
 }
 
 // ============================================================
 // Typed-body builders (#4385 — "response builders never set
-// Content-Type"). The plain `http_response_*` builders above
+// Content-Type"). The plain builders above (`ok`, `text`, …)
 // leave the media type unset, so a browser sniffs the body and
 // a JSON API response can render as text. These set the right
 // `Content-Type` up front, saving the `.with_header("Content-
@@ -147,32 +154,32 @@ function __http_response_typed(status: i32, body: string, ct: string): HttpRespo
     return HttpResponse { status: status, body: BodyText(body), headers: h };
 }
 
-// `http_response_json(body)` — 200 with `Content-Type:
+// `json(body)` — 200 with `Content-Type:
 // application/json`. `body` is the already-serialized JSON
 // text (e.g. from `json.encode(...)`); this only sets the
 // media type, it does not itself serialize.
-pub function http_response_json(body: string): HttpResponse {
+pub function json(body: string): HttpResponse {
     return __http_response_typed(200, body, "application/json");
 }
 
-// `http_response_json_status(status, body)` — like
-// `http_response_json` but with an explicit status code, for
+// `json_status(status, body)` — like
+// `json` but with an explicit status code, for
 // `201 Created` / `422 Unprocessable Entity` / … JSON replies.
-pub function http_response_json_status(status: i32, body: string): HttpResponse {
+pub function json_status(status: i32, body: string): HttpResponse {
     return __http_response_typed(status, body, "application/json");
 }
 
-// `http_response_html(body)` — 200 with `Content-Type:
+// `html(body)` — 200 with `Content-Type:
 // text/html; charset=utf-8`.
-pub function http_response_html(body: string): HttpResponse {
+pub function html(body: string): HttpResponse {
     return __http_response_typed(200, body, "text/html; charset=utf-8");
 }
 
-// `http_response_plain(body)` — 200 with `Content-Type:
+// `plain(body)` — 200 with `Content-Type:
 // text/plain; charset=utf-8`. The typed sibling of
-// `http_response_ok`, for when the client should be told the
+// `ok`, for when the client should be told the
 // body is plain text rather than left to sniff it.
-pub function http_response_plain(body: string): HttpResponse {
+pub function plain(body: string): HttpResponse {
     return __http_response_typed(200, body, "text/plain; charset=utf-8");
 }
 
@@ -259,7 +266,7 @@ impl ToResponse for string {
 //
 //     function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.BodyError] {
 //         var item: Item = http.body_json[Item](req)?;
-//         return Ok(http.http_response_json(item.to_json()));
+//         return Ok(http.json(item.to_json()));
 //     }
 //
 // The media type is the `Content-Type` header's type without its
@@ -1634,47 +1641,47 @@ pub function http_materialize(r: HttpResponse): HttpResponse {
         BodyFile(path) => {
             match (read_file_bytes(path)) {
                 Ok(bs) => { return HttpResponse { ...r, body: BodyBytes(bs) }; },
-                Err(e) => { return http_response_not_found(); }
+                Err(e) => { return not_found(); }
             }
-            return http_response_not_found();
+            return not_found();
         },
         _ => { return r; }
     }
     return r;
 }
 
-// `http_response_bytes(status, bs)` — a response whose body is
+// `bytes(status, bs)` — a response whose body is
 // given as bytes rather than a string, so a handler holding
 // `u8[]` (an image, a decoded frame, bytes read off a request
 // Stream) does not have to spell the conversion itself.
-pub function http_response_bytes(status: i32, bs: u8[]): HttpResponse {
+pub function bytes(status: i32, bs: u8[]): HttpResponse {
     return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new() };
 }
 
-// `http_response_stream(status, s)` — a response whose body is what
+// `stream(status, s)` — a response whose body is what
 // is left of a Stream: bytes already in memory, drained to the wire
 // from its cursor.
-pub function http_response_stream(status: i32, s: Stream): HttpResponse {
+pub function stream(status: i32, s: Stream): HttpResponse {
     return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new() };
 }
 
-// `http_response_file(path)` — a 200 whose body is the file at `path`,
+// `file(path)` — a 200 whose body is the file at `path`,
 // streamed by the serve loop as the socket takes it, so a handler
 // answers a file without holding it or reaching the filesystem; a file
 // the loop cannot open is answered 404 in its place. The
 // `Content-Type` is the caller's to set.
-pub function http_response_file(path: string): HttpResponse {
+pub function file(path: string): HttpResponse {
     return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new() };
 }
 
-// `http_response_chunks(status, next)` — a response whose body is what
+// `chunks(status, next)` — a response whose body is what
 // `next` answers for the indexes 0, 1, 2, … until it answers None, each
 // chunk produced as the socket takes the one before it. The serve loop
 // writes it under chunked transfer coding to an HTTP/1.1 client and
 // close-delimited to an HTTP/1.0 one, so the length need not be known
 // up front; a `Content-Length` the handler set is dropped. The
 // `Content-Type` is the caller's to set.
-pub function http_response_chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
+pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
     return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new() };
 }
 
@@ -1705,9 +1712,9 @@ pub function (r: HttpResponse) with_appended_header(name: string, value: string)
 // `(r: HttpResponse).with_content_type(ct)` — set (replace) the
 // `Content-Type` header. Convenience over `with_header` for the
 // most common single header a handler overrides; pairs with the
-// plain `http_response_*` builders when you want to keep their
+// plain builders (`ok`, `text`, …) when you want to keep their
 // status/body but add a media type:
-//   r = http_response_ok(csv).with_content_type("text/csv");
+//   r = ok(csv).with_content_type("text/csv");
 pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
     return HttpResponse { ...r, headers: r.headers.set("Content-Type", ct) };
 }

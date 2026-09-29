@@ -72,15 +72,15 @@ function census_burn(n: i32): i32 {
     return x;
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/chunked") { return http.http_response_ok(req.body_string()); }
-    if (req.path == "/nocontent") { return http.http_response_no_content(); }
-    if (req.path == "/expect") { return http.http_response_ok(req.body_string()); }
+    if (req.path == "/chunked") { return http.ok(req.body_string()); }
+    if (req.path == "/nocontent") { return http.no_content(); }
+    if (req.path == "/expect") { return http.ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
-    if (census_burn(work) == 0 - 1) { return http.http_response_ok("never"); }
-    return http.http_response_ok("ok");
+    if (census_burn(work) == 0 - 1) { return http.ok("never"); }
+    return http.ok("ok");
 }
 function main(): i32 {
     return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {});

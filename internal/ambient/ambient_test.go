@@ -30,7 +30,7 @@ func enforce(t *testing.T, src string) []Violation {
 }
 
 const handlerTail = `
-    return http.http_response_ok("");
+    return http.ok("");
 }
 function main(): i32 { return 0; }
 `

@@ -283,7 +283,7 @@ mode after the DOM mode.** Streaming and SIMD can wait.
 var v = json_parse(req.body);
 match v {
     Object(m) => …,
-    _ => return http_response_bad_request(),
+    _ => return http.bad_request(),
 }
 
 // Schema mode (new):

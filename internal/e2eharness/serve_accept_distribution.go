@@ -25,7 +25,7 @@ function main(): i32 {
     var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), workers: %d, max_connections: 16384, max_connections_per_ip: 0 };
     return tcp.tcp_serve_supervised_opts(%d, opts, (req: HttpRequest, plat: Platform): HttpResponse => {
         if (id.get() == (0 as i64)) { id.set(monotonic_ns()); }
-        return http.http_response_ok(id.get().to_string());
+        return http.ok(id.get().to_string());
     });
 }
 `, workers, port)

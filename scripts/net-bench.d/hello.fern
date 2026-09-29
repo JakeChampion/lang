@@ -7,7 +7,7 @@ import "std/tcp";
 import "core/int";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("hello");
+    return http.ok("hello");
 }
 
 function port(): i32 {

@@ -33,10 +33,10 @@ function sparse(i: i32): Option[u8[]] {
 }
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/big") { return http.http_response_file(%q).with_content_type("application/octet-stream"); }
-    if (req.path == "/chunks") { return http.http_response_chunks(200, chunk).with_content_type("text/plain"); }
-    if (req.path == "/sparse") { return http.http_response_chunks(200, sparse); }
-    return http.http_response_ok("ok");
+    if (req.path == "/big") { return http.file(%q).with_content_type("application/octet-stream"); }
+    if (req.path == "/chunks") { return http.chunks(200, chunk).with_content_type("text/plain"); }
+    if (req.path == "/sparse") { return http.chunks(200, sparse); }
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve(%d, handle);

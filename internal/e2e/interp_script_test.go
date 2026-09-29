@@ -707,7 +707,7 @@ func TestInterpScriptHttpResponseHeaders(t *testing.T) {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.http_response_ok("hello");
+    var r: HttpResponse = http.ok("hello");
     r = r.with_header("X-Trace-Id", "abc123");
     r = r.with_header("Cache-Control", "no-store");
     var wire: string = http.http_serialize_response(r);
@@ -721,7 +721,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.http_response_redirect("/login");
+    var r: HttpResponse = http.redirect("/login");
     match (r.headers.get("location")) {
         Some(v) => { print(v); },
         None => { print("MISSING"); }
@@ -735,7 +735,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.http_response_ok("hi");
+    var r: HttpResponse = http.ok("hi");
     r = r.with_header("Content-Length", "9999");
     var wire: string = http.http_serialize_response(r);
     print(wire);
@@ -748,7 +748,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var r: HttpResponse = http.http_response_ok("hi");
+    var r: HttpResponse = http.ok("hi");
     r = r.with_appended_header("Set-Cookie", "a=1");
     r = r.with_appended_header("Set-Cookie", "b=2");
     var wire: string = http.http_serialize_response(r);
@@ -1973,7 +1973,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         Some(v) => { plat.log("region=" + v); },
         None => { plat.log("no-region"); }
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
