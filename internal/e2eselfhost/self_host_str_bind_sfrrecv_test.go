@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // strBindSfrrecvCases pin the release of a FRESH-OR-RECEIVER method result in
 // BINDING position — `var v: str = base.drop(2)`, the half of #6544 the receiver
@@ -106,7 +99,7 @@ function main(): i32 {
 	// compare removed, 0 with it.
 	{"str-bind-sfrrecv-identity-guarded", strBindPrelude + `function round(pre: string): i32 {
     var base: string = w(pre);
-    var c: string = base.tail(0);
+    var c: str = base.tail(0);
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
@@ -133,7 +126,7 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// the field's own box on the identity path, which the reads below catch.
 	{"str-bind-sfrrecv-field-root-refused", strBindPrelude + `function round(pre: string): i32 {
     var h: Holder = Holder { name: w(pre) };
-    var c: string = h.name.tail(0);
+    var c: str = h.name.tail(0);
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     if (p1.len() + p2.len() < 0) { return 0; }
@@ -215,28 +208,12 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 }
 
 // TestSelfHostStrBindSfrrecvIRX86_64 drives the cases through the self-hosted
-// x86-64 compiler.
+// CLI for x86-64.
 func TestSelfHostStrBindSfrrecvIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strBindSfrrecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = the bound result was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
 			}
 		})
@@ -245,8 +222,6 @@ func TestSelfHostStrBindSfrrecvIRX86_64(t *testing.T) {
 
 // strBindStdlibCases run the real `std/string` through the module loader, where
 // the registry that admits `drop` is built from a SIBLING module's declarations.
-// The single-file driver the cases above use cannot express that: it parses one
-// source and an `import` line resolves to nothing.
 //
 // These are the helpers the issue is about. Measured base/after on x86-64 with
 // `make selfhost-cli`: `drop(2)` 24 -> 0 (a view box), `pad_start(200, " ")`
@@ -294,20 +269,10 @@ function main(): i32 {
 // TestSelfHostStrBindSfrrecvStdlibX86_64 is the cross-module leg: the same credit
 // on the real std/string helpers, loaded as a sibling module.
 func TestSelfHostStrBindSfrrecvStdlibX86_64(t *testing.T) {
-	gcc, runner, driverBin := buildModloadDriverX86(t)
-
+	cli := newStrictCLI(t)
 	for _, tc := range strBindStdlibCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm, progDir := compileSourceModload(t, runner, driverBin, strBindStdlibMain(tc.call))
-			progBin := buildBin(t, gcc, progDir, tc.name, asm)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", strBindStdlibMain(tc.call))); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = the bound result was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
 			}
 		})
@@ -317,22 +282,11 @@ func TestSelfHostStrBindSfrrecvStdlibX86_64(t *testing.T) {
 // TestSelfHostStrBindSfrrecvIRArm64 is the arm64 leg; the admission and the
 // pointer compare are shared irlower, the release a per-backend transcription.
 func TestSelfHostStrBindSfrrecvIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strBindSfrrecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf("%s = %d, want %d (98 = the bound result was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
 			}
 		})
@@ -344,37 +298,10 @@ func TestSelfHostStrBindSfrrecvIRArm64(t *testing.T) {
 // ordinary owned block and the leak is box + data (120 B/round for the view
 // shape) rather than the register backends' 24.
 func TestSelfHostStrBindSfrrecvWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping str-bind sfrrecv wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strBindSfrrecvCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, strings.ReplaceAll(tc.name, "/", "_")+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
 				t.Errorf("%s = %d, want %d (98 = the bound result was stranded; 99 = over-release; 97 = value corrupted)", tc.name, got, tc.want)
 			}
 		})
