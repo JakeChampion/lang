@@ -972,14 +972,14 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     }
     var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
     if (body.0 != 2) { return __unframed(body.0, req_headers); }
-    var request: HttpRequest = HttpRequest {
+    var req: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
         path: path,
         body: stream.stream_from_bytes(body.1),
         headers: req_headers,
         trailers: body.3,
     };
-    return Framed(HttpFramed { request: request, len: body.2 - start, keep_alive: __persists(version, req_headers) });
+    return Framed(HttpFramed { request: req, len: body.2 - start, keep_alive: __persists(version, req_headers) });
 }
 
 // `http_request_target(method, target)` — the request-target (RFC 9112
@@ -1339,6 +1339,37 @@ pub function http_serialize_response_to(method: string, resp: HttpResponse, keep
 // cursor, so they answer the same thing however far a
 // separate `body_stream()` walk has advanced.
 // ============================================================
+
+// `request(method, path)` — a request to hand a handler in a test: the
+// method and path as given, no headers and no body, built up with
+// `with_header`, `with_body` and `with_json`. It reads the way a served
+// request does (`body_string`, `cookie`, `headers.get`), so a handler
+// under test sees what it would in a serve loop.
+//
+//     var resp: HttpResponse = handle(http.request("POST", "/items").with_json("{\"n\": 1}"), m.as_platform());
+//     return test.assert_status(resp, 201);
+pub function request(method: string, path: string): HttpRequest {
+    var empty: u8[] = [];
+    return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(empty), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+}
+
+// `(r: HttpRequest).with_header(name, value)` — the request with `name`
+// set to `value` (replacing an earlier value of the same name).
+pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequest {
+    return HttpRequest { ...r, headers: r.headers.set(name, value) };
+}
+
+// `(r: HttpRequest).with_body(body)` — the request with `body` as its
+// body and the `Content-Length` a client would send for it.
+pub function (r: HttpRequest) with_body(body: string): HttpRequest {
+    return HttpRequest { ...r, body: stream.stream_from_bytes(body.bytes()), headers: r.headers.set("content-length", int.int_to_string(body.len())) };
+}
+
+// `(r: HttpRequest).with_json(body)` — `with_body` with the
+// `Content-Type` of JSON.
+pub function (r: HttpRequest) with_json(body: string): HttpRequest {
+    return r.with_body(body).with_header("content-type", "application/json");
+}
 
 // `(r: HttpRequest).body_stream()` — the body as a Stream,
 // positioned at the start. The entry point for incremental
