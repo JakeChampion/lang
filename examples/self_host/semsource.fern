@@ -1703,7 +1703,8 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
 // key was never built and the whole of std/i32's surface read as a builtin
 // this boundary does not own.
 function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-    var owner: string = typeinfo.spelling(s.values[recv.id]);
+    // Keyed as decl_key keys the declaration: `(m: Map[string, i32]) f` is `Map.f`.
+    var owner: string = util.base_type_name(typeinfo.spelling(s.values[recv.id]));
     if (owner.len() == 0) { return refused(s, "unsupported call target"); }
     var at: i32 = ssasem.find_contract(s.contracts, owner + "." + fa.field);
     if (at < 0) { return refused(s, "unsupported call target"); }

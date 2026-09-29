@@ -510,6 +510,21 @@ function total(c: i32): i32 {
 }
 function main(): i32 { return total(5) * 10 + total(1); }
 `},
+	// A method declared on a concrete map receiver is keyed `Map.<name>`, as
+	// every receiver's method is keyed by its base type; the call looked for
+	// the receiver's full spelling and found no contract.
+	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, noLeak: true, src: `
+import "core/map";
+function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
+    if (m.has(k)) { return m.get_or(k, 0); }
+    return fallback;
+}
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("a", 10);
+    return m.goi("a", 1) + m.goi("b", 2) * 100;
+}
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
