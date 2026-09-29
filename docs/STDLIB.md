@@ -1006,7 +1006,21 @@ Percent-encoding, URL parsing, query parsing.
   human-readable JSON (`indent` spaces per level; empty arrays/objects
   stay on one line). Same value tokens as `json_encode` — only
   whitespace differs.
-- `json_parse(s: string): Option[JsonValue]`
+- `json_parse(s: string): Option[JsonValue]`;
+  `json_parse_result(s): Result[JsonValue, JsonError]` with where the text
+  broke
+- **Typed decode:** `FromJson` is the decode half of `Json`:
+  `T.from_json_value(v: JsonValue): Result[T, string]`, implemented for the
+  integers, floats, `boolean` and `string`, and derived for a struct by
+  `@derive(json.FromJson)` (fields decode through their own `FromJson`; an
+  `E[]` field through `from_json_array[E]`, an `Option[E]` field through
+  `from_json_option[E]`, `None` when the field is missing or null; a
+  container nested in another is E021). `json.decode[T](text)` parses and
+  decodes in one call, and a derived type also has `T.from_json(text)`. A
+  shape error says where: `missing field "id"`, `field "id": expected an
+  integer, got a string`, `field "tags": [1]: expected a string, got null`;
+  a parse failure reads `invalid JSON: <line>:<col>: <why>`. `json_kind(v)`
+  names a value's kind for such messages.
 - `json_escape(s: string): string` — escape a raw string for embedding
   inside a JSON string literal (caller supplies the quotes): `\` `"`
   backslash-escaped, `\n` `\r` `\t` short escapes, other C0 controls as
@@ -1035,6 +1049,14 @@ serializer.
   as empty from a handler, since a handler may not reach the file system
   (E080). The serve loop reads the file when it writes the response, through
   `http_materialize(resp)`, and answers 404 for a file it cannot read.
+- **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
+  body as a `T: json.FromJson` and tells the failures apart:
+  `UnsupportedMediaType(ct)` when the `Content-Type` is not
+  `application/json` or a `+json` type (or is missing), `MalformedJson(e)`
+  with std/json's `JsonError`, `WrongShape(why)` naming the field.
+  `BodyError` is `ToResponse` (415 / 400 / 422, as RFC 9457 problems), so a
+  handler declared as `Result[HttpResponse, http.BodyError]` reads
+  `var item: Item = http.body_json[Item](req)?;`.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
