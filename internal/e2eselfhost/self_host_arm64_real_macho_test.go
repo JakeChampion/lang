@@ -2,12 +2,9 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/modload"
 )
 
 // TestSelfHostArm64DarwinMachORealAsm is the final gate of the arm64-darwin
@@ -15,9 +12,9 @@ import (
 // arm64-darwin assembly — not hand-written snippets — into a runnable,
 // ad-hoc-signed Mach-O with no external as/clang/ld64.
 //
-// The Go reference backend (internal/codegen/arm64, which the self-host
-// asm_arm64.fern mirrors) emits the darwin asm for a Fern program. That
-// asm text is fed to a generated Fern driver that runs it through
+// The pinned stage0 compiler (`-target arm64-darwin -emit asm`) emits the
+// darwin asm for a Fern program. That asm text is fed to a generated Fern
+// driver that runs it through
 // arm64_gas_program (parse -> bytes + data + symbol fixups),
 // arm64_gas_link (resolve @PAGE/@PAGEOFF against macho.fern's segment
 // addresses), and macho.fern (wrap + ad-hoc sign). The whole driver
@@ -46,18 +43,8 @@ func TestSelfHostArm64DarwinMachORealAsm(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prog, _, err := modload.LoadSource(c.src)
-			if err != nil {
-				t.Fatalf("load: %v", err)
-			}
-			info, err := checker.Check(prog)
-			if err != nil {
-				t.Fatalf("check: %v", err)
-			}
-			asm, err := arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: true})
-			if err != nil {
-				t.Fatalf("emit: %v", err)
-			}
+			srcPath := mustWrite(t, t.TempDir(), c.name+".fern", c.src)
+			asm := e2eharness.EmitAsmWithSelfHost(t, e2eharness.Stage0Compiler(t), e2eharness.TargetArm64Darwin, srcPath)
 
 			bin := selfHostMachOBytes(t, c.name+"_real", arm64NativeSrc(t)+"\n"+asmToMachoDriver(asm))
 			if bytes.HasPrefix(bin, []byte("UNKNOWN:")) {

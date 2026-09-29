@@ -18,7 +18,7 @@ func TestHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, e2eharness.HeldConnectionsServerSource(port))
 	_, _ = startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	per, first, second := e2eharness.MeasureHeldConnections(t, addr)
 	t.Logf("held connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",

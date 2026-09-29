@@ -21710,6 +21710,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     if (!se.ok) { return se; }
     se = tail_release_snapshot_locals(r.value, se);
     se = settle_returned_append(r.value, se);
+    se = settle_returned_handbacks(r.value, se);
     // Perceus move-on-return: any array local the returned value MOVES out
     // (a bare array local, an `.append` receiver, or an array under a
     // returned enum / struct-enum-field — see returned_moved_arr_slots) is
@@ -29886,6 +29887,10 @@ function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean
 // is superseded rather than handed back, exactly as it is at `p = f(p, …)`.
 // Skipping it there leaves the buffer at rc 2 with one owner, and the caller's
 // next in-place append reads it as shared and copies the whole thing.
+// A param held at a handback position (returned_handback_slots) is released
+// when the call took its buffer and gave a different one back; an identity
+// handback never reaches the release, since settle_returned_handbacks has
+// already cleared its flag.
 function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean): LowerState {
     var st: LowerState = s;
     var ret_names: string[] = [];
@@ -29896,6 +29901,7 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         if (fl >= 0 && has_ret && !named) { ret_names = astwalk.collect_idents_expr(ret, []); named = true; }
         if (fl >= 0 && (util.index_of_str(ret_names, st.locals[i].slot_name) < 0
             || (has_ret && rebind_call_same_dec(ret, st.locals[i].slot_name, st))
+            || (has_ret && slot_list_has(returned_handback_slots(ret, st), i))
             || ret_type_cannot_hold_buffer(st.frame.cur_ret))) {
             st = st.emit(ir.op_load_local(fl));
             st = st.emit(ir.op_if(0));
@@ -29905,6 +29911,55 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         i = i + 1;
     }
     return st;
+}
+
+// returned_handback_slots: the array slots the returned direct call `e` holds
+// at a declared `own` position its callee does not consume
+// (callee_consumes_own_array). Such a callee hands the buffer back uncounted
+// when it keeps it, so `return f(xs)` is `xs = f(xs); return xs`.
+function returned_handback_slots(e: ast.Expr, s: LowerState): i32[] {
+    var out: i32[] = [];
+    var cname: string = direct_call_callee_name(e);
+    if (cname.len() == 0 || s.slot_of(cname) >= 0) { return out; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            var sl: i32 = s.slot_of(ident_name_or_empty(c.args[i]));
+            if (sl >= 0 && s.is_arr_slot(sl) && call_arg_pos_owns(s, cname, 0 - 1, i)
+                && !s.callee_consumes_own_array(cname, i) && !s.callee_param_is_typevar(cname, i)) {
+                out = out.append(sl);
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// settle_returned_handbacks: with the returned call's result on the stack, a
+// handback slot the call gave back is the returned value, so the exit sweep
+// must not release it: an owned local is cleared, and a flagged binding's flag
+// is cleared. One the call replaced is released at exit as the rebind would.
+function settle_returned_handbacks(e: ast.Expr, s: LowerState): LowerState {
+    var slots: i32[] = returned_handback_slots(e, s);
+    if (slots.len() == 0) { return s; }
+    var tmpn: string = "$rhb" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(tmpn);
+    var tmp: i32 = st.slot_of(tmpn);
+    st = st.emit(ir.op_store_local(tmp));
+    for sl in slots {
+        var clear: i32 = st.ownflag_slot_of(sl);
+        if (clear < 0 && sl >= st.frame.n_params && !st.is_borrowed_arr_slot(sl)) { clear = sl; }
+        if (clear >= 0) {
+            st = st.emit(ir.op_load_local(sl));
+            st = st.emit(ir.op_load_local(tmp));
+            st = st.emit(ir.op_bin("eq", 0, false));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(clear));
+            st = st.emit(ir.op_end());
+        }
+    }
+    return st.emit(ir.op_load_local(tmp));
 }
 
 struct RetArm { handled: boolean, state: LowerState }
@@ -42068,12 +42123,39 @@ function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string
             var nm: string = slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "";
             if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
         }
-        // A threader row rides along whole; no bare name can match it.
+        // A threader or handback row rides along whole; no bare name can match it.
         var thr: string = thread_row_name(fresh_ret[i]);
         if (thr.len() > 0 && !body_declares_name(body, thr)) { out = push_str_unique(out, fresh_ret[i]); }
+        var hbk: string = handback_row_name(fresh_ret[i]);
+        if (hbk.len() > 0 && !body_declares_name(body, hbk)) { out = push_str_unique(out, fresh_ret[i]); }
         i = i + 1;
     }
     return out;
+}
+
+// handback_row_name: the function a "SARRH:" row names, or "".
+function handback_row_name(row: string): string {
+    if (!bytes_at(row, 0, "SARRH:")) { return ""; }
+    var end: i32 = 6;
+    while (end < row.len() && row[end] != b'|') { end = end + 1; }
+    return slice_unchecked(row, 6, end) + "";
+}
+
+// strarr_handback_call: `f(.., name, ..)` hands the local to a counted handback,
+// which gives it back uncounted or leaves it with this frame, and no other
+// argument reads it but as a borrow. Returned, settle_returned_handbacks keeps
+// it when given back; rebound, the store's cow guard does.
+function strarr_handback_call(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
+    var k: i32 = handback_pos(e, name, rows, "SARRH:");
+    if (k < 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (i != k && strarr_expr_unsafe(c.args[i], name, borrowable)) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
 }
 
 // strarr_rebind_is_fresh: `name = <e>` rebuilds the local from a value it can
@@ -42150,7 +42232,12 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
             }
             return strarr_expr_unsafe(v.init, name, borrowable);
         },
-        ast.StmtReturn(r) => { return strarr_expr_unsafe(r.value, name, borrowable); },
+        // A bare `return name` moves the array out: the return excludes the slot
+        // from the exit sweep (returned_moved_arr_slots).
+        ast.StmtReturn(r) => {
+            return ident_name_or_empty(r.value) != name && strarr_expr_unsafe(r.value, name, borrowable)
+                && !strarr_handback_call(r.value, name, borrowable, strarr_producers);
+        },
         ast.StmtExpr(e) => { return strarr_expr_unsafe(e.value, name, borrowable); },
         ast.StmtAssign(a) => {
             if (a.target == name) {
@@ -42201,6 +42288,7 @@ function stmt_strarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 // above it is not a call shape, so it is tested after the match.
                 if (strarr_rebind_is_fresh(a.value, name, borrowable, str_fresh, strarr_producers)) { return false; }
                 if (thread_rebind(a.value, name, borrowable, strarr_producers, true)) { return false; }
+                if (strarr_handback_call(a.value, name, borrowable, strarr_producers)) { return false; }
                 return true;   // any other reassignment of the candidate
             }
             // The assign form of the struct-literal field share above: the
@@ -45944,9 +46032,114 @@ function counted_strarr_value(e: ast.Expr, fn: parser.FuncDecl, sources: StringA
     }
     if let ast.ExprCall(c) = e {
         var nm: string = ident_name_or_empty(c.callee);
-        return util.has_str(owned, nm) && !fn_has_param_named(fn, nm) && !body_declares_name(fn.body, nm);
+        if (fn_has_param_named(fn, nm) || body_declares_name(fn.body, nm)) {
+            return false;
+        }
+        if (util.has_str(owned, nm)) {
+            return true;
+        }
+        if (!util.has_str(owned, "H:" + nm)) {
+            return false;
+        }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (util.has_str(owned, handback_pos_row("H:", nm, i)) && !counted_strarr_arg(c.args[i], fn, sources, owned, str_fresh)) {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
     }
     return false;
+}
+
+// handback_pos_row: the row naming position `k` of a handback callee under `tag`.
+function handback_pos_row(tag: string, callee: string, k: i32): string {
+    return tag + callee + "|" + util.i32_to_string(k);
+}
+
+// handback_pos: the position at which the direct call `e` holds the bare ident
+// `name`, when that is its only mention and a handback position of a callee
+// `rows` lists under `tag`; else -1.
+function handback_pos(e: ast.Expr, name: string, rows: string[], tag: string): i32 {
+    if let ast.ExprCall(c) = e {
+        var callee: string = ident_name_or_empty(c.callee);
+        if (callee.len() == 0 || !util.has_str(rows, tag + callee)) {
+            return 0 - 1;
+        }
+        var k: i32 = 0 - 1;
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) == name) {
+                if (k >= 0 || !util.has_str(rows, handback_pos_row(tag, callee, i))) {
+                    return 0 - 1;
+                }
+                k = i;
+            }
+            i = i + 1;
+        }
+        return k;
+    }
+    return 0 - 1;
+}
+
+// counted_strarr_handback: `name` is handed to a counted handback callee, whose
+// result is either `name` itself or a counted array. Every other handback
+// position holds a counted value that is not a local, and no other argument
+// reads `name` or an element of it other than as a borrow.
+function counted_strarr_handback(e: ast.Expr, name: string, fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    var k: i32 = handback_pos(e, name, owned, "H:");
+    if (k < 0) {
+        return false;
+    }
+    if let ast.ExprCall(c) = e {
+        var callee: string = ident_name_or_empty(c.callee);
+        if (fn_has_param_named(fn, callee) || body_declares_name(fn.body, callee)) {
+            return false;
+        }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (i != k) {
+                if (strarr_expr_unsafe(c.args[i], name, [])) {
+                    return false;
+                }
+                if (util.has_str(owned, handback_pos_row("H:", callee, i)) && !counted_strarr_value(c.args[i], fn, sources, owned, str_fresh)) {
+                    return false;
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// counted_strarr_arg: an argument at a handback position holds a counted array
+// — a counted value, or a counted builder local handed over here.
+function counted_strarr_arg(e: ast.Expr, fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) {
+        return counted_strarr_value(e, fn, sources, owned, str_fresh);
+    }
+    return counted_strarr_local(nm, fn, sources, owned, str_fresh);
+}
+
+// counted_strarr_local: `nm` holds a counted array wherever it is returned or
+// handed back — a local declared once from a counted value, or an `own`
+// parameter the handback proof assumes counted ("P:" in `owned`), used only as
+// a counted builder either way.
+function counted_strarr_local(nm: string, fn: parser.FuncDecl, sources: StringArraySources, owned: string[], str_fresh: string[]): boolean {
+    if (fn_has_param_named(fn, nm)) {
+        // A binder of the same name reads another value under this spelling.
+        if (!util.has_str(owned, "P:" + nm) || util.has_str(astwalk.collect_bound_stmts(fn.body, []), nm)) {
+            return false;
+        }
+    } else if (local_decl_count(fn.body, nm) != 1 || !counted_strarr_value(cap_local_init(fn.body, nm), fn, sources, owned, str_fresh)) {
+        // A unique binder is not an initializer witness: tuple, foreach and
+        // match binders are counted too, and cap_local_init returns Unknown
+        // unless a matching var supplies an initializer.
+        return false;
+    }
+    return counted_strarr_builder_ok(fn.body, nm, fn, sources, owned, str_fresh);
 }
 
 // Validate every use of a returned builder, not only its final append. Element
@@ -45975,7 +46168,10 @@ function counted_strarr_builder_ok(stmts: ast.Stmt[], name: string, fn: parser.F
                             }
                         }
                     }
-                    if (!ok) {
+                    if (!ok && ident_name_or_empty(a.value).len() == 0 && !strarr_expr_unsafe(a.value, name, [])) {
+                        ok = counted_strarr_value(a.value, fn, sources, owned, str_fresh);
+                    }
+                    if (!ok && !counted_strarr_handback(a.value, name, fn, sources, owned, str_fresh)) {
                         return false;
                     }
                 } else if (strarr_expr_unsafe(a.value, name, [])) {
@@ -45983,7 +46179,8 @@ function counted_strarr_builder_ok(stmts: ast.Stmt[], name: string, fn: parser.F
                 }
             },
             ast.StmtReturn(r) => {
-                if (ident_name_or_empty(r.value) != name && strarr_expr_unsafe(r.value, name, [])) {
+                if (ident_name_or_empty(r.value) != name && strarr_expr_unsafe(r.value, name, [])
+                        && !counted_strarr_handback(r.value, name, fn, sources, owned, str_fresh)) {
                     return false;
                 }
             },
@@ -46038,12 +46235,7 @@ function counted_strarr_returns_ok(stmts: ast.Stmt[], fn: parser.FuncDecl, sourc
             ast.StmtReturn(r) => {
                 if (!counted_strarr_value(r.value, fn, sources, owned, str_fresh)) {
                     var nm: string = ident_name_or_empty(r.value);
-                    // A unique binder is not an initializer witness: tuple,
-                    // foreach and match binders are counted too. Their child
-                    // ownership is not proved by the ordinary builder walk.
-                    // cap_local_init returns Unknown unless a matching var
-                    // actually supplies an initializer we can validate.
-                    if (nm.len() == 0 || fn_has_param_named(fn, nm) || local_decl_count(fn.body, nm) != 1 || !counted_strarr_value(cap_local_init(fn.body, nm), fn, sources, owned, str_fresh) || !counted_strarr_builder_ok(fn.body, nm, fn, sources, owned, str_fresh)) {
+                    if (nm.len() == 0 || !counted_strarr_local(nm, fn, sources, owned, str_fresh)) {
                         return false;
                     }
                 }
@@ -46091,6 +46283,10 @@ function counted_strarr_returns_ok(stmts: ast.Stmt[], fn: parser.FuncDecl, sourc
 // Least fixed point: a forwarding result qualifies only after its callee.
 // Remove proved functions from the worklist; an ungrounded recursion cycle
 // adds nothing and terminates without claiming ownership. No depth cut-off.
+// A function whose returns are counted only when its `own string[]`
+// parameters hold counted arrays is a HANDBACK: "H:<name>" plus one
+// "H:<name>|<k>" row per such position, and a call to it is counted when each
+// of those arguments is.
 function counted_strarr_returns_of(funcs: parser.FuncDecl[], str_fresh: string[]): string[] {
     var pending: i32[] = [];
     var i: i32 = 0;
@@ -46105,8 +46301,19 @@ function counted_strarr_returns_of(funcs: parser.FuncDecl[], str_fresh: string[]
         var next: i32[] = [];
         for fi in pending {
             var fn: parser.FuncDecl = funcs[fi];
-            if (counted_strarr_returns_ok(fn.body, fn, string_array_sources_of(fn), owned, str_fresh)) {
+            var sources: StringArraySources = string_array_sources_of(fn);
+            var assumed: string[] = own_strarr_param_rows(fn);
+            if (counted_strarr_returns_ok(fn.body, fn, sources, owned, str_fresh)) {
                 owned = owned.append(fn.name);
+            } else if (assumed.len() > 0 && counted_strarr_returns_ok(fn.body, fn, sources, util.append_all(owned, assumed), str_fresh)) {
+                owned = owned.append("H:" + fn.name);
+                var k: i32 = 0;
+                while (k < fn.params.len()) {
+                    if (fn.params[k].own && fn.params[k].type_name == "string[]") {
+                        owned = owned.append(handback_pos_row("H:", fn.name, k));
+                    }
+                    k = k + 1;
+                }
             } else {
                 next = next.append(fi);
             }
@@ -46117,6 +46324,18 @@ function counted_strarr_returns_of(funcs: parser.FuncDecl[], str_fresh: string[]
         pending = next;
     }
     return owned;
+}
+
+// own_strarr_param_rows: a "P:<name>" row per `own string[]` parameter of `fn`,
+// the handback proof's assumption that each holds a counted array.
+function own_strarr_param_rows(fn: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    for p in fn.params {
+        if (p.own && p.type_name == "string[]") {
+            out = out.append("P:" + p.name);
+        }
+    }
+    return out;
 }
 
 // fn_returns_fresh_strarr: `fn` is a FREE function every return of which hands
@@ -46682,7 +46901,11 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: S
     if (want_str_fresh) { str_fresh = str_fresh_ret_fns_of(funcs); }
     // Counted elements need not be fresh or unique. Keep this result separate
     // from STRARR: so projection and field-freshness consumers do not widen.
-    for nm in counted_strarr_returns_of(funcs, str_fresh) { out = out.append("SARRC:" + nm); }
+    // A handback row "H:..." is registered as "SARRH:...".
+    for nm in counted_strarr_returns_of(funcs, str_fresh) {
+        if (bytes_at(nm, 0, "H:")) { out = out.append("SARRH:" + slice_unchecked(nm, 2, nm.len())); }
+        else { out = out.append("SARRC:" + nm); }
+    }
     var arr_fresh: string[] = arr_fresh_ret_fns_of(funcs);
     // The string[] producers are in the same list under "SA:" so the strict-fresh
     // walk can ask about either element kind without a second parameter; every
@@ -52799,6 +53022,7 @@ function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
         ast.StmtAssign(a) => {
             if (a.target == name) {
                 if (arrarr_self_append_row(a.value, name, ofr) >= 0) { return false; }
+                if (arrarr_handback_call(a.value, name, borrowable, ofr.rows)) { return false; }
                 // `name = h` from a member of the group retains, as a bind does.
                 match (a.value) {
                     ast.ExprIdent(rid) => { return !alias_ok_holds_name(alias_ok, rid.name); },
@@ -52806,6 +53030,11 @@ function stmt_arrarr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]
                 }
                 return true;   // any other reassignment of the candidate
             }
+            return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok);
+        },
+        // A bare `return name` moves the structure out (returned_moved_arr_slots).
+        ast.StmtReturn(r) => {
+            if (ident_name_or_empty(r.value) == name || arrarr_handback_call(r.value, name, borrowable, ofr.rows)) { return false; }
             return stmt_unsafe_for_alias(st, name, borrowable, [], alias_ok);
         },
         ast.StmtIf(f) => {
@@ -65124,6 +65353,7 @@ function direct_call_callee_name(e: ast.Expr): string {
 
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[]): string[] {
     var out: string[] = [];
+    var aac: string[] = aac_rows_of(funcs, sig_reg_of(row_producer_rows_of(funcs)));
     for fn in funcs {
         var rt: string = fn.ret_type;
         if (rt.len() >= 8 && (slice_unchecked(rt, 0, 7) == "Option[" || slice_unchecked(rt, 0, 7) == "Result[")
@@ -65158,30 +65388,15 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
-        // in the SAME list (the no-new-threading trick RCE: uses above). A
-        // qualifying FREE function's every return is a fresh arr-of-arr LITERAL
-        // (arrarr_lit_is_fresh — non-empty, rows are array literals), so the
-        // returned structure is rc=1 and solely owned by the caller (the
-        // self-host IR path has no return-transfer inc). `flag` is "s" when
-        // every return also passes arrarr_lit_strings_fresh (string inners are
-        // literals / fresh producers — a param-embedding row like `[[s]]`
-        // disqualifies, exactly the dangling-pointer hazard the strict credit
-        // exists for), else "p" (rows-are-literals only: enough for scalar-kind
-        // slots, whose inner elements value-copy; a string-kind slot gets no
-        // strict credit and stays on its sound leak).
-        // collect_fresh_arrarr_names admits `var g: T[][] = mk(..)` call inits
-        // exactly like literal inits off these entries. Deeper nesting
-        // (`string[][][]`) may register — its rows are array literals too — but
-        // the consuming slot's arrarr_elem is "" for those, so only the lax
+        // in the SAME list (the no-new-threading trick RCE: uses above);
+        // aac_rows_of proves them. A qualifying return hands the caller a
+        // structure it solely owns (the self-host IR path has no
+        // return-transfer inc). collect_fresh_arrarr_names admits
+        // `var g: T[][] = mk(..)` call inits exactly like literal inits off
+        // these entries. Deeper nesting (`string[][][]`) may register, but the
+        // consuming slot's arrarr_elem is "" for those, so only the lax
         // shallow-row free applies (sound), mirroring the literal-init path.
-        else if (fn.receiver_type.len() == 0
-                && rt.len() >= 4 && slice_unchecked(rt, rt.len() - 4, rt.len()) == "[][]"
-                && body_has_return(fn.body)
-                && !body_has_nonfresh_arrarr_return(fn.body)) {
-            var aflag: string = "p";
-            if (!body_has_nonstrfresh_arrarr_return(fn.body)) { aflag = "s"; }
-            out = out.append("AAC:" + fn.name + "|" + aflag);
-        }
+        else if (util.has_str(aac, "AAC:" + fn.name + "|s") || util.has_str(aac, "AAC:" + fn.name + "|p")) {}
         // #6102: fresh ROW producers, "ARC:<name>|<flag>" — the single-level
         // sibling of AAC above, consumed by arrarr_self_append_row so an
         // append-built arr-of-arr can take `g = g.append(make_row())`. Return
@@ -65195,7 +65410,23 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
             out = out.append("ARC:" + fn.name + "|" + rflag);
         }
     }
+    out = append_all(out, aac);
     return append_all(out, strict_closure_enum_rows(funcs, structs, str_fresh, out));
+}
+
+// row_producer_rows_of: the "ARC:" rows of the free functions returning one
+// level of array, which the "AAC:" proof reads before the arm above writes them.
+function row_producer_rows_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        var rt: string = fn.ret_type;
+        if (fn.receiver_type.len() == 0 && rt.len() >= 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]"
+                && !(rt.len() >= 4 && slice_unchecked(rt, rt.len() - 4, rt.len()) == "[][]")) {
+            var k: i32 = row_producer_kind(fn.body);
+            if (k >= 0) { out = out.append("ARC:" + fn.name + "|" + aac_flag(k)); }
+        }
+    }
+    return out;
 }
 
 // arrenum_producer_enum: the element enum of an array-of-enums producer, or "".
@@ -65499,42 +65730,249 @@ function row_self_append_elem_kind(e: ast.Expr, name: string): i32 {
     return -1;
 }
 
-// body_has_nonfresh_arrarr_return: any return whose value is NOT a fresh
-// arr-of-arr literal (arrarr_lit_is_fresh) — disqualifies the function from
-// the "AAC:" registry (#4355 slice 10). A param pass-through or a call chain
-// disqualifies; `return t;` of a whole local does too. A literal whose ROWS are
-// consumed locals still qualifies — the returned value solely owns them.
-function body_has_nonfresh_arrarr_return(stmts: ast.Stmt[]): boolean {
+// aac_rows_of: the "AAC:<name>|<flag>" rows of the FREE functions every return
+// of which hands the caller a fresh arr-of-arr (aac_body_kind), as a least
+// fixpoint because a return may forward another's result. `flag` is "s" when
+// every inner element is also a fresh string, else "p". A function fresh only
+// when its `own` parameters of the return type are is a HANDBACK: "AACH:<name>",
+// one "AACH:<name>|<k>" per such position, and "AACHS:<name>" when strict. A
+// call to one is fresh when each of those arguments is. `arc` holds the fresh
+// ROW producers a self-append may take.
+function aac_rows_of(funcs: parser.FuncDecl[], arc: SigReg): string[] {
+    var pending: i32[] = [];
     var i: i32 = 0;
-    while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtReturn(r) => { if (!arrarr_lit_is_fresh(arrarr_row_effective(r.value, stmts, i), stmts, i)) { return true; } },
-            ast.StmtIf(f) => { if (body_has_nonfresh_arrarr_return(f.then_body) || body_has_nonfresh_arrarr_return(f.else_body)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_arrarr_return(w.body)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_arrarr_return(fo.body)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrarr_return(m.arms[a].body)) { return true; } a = a + 1; } },
-            _ => {}
+    while (i < funcs.len()) {
+        var rt: string = funcs[i].ret_type;
+        if (funcs[i].receiver_type.len() == 0 && rt.len() >= 4 && slice_unchecked(rt, rt.len() - 4, rt.len()) == "[][]" && body_has_return(funcs[i].body)) {
+            pending = pending.append(i);
         }
         i = i + 1;
     }
-    return false;
+    var rows: string[] = [];
+    while (pending.len() > 0) {
+        var next: i32[] = [];
+        for fi in pending {
+            var fn: parser.FuncDecl = funcs[fi];
+            var assumed: string[] = [];
+            var hpos: string[] = [];
+            var k: i32 = 0;
+            while (k < fn.params.len()) {
+                if (fn.params[k].own && fn.params[k].type_name == fn.ret_type) {
+                    assumed = assumed.append("P:" + fn.params[k].name);
+                    hpos = hpos.append(handback_pos_row("AACH:", fn.name, k));
+                }
+                k = k + 1;
+            }
+            var kind: i32 = aac_body_kind(fn.body, fn, rows, arc);
+            if (kind >= 0) {
+                rows = rows.append("AAC:" + fn.name + "|" + aac_flag(kind));
+                continue;
+            }
+            if (assumed.len() > 0) {
+                kind = aac_body_kind(fn.body, fn, util.append_all(rows, assumed), arc);
+            }
+            if (kind < 0) {
+                next = next.append(fi);
+                continue;
+            }
+            rows = util.append_all(rows.append("AACH:" + fn.name), hpos);
+            if (kind == 1) { rows = rows.append("AACHS:" + fn.name); }
+        }
+        if (next.len() == pending.len()) { return rows; }
+        pending = next;
+    }
+    return rows;
 }
 
-// body_has_nonstrfresh_arrarr_return: any return whose value fails the STRICT
-// strings-fresh test (arrarr_lit_strings_fresh) — withholds the "s" flag from
-// an "AAC:" entry, so string-kind consumer slots stay excluded.
-function body_has_nonstrfresh_arrarr_return(stmts: ast.Stmt[]): boolean {
+function min_i32(a: i32, b: i32): i32 {
+    if (a < b) { return a; }
+    return b;
+}
+
+function aac_flag(kind: i32): string {
+    if (kind == 1) { return "s"; }
+    return "p";
+}
+
+// aac_body_kind: the weakest aac_value_kind over every return in `stmts`.
+function aac_body_kind(stmts: ast.Stmt[], fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    var worst: i32 = 1;
     var i: i32 = 0;
     while (i < stmts.len()) {
+        var k: i32 = 1;
         match (stmts[i]) {
-            ast.StmtReturn(r) => { if (!arrarr_lit_strings_fresh(arrarr_row_effective(r.value, stmts, i), stmts, i)) { return true; } },
-            ast.StmtIf(f) => { if (body_has_nonstrfresh_arrarr_return(f.then_body) || body_has_nonstrfresh_arrarr_return(f.else_body)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonstrfresh_arrarr_return(w.body)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonstrfresh_arrarr_return(fo.body)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonstrfresh_arrarr_return(m.arms[a].body)) { return true; } a = a + 1; } },
+            ast.StmtReturn(r) => { k = aac_value_kind(r.value, stmts, i, fn, rows, arc); },
+            ast.StmtIf(f) => { k = min_i32(aac_body_kind(f.then_body, fn, rows, arc), aac_body_kind(f.else_body, fn, rows, arc)); },
+            ast.StmtWhile(w) => { k = aac_body_kind(w.body, fn, rows, arc); },
+            ast.StmtFor(fo) => { k = aac_body_kind(fo.body, fn, rows, arc); },
+            ast.StmtMatch(m) => { for arm in m.arms { k = min_i32(k, aac_body_kind(arm.body, fn, rows, arc)); } },
             _ => {}
         }
+        if (k < 0) { return 0 - 1; }
+        worst = min_i32(worst, k);
         i = i + 1;
+    }
+    return worst;
+}
+
+// aac_value_kind classifies an arr-of-arr value `e` read at statement `k` of
+// `stmts`: -1 not fresh, 0 every row a buffer the value solely owns, 1 also
+// every inner element a fresh string. Fresh is a literal of fresh rows
+// (arrarr_lit_is_fresh, a consumed row local included), a local built from one
+// (aac_local_kind), or a call to an "AAC:" producer or a handback over fresh
+// arguments.
+function aac_value_kind(e: ast.Expr, stmts: ast.Stmt[], k: i32, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    var eff: ast.Expr = arrarr_row_effective(e, stmts, k);
+    if (arrarr_lit_is_fresh(eff, stmts, k)) {
+        if (arrarr_lit_strings_fresh(eff, stmts, k)) { return 1; }
+        return 0;
+    }
+    match (e) {
+        ast.ExprIdent(id) => { return aac_local_kind(id.name, fn, rows, arc); },
+        ast.ExprCall(c) => { return aac_call_kind(c, fn, rows, arc); },
+        _ => {}
+    }
+    return 0 - 1;
+}
+
+// aac_call_kind: the kind of a direct call's result, -1 unless the callee is an
+// "AAC:" producer or a handback whose every handback argument is fresh.
+function aac_call_kind(c: ast.ExprCall, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    var cn: string = ident_name_or_empty(c.callee);
+    if (cn.len() == 0 || fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
+    if (util.has_str(rows, "AAC:" + cn + "|s")) { return 1; }
+    if (util.has_str(rows, "AAC:" + cn + "|p")) { return 0; }
+    if (!util.has_str(rows, "AACH:" + cn)) { return 0 - 1; }
+    var worst: i32 = 0;
+    if (util.has_str(rows, "AACHS:" + cn)) { worst = 1; }
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        if (util.has_str(rows, handback_pos_row("AACH:", cn, i))) {
+            var ak: i32 = 0 - 1;
+            var an: string = ident_name_or_empty(c.args[i]);
+            if (an.len() > 0) { ak = aac_local_kind(an, fn, rows, arc); }
+            else { ak = aac_value_kind(c.args[i], [], 0 - 1, fn, rows, arc); }
+            if (ak < 0) { return 0 - 1; }
+            worst = min_i32(worst, ak);
+        }
+        i = i + 1;
+    }
+    return worst;
+}
+
+// aac_local_kind: `name` holds a fresh arr-of-arr wherever it is returned or
+// handed back — a local declared once from a fresh value, or an `own`
+// parameter the handback proof assumes fresh ("P:" in `rows`); every rebind a
+// self-append of a fresh row or a handback over it; and no escape but those.
+function aac_local_kind(name: string, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    var kind: i32 = 1;
+    if (fn_has_param_named(fn, name)) {
+        if (!util.has_str(rows, "P:" + name) || util.has_str(astwalk.collect_bound_stmts(fn.body, []), name)) { return 0 - 1; }
+    } else {
+        if (local_decl_count(fn.body, name) != 1) { return 0 - 1; }
+        var init: ast.Expr = cap_local_init(fn.body, name);
+        if (!arrarr_lit_is_empty(init)) { kind = aac_value_kind(init, [], 0 - 1, fn, rows, arc); }
+    }
+    if (kind < 0) { return 0 - 1; }
+    kind = min_i32(kind, aac_rebind_kind(fn.body, name, fn, rows, arc));
+    if (kind < 0 || aac_local_escapes(fn.body, name, rows) || arrarr_row_escapes_iter(fn.body, name, [])) { return 0 - 1; }
+    return kind;
+}
+
+// aac_rebind_kind: the weakest kind over every reassignment of `name`, each a
+// self-append (arrarr_self_append_row) or a handback over it; -1 for any other.
+function aac_rebind_kind(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    var worst: i32 = 1;
+    for st in stmts {
+        var k: i32 = 1;
+        match (st) {
+            ast.StmtAssign(a) => {
+                if (a.target == name) {
+                    k = arrarr_self_append_row(a.value, name, arc);
+                    if (k < 0) { k = aac_handback_kind(a.value, name, fn, rows, arc); }
+                }
+            },
+            ast.StmtIf(f) => { k = min_i32(aac_rebind_kind(f.then_body, name, fn, rows, arc), aac_rebind_kind(f.else_body, name, fn, rows, arc)); },
+            ast.StmtWhile(w) => { k = aac_rebind_kind(w.body, name, fn, rows, arc); },
+            ast.StmtFor(fo) => { k = aac_rebind_kind(fo.body, name, fn, rows, arc); },
+            ast.StmtMatch(m) => { for arm in m.arms { k = min_i32(k, aac_rebind_kind(arm.body, name, fn, rows, arc)); } },
+            ast.StmtDefer(d) => { k = aac_rebind_kind([d.action], name, fn, rows, arc); },
+            _ => {}
+        }
+        if (k < 0) { return 0 - 1; }
+        worst = min_i32(worst, k);
+    }
+    return worst;
+}
+
+// aac_handback_kind: `e` hands `name` to a handback (arrarr_handback_call), whose
+// other handback arguments are fresh values that are not locals; the result's
+// kind apart from `name`'s own, or -1.
+function aac_handback_kind(e: ast.Expr, name: string, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
+    if (!arrarr_handback_call(e, name, [], rows)) { return 0 - 1; }
+    var worst: i32 = 0;
+    if let ast.ExprCall(c) = e {
+        var cn: string = ident_name_or_empty(c.callee);
+        if (fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
+        if (util.has_str(rows, "AACHS:" + cn)) { worst = 1; }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) != name && util.has_str(rows, handback_pos_row("AACH:", cn, i))) {
+                if (ident_name_or_empty(c.args[i]).len() > 0) { return 0 - 1; }
+                var ak: i32 = aac_value_kind(c.args[i], [], 0 - 1, fn, rows, arc);
+                if (ak < 0) { return 0 - 1; }
+                worst = min_i32(worst, ak);
+            }
+            i = i + 1;
+        }
+    }
+    return worst;
+}
+
+// arrarr_handback_call: `f(.., name, ..)` hands the arr-of-arr local to an
+// "AACH:" handback, which gives it back uncounted or leaves it with this frame,
+// and no other argument reads it but as a borrow.
+function arrarr_handback_call(e: ast.Expr, name: string, borrowable: string[], rows: string[]): boolean {
+    var k: i32 = handback_pos(e, name, rows, "AACH:");
+    if (k < 0) { return false; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (i != k && expr_unsafe_for(c.args[i], name, borrowable, [])) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// aac_local_escapes: `name` escapes by a route other than a bare return, a
+// handback return, or a handback rebind (body_unsafe_for_allow_ret otherwise).
+// A compound statement's own header is judged with its bodies emptied.
+function aac_local_escapes(stmts: ast.Stmt[], name: string, rows: string[]): boolean {
+    for st in stmts {
+        var hdr: ast.Stmt = st;
+        var inner: boolean = false;
+        match (st) {
+            ast.StmtReturn(r) => { if (arrarr_handback_call(r.value, name, [], rows)) { continue; } },
+            ast.StmtAssign(a) => { if (a.target == name && arrarr_handback_call(a.value, name, [], rows)) { continue; } },
+            ast.StmtIf(f) => {
+                hdr = ast.StmtIf { ...f, then_body: [], else_body: [] };
+                inner = aac_local_escapes(f.then_body, name, rows) || aac_local_escapes(f.else_body, name, rows);
+            },
+            ast.StmtWhile(w) => { hdr = ast.StmtWhile { ...w, body: [] }; inner = aac_local_escapes(w.body, name, rows); },
+            ast.StmtFor(fo) => { hdr = ast.StmtFor { ...fo, body: [] }; inner = aac_local_escapes(fo.body, name, rows); },
+            ast.StmtMatch(m) => {
+                var arms: ast.MatchArm[] = [];
+                for arm in m.arms {
+                    arms = arms.append(ast.MatchArm { ...arm, body: [] });
+                    if (aac_local_escapes(arm.body, name, rows)) { inner = true; }
+                }
+                hdr = ast.StmtMatch { ...m, arms: arms };
+            },
+            ast.StmtDefer(d) => { inner = aac_local_escapes([d.action], name, rows); },
+            _ => {}
+        }
+        if (inner || stmt_unsafe_for_allow_ret(hdr, name, [], [])) { return true; }
     }
     return false;
 }
@@ -77288,6 +77726,16 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
     return e;
 }
 
+// array_literal_boxes reports whether an array literal is a function array, and
+// so has its elements lifted into env boxes.
+function array_literal_boxes(arr: ast.ExprArray, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    if (array_holds_fn_value(arr, mfuncs)) { return true; }
+    for el in arr.elements {
+        if (array_elem_is_env_boxed(el, fd, structs, mfuncs)) { return true; }
+    }
+    return false;
+}
+
 // array_holds_fn_value reports whether the literal has any fn-VALUED element, so
 // the uniformity rule above applies to it at all (an i32[] never does).
 function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
@@ -78038,21 +78486,21 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
 }
 
 // iife_arms_are_arrays_with_boxed_elem reports whether any arm of a
-// value-position if/match returns an array literal holding an env-boxed
-// element, which box_iife_arm_array_elems then boxes. An arm yielding any
-// other function array (a parameter, a local, a call's result) needs nothing:
-// every function array is built on the env-box ABI (#10076).
+// value-position if/match returns a function-array literal, which
+// box_iife_arm_array_elems then boxes. An arm yielding any other function
+// array (a parameter, a local, a call's result) needs nothing: every function
+// array is built on the env-box ABI (#10076).
 //
-// The element question is array_elem_is_env_boxed, the same one the
-// single-literal rule asks, so the two cannot disagree about an element
-// (#8151). Captures read against iife_scope_fd, so a name the IIFE itself
+// The literal question is array_literal_boxes, the same one the
+// single-literal rule asks, so the two cannot disagree about a literal
+// (#8151, #8795). Captures read against iife_scope_fd, so a name the IIFE itself
 // binds (a match arm's payload) counts.
 function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     return iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs) > 0;
 }
 
-// The number of env-boxed elements in the array literals the arms return,
-// directly, through a generic passthrough, or one nested if/match in.
+// The number of function-array literals the arms return, directly, through a
+// generic passthrough, or one nested if/match in.
 function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: StructTab, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
@@ -78061,11 +78509,7 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                 var lit: ast.Expr[] = passthrough_array_literal(r.value, mfuncs);
                 if (lit.len() == 0) { continue; }
                 match (lit[0]) {
-                    ast.ExprArray(arr) => {
-                        for el in arr.elements {
-                            if (array_elem_is_env_boxed(el, fd, structs, mfuncs)) { n = n + 1; }
-                        }
-                    },
+                    ast.ExprArray(arr) => { if (array_literal_boxes(arr, fd, structs, mfuncs)) { n = n + 1; } },
                     ast.ExprCall(ic) => {
                         if let ast.ExprLambda(il) = ic.callee { n = iife_arm_arrays_boxed_elems(il.body, iife_scope_fd(fd, il.body), n, structs, mfuncs); }
                     },
@@ -78433,12 +78877,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // named function boxes through its `$wrap`, and a value-position
             // if/match element whose arms all box becomes a call yielding one
             // (#6256, #7438).
-            var boxes: boolean = array_holds_fn_value(arr, mfuncs);
-            var sc: i32 = 0;
-            while (!boxes && sc < arr.elements.len()) {
-                if (array_elem_is_env_boxed(arr.elements[sc], fd, structs, mfuncs)) { boxes = true; }
-                sc = sc + 1;
-            }
+            var boxes: boolean = array_literal_boxes(arr, fd, structs, mfuncs);
             // A bare fn-name element is a module function only when it names no
             // local or param of this function.
             var abound: string[] = [];

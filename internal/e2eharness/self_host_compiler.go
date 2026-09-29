@@ -117,18 +117,52 @@ func DriverBuildWeightMB(fernName string) int {
 	return 4300
 }
 
-// CompileWithSelfHost runs `compiler -target x86-64-linux -o binPath src
-// <stdlib>` under a RAM reservation of weightMB.
-func CompileWithSelfHost(t testing.TB, compiler, src, binPath string, weightMB int) error {
+// The -target names a self-host build takes. The pin cross-compiles every
+// one of them from any host: a runnable static ELF for the two Linux targets,
+// and for arm64-darwin a Mach-O, or with -emit asm the assembly text.
+const (
+	TargetX86_64Linux = "x86-64-linux"
+	TargetArm64Linux  = "arm64-linux"
+	TargetArm64Darwin = "arm64-darwin"
+)
+
+// CompileWithSelfHost runs `compiler -target target -o binPath src <stdlib>`
+// under a RAM reservation of weightMB.
+func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, weightMB int) error {
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)
 	return withBuildMemory(weightMB, func() error {
-		cmd := exec.Command(compiler, "-target", "x86-64-linux", "-o", binPath, src, stdlib)
+		cmd := exec.Command(compiler, "-target", target, "-o", binPath, src, stdlib)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("%s -target x86-64-linux %s: %v\n%s", filepath.Base(compiler), filepath.Base(src), err, out)
+			return fmt.Errorf("%s -target %s %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}
 		return os.Chmod(binPath, 0o755)
 	})
+}
+
+// EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src and
+// returns the assembly text. It reserves what a driver build of that name
+// takes: the compiler's own footprint dominates, and over-reserving only
+// delays another build.
+func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string) string {
+	t.Helper()
+	stdlib := SelfHostStdlibRoot(t)
+	asmPath := filepath.Join(t.TempDir(), "out.s")
+	err := withBuildMemory(DriverBuildWeightMB(filepath.Base(src)), func() error {
+		cmd := exec.Command(compiler, "-target", target, "-emit", "asm", "-o", asmPath, src, stdlib)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s -target %s -emit asm %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asm, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(asm)
 }
 
 // cachedBinary returns a binary from the process cache dir, restoring it from

@@ -1509,9 +1509,14 @@ func builtinTcpSend(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return Number(-1), nil
 	}
-	n, err := conn.Write([]byte(data))
+	// A non-blocking socket takes what the kernel has room for and
+	// answers -EAGAIN when it has none, as a native send does.
+	n, err := writeSocket(conn, []byte(data), i.tcpNonblocking[int64(id)])
 	if err != nil {
-		return Number(-1), nil
+		if n > 0 {
+			return Number(n), nil
+		}
+		return Number(errnoOf(err)), nil
 	}
 	return Number(n), nil
 }
@@ -1705,7 +1710,7 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 5 {
+	if op < 1 || op > 6 {
 		return Number(-22), nil
 	}
 	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
@@ -1720,6 +1725,16 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	case 5:
 		// A connection here is always complete: tcp_connect_with dials
 		// through the net package, which blocks until it is.
+	case 6:
+		fd, ok := i.rawFd(int64(id))
+		if !ok {
+			return Number(-1), nil
+		}
+		queued, err := hostSendQueued(fd)
+		if err != nil {
+			return Number(errnoOf(err)), nil
+		}
+		return Number(queued), nil
 	case 1:
 		err = conn.SetNoDelay(arg != 0)
 	case 2:
