@@ -97,7 +97,9 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platfo
     var data: u8[] = read_body(request);
     var headers: HeaderMap = headers_of(fields);
     req_drop(request);
-    var req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers };
+    // The body's trailers are a future the host settles after the body is
+    // finished; nothing reads it yet, so the request's are empty.
+    var req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
     var resp: HttpResponse = handle(req, platform.platform_new());
     send(response_out, resp);
 }

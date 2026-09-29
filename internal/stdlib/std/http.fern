@@ -8,8 +8,8 @@
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
 // Scope: HTTP/1.1 and HTTP/1.0, request bodies delimited by
-// Content-Length or by chunked transfer coding (trailers read and
-// discarded); a request line of at most 8 KiB, a header block of at most
+// Content-Length or by chunked transfer coding (trailers into
+// `request.trailers`); a request line of at most 8 KiB, a header block of at most
 // 32 KiB and 100 fields, a body of at most 1 MiB with at most 32 KiB of
 // chunk framing, and no lenient mode: a malformed request is refused
 // (RFC 9112 §2.2, §5, §6.1, §6.3, §7.1), never repaired.
@@ -551,31 +551,33 @@ function __hex_digit(b: u8): i32 {
 // CRLF must be before the CRLF is complete, a line past the budget
 // before its end.
 //
-// `__chunked_walk(buf, from)` answers like the parse: `(0, _, _)`
-// malformed, `(1, _, _)` incomplete, `(2, end, spans)` complete, with
-// `end` the offset past the trailer section's terminator and `spans` the
-// (start, len) pairs of the chunk data.
-function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[]) {
+// `__chunked_walk(buf, from)` answers like the parse: `(0, _, _, _)`
+// malformed, `(1, _, _, _)` incomplete, `(2, end, spans, trailers)`
+// complete, with `end` the offset past the trailer section's
+// terminator, `spans` the (start, len) pairs of the chunk data and
+// `trailers` the trailer section's fields.
+function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
     var at: i32 = from;
     var budget: i32 = http_header_bytes_cap();
     var room: i32 = http_body_cap();
     var spans: i32[] = [];
+    var none: HeaderMap = headers.header_map_new();
     while (true) {
         var line: (i32, i32, i32) = __chunk_size_line(buf, at, budget, room);
-        if (line.0 != 2) { return (line.0, 0, spans); }
+        if (line.0 != 2) { return (line.0, 0, spans, none); }
         var data: i32 = line.1 + 2;
         var size: i32 = line.2;
         budget = budget - (data - at) - 2;
-        if (budget < 0) { return (0, 0, spans); }
+        if (budget < 0) { return (0, 0, spans, none); }
         if (size == 0) { return __chunked_trailers(buf, data, budget + 2, spans); }
         var crlf: i32 = __crlf_at(buf, data + size);
-        if (crlf != 2) { return (crlf, 0, spans); }
+        if (crlf != 2) { return (crlf, 0, spans, none); }
         spans = spans.append(data).append(size);
         room = room - size;
         at = data + size + 2;
     }
-    return (0, 0, spans);
+    return (0, 0, spans, none);
 }
 
 // `__crlf_at(buf, at)` — whether buf[at, at + 2) is CRLF: 2 when it is,
@@ -638,15 +640,15 @@ function __chunk_ext_only(buf: u8[], from: i32, end: i32): boolean {
 
 // `__chunked_trailers(buf, at, budget, spans)` — the trailer section that
 // follows the last chunk's CRLF, at `at`, through the CRLF that ends it:
-// `(2, end, spans)` with `end` past that CRLF, `(1, _, _)` while it has
-// not arrived, `(0, _, _)` when a line breaks the header rules
-// (`__parse_header_bytes`, count cap included), a bare CR or LF appears,
-// or the section outgrows the framing budget. The fields are read and
-// then discarded: nothing here knows a trailer's semantics, so none may
-// merge into the headers (RFC 9110 §6.5.1), and HttpRequest carries no
-// trailers yet.
-function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32, i32, i32[]) {
+// `(2, end, spans, trailers)` with `end` past that CRLF, `(1, _, _, _)`
+// while it has not arrived, `(0, _, _, _)` when a line breaks the header
+// rules (`__parse_header_bytes`, count cap included), a bare CR or LF
+// appears, or the section outgrows the framing budget. The fields are
+// the request's `trailers`, kept apart from its headers: nothing here
+// knows a trailer's semantics, so none may merge (RFC 9110 §6.5.1).
+function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
+    var trailers: HeaderMap = headers.header_map_new();
     var limit: i32 = at + budget;
     if (limit > n) { limit = n; }
     // The last chunk's own CRLF, at `at - 2`, starts the CRLF CRLF when
@@ -654,18 +656,18 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32
     var sep: i32 = __find_crlf_crlf(buf, at - 2, limit);
     var scanned: i32 = limit;
     if (sep >= 0) { scanned = sep; }
-    if (scanned > at && !__crlf_terminated(buf, at, scanned)) { return (0, 0, spans); }
+    if (scanned > at && !__crlf_terminated(buf, at, scanned)) { return (0, 0, spans, trailers); }
     if (sep < 0) {
-        if (n >= at + budget) { return (0, 0, spans); }
-        return (1, 0, spans);
+        if (n >= at + budget) { return (0, 0, spans, trailers); }
+        return (1, 0, spans, trailers);
     }
     if (sep > at) {
         match (__parse_header_bytes(buf, at, sep)) {
-            Some(_) => { },
-            None => { return (0, 0, spans); }
+            Some(h) => { trailers = h; },
+            None => { return (0, 0, spans, trailers); }
         }
     }
-    return (2, sep + 4, spans);
+    return (2, sep + 4, spans, trailers);
 }
 
 // `__chunked_body(buf, spans)` — the chunk data the walk recorded, as
@@ -694,29 +696,31 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
 }
 
 // `__framed_body(buf, at, framing, version)` — the body that starts at
-// `at` under its framing: `(2, body, end)` with `end` past it, `(1, _, _)`
-// while it has not arrived, `(0, _, _)` when it is malformed: a declared
-// length past the body cap (known before the body arrives), a chunked
-// body that breaks `__chunked_walk`'s rules, or chunked coding on a
-// request that is not HTTP/1.1 (§6.1 gives the coding to HTTP/1.1; an
-// older peer cannot have sent it, and reading its body as empty would be
-// a framing disagreement).
-function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string): (i32, u8[], i32) {
+// `at` under its framing: `(2, body, end, trailers)` with `end` past it,
+// `(1, _, _, _)` while it has not arrived, `(0, _, _, _)` when it is
+// malformed: a declared length past the body cap (known before the body
+// arrives), a chunked body that breaks `__chunked_walk`'s rules, or
+// chunked coding on a request that is not HTTP/1.1 (§6.1 gives the
+// coding to HTTP/1.1; an older peer cannot have sent it, and reading its
+// body as empty would be a framing disagreement). Only a chunked body
+// has trailers.
+function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string): (i32, u8[], i32, HeaderMap) {
     var empty: u8[] = [];
+    var none: HeaderMap = headers.header_map_new();
     match (framing) {
         Length(content_length) => {
-            if (content_length > http_body_cap()) { return (0, empty, 0); }
-            if (at + content_length > buf.len()) { return (1, empty, 0); }
-            return (2, __bytes_range(buf, at, at + content_length), at + content_length);
+            if (content_length > http_body_cap()) { return (0, empty, 0, none); }
+            if (at + content_length > buf.len()) { return (1, empty, 0, none); }
+            return (2, __bytes_range(buf, at, at + content_length), at + content_length, none);
         },
         Chunked => {
-            if (version != "HTTP/1.1") { return (0, empty, 0); }
-            var walk: (i32, i32, i32[]) = __chunked_walk(buf, at);
-            if (walk.0 != 2) { return (walk.0, empty, 0); }
-            return (2, __chunked_body(buf, walk.2), walk.1);
+            if (version != "HTTP/1.1") { return (0, empty, 0, none); }
+            var walk: (i32, i32, i32[], HeaderMap) = __chunked_walk(buf, at);
+            if (walk.0 != 2) { return (walk.0, empty, 0, none); }
+            return (2, __chunked_body(buf, walk.2), walk.1, walk.3);
         }
     }
-    return (0, empty, 0);
+    return (0, empty, 0, none);
 }
 
 // `http_parse_request_bytes(buf)` parses a full HTTP/1.1 request
@@ -821,7 +825,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         None => { return Malformed; }
     }
     var version: string = __bytes_string(buf, sp2 + 1, first_crlf);
-    var body: (i32, u8[], i32) = __framed_body(buf, from + headers_len, framing, version);
+    var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
     if (body.0 == 0) { return Malformed; }
     if (body.0 == 1) { return Incomplete; }
     var request: HttpRequest = HttpRequest {
@@ -829,6 +833,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         path: __bytes_string(buf, sp1 + 1, sp2),
         body: stream.stream_from_bytes(body.1),
         headers: req_headers,
+        trailers: body.3,
     };
     return Framed(HttpFramed { request: request, len: body.2 - from, keep_alive: __persists(version, req_headers) });
 }

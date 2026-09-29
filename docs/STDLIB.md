@@ -1080,9 +1080,9 @@ serializer.
   the cap is passed, a bad request line once its CRLF has arrived, before
   the rest of the request. A chunked body (§7.1, HTTP/1.1 only) is
   decoded into `request.body`: chunk extensions are skipped, trailers are
-  read under the header rules and then discarded (nothing knows their
-  semantics, so none may merge into the headers, RFC 9110 §6.5.1;
-  `HttpRequest` has no trailers field yet), the decoded bytes are held to
+  read under the header rules into `request.trailers`, kept apart from
+  the headers (nothing knows their semantics, so none may merge,
+  RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to
   the body cap, and the framing (chunk-size lines, extensions, CRLFs and
   the trailer section) to another `http_header_bytes_cap()`, so a
   chunk-flood cannot hold more buffer than any other request.
@@ -1272,8 +1272,8 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
 ### `std/headers`
 
 HTTP `HeaderMap` with case-insensitive lookup, multi-valued
-entries, and insertion-ordered iteration. Backs the `headers`
-field slated for `HttpRequest` / `HttpResponse`.
+entries, and insertion-ordered iteration. Backs `HttpRequest`'s
+`headers` and `trailers` and `HttpResponse`'s `headers`.
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
@@ -1283,8 +1283,8 @@ field slated for `HttpRequest` / `HttpResponse`.
 
 ### `std/stream`
 
-Byte-stream value backing the eventual `HttpRequest.body: Stream`
-migration. Phase 1 is an in-memory buffer-backed `Stream`.
+Byte-stream value backing `HttpRequest.body: Stream`. Phase 1 is an
+in-memory buffer-backed `Stream`.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`.

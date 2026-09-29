@@ -8664,6 +8664,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "Stream", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+        hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
     if (!name_declared(structs, "HttpResponse")) {
