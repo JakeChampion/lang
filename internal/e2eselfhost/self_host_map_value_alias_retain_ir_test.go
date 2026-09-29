@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // mapValueAliasRetainIRCases pin the retain a map insert owes an ALIASED array
 // VALUE on the register backends (#6880).
@@ -41,7 +34,8 @@ var mapValueAliasRetainIRCases = []struct {
 }{
 	// The reduced #6880 shape: a helper builds the value array and returns the
 	// map, so the helper's exit sweep is what freed the stored buffer.
-	{"helper-insert", `function put(m: Map[string, i32[]], k: string, a: i32, b: i32): Map[string, i32[]] {
+	{"helper-insert", `import "core/map";
+function put(m: Map[string, i32[]], k: string, a: i32, b: i32): Map[string, i32[]] {
     var arr: i32[] = [a, b];
     return m.insert(k, arr);
 }
@@ -64,7 +58,8 @@ function main(): i32 {
 `},
 	// Loop-scoped value locals — std/url's query_parse shape, where each round's
 	// array is freed at the iteration's sweep and the next round recycles it.
-	{"loop-scoped-value", `function main(): i32 {
+	{"loop-scoped-value", `import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = Map {};
     var i: i32 = 0;
     while (i < 6) {
@@ -88,7 +83,8 @@ function main(): i32 {
 }
 `},
 	// The reported column type: Map[string, string[]].
-	{"string-array-value", `function put(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
+	{"string-array-value", `import "core/map";
+function put(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
     var a: string[] = [v];
     return m.insert(k, a);
 }
@@ -111,7 +107,8 @@ function main(): i32 {
 	// Control: a FRESH value literal takes no retain — its sole rc=1 moves into
 	// the map — and must still read back correctly. Passes either side of the
 	// fix, which is its job.
-	{"fresh-value-control", `function main(): i32 {
+	{"fresh-value-control", `import "core/map";
+function main(): i32 {
     var m: Map[i32, i32[]] = Map {};
     m = m.insert(1, [3, 4]);
     var junk: i32[] = [7, 9];
@@ -129,35 +126,13 @@ function main(): i32 {
 }
 
 // TestSelfHostMapValueAliasRetainIRX86_64 runs each case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path.
+// CLI for x86-64.
 func TestSelfHostMapValueAliasRetainIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "mvar_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 — the map's value column read back wrong", tc.name, code)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the map's value column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
@@ -166,23 +141,12 @@ func TestSelfHostMapValueAliasRetainIRX86_64(t *testing.T) {
 // TestSelfHostMapValueAliasRetainIRArm64 is the arm64 leg: same programs, the
 // arm64 map_set emission, run under qemu.
 func TestSelfHostMapValueAliasRetainIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "mvar_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 — the map's value column read back wrong", tc.name, code)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the map's value column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
@@ -192,38 +156,11 @@ func TestSelfHostMapValueAliasRetainIRArm64(t *testing.T) {
 // always retained a `vis` value, so these pass either side of the fix and pin
 // that the register backends now agree with it.
 func TestSelfHostMapValueAliasRetainIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-value-alias-retain wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "mapvaluealias_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			out, runErr := run.CombinedOutput()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q: %v\n%s", tc.name, runErr, out)
-			}
-			if code := run.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("map-value-alias-retain wasm IR %q = %d, want 0\n%s", tc.name, code, out)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the map's value column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
