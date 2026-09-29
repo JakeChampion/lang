@@ -310,29 +310,34 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 			return t, true
 		}
 	case *ast.IfExpr:
-		return b.countedConditionalType(x, []ast.Expr{x.Then, x.Else})
+		return b.countedConditionalType(x, []ast.Expr{x.Then, x.Else},
+			[]bool{needsRcIncOnAlias(x.Then, b), needsRcIncOnAlias(x.Else, b)})
 	case *ast.MatchExpr:
 		arms := make([]ast.Expr, len(x.Arms))
+		counted := make([]bool, len(x.Arms))
 		for i, arm := range x.Arms {
 			arms[i] = arm.Body
+			counted[i] = b.matchArmYieldCounted(arm)
 		}
-		return b.countedConditionalType(x, arms)
+		return b.countedConditionalType(x, arms, counted)
 	}
 	return nil, false
 }
 
 // countedConditionalType reports an if- or match-expression whose value is an
 // owned reference whichever arm runs: emitCountedYield retains every arm that
-// yields an alias, so each remaining arm has to be owned by construction. Both
-// sides ask needsRcIncOnAlias of the same arm node and must keep doing so; the
-// assign path's moveSites classification is a different contract.
-func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr) (ast.Type, bool) {
+// yields an alias, so each remaining arm has to be owned by construction.
+// `counted` marks the arms that retain: needsRcIncOnAlias of the arm node, the
+// question emitCountedYield asks, or matchArmYieldCounted for a match arm
+// yielding its own binding, which is out of exprType's scope here. The assign
+// path's moveSites classification is a different contract.
+func (b *builder) countedConditionalType(e ast.Expr, arms []ast.Expr, counted []bool) (ast.Type, bool) {
 	t := b.exprType(e)
 	if !b.retainsOnAlias(t) {
 		return nil, false
 	}
-	for _, arm := range arms {
-		if needsRcIncOnAlias(arm, b) {
+	for i, arm := range arms {
+		if counted[i] {
 			continue
 		}
 		v := blockValue(arm)
