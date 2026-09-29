@@ -1287,13 +1287,6 @@ pub function op_map_len(): Op { return op0(126); }
 // print_str; `print(s)` is two of them, the payload then a "\n" literal.
 // Lowers to each backend's __fern_print_str helper.
 pub function op_print_str(): Op { return op0(163); }
-// `read_all_stdin` reads fd 0 to EOF and pushes ONE string box holding the whole
-// input (a VALUE op — no args). Unlike `read_line`'s single 256-byte read it
-// loops until the read syscall returns 0, so it can pull in a whole multi-line
-// source. Lowers to each register backend's __fern_read_all_stdin helper and to
-// wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
-// idiom read_line uses), so every IR backend covers it.
-pub function op_read_all_stdin(): Op { return op0(209); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
 // is a bare eprint_str.
@@ -2661,7 +2654,6 @@ function kind_id_len14(name: string): i32 {
     if (c == b'c' && name == "create_dir_all") { return 231; }
     if (c == b'c' && name == "create_symlink") { return 263; }
     if (c == b'r' && name == "remove_dir_all") { return 172; }
-    if (c == b'r' && name == "read_all_stdin") { return 209; }
     if (c == b's' && name == "str_from_bytes") { return 103; }
     if (c == b's' && name == "signal_default") { return 244; }
     if (c == b's' && name == "set_file_times") { return 269; }
@@ -2963,7 +2955,6 @@ function kind_name_4(id: i32): string {
     if (id == 207) { return "raw_environ"; }
     if (id == 331) { return "raw_splice_pipe"; }
     if (id == 208) { return "udp_send"; }
-    if (id == 209) { return "read_all_stdin"; }
     if (id == 211) { return "proc_fork"; }
     if (id == 212) { return "proc_waitpid"; }
     if (id == 213) { return "proc_exec"; }
@@ -3129,7 +3120,7 @@ function pops0(t: i32): boolean {
         || t == 180                                                      // args
         || t == 182 || t == 183 || t == 184                              // monotonic_ns, now_ns, now_unix_ms
         || t == 186                                                      // random_i32
-        || t == 207 || t == 209 || t == 211                              // raw_environ, read_all_stdin, proc_fork
+        || t == 207 || t == 211                                          // raw_environ, proc_fork
         || t == 331                                                      // raw_splice_pipe
         || t == 216 || t == 217 || t == 218                              // arr_push_shared_*, const_struct
         || t == 222                                                      // map_hash_seed
@@ -5089,8 +5080,6 @@ pub function op_allocates(tag: i32): boolean {
     if (tag == 177) { return true; }
     // read_line boxes the line into a fresh string block, so it needs the heap.
     if (tag == 168) { return true; }
-    // read_all_stdin allocates the whole-input buffer plus its string box.
-    if (tag == 209) { return true; }
     // hostname boxes the node name into a fresh string block; uname_field
     // and getcwd box their answers the same way.
     if (tag == 240 || tag == 250 || tag == 251) { return true; }

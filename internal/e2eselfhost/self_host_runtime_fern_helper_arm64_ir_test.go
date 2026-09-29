@@ -24,8 +24,6 @@ import (
 // every x86 lane: the emitted aarch64 asm must define each Fern-compiled symbol,
 // must NOT define the hand-asm one, and must contain the __syscall3 op's number
 // load — the same instruction darwinize keys its Mach-O rewrite off.
-// This is an internal-runtime probe: read_all_stdin is a self-host lowering
-// primitive, not a public builtin of the Go front end.
 // The emitting compiler can run under QEMU; emitted target code is not run.
 func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -84,9 +82,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The stdin leaf. Emitted, not run, so the empty stdin of a build
-		// machine is irrelevant — this only has to make the op lower.
-		"    if (read_all_stdin().len() != 0) { return 25; }\n" +
 		// The three boxed-return Reader leaves. read_line gates on
 		// `str_read_line`; read_chunk and close share the `reader` need, so the
 		// Reader has to be both read from and closed for both to be reachable.
@@ -165,12 +160,6 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// putchar is the reason the group needed __raw_scratch: it staged its
 		// byte in a stack slot, which is the one thing a Fern helper cannot name.
 		"print_str", "putchar", "eprint_str",
-		// The stdin leaf (#2649), read(2) to the stdout three's write(2). It
-		// returns no Option, so it carries no box-layout question: it boxes with
-		// __raw_string. arm64 shed more here than the other targets — the dead
-		// AST __fern_read_all_stdin body and its __fern_read_all_stdin_rc IR twin
-		// both went with the migration.
-		"read_all_stdin",
 		// The three boxed-return Reader leaves (#2649). read_chunk and close
 		// were emitted UNCONDITIONALLY inside the arm64 heap block before the
 		// migration — `has_need("reader")` was never consulted on this backend —
@@ -329,9 +318,6 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    write(\"x\");\n" +
 		"    putchar(65);\n" +
 		"    eprint(\"x\");\n" +
-		// The stdin leaf, likewise called for effect so its read(2) number can
-		// be inspected below.
-		"    if (read_all_stdin().len() != 0) { return 19; }\n" +
 		// The three Reader leaves, called for effect so their read(2) / close(2)
 		// numbers can be inspected below.
 		"    match (read_line()) { Some(_) => {}, None => {} }\n" +
@@ -452,7 +438,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	// read_line and reader_read_chunk join them (#2649): the same read(2), one
 	// byte at a time from fd 0 for read_line and up to n from the Reader's own fd
 	// for read_chunk.
-	for _, sym := range []string{"__fn___fern_read_all_stdin", "__fn___fern_tcp_recv",
+	for _, sym := range []string{"__fn___fern_tcp_recv",
 		"__fn___fern_read_line", "__fn___fern_reader_read_chunk"} {
 		body := extractFuncBody(asm, sym)
 		if body == "" {

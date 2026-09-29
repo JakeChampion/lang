@@ -8458,7 +8458,7 @@ pub function builtin_function_names(): string[] {
         // is the NICE value: -20 is the most favourable and 19 the least.
         "priority", "set_priority",
         // stdin / readers
-        "stdin", "stdout", "stderr", "isatty", "read_line", "read_all_stdin",
+        "stdin", "stdout", "stderr", "isatty", "read_line",
         // the two halves of the compile target's name, literals once compiled
         "target_os", "target_arch",
         "open_reader", "open_writer", "open_appender", "open_exclusive",
