@@ -1,9 +1,6 @@
 package e2eselfhost
 
-import (
-	"os/exec"
-	"testing"
-)
+import "testing"
 
 // genericErasureIRCases pin type-driven dispatch on values returned by
 // ERASED-generic functions. The self-host strips UNBOUNDED type params
@@ -94,18 +91,15 @@ var genericErasureIRCases = []struct {
 	// keyed `T.to_string` — a symbol nothing defines, bailing the whole module.
 	// f-strings are how this is normally reached, since `f"{e}"` desugars to
 	// `(e).to_string()`. "a5b".len() * 14.
-	{"id-scalar-fstring", "function idg[T](x: T): T { return x; } function main(): i32 { var s = f\"a{idg(5)}b\"; return s.len() * 14; }", 42},
+	{"id-scalar-fstring", "import \"std/i32\"; function idg[T](x: T): T { return x; } function main(): i32 { var s = f\"a{idg(5)}b\"; return s.len() * 14; }", 42},
 	// The same defect without the f-string: an explicit method call on a local
 	// bound from the generic. The ANNOTATION does not save it — the slot is
 	// stamped from the registry, not from `: i32`. "x5".len() * 21.
-	{"id-scalar-method-annotated", "function idg[T](x: T): T { return x; } function main(): i32 { var v: i32 = idg(5); var s = \"x\" + v.to_string(); return s.len() * 21; }", 42},
+	{"id-scalar-method-annotated", "import \"std/i32\"; function idg[T](x: T): T { return x; } function main(): i32 { var v: i32 = idg(5); var s = \"x\" + v.to_string(); return s.len() * 21; }", 42},
 	// A guard for what dropping the entry must NOT cost: a bare-T return
 	// instantiated at an ENUM still matches. The binding is unannotated, so it
 	// gets its type from neither the registry nor a `:` — if the entry had been
-	// the only source, this would break. (The STRUCT sibling is not pinned here:
-	// this driver resolves no imports and lowers no struct-returning generic at
-	// all, so the case fails identically with and without the fix. It is covered
-	// through the CLI instead, which is what the corpus measurement exercises.)
+	// the only source, this would break.
 	{"id-enum-regress", "enum E { A, B } function idg[T](x: T): T { return x; } function main(): i32 { var e = idg(E.A); return match (e) { A => 42, B => 9 }; }", 42},
 	// A real enum whose name IS a single uppercase letter, returned by a
 	// function that takes no `E`. The type-var test alone cannot tell this from
@@ -115,55 +109,25 @@ var genericErasureIRCases = []struct {
 	{"single-letter-enum-return", "enum E { A, B } function mkE(): E { return E.A; } function main(): i32 { var e = mkE(); return match (e) { A => 42, B => 9 }; }", 42},
 }
 
-// TestSelfHostGenericErasureIRX86_64 — erased-generic returns through the
-// PRODUCTION x86-64 IR path (asm_ir_run `-ir`).
+// TestSelfHostGenericErasureIRX86_64 runs the cases through the self-hosted CLI for x86-64.
 func TestSelfHostGenericErasureIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range genericErasureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 }
 
-// TestSelfHostGenericErasureIRArm64 — CI-gated arm64 counterpart
-// (asm_ir_run `-target arm64-linux -ir`); the registry fixes are shared irlower
-// analysis, so both register backends inherit them.
+// TestSelfHostGenericErasureIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostGenericErasureIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range genericErasureIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})

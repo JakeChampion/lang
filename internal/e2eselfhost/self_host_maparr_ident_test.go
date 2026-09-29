@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // mapArrIdentCases pin a `Map[K, V][]` IDENT not being typed as a single map.
 //
@@ -21,17 +14,14 @@ import (
 // array slot. The array-ELEMENT readers are unaffected: they pair map_type_of
 // with is_arr_slot explicitly, which is how `ms[i].get(k)` already worked and
 // why it is a control here rather than a fix.
-//
-// Not covered, and still a correct bail rather than a miscompile: `for x in ms`
-// and a map-array in a tuple element or struct field. Those need a map ELEMENT
-// kind the array side does not carry — a separate slice.
 var mapArrIdentCases = []struct {
 	name string
 	src  string
 	want int
 }{
 	// The gate. SEGFAULT before.
-	{"maparr-len", `function main(): i32 {
+	{"maparr-len", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     var ms: Map[string, i32][] = [m];
@@ -39,7 +29,8 @@ var mapArrIdentCases = []struct {
 }`, 1},
 	// The gate plus the element read, so the two paths are exercised on one
 	// slot: `ms` as an array, `ms[0]` as a map. SEGFAULT before.
-	{"maparr-len-and-index", `function main(): i32 {
+	{"maparr-len-and-index", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     var ms: Map[string, i32][] = [m];
@@ -48,7 +39,8 @@ var mapArrIdentCases = []struct {
 	// CONTROL: the element read alone already resolved through the ExprIndex
 	// arm's own is_arr_slot check. It must keep working — a fix that answered
 	// "" everywhere for the column would break this.
-	{"maparr-index-only", `function main(): i32 {
+	{"maparr-index-only", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     var ms: Map[string, i32][] = [m];
@@ -56,7 +48,8 @@ var mapArrIdentCases = []struct {
 }`, 7},
 	// CONTROL: a genuine map local must still dispatch every map op off its
 	// ident. This is the shape slot_map_type exists to keep answering.
-	{"plain-map-ops-unchanged", `function main(): i32 {
+	{"plain-map-ops-unchanged", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("a", 3);
     m = m.insert("b", 4);
@@ -66,7 +59,8 @@ var mapArrIdentCases = []struct {
 }`, 9},
 	// A churn loop over both paths: the reads must stay balanced, so a
 	// mis-typed dispatch cannot hide behind a single-shot value check.
-	{"maparr-churn-balanced", `function churn(n: i32): i32 {
+	{"maparr-churn-balanced", `import "core/map";
+function churn(n: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -89,95 +83,37 @@ function main(): i32 {
 
 const mapArrIdentFailFmt = "%s = %d, want %d (-1 = died on a signal, which on the parent is the segfault from a map op dispatched on an array box; 99 = over-release; 97 = value corrupted)"
 
-func runMapArrIdentStrictIR(t *testing.T, driverBin string, runner []string, src string, extra ...string) []byte {
-	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, extra...)
-	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), extra...)...)
-	}
-	cmd.Stdin = bytes.NewReader([]byte(src + "\n"))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
-	_ = cmd.Run()
-	if stdout.Len() == 0 {
-		t.Fatalf("did not lower under FERN_STRICT_IR=1 (exit %d):\n%s", cmd.ProcessState.ExitCode(), stderr.String())
-	}
-	return stdout.Bytes()
-}
-
+// TestSelfHostMapArrIdentIRX86_64 runs the cases through the self-hosted CLI for x86-64.
 func TestSelfHostMapArrIdentIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrIdentCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runMapArrIdentStrictIR(t, driverBin, runner, tc.src)
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
 				t.Errorf(mapArrIdentFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
+// TestSelfHostMapArrIdentIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostMapArrIdentIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrIdentCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runMapArrIdentStrictIR(t, driverBin, x86runner, tc.src, "-target", "arm64-linux")
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf(mapArrIdentFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
+// TestSelfHostMapArrIdentWasmIR is the wasm32-wasi leg.
 func TestSelfHostMapArrIdentWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping map-array ident wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrIdentCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runMapArrIdentStrictIR(t, driverBin, runner, tc.src, "-ir")
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", watFile)
-			_ = run.Run()
-			if code := run.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.want {
 				t.Errorf(mapArrIdentFailFmt, tc.name, code, tc.want)
 			}
 		})
