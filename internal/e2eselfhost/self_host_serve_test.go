@@ -87,3 +87,17 @@ func TestSelfHostSupervisedServeShutsDownAfterBurst(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+func TestSelfHostServeResponseRateCutsStalledReader(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.DataRateServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckResponseRateCutsStalledReader(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeResponseRateKeepsSteadyReader(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.DataRateServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckResponseRateKeepsSteadyReader(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

@@ -297,7 +297,18 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
 the self-host compiler.
 `TestSupervisedServeWorkersServeSideBySide` pins two workers over one
-listener answering side by side and surviving one worker's death.
+listener answering side by side and surviving one worker's death;
+`TestSupervisedServeOneWorkerPerCPU` counts the default worker set
+against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
+requires every one of four workers to exit on SIGTERM after a burst of
+connections over the shared listener.
+`TestServeResponseRateCutsStalledReaderX86_64` and
+`TestServeResponseRateKeepsSteadyReaderX86_64` (`internal/e2e`, with
+self-host twins) pin the minimum data rate on the write side: an 8 MiB
+response to a reader that stops reading is cut off after the grace, and
+one to a reader pacing itself above the rate goes out whole however long
+it takes, which needs the socket's send queue (`tcp_socket_ctl` op 6)
+rather than a writable event for the peer's progress.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

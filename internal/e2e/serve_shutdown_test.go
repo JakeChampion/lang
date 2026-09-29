@@ -57,3 +57,20 @@ func TestSupervisedServeShutsDownAfterBurst(t *testing.T) {
 	cmd, _ := startSupervisedServer(t, bin, runner)
 	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+// The minimum data rate on the write side (#9854): a reader that stalls
+// is cut off after the grace, one that keeps reading above the rate gets
+// the whole response.
+func TestServeResponseRateCutsStalledReaderX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.DataRateServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckResponseRateCutsStalledReader(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestServeResponseRateKeepsSteadyReaderX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.DataRateServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckResponseRateKeepsSteadyReader(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
