@@ -1,21 +1,20 @@
 package e2eselfhost
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // tryDeferIRCases pin defer/errdefer firing on the `?` (try) FAILURE path
 // (#4334): plain defers first, then errdefers, then the reclaim of owned
 // locals, in that order. Every case the interpreter can judge is cross-checked
-// against it before asserting the self-hosted CLI's result; the row that reads
-// the bump mark is its own oracle, since the interpreter's `__heap_bump_bytes`
-// is a constant 0 and it answers 7 there whatever is reclaimed.
+// against it before asserting the self-hosted CLI's result.
 var tryDeferIRCases = []struct {
 	name    string
 	main    string
 	wantOut string
 	want    int
+	// bumpMark rows take their verdict from a bump-mark difference, which the
+	// interpreter cannot see (its `__heap_bump_bytes` is a constant 0), so
+	// they are their own oracle.
+	bumpMark bool
 }{
 	// Both defer and errdefer fire on a failing `?`, defer first — then the
 	// caller sees the propagated Err.
@@ -30,7 +29,7 @@ function f(x: i32): Result[i32, i32] {
 function main(): i32 {
     match (f(0 - 1)) { Ok(v) => {}, Err(e) => { print("err"); } }
     return 0;
-}`, "D\nE\nerr\n", 0},
+}`, "D\nE\nerr\n", 0, false},
 	// Success path: the `?` yields the payload, the function leaves via its
 	// normal return — defer fires there, errdefer stays silent.
 	{"success-defer-at-return-only",
@@ -44,7 +43,7 @@ function f(x: i32): Result[i32, i32] {
 function main(): i32 {
     match (f(5)) { Ok(v) => { print("ok"); }, Err(e) => { print("err"); } }
     return 0;
-}`, "D\nok\n", 0},
+}`, "D\nok\n", 0, false},
 	// Two defers replay LIFO at the `?` edge, same as at an explicit return.
 	{"lifo-order-at-try-edge",
 		`function step(x: i32): Result[i32, i32] { if (x < 0) { return Err(1); } return Ok(x); }
@@ -55,7 +54,7 @@ function f(x: i32): Result[i32, i32] {
     return Ok(v);
 }
 function main(): i32 { match (f(0 - 3)) { Ok(v) => {}, Err(e) => { print("err"); } } return 0; }`,
-		"B\nA\nerr\n", 0},
+		"B\nA\nerr\n", 0, false},
 	// Registration is dynamic: a conditionally-registered defer fires only when
 	// its branch ran, and a defer AFTER the `?` never fires on the failure path.
 	{"conditional-and-late-registration",
@@ -70,7 +69,7 @@ function main(): i32 {
     match (f(true, 0 - 1)) { Ok(v) => {}, Err(e) => { print("e1"); } }
     match (f(false, 0 - 1)) { Ok(v) => {}, Err(e) => { print("e2"); } }
     return 0;
-}`, "C\ne1\ne2\n", 0},
+}`, "C\ne1\ne2\n", 0, false},
 	// Option `?`: None propagation is the error path too — both kinds fire.
 	{"option-none-propagation",
 		`function step(x: i32): Option[i32] { if (x < 0) { return None; } return Some(x); }
@@ -81,7 +80,7 @@ function f(x: i32): Option[i32] {
     return Some(v + 1);
 }
 function main(): i32 { match (f(0 - 2)) { Some(v) => {}, None => { print("none"); } } return 0; }`,
-		"D\nE\nnone\n", 0},
+		"D\nE\nnone\n", 0, false},
 	// RC interplay: with a defer registered, an owned local live at the `?` is
 	// still reclaimed on the failure path. The bare loop is the baseline; the
 	// owned loop's extra heap growth stays ~0 only if the array is freed.
@@ -99,7 +98,7 @@ function main(): i32 {
     while (j < 20000) { match (step_owned()) { Some(_) => {}, None => {} } j = j + 1; }
     if ((__heap_bump_bytes() as i32) - b1 - base < 100000) { return 7; }
     return 1;
-}`, "", 7},
+}`, "", 7, true},
 }
 
 // TestSelfHostTryDeferIRX86_64 cross-checks each case the interpreter can
@@ -109,9 +108,7 @@ func TestSelfHostTryDeferIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range tryDeferIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A row whose verdict is a bump-mark difference has no witness in
-			// the interpreter, where the mark is always 0.
-			if !strings.Contains(tc.main, "__heap_bump_bytes()") {
+			if !tc.bumpMark {
 				oracleOut, oracleCode := runInterp(t, tc.main+"\n")
 				if oracleCode != tc.want || oracleOut != tc.wantOut {
 					t.Fatalf("%s interpreter: out %q exit %d, want %q / %d", tc.name, oracleOut, oracleCode, tc.wantOut, tc.want)
