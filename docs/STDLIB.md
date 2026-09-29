@@ -1302,7 +1302,14 @@ loop and `std/fetch` the client.
   one listener per port, the 10 s deadline, 240 bytes per second after
   5 s, 130 s, 1000, 1024 and 100): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
-  wasm), the read deadline, the least rate a request body must keep
+  wasm; under `tcp_serve_supervised_opts` each worker then binds a
+  listener of its own instead of inheriting the supervisor's, the group
+  steered by the CPU a connection arrived on where the host can, Linux,
+  and by the kernel's hash elsewhere; what a worker's listener holds
+  unaccepted when the worker dies is lost with it unless the kernel
+  migrates it, `net.ipv4.tcp_migrate_req=1`, where the inherited
+  listener keeps it for the next worker; a listener handed in through
+  `LISTEN_FDS` stays the shared one), the read deadline, the least rate a request body must keep
   arriving at once its header block is in and a response must keep
   being drained at once a write came up short (after the grace, the body
   may take as long as its bytes buy at that rate beyond the read
@@ -1358,9 +1365,10 @@ loop and `std/fetch` the client.
   opts, handler)` takes the `ServeOptions` and forks `workers` workers
   (one per processing unit by default), each running its own loop over
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
-  connection wakes one of them; whichever dies is replaced, and SIGTERM
-  is forwarded to every worker and waited for. No threaded-state variant
-  — a refork resets the loop frame.
+  connection wakes one of them, or with `reuse_port` over a listener of
+  its own; whichever dies is replaced, and SIGTERM is forwarded to every
+  worker and waited for. No threaded-state variant — a refork resets the
+  loop frame.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where

@@ -132,6 +132,16 @@ func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+// Per-worker SO_REUSEPORT listeners (#9854): two workers bind their own,
+// a trap takes one worker and its listener, and the replacement binds
+// anew, so /ok answers again.
+func TestSupervisedServeReusePortWorkers(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ReusePortWorkersServerSource(port))
+	_, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 // A crash-looping worker makes the supervisor give up with the child's
 // code instead of reforking forever. Slow by design: the doubling
 // backoff sleeps sum to about 11 s.

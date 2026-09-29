@@ -1091,8 +1091,8 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
-	// op 1, 3 and 6: no control on this target.
-	for _, op := range []int32{1, 3, 6} {
+	// op 1, 3, 6 and 8: no control on this target.
+	for _, op := range []int32{1, 3, 6, 8} {
 		body = opIs(body, op)
 		body = inst.InstI32Const(body, -58)
 		body = inst.InstReturn(body)

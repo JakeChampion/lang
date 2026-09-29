@@ -1174,17 +1174,23 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 // tcp_serve_supervised_opts(port, opts, handler) — `tcp_serve_supervised`
 // with `ServeOptions`: `opts.workers` workers are forked (below 1: one
 // per processing unit), each running its own loop over the one
-// listener, watched exclusively so a connection wakes one of them;
-// whichever dies is replaced, the backoff
+// listener, watched exclusively so a connection wakes one of them — or,
+// with `reuse_port`, over a listener of its own bound beside the others'
+// (`__per_worker_listeners`); whichever dies is replaced, the backoff
 // and the fast-death count shared among them. SIGTERM is forwarded to
 // every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
 pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     // Listener FIRST, in the parent — the whole design hinges on
-    // workers inheriting this fd rather than owning it.
-    var listener: i32 = __serve_listener(port, opts);
-    if (listener < 0) {
-        return listener;
+    // workers inheriting this fd rather than owning it. Per-worker
+    // listeners are the opt-in that gives that up: each worker binds
+    // its own once forked.
+    var listener: i32 = 0 - 1;
+    if (!__per_worker_listeners(opts)) {
+        listener = __serve_listener(port, opts);
+        if (listener < 0) {
+            return listener;
+        }
     }
     var workers: i32 = opts.workers;
     if (workers < 1) { workers = cpu_count(); }
@@ -1197,7 +1203,7 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
     drv.watch_signal(15);
     while (true) {
         while (!sup.stopping && sup.pids.len() < workers) {
-            var forked: (__Supervisor, i32) = __supervisor_fork(drv, listener, handler, resolved, sup);
+            var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, handler, resolved, sup);
             sup = forked.0;
             if (forked.1 != 0 - 1) { return forked.1; }
         }
@@ -1220,31 +1226,70 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
     return 0;
 }
 
-// __supervisor_fork(drv, listener, handler, opts, sup) — one more worker
-// forked and recorded: `(sup, -1)`, or `(sup, code)` for the supervisor
-// to return with: a fork the host refuses, or the loop's own result
-// where there is no fork at all (ENOSYS: the interpreter), which serves
-// single-process instead. The child runs the loop over the inherited
-// listener and exits with its code rather than returning into a second
-// supervision loop; the reactor is the parent's, shared across the fork,
-// so the child only closes its copy, since an unwatch would take the
-// parent's signals out of the set the parent waits on.
-function __supervisor_fork(drv: async.RealDriver, listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
+// __supervisor_fork(drv, port, listener, handler, opts, sup) — one more
+// worker forked and recorded: `(sup, -1)`, or `(sup, code)` for the
+// supervisor to return with: a fork the host refuses, or the loop's own
+// result where there is no fork at all (ENOSYS: the interpreter), which
+// serves single-process instead. The child runs the loop over the
+// inherited listener, or one of its own where `listener` is none
+// (`__worker_listener`), and exits with its code rather than returning
+// into a second supervision loop; the reactor is the parent's, shared
+// across the fork, so the child only closes its copy, since an unwatch
+// would take the parent's signals out of the set the parent waits on.
+function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
     var pid: i32 = proc_fork();
     if (pid == -38) {
         eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
         drv.unwatch_signal(17);
         drv.unwatch_signal(15);
         drv.close();
-        return (sup, __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 }, (reason: string): void => {}));
+        var single: i32 = __worker_listener(port, listener, opts);
+        if (single < 0) { return (sup, single); }
+        return (sup, __serve_loop(single, handler, ServeOptions { ...opts, workers: 1 }, (reason: string): void => {}));
     }
     if (pid < 0) { return (sup, pid); }
     if (pid == 0) {
         drv.close();
-        exit(__serve_loop(listener, handler, opts, (reason: string): void => {}));
+        var own: i32 = __worker_listener(port, listener, opts);
+        if (own < 0) {
+            eprint("tcp_serve_supervised: worker could not bind port " + int.int_to_string(port) + ": " + int.int_to_string(own));
+            exit(1);
+        }
+        var loop_opts: ServeOptions = opts;
+        if (listener < 0) { loop_opts = ServeOptions { ...opts, workers: 1 }; }
+        exit(__serve_loop(own, handler, loop_opts, (reason: string): void => {}));
         return (sup, 0);
     }
     return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);
+}
+
+// __per_worker_listeners(opts) — whether each worker binds a listener of
+// its own rather than inheriting the supervisor's: the `reuse_port`
+// opt-in, unless the process was handed its listener (`LISTEN_FDS`),
+// which there is only one of. The kernel spreads connections over the
+// group's listeners, by the CPU each arrived on where the host can steer
+// (`tcp_socket_ctl` op 8, Linux), by its own hash elsewhere; what a
+// worker's listener holds unaccepted when the worker dies is lost with
+// it unless the kernel migrates it (`net.ipv4.tcp_migrate_req`), where
+// the inherited listener keeps it for the next worker.
+function __per_worker_listeners(opts: ServeOptions): boolean {
+    if (!opts.reuse_port) { return false; }
+    match (env("LISTEN_FDS")) {
+        Some(n) => { return false; },
+        None => { return true; }
+    }
+    return true;
+}
+
+// __worker_listener(port, listener, opts) — the listener a worker serves:
+// the inherited one, or its own beside the other workers' (SO_REUSEPORT,
+// steered by CPU where the host can, which every socket of the group
+// then shares).
+function __worker_listener(port: i32, listener: i32, opts: ServeOptions): i32 {
+    if (listener >= 0) { return listener; }
+    var own: i32 = __serve_listener(port, opts);
+    if (own >= 0) { tcp_socket_ctl(own, 8, 0); }
+    return own;
 }
 
 // __Supervisor — the supervisor's workers (pids, and when each was

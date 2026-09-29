@@ -5,8 +5,9 @@ package e2eharness
 // SO_REUSEPORT, a second listener on the same port where the target
 // load-balances one (Linux), no-delay and keep-alive on the accepted side,
 // a non-blocking read that answers empty rather than waiting, a write-side
-// shutdown the peer reads as end of stream, and the -EINVAL an unknown op
-// draws. Exit 42 and "ok" on stdout iff every check holds, else the number
+// shutdown the peer reads as end of stream, the -EINVAL an unknown op
+// draws, and the CPU steering of a SO_REUSEPORT group (op 8) where the
+// host has it. Exit 42 and "ok" on stdout iff every check holds, else the number
 // of the first failing check; a preview-2 wasm host reports only 0 or 1, so
 // the wasm legs read stdout.
 func SocketCtlProbe() string {
@@ -54,6 +55,17 @@ function main(): i32 {
     var eof: u8[] = tcp_recv(c, 16);
     if (eof.len() != 0) { return fail(14); }
     if (tcp_socket_ctl(a, 9, 0) >= 0) { return fail(15); }
+    // Op 8 steers the listener's SO_REUSEPORT group by CPU: attached on
+    // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
+    // does), -ENOTSUP on Darwin and on wasm.
+    if (target_os() == "linux") {
+        var steered: i32 = tcp_socket_ctl(ln, 8, 0);
+        if (steered != 0 && steered != 0 - 92) { return fail(16); }
+    } else if (target_os() == "wasi") {
+        if (tcp_socket_ctl(ln, 8, 0) != 0 - 58) { return fail(16); }
+    } else {
+        if (tcp_socket_ctl(ln, 8, 0) != 0 - 45) { return fail(16); }
+    }
     tcp_close(c);
     tcp_close(a);
     tcp_close(ln);

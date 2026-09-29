@@ -341,6 +341,15 @@ function main(): i32 {
 `, port)
 }
 
+// ReusePortWorkersServerSource is TrappingServerSource over two workers
+// that each bind their own SO_REUSEPORT listener (`reuse_port`): a
+// worker's death takes its listener with it, and its replacement binds
+// anew, so CheckSurvivesHandlerTrap proves the service is back on the
+// port after a trap.
+func ReusePortWorkersServerSource(port int) string {
+	return strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2, reuse_port: true }", 1)
+}
+
 // CheckWorkersServeSideBySide drives WorkersServerSource: a request on a
 // second connection is answered while the first worker is deep in
 // /slow, which one worker could not do since its handlers run to
