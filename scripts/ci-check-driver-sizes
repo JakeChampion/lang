@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ci-check-driver-sizes — record the linked size of the self-host drivers and
+# ci-check-driver-sizes — record the size of the self-host driver binaries and
 # compare it against the checked-in baseline.
 #
 # Usage: ci-check-driver-sizes BASELINE REPORT
@@ -37,8 +37,9 @@
 set -euo pipefail
 
 # Percentage drift, in either direction, that is worth a warning. Sizes are
-# deterministic per commit (in-process pure-Go emit and link), so this is a
-# significance threshold, not a noise floor.
+# deterministic per commit (the pinned self-host compiler's output is a
+# function of its input), so this is a significance threshold, not a noise
+# floor.
 TOLERANCE="${FERN_SIZE_TOLERANCE_PERCENT:-5}"
 
 BASELINE="${1:-}"

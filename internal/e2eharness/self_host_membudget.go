@@ -9,25 +9,25 @@ import (
 	"sync"
 )
 
-// Building a self-host DRIVER is memory-heavy: the Go x86-64 emit of a
-// multi-thousand-function driver peaks at ~8 GB RSS, and GNU `as` on the
-// emitted `.s` peaks at several GB more. A single driver build fits a
-// 16 GB host, but the test suite builds several DISTINCT drivers, and Go
-// test parallelism (`t.Parallel`, and `go test` running packages
-// concurrently) can put two cold driver builds in their memory-peak phase
-// at once — two ~8 GB peaks stacked crosses the host's RAM and trips the
-// OOM killer (the exit-137 / "signal: killed" the project notes used to
-// hide with an 8 GB swap file).
+// Building a self-host DRIVER is memory-heavy: the self-host compiler peaks
+// at 4.0 GB compiling asm_ir_run and 5.7 GB compiling fern.fern, itself. A
+// single build fits a 16 GB host, but the test suite builds several DISTINCT
+// drivers, and Go test parallelism (`t.Parallel`, and `go test` running
+// packages concurrently) can put two cold builds in their memory-peak phase
+// at once — two peaks stacked crosses the host's RAM and trips the OOM
+// killer (the exit-137 / "signal: killed" the project notes used to hide
+// with an 8 GB swap file).
 //
 // buildMemLimiter is a weighted counting semaphore over an estimated-RSS
-// budget: each cold driver build acquires its estimated peak before it
-// starts emitting and releases it after the link, so the harness never
-// runs more heavy builds at once than the host's RAM can hold. On a
-// 16 GB host that serialises the heavy builds (correct — you cannot build
-// two 8 GB things at once in 16 GB, and serialising beats OOM+swap
-// thrash); on a big host it still parallelises up to the budget. Disk-
-// cache hits and the small self-host PROGRAM links never acquire — only
-// the cold DRIVER emit+link, the sole multi-GB step.
+// budget: each cold driver build acquires its estimated peak
+// (driverBuildWeightMB) before the compiler starts and releases it when the
+// binary is written, so the harness never runs more heavy builds at once
+// than the host's RAM can hold. On a 16 GB host that serialises the heavy
+// builds (correct — you cannot build two 8 GB things at once in 16 GB, and
+// serialising beats OOM+swap thrash); on a big host it still parallelises up
+// to the budget. Disk-cache hits and the small self-host PROGRAM links never
+// acquire — only the cold DRIVER build and the in-process assembly of a
+// huge self-host-emitted asm (CachedLink), the multi-GB steps.
 type buildMemLimiter struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -117,32 +117,12 @@ func buildMemBudgetMB() int {
 	return b
 }
 
-// heavyBuildWeightMB is the per-cold-driver-build reservation.
-// FERN_BUILD_HEAVY_MB overrides it. The default matches the measured
-// per-driver peak under the soft emit memory limit (withEmitMemLimit),
-// the OpExt side-table Op shrink, and the backends' per-function IR
-// release: the Go emit peaks ~3.7 GB RSS (down from ~9 GB uncapped),
-// and the in-process native assemble that follows peaks ~2.6 GB, so
-// ~4.3 GB covers the build's worst phase with margin. Two cold builds
-// can now run concurrently within a 16 GB host's budget.
-func heavyBuildWeightMB() int {
-	if n, ok := envPositiveInt("FERN_BUILD_HEAVY_MB"); ok {
-		return n
-	}
-	return 4300
-}
-
-// The Go x86-64 emit of a self-host driver allocates heavily: its LIVE heap
-// peaks ~2.6 GB (see emitMemLimitMB), but at the default GOGC the runtime
-// lets the heap double between collections, so the process peaked ~9 GB
-// RSS — over half the emit's footprint was garbage awaiting collection.
-// Capping the runtime's soft memory limit (GOMEMLIMIT semantics) during a
-// heavy build makes the GC keep the heap near the cap instead, and the
-// backends' per-function IR release keeps shrinking the live set as
-// emission proceeds: measured on the asm_ir_run driver emit, cap + Op
-// shrink + release run at ~3.7 GB peak RSS in ~40 s vs the original
-// 9.0 GB / 134 s (4-core host — fewer huge-heap GC pauses and less page
-// pressure), with byte-identical output.
+// The in-process Go assembler (nativeLinkX86 / nativeLinkArm64) allocates
+// heavily on a big `.s`, and at the default GOGC the runtime lets the heap
+// double between collections, so the process's RSS ran to twice the live
+// set. Capping the runtime's soft memory limit (GOMEMLIMIT semantics) during
+// such a build makes the GC keep the heap near the cap instead. Self-host
+// driver builds run in a subprocess and are not affected by it.
 //
 // The limit is process-wide, so it is REFCOUNTED and scaled: while n
 // heavy builds are active the limit is n * per-build-cap, and when the
@@ -155,16 +135,11 @@ var (
 )
 
 // emitMemLimitMB is the per-heavy-build soft heap cap in MB.
-// FERN_EMIT_MEMLIMIT_MB overrides it; <= 0 disables the cap entirely.
-// The emit's live heap peaks ~2.6 GB (AST + checker info + the full IR,
-// right as emission starts — ir.Op's OpExt side-table shrank the IR to
-// ~96 B/op, and the per-function IR release in the backends then shrinks
-// the live set further as the output grows). The default leaves ~1 GB of
-// headroom above that live peak; a cap below the live set would make the
-// GC thrash, not save memory (it is a soft limit; the process would
-// still finish). Measured on the asm_ir_run driver: this cap + the Op
-// shrink + the IR release run the emit at ~40 s / 3.7 GB RSS vs the
-// original 134 s / 9.0 GB, output byte-identical.
+// FERN_EMIT_MEMLIMIT_MB overrides it; <= 0 disables the cap entirely. The
+// assembler's live heap on the stage-2 self-compile's asm stays under ~2.6 GB,
+// and the default leaves ~1 GB of headroom above that; a cap below the live
+// set would make the GC thrash, not save memory (it is a soft limit; the
+// process would still finish).
 // CI-DARK: FERN_EMIT_MEMLIMIT_MB — a tuning override with a default, not a
 // gate. CI exercises the default (3600), which is the configuration that
 // matters; the override exists to lower the cap on a smaller host.

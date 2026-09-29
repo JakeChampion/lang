@@ -15,7 +15,12 @@ hosts (`bootstrap.yml`, `verify`).
 make bootstrap                       # pinned stage0 -> stage1, smoke-tested, installed
 make distcheck                       # stage1 -> stage2 -> stage3, stage2 == stage3
 STAGE0=bin/fern-selfhost make bootstrap   # run the chain from a local candidate
+bootstrap/bootstrap.sh stage0        # print the verified stage0's path, nothing else
 ```
+
+`stage0` is for a caller that compiles with the pin itself: the self-host test
+harness (`internal/e2eharness/self_host_compiler.go`) builds every test driver
+with it, so the drivers are held to the pin the way `fern.fern` is.
 
 Everything lands in `build/bootstrap/`: the cached stage0 under
 `stage0/<release>/`, `stage1`, `stage2`, `stage3`, and the smoke programs. The smoke is

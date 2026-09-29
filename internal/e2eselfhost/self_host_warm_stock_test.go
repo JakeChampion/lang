@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// recordDriverSize logs a warmed driver's linked size and, when
+// recordDriverSize logs a warmed driver's size and, when
 // FERN_DRIVER_SIZE_REPORT names a file, appends `driver<TAB>bytes` to it for
 // scripts/ci-check-driver-sizes to compare against
 // .github/selfhost-driver-sizes.txt (#6826). Every driver here is linked on its
@@ -19,7 +19,7 @@ func recordDriverSize(t *testing.T, driver, bin string) {
 	if err != nil {
 		t.Fatalf("stat warmed driver %s: %v", driver, err)
 	}
-	t.Logf("warmed driver %s: %d bytes linked", driver, fi.Size())
+	t.Logf("warmed driver %s: %d bytes", driver, fi.Size())
 	out := os.Getenv("FERN_DRIVER_SIZE_REPORT")
 	if out == "" {
 		return
@@ -98,7 +98,7 @@ func TestSelfHostDriverSizeReport(t *testing.T) {
 
 // TestSelfHostWarmStockDriver compiles each self-host driver named in the
 // comma-separated FERN_WARM_DRIVER env var (e.g. "asm_run.fern,asm_ir_run.fern")
-// into the disk cache (FERN_SELFHOST_BUILD_CACHE), records each linked size
+// into the disk cache (FERN_SELFHOST_BUILD_CACHE), records each one's size
 // and smoke-runs it. Two CI jobs run it (.github/workflows/test-e2e-selfhost.yml):
 // `cli` builds fern.fern once for the isolated driver tests that follow in the
 // same job, and `driver-sizes` builds every baselined driver for the size gate.

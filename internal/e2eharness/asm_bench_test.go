@@ -122,7 +122,7 @@ func asmBenchCorpus(b *testing.B, tgt asmBenchTarget, size string) string {
 			})
 		}
 		if size == "full" {
-			err = withBuildMemory(heavyBuildWeightMB(), emit)
+			err = withBuildMemory(driverBuildWeightMB("fern.fern"), emit)
 		} else {
 			err = emit()
 		}

@@ -209,10 +209,24 @@ the same duration-weighted LPT partition CI uses.
 2026-09-02, 4-core container) and at the default panics before it finishes. The
 `--- FAIL` rule below applies with a twist that makes this one read even more
 like a breakage — the panic can land while the suite is still BUILDING a driver
-binary, so the goroutine dump bottoms out in `e2eharness.emitDriverAsm` →
-`codegen/x86_64.Emit`, in compiler code the change under test often touches,
-with no test body having run at all. The `running tests:` header naming a single
-test seconds in is the tell.
+binary, so the goroutine dump bottoms out in `e2eharness.compileWithSelfHost`
+waiting on the compiler subprocess, with no test body having run at all. The
+`running tests:` header naming a single test seconds in is the tell.
+
+**The drivers are built by the pinned stage0 compiler** (since 2026-09-29;
+`internal/e2eharness/self_host_compiler.go`): the first test in a process that
+needs one resolves it through `bootstrap/bootstrap.sh stage0` (downloaded once
+into `build/bootstrap/`, sha256-checked), and it compiles each driver for
+x86-64-linux. Measured on the 4-core container: `asm_ir_run.fern` 104 s at
+4.0 GB, `wasm_ir_run.fern` 87 s at 3.6 GB, `fern.fern` 300 s at 5.7 GB — where
+the Go backend emitted a driver in ~9 s — each once per source change and
+shared across processes through `FERN_SELFHOST_BUILD_CACHE`. A cold driver
+build is therefore the dominant cost of a single test; `FERN_SELFHOST_INTERP=1`
+runs the driver under the interpreter instead when the test is not about the
+driver's machine code. `STAGE0=<path>` substitutes a local compiler for the pin,
+as it does for `make bootstrap`, and it is how a compiler change is tested as
+the drivers' builder before the pin carries it. Every driver is held to what
+the pin can compile, like `fern.fern`.
 
 **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you run
 ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it
@@ -237,41 +251,29 @@ well under its job timeout.
 ## Build memory
 
 Every `buildSelfHostBin` / `buildBin` of a self-host driver (`asm_run.fern` /
-`asm_load_run.fern` / `asm_ir_run.fern` / `wasm_ir_run.fern` / …) emits a
-multi-thousand-function asm text. The harness self-limits, so **swap is
-generally not needed** and the peak sits comfortably under a 16 GB host:
+`asm_load_run.fern` / `asm_ir_run.fern` / `wasm_ir_run.fern` / …) runs the
+pinned self-host compiler over the driver's source closure in a subprocess that
+peaks at 4.0 GB (`asm_ir_run.fern`) to 5.7 GB (`fern.fern`). The harness
+self-limits, so **swap is generally not needed** and the peak sits comfortably
+under a 16 GB host:
 
-- The x86-64 backend flips the self-host compiler's one lowering monster
-  (`irlower__lower_expr`, ~9.75M IR ops) from the inline rc fast-path to the
-  `call __fern_rc_dec/inc` form (the arm64 backend's long-standing `rcInlineOK`
-  mechanism, backported — behaviour-identical). That cut the `asm_ir_run` driver
-  asm from ~1028 MB → ~470 MB.
-- The cold driver emit runs under a **refcounted soft heap cap**
-  (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0` disables),
-  `ir.Op` keeps its rare payload fields (Str2 / Sig / ArgTypes / CaptureSlots)
-  in an `OpExt` side-table (96 B/op, was 160), and both native backends
-  **release each function's IR as it is emitted** (`ip.Funcs[i] = nil` in the
-  emit loop) so the IR is reclaimed incrementally instead of peaking alongside
-  the output buffer. At default GOGC the emit ballooned to ~9 GB RSS of
-  mostly-garbage in 134 s; capped + shrunk + released it runs ~3.7 GB in ~40 s.
-  Output is byte-identical.
-- Driver binaries are **assembled + linked in-process** by the pure-Go native
-  assembler (`internal/native/x86_64` + `internal/native/elf` — the same
-  pipeline `cmd/fern -target x86-64-linux` uses by default): ~25 s / ~2.6 GB where GNU
-  `as` took ~36 s at ~4.7 GB plus a link, and the ~470 MB `.s` never touches
-  disk. Any assembler error falls back to the old gcc(+lld) path automatically.
-  `CachedLink` does the same for HUGE self-host-emitted asm (the stage-2
-  self-compile, >= 8 MB), which previously ran GNU `as`+bfd with no memory
-  reservation at all; small program links stay on gcc/bfd unchanged.
 - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted semaphore
-  around the cold emit+link: it reserves each heavy build's estimated peak
-  (`FERN_BUILD_HEAVY_MB`, default 4300) against a budget
+  around each cold driver build: it reserves the build's estimated peak
+  (`driverBuildWeightMB`: 4300 MB, 6000 MB for `fern.fern`) against a budget
   (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy builds
   can't stack past the host's RAM and OOM the run. Two cold driver builds fit a
   16 GB host concurrently; bigger hosts parallelise further up to the budget.
+- Self-host-emitted asm that a test links itself (`CachedLink`; the stage-2
+  self-compile is the big one, >= 8 MB) is **assembled + linked in-process** by
+  the pure-Go assembler (`internal/native/x86_64` + `internal/native/elf`)
+  under the same reservation and a refcounted soft heap cap
+  (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0` disables),
+  so the Go runtime keeps its heap near the live set instead of letting it
+  double between collections. Any assembler error falls back to the gcc(+lld)
+  path automatically; small program links stay on gcc/bfd unchanged.
 
-If a build is still OOM-killed, lower `FERN_BUILD_HEAVY_MB` /
-`FERN_BUILD_MEM_BUDGET_MB` / `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral
+If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
+overlap) or `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral
 swap file (a container restart wipes it):
 
 ```
@@ -367,8 +369,8 @@ treating genuine compiler regressions as infra.
   and under WASI's 126 ceiling so it survives wasmtime. Pinned across all five
   emitters by `internal/e2e/arena_exit_code_test.go`.
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
-  killed` during the Go emit, or `as`/gcc dying on the fallback path. Retry with
-  a smaller budget per the knobs above. This is *total-RAM* pressure, not a
+  killed` from the self-host compiler building a driver, or `as`/gcc dying on
+  a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a
   cgroup cap (`memory.limit_in_bytes` is effectively unlimited).
 
 **The arena is 16 GiB** (0x400000000) on every emitter — native x86-64 + arm64

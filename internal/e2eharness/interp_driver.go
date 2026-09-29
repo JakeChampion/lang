@@ -39,7 +39,7 @@ import (
 //
 // Cost: interpreting a driver runs the whole self-host compiler under the
 // interpreter, ~2 s for a small program — comparable to a warm driver-binary
-// cache hit, and far cheaper than the cold multi-GB emit + link it replaces.
+// cache hit, and far cheaper than the cold multi-GB self-host build it replaces.
 
 // InterpDriverMode reports whether FERN_SELFHOST_INTERP selects
 // interpret-the-driver mode.

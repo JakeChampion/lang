@@ -155,7 +155,10 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    codegen output (byte-identical emit comparisons, the native half of the
    leak and alloc-count matrices) therefore goes with the backends or is
    re-anchored on the interpreter; that is scope for the deletion PRs, not a
-   reason to keep a backend.
+   reason to keep a backend. The self-host suites themselves no longer need
+   one: since 2026-09-29 their drivers are built by the pinned stage0
+   self-host compiler (`internal/e2eharness/self_host_compiler.go`), so
+   deleting the x86-64 backend leaves the harness standing.
 4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
    need the self-host compiler compiled to wasm instead.~~ **Moved
