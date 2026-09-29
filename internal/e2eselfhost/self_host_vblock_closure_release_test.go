@@ -37,8 +37,7 @@ function main(): i32 {
 // Interpreter-confirmed.
 const vblockTailMoveWant = 41
 
-// The move through a nested value block. The semantic lowering refuses this
-// main (#10436), so only the AST lowering runs it.
+// The move through a nested value block, on both lowerings (#10436).
 const vblockNestedTailMoveSrc = `function main(): i32 {
     var t: i32 = 0;
     var j: i32 = 0;
@@ -110,7 +109,7 @@ var vblockClosureReleaseCases = []struct {
 	lowerings []vblockClosureLowering
 }{
 	{"vblock_tail_move", vblockTailMoveSrc, vblockTailMoveWant, vblockClosureBoth},
-	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureAST},
+	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureBoth},
 	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant, vblockClosureBoth},
 }
 
