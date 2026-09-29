@@ -1,12 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // #6891: an expression-position `.append` whose receiver is READ AGAIN must
 // have value semantics. op_arr_push consumes its receiver — at rc==1 with
@@ -60,31 +54,15 @@ var selfHostAppendValueCases = []struct {
 	{"inplace-shapes-control", "function tail(acc: i32[], x: i32): i32[] {\n    return acc.append(x);\n}\nfunction main(): i32 {\n    var a: i32[] = [];\n    var i: i32 = 0;\n    while (i < 20) { a = tail(a, i); i = i + 1; }\n    var b: i32[] = [];\n    var j: i32 = 0;\n    while (j < 20) { b = b.append(j); j = j + 1; }\n    return a.len() + b.len();\n}"},
 }
 
-// TestSelfHostAppendValueSemanticsX86_64 — the production x86-64 IR path
-// (asm_ir_run `-ir`) against the interpreter oracle.
+// TestSelfHostAppendValueSemanticsX86_64 — the x86-64 leg against the
+// interpreter oracle.
 func TestSelfHostAppendValueSemanticsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range selfHostAppendValueCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "apv_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
@@ -95,69 +73,31 @@ func TestSelfHostAppendValueSemanticsX86_64(t *testing.T) {
 // emit. The receiver bracket is shared irlower analysis, so this leg guards
 // the register backends agreeing on the grow helper's uniqueness gate.
 func TestSelfHostAppendValueSemanticsArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
+	gcc, qemu := arm64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range selfHostAppendValueCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, "apv_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
 	}
 }
 
-// TestSelfHostAppendValueSemanticsWasmIR — the wasm-IR leg, and the only one
+// TestSelfHostAppendValueSemanticsWasmIR — the wasm leg, and the only one
 // that reaches $__fern_arr_push_i64 / $__fern_arr_push_f64: the register
 // backends route every element width through the rc-gated __fern_arr_push,
 // while wasm has separate 8-byte-slot helpers that had no rc gate at all, so
 // the i64[] / f64[] cases stayed wrong there after the lowering was fixed.
 func TestSelfHostAppendValueSemanticsWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping wasm-IR append value-semantics e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range selfHostAppendValueCases {
 		t.Run(tc.name, func(t *testing.T) {
 			want := interpExit(t, interpBin, tc.src)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "apv_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if code := run.ProcessState.ExitCode(); code != want {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
