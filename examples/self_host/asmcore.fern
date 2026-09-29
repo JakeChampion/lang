@@ -2011,8 +2011,8 @@ function kqueue_watch_src(t: string): string {
 function epoll_watch_src(t: string): string {
     var data_at: string = "8";
     if (t == "x86_64") { data_at = "4"; }
-    return "var ev: usize = __raw_scratch(16); var bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } "
-        + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, 0); __raw_store8(ev, 2, 0); __raw_store8(ev, 3, 0); "
+    return "var ev: usize = __raw_scratch(16); var bits: i32 = 0; if ((interest & 1) != 0) { bits = bits | 1; } if ((interest & 2) != 0) { bits = bits | 4; } if ((interest & 4) != 0) { bits = bits | 268435456; } "
+        + "__raw_store8(ev, 0, bits & 255); __raw_store8(ev, 1, (bits >> 8) & 255); __raw_store8(ev, 2, (bits >> 16) & 255); __raw_store8(ev, 3, (bits >> 24) & 255); "
         + "__raw_store8(ev, " + data_at + ", fd & 255); __raw_store8(ev, " + data_at + " + 1, (fd >> 8) & 255); __raw_store8(ev, " + data_at + " + 2, (fd >> 16) & 255); __raw_store8(ev, " + data_at + " + 3, (fd >> 24) & 255); "
         + "__raw_store8(ev, " + data_at + " + 4, 0); __raw_store8(ev, " + data_at + " + 5, 0); __raw_store8(ev, " + data_at + " + 6, 0); __raw_store8(ev, " + data_at + " + 7, 0); "
         + "var r: i32 = 0; if (interest == 0) { r = __syscall4(" + sysno(t, "epoll_ctl") + ", r_fd as i64, 2, fd as i64, ev as i64) as i32; } else { "
@@ -2048,7 +2048,7 @@ pub function rt_src_reactor_ctl(t: string): string {
     return "function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 { "
         + "if (op == 3) { return __syscall3(" + sysno(t, "close") + ", r_fd as i64, 0, 0) as i32; } "
         + signal_watch_src(t)
-        + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 3; if (op == 2) { interest = 0; } " + watch + " }";
+        + "if (op != 1 && op != 2) { return 0 - 22; } var interest: i32 = arg & 7; if (op == 2) { interest = 0; } " + watch + " }";
 }
 
 // The pairs are written one word per slot into the caller's array through
