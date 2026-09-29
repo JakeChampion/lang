@@ -281,6 +281,17 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
+`TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
+repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
+522 requests, its README for the columns and the sources) through
+`http_parse_request_framed` on the
+interpreter, checked against the verdict pinned beside each request, and on
+wasm, x86-64 and arm64, checked against the interpreter;
+`TestSelfHostHTTPCorpus` is the same program through the self-host compiler
+(#9854). The pin is std/http's own rule, so the corpus file is where a
+disagreement with the upstream parser is recorded, and a changed pin is a
+parser change that has to be meant (`FERN_HTTP_CORPUS_DUMP=1` re-records).
+
 `TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
 and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
 and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
