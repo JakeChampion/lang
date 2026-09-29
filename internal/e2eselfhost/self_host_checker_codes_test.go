@@ -1936,6 +1936,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = (): i32 => { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = (): i32 => { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
+		// A generic function named where a value is expected: nothing
+		// determines its type parameters (#7040). A module const in a call
+		// bracket is that value, not a type argument (#10427).
+		{"generic-fn-as-value", "function id[T](a: T): T { return a; }\nfunction main(): i32 { var f = id; return 0; }\n", []string{"E040"}},
+		{"module-const-in-call-bracket", "const T: i32 = 2;\nfunction id[T](a: T): T { return a; }\nfunction pass[T](a: T): T { return id[T](a); }\nfunction main(): i32 { return pass(3); }\n", []string{"E040"}},
 		// An injected enum's variant payload is checked like a declared one:
 		// JsonValue and IoError have no union declaration to find it by.
 		{"injected-variant-payload-json", "function main(): i32 { var j: JsonValue = JNumber(1.0); return 0; }\n", []string{"E036"}},

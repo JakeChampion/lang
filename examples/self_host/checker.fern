@@ -1296,7 +1296,7 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
 // `+`-joined trait bound(s) when parameter i's declared type is exactly a
 // bounded type parameter (`x: T` where `T: Tr`), else "". Drives the E021
 // generic-bound conformance check at call sites (#4842) — see call_diags.
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], is_const: boolean }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], param_bound: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean }
 
 // StructSig: nominal handle for a declared struct. Parallel
 // arrays describe the field list in declaration order: each
@@ -2148,7 +2148,7 @@ function (s: Scope) lookup_sig(name: string): FuncSig {
   var empty: typeinfo.Type[] = [];
   var nob: string[] = [];
   var non: string[] = [];
-  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, is_const: false };
+  return FuncSig { name: "", param_types: empty, param_own: [], ret_type: t_unknown("undefined function"), all_type_params: [], type_params: [], param_bound: nob, type_bounds: [], ret_type_name: "", param_type_names: non, param_names: [], is_const: false };
 }
 
 // tp_bound_for returns the `+`-joined trait bound(s) on the type parameter
@@ -4973,6 +4973,9 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // to the function turned `Some(pair) => pair.0` into an E043 inside
   // std the moment a user function was named `pair`.
   if (csig.name.len() > 0 && !s.is_bound(id.name)) {
+    // A generic one is E040 (generic_fn_value_diag); typing it would hand
+    // an uninstantiated signature to whatever reads the value.
+    if (generic_fn_value(csig)) { return t_unknown("generic function value"); }
     return t_func_own(csig.param_types, csig.param_own, csig.ret_type);
   }
   return bound;
@@ -5821,7 +5824,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       pbnd = pbnd.append(tp_bound_for(param.type_name, fd.type_params, fd.bound_traits));
       ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
     }
-    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, is_const: fd.is_const });
+    out = out.append(FuncSig { name: fd.name, param_types: pts, param_own: typeinfo.own_flags(powns, pts), ret_type: func_ret_type(fd, tn), all_type_params: fd.all_type_params, type_params: fd.type_params, param_bound: pbnd, type_bounds: fd.bound_traits, ret_type_name: parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const });
     i = i + 1;
   }
   return out;
@@ -11977,6 +11980,8 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // detection and vref_expr's ambiguity rule). #6658.
   if (is_unknown(s.lookup(id.name)) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
     out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
+  } else if (is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
+    out = out.append(generic_fn_value_diag(id, s.lookup_sig(id.name)));
   } else if (!is_resolvable_value(id.name, s)) {
     // E001: a bare identifier in VALUE position that resolves to
     // nothing — not a local / param / loop / match binding, a free
@@ -11988,6 +11993,45 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
     out = out.append(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
   }
 
+  return out;
+}
+
+// generic_fn_value: a generic function named where a value is expected. No
+// instantiation reaches such a use, so nothing determines its type
+// parameters; native refuses it with E040 (#7040).
+function generic_fn_value(sig: FuncSig): boolean {
+  return sig.name.len() > 0 && !sig.is_const && sig.all_type_params.len() > 0;
+}
+
+// generic_fn_value_diag spells native's E040, whose hint eta-expands the
+// declaration's own parameters.
+function generic_fn_value_diag(id: ast.ExprIdent, sig: FuncSig): util.Diag {
+  var tps: string = comma_list(sig.all_type_params);
+  var plural: string = "";
+  if (sig.all_type_params.len() > 1) { plural = "s"; }
+  var params: string[] = [];
+  var i: i32 = 0;
+  while (i < sig.param_names.len()) {
+    var pt: string = "";
+    if (i < sig.param_type_names.len()) { pt = sig.param_type_names[i]; }
+    params = params.append(sig.param_names[i] + ": " + pt);
+    i = i + 1;
+  }
+  return dg_at("E040", "generic function " + id.name + " cannot be used as a value — nothing here determines its type parameter" + plural + " " + tps + ". Wrap it in a lambda, which does: (" + comma_list(params) + ") => " + id.name + "(" + comma_list(sig.param_names) + ")", id.line, id.col);
+}
+
+function comma_list(xs: string[]): string {
+  var out: string = "";
+  for x in xs {
+    if (out.len() > 0) { out = out + ", "; }
+    out = out + x;
+  }
+  return out;
+}
+
+function param_decl_names(params: ast.ParamDecl[]): string[] {
+  var out: string[] = [];
+  for pd in params { out = out.append(pd.name); }
   return out;
 }
 
@@ -21120,7 +21164,7 @@ function gcall_sig(c: ast.ExprCall, s: Scope): FuncSig {
   if let ast.ExprIdent(cid) = c.callee {
     if (s.has_sig(cid.name)) { return s.lookup_sig(cid.name); }
   }
-  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], is_const: false };
+  return FuncSig { name: "", param_types: [], param_own: [], ret_type: t_unknown("no callee"), all_type_params: [], type_params: [], param_bound: [], type_bounds: [], ret_type_name: "", param_type_names: [], param_names: [], is_const: false };
 }
 
 // gcall_tvars: the type variables a signature declares some parameter AS —

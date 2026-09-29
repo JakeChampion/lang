@@ -16960,6 +16960,10 @@ function retag_type_arg_indexes(mod: Module): Module {
     for sd in mod.structs { types = types.append(sd.name); }
     for ed in mod.enums { types = types.append(ed.name); }
     for rd in mod.resources { types = types.append(rd.name); }
+    // A module const is a value in the bracket, as native's const folding
+    // makes it before the retag (#10427).
+    var consts: string[] = [];
+    for fd in mod.funcs { if (fd.is_const) { consts = consts.append(fd.name); } }
     // Most bodies hold no `f[Name](…)` at all; rebuilding them would copy the
     // whole module for nothing.
     var funcs: FuncDecl[] = [];
@@ -16968,7 +16972,7 @@ function retag_type_arg_indexes(mod: Module): Module {
             funcs = funcs.append(fd);
             continue;
         }
-        var shadow: string[] = astwalk.collect_bound_stmts(fd.body, []);
+        var shadow: string[] = astwalk.collect_bound_stmts(fd.body, consts);
         for pd in fd.params { shadow = shadow.append(pd.name); }
         // Unbounded type parameters are erased from the decl, but every name
         // the signature's types mention is a type or one of them.
@@ -16981,7 +16985,7 @@ function retag_type_arg_indexes(mod: Module): Module {
         funcs = funcs.append(FuncDecl { ...fd, body: astwalk.map_stmts(fd.body, rw) });
     }
     if (!rta_has_index_call(mod.top_stmts)) { return Module { ...mod, funcs: funcs }; }
-    var top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, []);
+    var top_shadow: string[] = astwalk.collect_bound_stmts(mod.top_stmts, consts);
     function top_rw(x: ast.Expr): ast.Expr { return rta_call_of(x, generics, types, top_shadow); }
     return Module { ...mod, funcs: funcs, top_stmts: astwalk.map_stmts(mod.top_stmts, top_rw) };
 }
@@ -18009,10 +18013,11 @@ pub function written_type_vars_module(mod: Module): Module {
 }
 
 function respell_type_vars_module(mod: Module, written: boolean): Module {
+    var mvals: string[] = module_value_names(mod);
     var funcs: FuncDecl[] = [];
     for fd in mod.funcs {
         var fvars: string[] = fn_type_vars(fd, mod, written);
-        funcs = funcs.append(rename_fn_type_vars(fd, fvars, tvar_respellings(fvars, written)));
+        funcs = funcs.append(rename_fn_type_vars(fd, fvars, tvar_respellings(fvars, written), mvals));
     }
     var structs: StructDecl[] = [];
     for sd in mod.structs {
@@ -18029,6 +18034,19 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
         impls = impls.append(rename_impl_type_vars(im, ivars, tvar_respellings(ivars, written)));
     }
     return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls };
+}
+
+// module_value_names is every module-level name the checker resolves as a
+// value or a qualifier: a const, a function used as a value, a variant, and an
+// enum, struct or alias qualifying a variant or an associated call. A type
+// variable of the same name does not reach those positions (#10427).
+function module_value_names(mod: Module): string[] {
+    var out: string[] = [];
+    for fd in mod.funcs { if (fd.receiver_type.len() == 0) { out = out.append(fd.name); } }
+    for sd in mod.structs { out = out.append(sd.name); }
+    for ed in mod.enums { out = out.append(ed.name); }
+    for al in mod.aliases { out = out.append(al.name); }
+    return out;
 }
 
 // tvar_respellings maps each variable to its reserved spelling, or with
@@ -18119,9 +18137,10 @@ function rename_param_type_vars(pd: ast.ParamDecl, vars: string[], cts: string[]
     return ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, vars, cts), fn_ret: subst_ty(pd.fn_ret, vars, cts), fn_param_types: subst_ty_list(pd.fn_param_types, vars, cts), default_value: dv };
 }
 
-function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[]): FuncDecl {
+function rename_fn_type_vars(fd: FuncDecl, vars: string[], cts: string[], mvals: string[]): FuncDecl {
     if (vars.len() == 0) { return fd; }
     var values: string[] = [];
+    for v in vars { if (str_in(mvals, v)) { values = values.append(v); } }
     if (fd.receiver_name.len() > 0) { values = values.append(fd.receiver_name); }
     for pd in fd.params { values = astwalk.append_bound_name(values, pd.name); }
     var sc: TvScope = TvScope { vars: vars, cts: cts, values: values };
@@ -18185,8 +18204,9 @@ function rename_tv_expr(e: ast.Expr, vars: string[], cts: string[]): ast.Expr {
 // A type variable also reaches two expression positions: the object of
 // `T.default()`, and the bracket of `f[T](x)`, which parses as an index until
 // retag_type_arg_indexes settles it as a type argument. A value binding of the
-// same name shadows it in both, as in native, so that respelling walks the
-// body with the value names in scope. TvScope is the
+// same name shadows it in both, and so does a module-level name the checker
+// resolves in either position (module_value_names), so that respelling walks
+// the body with the value names in scope. TvScope is the
 // walk's accumulator: the declaration's variables, their respellings, and the
 // value names bound so far.
 struct TvScope { vars: string[], cts: string[], values: string[] }
