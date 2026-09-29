@@ -952,6 +952,7 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 					continue
 				}
 				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
+					(countedAliasOK && b.borrowedCallArg(x, i)) ||
 					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
 					excused[id] = true
 				}
@@ -1091,6 +1092,39 @@ func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 	}
 	esc, known := b.paramEscapes[id.Name]
 	return known && i < len(esc) && !esc[i]
+}
+
+// borrowedCallArg reports whether argument `i` of direct call `call` reaches
+// a parameter the callee BORROWS: a Fern function whose parameter is neither
+// `own` nor owned-by-default. Such a callee retains anything it keeps (the
+// store-side inc is the borrow convention's invariant; `HeaderMap.append`
+// pushing its value into the map is the shape), so a reference it lets out
+// is a counted one and the argument's own count stays the caller's to
+// release. readOnlyCallArg is the stronger fact (the callee keeps nothing);
+// this one is enough for a release that only has to leave no UNCOUNTED
+// reference behind. A pair-form payload bound by a match arm and handed to
+// such a callee was released by nobody: not moved (the callee does not take
+// ownership) and not excused (the callee keeps it), so the arm's release was
+// withheld and one payload per match leaked.
+func (b *builder) borrowedCallArg(call *ast.Call, i int) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	sig := b.info.FuncSigs[id.Name]
+	if sig == nil || i >= len(sig.Params) || calleeRetainsAnyArg(id.Name) {
+		return false
+	}
+	if _, known := b.paramEscapes[id.Name]; !known {
+		return false
+	}
+	if own := b.info.OwnFuncs[id.Name]; i < len(own) && own[i] {
+		return false
+	}
+	return !b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i)
 }
 
 // indirectCallArg reports whether call goes through a function value. Its

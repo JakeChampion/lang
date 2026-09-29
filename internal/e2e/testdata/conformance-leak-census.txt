@@ -184,7 +184,7 @@ audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
-audit_std_json                                       13
+audit_std_json                                       9
 audit_std_numeric                                    0
 audit_std_path_numeric                               0
 audit_std_string                                     0
@@ -262,8 +262,8 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     23
-derive_from_json_i64                                 10
+derive_from_json                                     6
+derive_from_json_i64                                 2
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
