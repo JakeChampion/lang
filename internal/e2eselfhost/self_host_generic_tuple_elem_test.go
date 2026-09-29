@@ -46,3 +46,44 @@ function main(): i32 {
 		t.Fatalf("the program failed: %v (a non-zero exit names the shape whose call did not bind)", err)
 	}
 }
+
+// The same issue's second shape: a bare `Err(...)` (or `Ok`, `Some`) as the
+// argument binding a generic's type parameter. The constructors belong to
+// no declared enum, so the variant-argument binding knew nothing of them,
+// `E` never bound and the call stayed the template (`outer` undefined).
+func TestSelfHostGenericBuiltinVariantArgIRX86_64(t *testing.T) {
+	gcc, runner, driverBin := buildModloadDriverX86(t)
+	src := `trait Answer { function answer(self: Self): i32; }
+struct Boom { n: i32 }
+impl Answer for Boom { function answer(self: Self): i32 { return self.n; } }
+function inner[E: Answer](r: Result[i32, E]): i32 {
+    match (r) { Ok(v) => { return v; }, Err(e) => { return e.answer(); } }
+    return 0;
+}
+function okay[T: Answer](r: Result[T, string]): i32 {
+    match (r) { Ok(v) => { return v.answer(); }, Err(e) => { return 0 - 1; } }
+    return 0;
+}
+function outer[S, E: Answer](s: S, r: Result[i32, E]): (S, i32) { return (s, inner(r)); }
+function first[T: Answer](o: Option[T]): i32 {
+    match (o) { Some(v) => { return v.answer(); }, None => { return 0; } }
+    return 0;
+}
+function main(): i32 {
+    var o: (string, i32) = outer("s", Err(Boom { n: 7 }));
+    if (o.0 != "s" || o.1 != 7) { return 1; }
+    if (inner(Err(Boom { n: 5 })) != 5) { return 2; }
+    if (first(Some(Boom { n: 4 })) != 4) { return 3; }
+    if (okay(Ok(Boom { n: 8 })) != 8) { return 4; }
+    return 0;
+}
+`
+	asm, progDir := compileSourceModload(t, runner, driverBin, src)
+	if !strings.Contains(asm, ".Lssa_") {
+		t.Fatal("the program did not route through the IR path")
+	}
+	bin := buildBin(t, gcc, progDir, "builtin_variant", asm)
+	if err := binCmd(runner, bin).Run(); err != nil {
+		t.Fatalf("the program failed: %v (a non-zero exit names the shape whose call did not bind)", err)
+	}
+}

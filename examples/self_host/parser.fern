@@ -9747,7 +9747,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         var vname: string = ctor_variant_name(c.callee, funcs.enums);
         if (vname.len() > 0) {
             var owner: i32 = genum_owner_of_variant(funcs.enums, vname);
-            if (owner < 0) { return binds; }
+            if (owner < 0) { return builtin_variant_arg_binds(pattern, vname, c.args, env, funcs, vars, binds); }
             var ed: EnumDecl = funcs.enums[owner];
             var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
             if (str_list_contains(vars, pattern)) {
@@ -9771,6 +9771,29 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         }
     }
     return binds;
+}
+
+// builtin_variant_arg_binds is variant_arg_binds for `Ok(x)`, `Err(x)` and
+// `Some(x)`, whose enums are not declared anywhere: the payload's inferred
+// type binds the variables the parameter names in that half of its
+// `Result[..]` / `Option[..]`. A number literal payload binds nothing, as
+// its width is the parameter's to decide.
+function builtin_variant_arg_binds(pattern: string, vname: string, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
+    if (args.len() != 1 || number_literal_tree(args[0])) { return binds; }
+    var slot: i32 = 0 - 1;
+    var base: string = "";
+    if (vname == "Some") { base = "Option"; slot = 0; }
+    if (vname == "Ok") { base = "Result"; slot = 0; }
+    if (vname == "Err") { base = "Result"; slot = 1; }
+    if (slot < 0) { return binds; }
+    var pb: i32 = first_bracket(pattern);
+    if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
+    if (slice_unchecked(pattern, 0, pb) != base) { return binds; }
+    var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
+    if (slot >= pargs.len()) { return binds; }
+    var pt: string = mono_infer(args[0], env, funcs);
+    if (pt.len() == 0) { return binds; }
+    return bind_unify(strip_ws(pargs[slot]), pt, vars, binds);
 }
 
 // func_ret_of returns the return type of a plain function by name.
