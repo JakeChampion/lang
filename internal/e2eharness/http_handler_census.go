@@ -104,8 +104,10 @@ const KeepAliveCycle = 276
 // reset the connection, whose failed write must close it before the
 // request behind it is answered; a request with a malformed one pipelined
 // behind it, answered with close and then closed with no response to the
-// second; a request of 101 header fields, refused before any handler sees
-// it; a chunked request with a request pipelined behind it, whose decoded
+// second; a request of 101 header fields, answered 431 and closed before
+// any handler sees it, an HTTP/1.1 request without a Host, answered 400,
+// and a body past the cap, answered 413 before the body arrives; a
+// chunked request with a request pipelined behind it, whose decoded
 // body the handler echoes and whose framing must leave exactly the second
 // request to answer; and an HTTP/1.0 keep-alive request followed by an
 // HTTP/1.1 one on the same connection. Every response is checked, and
@@ -154,6 +156,22 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
 		t.Helper()
 		readBody(conn, r, label, "ok", wantConnection...)
+	}
+	// refused checks the loop's own answer to a malformed request: the
+	// status, an empty body and `Connection: close`.
+	refused := func(conn net.Conn, r *bufio.Reader, label string, wantStatus int) {
+		t.Helper()
+		resp, err := http.ReadResponse(r, nil)
+		if err != nil {
+			conn.Close()
+			t.Fatalf("%s: %v", label, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != wantStatus || resp.ContentLength != 0 || len(body) != 0 || !resp.Close {
+			conn.Close()
+			t.Fatalf("%s: status=%d length=%d body=%q close=%v error=%v, want %d, empty, close", label, resp.StatusCode, resp.ContentLength, body, resp.Close, err, wantStatus)
+		}
 	}
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
 		t.Helper()
@@ -292,7 +310,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "before a malformed request", "close")
 		eof(conn, r, "after a malformed request")
 		// 101 header fields, one past the cap: refused before any handler
-		// sees the request, so the connection closes with no response.
+		// sees the request, answered 431 by the loop itself and closed.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -302,7 +320,21 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		pipeline.WriteString("\r\n")
 		write(conn, pipeline.String())
-		eof(conn, r, "a request with 101 header fields")
+		refused(conn, r, "a request with 101 header fields", 431)
+		eof(conn, r, "after 101 header fields")
+		// An HTTP/1.1 request without a Host (RFC 9112 §3.2): 400, closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /nohost HTTP/1.1\r\n\r\n")
+		refused(conn, r, "a request without Host", 400)
+		eof(conn, r, "after a request without Host")
+		// A body past the cap: 413 as soon as the header block declares
+		// it, before any of the body arrives, then closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /big HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n")
+		refused(conn, r, "a body past the cap", 413)
+		eof(conn, r, "after a body past the cap")
 		// A chunked request (two chunks, an extension, a trailer) with a
 		// request pipelined behind it in one write: the handler echoes the
 		// decoded body, and the framing must leave exactly the second
