@@ -4870,6 +4870,7 @@ function main(): i32 {
 	// A literal past 32 bits cast to an address wraps on wasm on both
 	// lowerings (#10743).
 	{name: "usize-wide-literal", atLeast: 1, noLeak: true, src: semUsizeWideLiteralSource},
+	{name: "usize-wide-product", atLeast: 2, noLeak: true, src: semUsizeWideProductSource},
 	// The FFI trampolines, reached behind a test that never holds so no C
 	// pointer is called: the typed path produces each caller and the shims
 	// link (#10736).
@@ -5836,6 +5837,19 @@ function main(): i32 {
     var a: usize = 70000000000 as usize;
     var b: usize = 1000000000 as usize;
     return (a / b) as i32;
+}
+`
+
+// semUsizeWideProductSource casts computed i64 values past 32 bits to usize,
+// in a binding and in a return. wasm keeps the low 32 bits of each.
+const semUsizeWideProductSource = `
+function addr(x: i64): usize { return x as usize; }
+function main(): i32 {
+    var n: i64 = (args().len() as i64) * 70000000000i64;
+    var a: usize = n as usize;
+    var b: usize = addr(n * 2i64);
+    var unit: usize = 100000000 as usize;
+    return ((a / unit) + (b / unit) * (4 as usize)) as i32;
 }
 `
 
