@@ -23,9 +23,8 @@ import (
 // trigger. The emit must instead refuse the function by name with the reason
 // the lowering recorded, exactly as the checked route does.
 //
-// The programs are strictIRBailReasons' rows, so the reasons asserted here are
-// the ones TestSelfHostStrictIRNamesBailReason already pins on the checked
-// route; a row retiring there retires here with it. Each row runs on both
+// The programs are ones the AST lowering refuses; a row that starts lowering
+// is replaced by another refusal, not weakened. Each row runs on both
 // register targets — the driver is one x86-64 binary, and `-target arm64-linux`
 // only selects which emitter the partial stream would have reached — and once
 // through the batched emit-all route the whole-compiler build takes.
@@ -64,7 +63,7 @@ func TestSelfHostAssumeEligibleBailRefusesByName(t *testing.T) {
 		}
 	}
 
-	for _, tc := range strictIRBailReasons {
+	for _, tc := range astBailReasons {
 		t.Run(tc.name, func(t *testing.T) {
 			entry := entryFor(t, tc)
 			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
@@ -87,7 +86,7 @@ func TestSelfHostAssumeEligibleBailRefusesByName(t *testing.T) {
 	// The batched route (`-per-module-emit-all -assume-eligible`) is the one
 	// every whole-compiler build takes, and the one #8585 hit.
 	t.Run("emit-all", func(t *testing.T) {
-		tc := strictIRBailReasons[0]
+		tc := astBailReasons[0]
 		entry := entryFor(t, tc)
 		outDir := filepath.Join(t.TempDir(), "units")
 		if err := os.MkdirAll(outDir, 0o755); err != nil {
@@ -97,4 +96,24 @@ func TestSelfHostAssumeEligibleBailRefusesByName(t *testing.T) {
 			entry, "-per-module-emit-all", "-out-dir", outDir, "-assume-eligible")
 		assertRefusal(t, "emit-all strict", stderr, code, tc.fn, tc.reason)
 	})
+}
+
+var astBailReasons = []struct{ name, src, fn, reason string }{
+	// A loop over the innermost level of a 4-deep nested array.
+	{"nested-for", `function main(): i32 {
+    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+    var sum = 0;
+    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
+    return sum;
+}
+`, "main", "did not lower: `for v`"},
+	// A value-position match desugars to an immediately invoked value block; an
+	// 8-byte-element array payload is what it cannot bind.
+	{"iife-value-block", `enum W { Wide(i64[]), Empty }
+function main(): i32 {
+    var w: W = Wide([5i64, 6i64]);
+    var u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
+    return (u as i32) & 255i32;
+}
+`, "main", "did not lower: `var u` bound from immediately-invoked value block"},
 }
