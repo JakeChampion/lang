@@ -1,59 +1,24 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
-// --- A `Some(None)` payload loses the binding's declared type (#7217) --------
-//
-// `some_opt_type` types a direct `Some(x)` construction from its ARGUMENT, and
-// elem_type_tag cannot see through a bare `None`: it is an ExprIdent with no
-// slot, so it falls to the "i32" default and `Some(None)` answers
-// "Option[i32]". That beat the declared type of
+// --- A `Some(None)` payload keeps the binding's declared type (#7217) -------
 //
 //	var o: Option[Option[i32]] = Some(None);
 //
-// so the `Some(inner)` arm bound the inner Option BOX as a scalar and the
-// nested `match (inner)` had an untyped scrutinee, bailing the whole function:
-//
-//	FERN_STRICT_IR: f (did not lower: `match`)
-//
-// Three neighbours isolated it — only the third bailed, and the last is the
-// tell, since routing the same `None` through an annotated local restores the
-// type elem_type_tag could not read off the construction:
-//
-//	Some(None)     + a SINGLE-level match      lowers
-//	Some(Some(i))  + a nested match            lowers
-//	Some(None)     + a nested match            BAILS
-//	var inner0: Option[i32] = None; Some(inner0) + a nested match   lowers
-//
-// The fix is a precedence one: the construction walk is consulted only for an
-// UNANNOTATED binding. An annotation names the payload outright and the checker
-// has already proven the construction assignable to it, so it is left to the
-// annotation fallback that already existed below.
-//
-// The fabrication was directly observable: an unannotated `Some(None)` whose
-// payload IS used reports `calls unknown symbol "i32.is_none"` — the arm
-// binding really was an i32.
-//
-// The unannotated rows are the guard on that precedence. `var o = Some(None)`
-// types its payload as an unresolved type var the checker accepts only while
-// the payload goes unread (using it is E002/E043), and the construction walk is
-// the only thing that types it — so it must keep answering there.
+// The `Some(inner)` arm binds the inner Option, so a nested `match (inner)`
+// must see an Option scrutinee, not the `Option[i32]` a bare `None` argument
+// would suggest. The neighbours pin the other payload shapes (nested Some,
+// nested Result, a `None` routed through a local, an unannotated binding, an
+// array payload that escapes, a string payload, a reassigned local).
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test. Native is fully balanced on all six.
+// native x86-64 backend — and every row balances at live_bytes 0.
 type nestedOptNoneCase struct {
 	name      string
 	src       string
 	want      int
-	balance   bool // assert allocs == frees at live_bytes 0
-	wantFrees int  // when non-zero, assert an exact free count
+	wantFrees int // when non-zero, assert an exact free count
 }
 
 const nestedOptNoneMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
@@ -63,7 +28,7 @@ const nestedOptNoneMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 =
 func nestedOptNoneCases() []nestedOptNoneCase {
 	return []nestedOptNoneCase{
 		{
-			// THE REPRO. Bailed the whole function; now lowers and balances.
+			// THE REPRO: a nested match on the `Some(None)` payload.
 			name: "nested_none",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[i32]] = Some(None);
@@ -73,12 +38,10 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return 0;
 }` + nestedOptNoneMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
-			// The nested-Some neighbour: some_opt_type recurses through a `Some`
-			// payload, so this always lowered. It must stay balanced — the
-			// annotation now supplies the same type the recursion did.
+			// The nested-Some neighbour.
 			name: "nested_some",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[i32]] = Some(Some(i));
@@ -88,12 +51,10 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return 0;
 }` + nestedOptNoneMain,
-			want: 63, balance: true,
+			want: 63,
 		},
 		{
-			// A nested RESULT payload. some_opt_type declines an Ok/Err payload
-			// outright (it cannot name the Result's E arm), so this already went
-			// through the annotation — the path this fix widens `None` onto.
+			// A nested RESULT payload.
 			name: "nested_result",
 			src: `function round(i: i32): i32 {
     var o: Option[Result[i32, i32]] = Some(Ok(i));
@@ -103,14 +64,10 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return 0;
 }` + nestedOptNoneMain,
-			want: 63, balance: true,
+			want: 63,
 		},
 		{
-			// The same `None` routed through an annotated local — the neighbour
-			// that identified the cause, since here elem_type_tag reads the type
-			// off the SLOT and always answered correctly. It leaks the extra
-			// local's own box (400/0, 16000) — byte-for-byte what it leaked on
-			// the parent, so exit code only.
+			// The same `None` routed through an annotated local.
 			name: "via_local",
 			src: `function round(i: i32): i32 {
     var inner0: Option[i32] = None;
@@ -124,11 +81,9 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 19,
 		},
 		{
-			// THE PRECEDENCE GUARD. No annotation, so the construction walk is
-			// still the only source of the slot's opt_type; gating it on the
-			// annotation must not take this away. Leaks 400/0 exactly as on the
-			// parent, so exit code only — what is pinned here is that it still
-			// LOWERS.
+			// No annotation: the payload's type comes from the construction
+			// alone, which the checker accepts only while the payload goes
+			// unread.
 			name: "unannotated_none",
 			src: `function round(i: i32): i32 {
     var o = Some(None);
@@ -138,36 +93,19 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 72,
 		},
 		{
-			// The annotated single-level match: lowered before via the fabricated
-			// "Option[i32]", and lowers now via the annotation.
+			// The annotated single-level match.
 			name: "single_level",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[i32]] = Some(None);
     match (o) { Some(inner) => { return 7; }, None => { return 2; } }
     return 0;
 }` + nestedOptNoneMain,
-			want: 72, balance: true,
+			want: 72,
 		},
 		{
-			// THE TAG GUARD. This column is a lowering TAG, not the declared
-			// type: elem_type_tag gives a scalar-array payload a bare "i32"
-			// where the annotation spells `Option[i32[]]`, deliberately —
-			// some_opt_type's own comment says `Option[i32[][]]` depends on it.
-			// So the annotation may win ONLY for the payload the walk cannot
-			// read at all; letting it win generally drops this payload's
-			// reclaim while every count still looks plausible.
-			//
-			// The escape is what makes the row discriminate, and it is why the
-			// simpler `match (o) { Some(a) => a[0] + a[1] }` is not the probe
-			// here: that shape balances under the broad rule too and would gate
-			// nothing. With `a` escaping to an outer local the row once read 400
-			// (200 under the broad rule, the defect that took
-			// TestSelfHostNestedMatchBorrowHazards from 200 frees to 100): the
-			// consuming match refused `o` for the escape, `held` took the payload
-			// uncounted and its sweep freed it, and the box leaked 40 B a round.
-			// A scalar-array payload's escapes are counted now, so the candidate
-			// is admitted and every box goes: 600, native's number. Pinned
-			// exactly, so an OVER-release is caught too.
+			// A scalar-array payload that escapes the match into an outer
+			// local. Two boxes a round (the array and the Some), both freed:
+			// pinned exactly, so a dropped reclaim or an over-release shows.
 			name: "array_payload_escapes",
 			src: `function round(i: i32): i32 {
     var held: i32[] = [];
@@ -178,15 +116,10 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return acc + held[1];
 }` + nestedOptNoneMain,
-			want: 77, wantFrees: 600,
+			want: 77, wantFrees: 400,
 		},
 		{
-			// A STRING payload. Newly lowering, and it leaks 80 B/round — but
-			// that is the Option[string] reclaim gap, not this fix: a FLAT
-			// `var o: Option[string] = Some(w("ab"))` leaks 600/0 on the parent
-			// too, with no nesting anywhere. Asserted on the exit code only, so
-			// the shape is pinned against becoming an OVER-release (99) while it
-			// waits on that gap; native balances it at 200/200.
+			// A STRING payload.
 			name: "nested_string",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(None);
@@ -199,10 +132,7 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 			want: 19,
 		},
 		{
-			// A REASSIGNED Option local, likewise newly lowering and likewise
-			// leaking for a pre-existing reason: reassigning an Option local
-			// frees nothing, and the all-Some form of exactly this shape leaks
-			// the same 120 B/round on the parent. Exit code only, same rationale.
+			// A REASSIGNED Option local.
 			name: "reassigned",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[i32]] = Some(None);
@@ -219,21 +149,15 @@ func nestedOptNoneCases() []nestedOptNoneCase {
 }
 
 // TestSelfHostNestedOptNoneX86_64 — a `Some(None)` payload keeps the binding's
-// declared Option type, so the nested `match` lowers instead of bailing.
+// declared Option type, so the nested `match` lowers, and every row balances.
 func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range nestedOptNoneCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
-			progBin := buildBin(t, gcc, dir, "nestoptnone_"+tc.name, asm)
-			stderr, exit := hevRun(t, runner, progBin)
+			asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
+			stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "nestoptnone", asm))
 			if exit != tc.want {
-				t.Fatalf("%s exited %d, want %d (99 = rc underflow; the whole "+
-					"function bailed `did not lower: match` before this fix)", tc.name, exit, tc.want)
+				t.Fatalf("%s exited %d, want %d (99 = rc underflow)", tc.name, exit, tc.want)
 			}
 			summary := leakSummaryLine(stderr)
 			if summary == "" {
@@ -247,12 +171,9 @@ func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
 			if tc.wantFrees != 0 && frees != int64(tc.wantFrees) {
-				t.Errorf("%s: %s — want exactly %d frees. A LOWER count is the "+
-					"payload's reclaim dropped by overriding its lowering tag "+
-					"with the declared type; a higher one is an over-release",
-					tc.name, summary, tc.wantFrees)
+				t.Errorf("%s: %s — want exactly %d frees", tc.name, summary, tc.wantFrees)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0 (native does)", tc.name, summary)
 			}
 		})
@@ -262,38 +183,11 @@ func TestSelfHostNestedOptNoneX86_64(t *testing.T) {
 // TestSelfHostNestedOptNoneWasmIR — the wasm sibling. Exit codes only: an
 // over-release moves no byte count on any backend.
 func TestSelfHostNestedOptNoneWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping nested Some(None) wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range nestedOptNoneCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "nestoptnone_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("nested Some(None) wasm IR %q = %d, want %d", tc.name, got, tc.want)
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
+				t.Errorf("nested Some(None) wasm %q = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}
@@ -301,23 +195,12 @@ func TestSelfHostNestedOptNoneWasmIR(t *testing.T) {
 
 // TestSelfHostNestedOptNoneIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostNestedOptNoneIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range nestedOptNoneCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "nestoptnone_"+tc.name+"_arm64", string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("nested Some(None) arm64 IR %q = %d, want %d", tc.name, code, tc.want)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
+				t.Errorf("nested Some(None) arm64 %q = %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}

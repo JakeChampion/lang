@@ -1035,6 +1035,14 @@ serializer.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
+- **Request builder:** `request(method, path)` is a request to hand a
+  handler in a test (no headers, no body), and `(req).with_header(name,
+  value)`, `(req).with_body(body)` (with the `Content-Length` a client
+  sends) and `(req).with_json(body)` (`Content-Type: application/json`
+  too) build it up; it reads the way a served request does. With a
+  `MockPlatform`'s bag and `std/test`'s `assert_status` /
+  `assert_header` / `assert_no_header` / `assert_body`, a handler is
+  tested without a socket (`examples/tests/http_request_builder_test.fern`).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
@@ -1233,14 +1241,22 @@ loop and `std/fetch` the client.
   it arrived first, and behind an answered one whose response then says
   `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
-  `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
-  keep_alive_requests }` (`serve_options()` is 128, one listener per
-  port, the 10 s deadline, 130 s and 1000): the accept queue depth,
-  port sharing between listeners (`SO_REUSEPORT`, ignored on wasm),
-  the read deadline, how long an idle persistent connection waits
-  for its next request, and how many requests one connection may
-  carry before its last response says `Connection: close` (a value
-  below 1 behaves as 1).
+  `ServeOptions { backlog, reuse_port, recv_deadline, body_min_rate,
+  body_rate_grace, keep_alive_idle, keep_alive_requests,
+  max_connections }` (`serve_options()` is 128, one listener per port,
+  the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
+  1024): the accept queue
+  depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
+  wasm), the read deadline, the least rate a request body must keep
+  arriving at once its header block is in (after the grace, the body may
+  take as long as its bytes buy at that rate beyond the read deadline, so
+  a large upload that keeps flowing is read and a trickle is closed; 0
+  turns the rate off), how long an idle persistent connection waits for
+  its next request, how many requests one connection may carry before
+  its last response says `Connection: close` (a value below 1 behaves as
+  1), and how many connections the loop holds open at once: at the cap
+  the listener is not read, so further connections wait in its accept
+  queue (`backlog` deep, the kernel refusing past it) until one closes.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1689,6 +1705,11 @@ stay bare.
   cover `boolean` and `string` directly (both are `cmp.Eq +
   cmp.Display`). String-specific sugar: `assert_empty_string`,
   `assert_non_empty_string`
+- **HTTP:** `assert_status(resp, status)`, `assert_header(resp, name,
+  value)` (the name in any case; a missing header fails too),
+  `assert_no_header(resp, name)`, `assert_body(resp, text)` — a
+  handler's response, built from `http.request(method, path)` and a
+  `MockPlatform`'s bag
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
 - **Substring (case-insensitive):** `assert_eq_string_ci`,
