@@ -71,3 +71,11 @@ func TestSelfHostServeInheritsListenFds(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd, file)
 	e2eharness.CheckInheritedListener(t, cmd, addr)
 }
+
+func TestSelfHostSupervisedServeShutsDownAfterBurst(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.BurstServerSource(port))
+	cmd := binCmd(runner, bin)
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}

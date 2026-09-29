@@ -152,9 +152,34 @@ func waitExit(t *testing.T, cmd *exec.Cmd, within time.Duration) int {
 	case code := <-done:
 		return code
 	case <-time.After(within):
-		t.Fatalf("the server did not exit within %v of SIGTERM", within)
+		t.Fatalf("the server did not exit within %v of SIGTERM; its children: %s", within, childrenState(cmd.Process.Pid))
 	}
 	return -1
+}
+
+// childrenState names each child the process still has, with the kernel
+// function it waits in, for the report of a shutdown that hung.
+func childrenState(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
+	if err != nil {
+		return err.Error()
+	}
+	var out []string
+	for _, child := range strings.Fields(string(b)) {
+		wchan, _ := os.ReadFile("/proc/" + child + "/wchan")
+		status, _ := os.ReadFile("/proc/" + child + "/status")
+		state := ""
+		for _, line := range strings.Split(string(status), "\n") {
+			if strings.HasPrefix(line, "State:") {
+				state = strings.TrimSpace(strings.TrimPrefix(line, "State:"))
+			}
+		}
+		out = append(out, fmt.Sprintf("%s (%s, in %s)", child, state, strings.TrimSpace(string(wchan))))
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ", ")
 }
 
 func sigterm(t *testing.T, cmd *exec.Cmd) {

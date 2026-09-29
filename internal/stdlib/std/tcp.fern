@@ -152,6 +152,18 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 // (descriptor 3, the systemd convention, which is also how a restarted
 // server takes over a socket without a gap), else a fresh one on `port`.
 function __serve_listener(port: i32, opts: ServeOptions): i32 {
+    var listener: i32 = __listener_of(port, opts);
+    // Non-blocking: a wake-up over a listener workers share can reach
+    // more than one of them, and the one that finds nothing to accept
+    // must return to its wait rather than block in accept until the next
+    // connection, deaf to SIGTERM.
+    if (listener >= 0) { tcp_socket_ctl(listener, 3, 1); }
+    return listener;
+}
+
+// __listener_of(port, opts) — the listener handed in through LISTEN_FDS,
+// or a fresh one on `port`.
+function __listener_of(port: i32, opts: ServeOptions): i32 {
     match (env("LISTEN_FDS")) {
         Some(n) => {
             match (int.parse_int_radix(n, 10)) {

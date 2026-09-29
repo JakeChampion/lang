@@ -142,7 +142,9 @@ the native supervised path and the interp fallback.
   `ServeOptions.workers` above one forks that many workers over the
   one inherited listener, each watching it with epoll's
   `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
-  one worker rather than all, and the supervisor reaps whichever dies
+  one worker rather than all (the listener is non-blocking, so a worker
+  a wake-up reaches after another took the connection returns to its
+  wait instead of blocking in accept), and the supervisor reaps whichever dies
   (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
   each) and forks its replacement under the same backoff and
   fast-death count. Per-worker `SO_REUSEPORT` listeners, and the accept

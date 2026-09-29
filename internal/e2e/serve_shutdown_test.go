@@ -39,3 +39,13 @@ func TestServeInheritsListenFds(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd, file)
 	e2eharness.CheckInheritedListener(t, cmd, addr)
 }
+
+// Every worker exits on SIGTERM after a burst of connections over the
+// shared listener (#9854): a worker a wake-up reached without a
+// connection left for it is not held in accept.
+func TestSupervisedServeShutsDownAfterBurst(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.BurstServerSource(port))
+	cmd, _ := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
