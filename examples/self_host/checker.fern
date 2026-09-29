@@ -11604,6 +11604,9 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       }
     }
     var tgt: typeinfo.Type = type_from_name(slice_unchecked(u.op, 3, u.op.len()));
+    // E047: a bare literal operand settles at the cast's type, as native's
+    // cast-inner settle does; a negated or computed operand is not settled.
+    if let ast.ExprNumber(_) = u.operand { out = util.append_diags(out, int_dest_range_diags(u.operand, tgt)); }
     var cot: typeinfo.Type = check_expr(u.operand, s);
     if (is_primitive_type(tgt) && is_primitive_type(cot)) {
       // E069 (#5053): reinterpreting a 32-bit-only value (i32 /
