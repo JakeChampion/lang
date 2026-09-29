@@ -21750,7 +21750,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
         // to the move-on-return path below.
         //
         // A hoisted closure's capture extract (`var <cap> = __env[1+i]`,
-        // "ENVCAP:") is the same borrow: the env box keeps the reference.
+        // "ENVCAP:") is the same borrow: the captured local keeps the reference.
         // E049 refuses assigning a reference-typed capture, so the slot still
         // holds what was captured. A captured closure takes ret_closure_uncounted's
         // retain below instead.
@@ -63675,10 +63675,11 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     }
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
-    // body, but the env box owns those references — the exit sweep's shallow
-    // dec released them EVERY CALL (rc==1 captures were freed out from under
-    // the box's owner: a per-call over-dec/UAF, 2 underflow ticks on the
-    // 2-call escaping shape). Register them under the "ENVCAP:" prefix so the
+    // body, but the captured locals of the frame that built the box own those
+    // references — the exit sweep's shallow dec released them EVERY CALL
+    // (rc==1 captures were freed out from under their owner: a per-call
+    // over-dec/UAF, 2 underflow ticks on the 2-call escaping shape).
+    // Register them under the "ENVCAP:" prefix so the
     // sweep's array loop skips them; the env box itself (owned by the CALLER)
     // keeps its normal release path.
     //
@@ -70723,6 +70724,177 @@ function seed_flags(fn: parser.FuncDecl): string {
     return out;
 }
 
+// A closure box (`__mkclo$<clo>(caps…)`) is keyed in the borrowability
+// registry like a call to `<clo>`, one flag per capture: the box holds each
+// capture as a borrow, so passing a local there is a borrow while the box dies
+// before the local and the closure body keeps the capture no longer than the
+// box. CloSite is one such box: the function `host` builds it and `clo` is the
+// lifted body.
+struct CloSite { key: string, host: i32, clo: i32, caps: i32 }
+
+// clo_sites: every capturing closure box the module builds, with its host and
+// its lifted body.
+function clo_sites(funcs: parser.FuncDecl[]): CloSite[] {
+    var out: CloSite[] = [];
+    var hi: i32 = 0;
+    while (hi < funcs.len()) {
+        var found: CloScan = CloScan { markers: [], caps: [] };
+        for st in funcs[hi].body { found = astwalk.fold_stmt(st, found, clo_marker_visit); }
+        var k: i32 = 0;
+        while (k < found.markers.len()) {
+            var ci: i32 = func_index_named(funcs, mkclo_funcval(found.markers[k]));
+            if (ci >= 0) { out = out.append(CloSite { key: found.markers[k], host: hi, clo: ci, caps: found.caps[k] }); }
+            k = k + 1;
+        }
+        hi = hi + 1;
+    }
+    return out;
+}
+
+struct CloScan { markers: string[], caps: i32[] }
+
+function clo_marker_visit(e: ast.Expr, own sc: CloScan): CloScan {
+    if let ast.ExprCall(c) = e {
+        var nm: string = ident_name_or_empty(c.callee);
+        if (c.args.len() > 0 && mkclo_funcval(nm).len() > 0) {
+            return CloScan { markers: sc.markers.append(nm), caps: sc.caps.append(c.args.len()) };
+        }
+    }
+    return sc;
+}
+
+function func_index_named(funcs: parser.FuncDecl[], name: string): i32 {
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (funcs[i].receiver_type.len() == 0 && funcs[i].name == name) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// clo_site_flags: the flags the box `site` earns under `reg`, or "" when it
+// earns none. The box must die in its host — bound once to a local that only
+// calls it or lends it at borrowable positions, or passed straight to a
+// borrowable position, where the call's own release frees it — and no captured
+// local may be reassigned while the box could read it. Each capture is then a
+// borrow unless the body lets it escape; a bare `return <cap>` retains it.
+function clo_site_flags(site: CloSite, funcs: parser.FuncDecl[], reg: string[]): string {
+    var host: parser.FuncDecl = funcs[site.host];
+    var seen: CloUse = CloUse { key: site.key, reg: reg, total: 0, lent: false, bound: "" };
+    for st in host.body { seen = astwalk.fold_stmt(st, seen, clo_use_visit); }
+    for st in host.body { seen = astwalk.fold_stmt_spine(st, seen, clo_bind_visit); }
+    if (seen.total != 1) { return ""; }
+    var reasg: string[] = body_assign_targets(host.body);
+    if (seen.bound.len() > 0) {
+        if (local_decl_count(host.body, seen.bound) != 1 || util.has_str(reasg, seen.bound)
+            || body_unsafe_for(host.body, seen.bound, reg, [])) { return ""; }
+    } else if (!seen.lent) { return ""; }
+    var body: ast.Stmt[] = funcs[site.clo].body;
+    var cloreasg: string[] = body_assign_targets(body);
+    var flags: string = "";
+    var any: boolean = false;
+    var k: i32 = 0;
+    while (k < site.caps) {
+        var cap: string = env_capture_name(body, k);
+        if (cap.len() > 0 && !util.has_str(cloreasg, cap) && !body_unsafe_for_allow_ret(body, cap, reg, [])) {
+            flags = flags + "1";
+            any = true;
+        } else { flags = flags + "0"; }
+        k = k + 1;
+    }
+    if (!any || clo_site_captures_reassigned(host.body, site.key, reasg)) { return ""; }
+    return flags;
+}
+
+// flags_meet: the positions set in both `a` and `b`, either of which may be ""
+// (none set).
+function flags_meet(a: string, b: string): string {
+    if (a.len() == 0 || b.len() == 0) { return ""; }
+    var out: string = "";
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (i < b.len() && a[i] == b'1' && b[i] == b'1') { out = out + "1"; any = true; } else { out = out + "0"; }
+        i = i + 1;
+    }
+    if (!any) { return ""; }
+    return out;
+}
+
+function i32_or(a: i32[], b: i32[]): i32[] {
+    var out: i32[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { if (b[i] == 1) { out = out.with(i, 1); } i = i + 1; }
+    return out;
+}
+
+struct CloUse { key: string, reg: string[], total: i32, lent: boolean, bound: string }
+
+function clo_use_visit(e: ast.Expr, own u: CloUse): CloUse {
+    if let ast.ExprCall(c) = e {
+        var nm: string = ident_name_or_empty(c.callee);
+        if (nm == u.key) { return CloUse { ...u, total: u.total + 1 }; }
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if let ast.ExprCall(ac) = c.args[i] {
+                if (ident_name_or_empty(ac.callee) == u.key && nm.len() > 0 && param_is_borrowable(u.reg, nm, i)) {
+                    return CloUse { ...u, lent: true };
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return u;
+}
+
+function clo_bind_visit(st: ast.Stmt, own u: CloUse): CloUse {
+    if let ast.StmtVar(v) = st {
+        if let ast.ExprCall(c) = v.init {
+            if (ident_name_or_empty(c.callee) == u.key) { return CloUse { ...u, bound: v.name }; }
+        }
+    }
+    return u;
+}
+
+// env_capture_name: the local the lifted body reads capture `k` into — its
+// `var <cap> = __env[1+k]` extract — or "".
+function env_capture_name(body: ast.Stmt[], k: i32): string {
+    for st in body {
+        if let ast.StmtVar(v) = st {
+            if let ast.ExprIndex(ix) = v.init {
+                if (ident_name_or_empty(ix.array) == "__env") {
+                    if let ast.ExprNumber(n) = ix.index {
+                        if (n.text == util.i32_to_string(k + 1)) { return v.name; }
+                    }
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// clo_site_captures_reassigned: some local the box `key` captures is reassigned
+// in the host, which could free the buffer the box still reads.
+function clo_site_captures_reassigned(body: ast.Stmt[], key: string, reasg: string[]): boolean {
+    var caps: CloCaps = CloCaps { key: key, names: [] };
+    for st in body { caps = astwalk.fold_stmt(st, caps, clo_caps_visit); }
+    for n in caps.names { if (util.has_str(reasg, n)) { return true; } }
+    return false;
+}
+
+struct CloCaps { key: string, names: string[] }
+
+function clo_caps_visit(e: ast.Expr, own cc: CloCaps): CloCaps {
+    if let ast.ExprCall(c) = e {
+        if (ident_name_or_empty(c.callee) == cc.key) {
+            var names: string[] = cc.names;
+            for a in c.args { names = names.append(ident_name_or_empty(a)); }
+            return CloCaps { key: cc.key, names: names };
+        }
+    }
+    return cc;
+}
+
 pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: StructTab): string[] {
     // Greatest-fixpoint FROM ABOVE (the native `inferParamEscapes`, ir.go): start
     // OPTIMISTIC — EVERY param borrowable — then repeatedly re-run the escape
@@ -70785,6 +70957,18 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         rows = rows.append(borrow_reg_record(ck, copying_builtin_flags(ck)));
         row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
+    // Closure boxes follow, seeded borrowable at every capture like a function.
+    var sites: CloSite[] = clo_sites(funcs);
+    var site_row0: i32 = rows.len();
+    var site_flags: string[] = [];
+    for site in sites {
+        var sflags: string = "";
+        var sk: i32 = 0;
+        while (sk < site.caps) { sflags = sflags + "1"; sk = sk + 1; }
+        site_flags = site_flags.append(sflags);
+        rows = rows.append(borrow_reg_row(site.key, sflags));
+        row_bucket = row_bucket.append(util.hash_bucket(site.key, nb));
+    }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);
     var deps: CallDeps = call_deps_of(funcs, false, false);
     var dirty: i32[] = i32_filled(n, 1);
@@ -70797,6 +70981,22 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
     while (iter < cap && any_i32_set(dirty)) {
         var changed: i32[] = i32_filled(n, 0);
         var stale: i32[] = i32_filled(nb, 0);
+        // A box's flags only fall, and its host re-reads the ones that did.
+        var hosts: i32[] = i32_filled(n, 0);
+        var si: i32 = 0;
+        while (si < sites.len()) {
+            var nf: string = flags_meet(site_flags[si], clo_site_flags(sites[si], funcs, reg));
+            if (nf != site_flags[si]) {
+                site_flags = site_flags.with(si, nf);
+                rows = rows.with(site_row0 + si, borrow_reg_row(sites[si].key, nf));
+                stale = stale.with(row_bucket[site_row0 + si], 1);
+                hosts = hosts.with(sites[si].host, 1);
+                dirty = dirty.with(sites[si].host, 1);
+            }
+            si = si + 1;
+        }
+        reg = borrow_reg_rebuild(reg, stale, rows, row_bucket);
+        stale = i32_filled(nb, 0);
         fi = 0;
         while (fi < n) {
             if (dirty[fi] == 1 && funcs[fi].params.len() > 0) {
@@ -70826,7 +71026,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[], structs: Stru
         }
         reg = borrow_reg_rebuild(reg, stale, rows, row_bucket);
         iter = iter + 1;
-        dirty = worklist_next(deps, changed);
+        dirty = i32_or(worklist_next(deps, changed), hosts);
     }
     return reg;
 }
