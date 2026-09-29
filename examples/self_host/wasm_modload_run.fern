@@ -221,7 +221,7 @@ function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[
 }
 
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded);
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, "wasm32-wasi");
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
         return 0;
@@ -335,7 +335,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // The struct world is shared by every unit, so the RC helper bodies are
         // emitted once against the merged module. heap_base is a whole-LINK
         // quantity: it sits past every unit's literals.
-        var merged: parser.Module = flatten.bundle(entry, loaded);
+        var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(with_builtin_enums(modloader.merge_builtins(dir, merged))));
         var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
         write(wasm_ir.emit_ir_module_units(units, merged, needs, fn_sigs, rc, 0));

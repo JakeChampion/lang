@@ -33,6 +33,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./astwalk";
+import "./platforms";
 
 // `locals` lists the value-binding names in scope for the body being
 // rewritten (params + every `var` / `for` / match-arm binding in the
@@ -320,9 +321,13 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 // the names stay bare, so the checker reports them undefined as native does.
 // A mispaired `init` and `handle` is left alone: E075 is the checker's, and
 // a main calling the wrong serve would only add a second error.
-pub function with_handler_main(entry0: parser.Module): parser.Module {
+pub function with_handler_main(entry0: parser.Module, target: string): parser.Module {
     var entry: parser.Module = with_result_handler(entry0);
     if (top_fn_index(entry, "main") >= 0) { return entry; }
+    // A wasi-http world serves through its incoming-handler export, which
+    // the wasm emit wires to `handle`; a serve loop there would only hold
+    // wasi:sockets imports the proxy world does not have.
+    if (platforms.for_target(target).environment == "wasi-http") { return entry; }
     var hi: i32 = top_fn_index(entry, "handle");
     if (hi < 0) { return entry; }
     var ii: i32 = top_fn_index(entry, "init");
@@ -1348,8 +1353,8 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
-pub function bundle(entry0: parser.Module, imports: LoadedModule[]): parser.Module {
-    var entry: parser.Module = with_handler_main(entry0);
+pub function bundle(entry0: parser.Module, imports: LoadedModule[], target: string): parser.Module {
+    var entry: parser.Module = with_handler_main(entry0, target);
     var funcs: parser.FuncDecl[] = [];
     var structs: parser.StructDecl[] = [];
     var aliases: parser.TypeAlias[] = [];
@@ -1560,8 +1565,8 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // emitted as its own translation unit (entry → `_start` + the shared runtime;
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
-pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[]): PerModule[] {
-    var entry: parser.Module = with_handler_main(entry0);
+pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[], target: string): PerModule[] {
+    var entry: parser.Module = with_handler_main(entry0, target);
     // One prefix authority for the whole bundle. Everything below -- the
     // enum-variant map, the re-export table, each module's own decls, and
     // every importer's references -- reads these rather than deriving a
@@ -1846,7 +1851,7 @@ function main(): i32 {
         "import \"./a\"; function main(): i32 { return a.add(2, 3); }"));
     var loaded: LoadedModule[] = [];
     loaded = loaded.append(LoadedModule { name: "a", ident: "", mod: amod });
-    var merged: parser.Module = bundle(emod, loaded);
+    var merged: parser.Module = bundle(emod, loaded, "");
 
     // a.add → a__add; a's own main → a__main (mangled, no collision);
     // entry's main kept. So merged funcs: a__add, a__main, main.
@@ -1888,7 +1893,7 @@ function main(): i32 {
     var rxloaded: LoadedModule[] = [];
     rxloaded = rxloaded.append(LoadedModule { name: "facade", ident: "", mod: fmod });
     rxloaded = rxloaded.append(LoadedModule { name: "helpers", ident: "", mod: hmod });
-    var rxmerged: parser.Module = bundle(rxmod, rxloaded);
+    var rxmerged: parser.Module = bundle(rxmod, rxloaded, "");
     // Find entry main and confirm its call resolved to helpers__add5.
     var fi: i32 = 0;
     var found_main: boolean = false;

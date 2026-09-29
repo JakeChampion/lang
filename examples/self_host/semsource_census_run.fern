@@ -247,7 +247,7 @@ function main(): i32 {
                 for m in missing { eprint("unresolved import: " + m + "\n"); }
                 return 2;
             }
-            var merged: parser.Module = flatten.bundle(entry, loaded);
+            var merged: parser.Module = flatten.bundle(entry, loaded, "arm64-linux");
             merged = modloader.merge_builtins(dir, merged);
             // The driver folds the target's name to its two literals before
             // anything lowers, so the boundary never sees the call; the
