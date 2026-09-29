@@ -77339,6 +77339,16 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
     return e;
 }
 
+// array_literal_boxes reports whether an array literal is a function array, and
+// so has its elements lifted into env boxes.
+function array_literal_boxes(arr: ast.ExprArray, fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
+    if (array_holds_fn_value(arr, mfuncs)) { return true; }
+    for el in arr.elements {
+        if (array_elem_is_env_boxed(el, fd, structs, mfuncs)) { return true; }
+    }
+    return false;
+}
+
 // array_holds_fn_value reports whether the literal has any fn-VALUED element, so
 // the uniformity rule above applies to it at all (an i32[] never does).
 function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
@@ -78089,21 +78099,21 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
 }
 
 // iife_arms_are_arrays_with_boxed_elem reports whether any arm of a
-// value-position if/match returns an array literal holding an env-boxed
-// element, which box_iife_arm_array_elems then boxes. An arm yielding any
-// other function array (a parameter, a local, a call's result) needs nothing:
-// every function array is built on the env-box ABI (#10076).
+// value-position if/match returns a function-array literal, which
+// box_iife_arm_array_elems then boxes. An arm yielding any other function
+// array (a parameter, a local, a call's result) needs nothing: every function
+// array is built on the env-box ABI (#10076).
 //
-// The element question is array_elem_is_env_boxed, the same one the
-// single-literal rule asks, so the two cannot disagree about an element
-// (#8151). Captures read against iife_scope_fd, so a name the IIFE itself
+// The literal question is array_literal_boxes, the same one the
+// single-literal rule asks, so the two cannot disagree about a literal
+// (#8151, #8795). Captures read against iife_scope_fd, so a name the IIFE itself
 // binds (a match arm's payload) counts.
 function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     return iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs) > 0;
 }
 
-// The number of env-boxed elements in the array literals the arms return,
-// directly, through a generic passthrough, or one nested if/match in.
+// The number of function-array literals the arms return, directly, through a
+// generic passthrough, or one nested if/match in.
 function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: StructTab, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
@@ -78112,11 +78122,7 @@ function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, see
                 var lit: ast.Expr[] = passthrough_array_literal(r.value, mfuncs);
                 if (lit.len() == 0) { continue; }
                 match (lit[0]) {
-                    ast.ExprArray(arr) => {
-                        for el in arr.elements {
-                            if (array_elem_is_env_boxed(el, fd, structs, mfuncs)) { n = n + 1; }
-                        }
-                    },
+                    ast.ExprArray(arr) => { if (array_literal_boxes(arr, fd, structs, mfuncs)) { n = n + 1; } },
                     ast.ExprCall(ic) => {
                         if let ast.ExprLambda(il) = ic.callee { n = iife_arm_arrays_boxed_elems(il.body, iife_scope_fd(fd, il.body), n, structs, mfuncs); }
                     },
@@ -78484,12 +78490,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // named function boxes through its `$wrap`, and a value-position
             // if/match element whose arms all box becomes a call yielding one
             // (#6256, #7438).
-            var boxes: boolean = array_holds_fn_value(arr, mfuncs);
-            var sc: i32 = 0;
-            while (!boxes && sc < arr.elements.len()) {
-                if (array_elem_is_env_boxed(arr.elements[sc], fd, structs, mfuncs)) { boxes = true; }
-                sc = sc + 1;
-            }
+            var boxes: boolean = array_literal_boxes(arr, fd, structs, mfuncs);
             // A bare fn-name element is a module function only when it names no
             // local or param of this function.
             var abound: string[] = [];
