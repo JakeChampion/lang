@@ -1018,9 +1018,10 @@ Worth knowing so you do not assume coverage you do not have:
   The gate reads two probes and asserts what survives a layout change:
   `__arr_push_shared_count()` staying ZERO or NON-ZERO as recorded (it counts
   events, not bytes), and per-churn `__heap_bump_bytes()` growth within a
-  ratio of the recorded figure — in both directions, so a recorded leak that
-  is fixed fails the row until its figure is re-recorded, the way the old
-  divergence allowlist failed when an entry came back within bound.
+  ratio of the recorded figure. A recorded leak also fails once it shrinks
+  below half of its figure (`leakShrinkFactor`), until the row is re-recorded
+  — the way the old divergence allowlist failed when an entry came back
+  within bound, though a shrink that stays above half is silent.
 
   Use `__heap_bump_bytes()` and never peak RSS, which varies 12x with
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
