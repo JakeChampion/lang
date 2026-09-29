@@ -39,6 +39,14 @@ var interpU64Cases = []struct {
 	// std/u64's ~30 methods in reach of the engine.
 	{"u64-receiver-method", "function (n: u64) twice(): u64 { return n * (2 as u64); }\nfunction main(): i32 {\n  var big: u64 = 9223372036854775807;\n  big = big + (1 as u64);\n  var t: u64 = big.twice();\n  if (t != (0 as u64)) { return 1; }\n  var small: u64 = 21;\n  if (small.twice() != (42 as u64)) { return 2; }\n  return 7;\n}\n"},
 
+	// A suffixed literal carries its type with no declared binding to tag it:
+	// an array literal's elements compare unsigned, and a u64 above 2^63 is
+	// not read back as a negative i64.
+	{"suffixed-literal-in-array", "function main(): i32 {\n  var xs: u64[] = [5u64, 9223372036854775809u64];\n  if (xs[1] > xs[0]) { return 7; }\n  return 1;\n}\n"},
+	// A call's result takes its declared return type: `return 1` from an i64
+	// function is 64-bit, so doubling it 33 times does not wrap at 32 bits.
+	{"i64-return-widens", "function pow2(n: i32): i64 {\n  if (n <= 0) { return 1; }\n  return pow2(n - 1) * 2;\n}\nfunction main(): i32 {\n  if (pow2(33) == 8589934592) { return 7; }\n  return 1;\n}\n"},
+
 	// CONTROLS. The fix reads MORE values as unsigned, so what can break is a
 	// value that should have stayed signed.
 	{"i64-stays-signed", "function main(): i32 {\n  var x: i64 = 1;\n  x = x - 2;\n  if (x > 100) { return 1; }\n  if (x / 2 != 0) { return 2; }\n  if ((x >> 1) != 0 - 1) { return 3; }\n  return 7;\n}\n"},

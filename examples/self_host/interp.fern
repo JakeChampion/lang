@@ -1597,7 +1597,11 @@ function eval_unary(op: string, ov: Value): Value {
 // (digits_to_i32/i64 stop at the `x`/`b` and yield 0, #4341); decimal
 // literals parse as i64 so a value beyond i32 range survives, and box_i64
 // narrows it back to a compact VInt when it fits.
-function eval_number_literal(is_float: boolean, t: string): Value {
+function eval_number_literal(is_float: boolean, t: string, suffix: string): Value {
+    return coerce_int_width(eval_unsuffixed_literal(is_float, t), suffix);
+}
+
+function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
     if (is_float) { return v_float(f64_from_bits(util.parse_f64_bits(t))); }
     var hs: i32 = 0;
     if (t.len() > 0 && t[0] == b'-') { hs = 1; }
@@ -1661,7 +1665,7 @@ function resolve_ident_value(name: string, env: Env): Value {
 
 function eval_expr(e: ast.Expr, env: Env): Value {
     match (e) {
-        ast.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text); },
+        ast.ExprNumber(n) => { return eval_number_literal(n.is_float, n.text, n.suffix); },
         ast.ExprBool(b) => { return v_bool(b.value); },
         ast.ExprString(s) => { return v_string(s.value); },
         ast.ExprIdent(id) => { return resolve_ident_value(id.name, env); },
@@ -2217,7 +2221,7 @@ function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliase
     }
     // A `?` unwind stops at the frame that owns it: unwrap_try turns the
     // in-flight VTry back into the None / Err box this call returns (#5990).
-    return unwrap_try(step.ret);
+    return coerce_int_width(unwrap_try(step.ret), fv.ret_type);
 }
 
 // assoc_index finds the receiver-LESS associated function `<type_name>.<name>`
@@ -2570,7 +2574,7 @@ function call_method(recv: Value, name: string, args: Value[], funcs: parser.Fun
             if (step.sig != 1) {
                 return v_void();
             }
-            return unwrap_try(step.ret);
+            return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
         }
         i = i + 1;
     }
@@ -3219,7 +3223,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             if (step.sig != 1) {
                 return v_void();
             }
-            return unwrap_try(step.ret);
+            return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
         }
         i = i + 1;
     }
