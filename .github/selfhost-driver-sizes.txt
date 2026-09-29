@@ -366,23 +366,24 @@
 # stage0-20260929-32d575e, whose hand-back set copies a lent view for a
 # callee that keeps it through a local (every row +0.005-0.04%, fern.fern
 # 12342352 -> 12346904, the copies that fix carries), and once more on the
-# merge of main at 4ebba1ff4, which changed the driver sources themselves
-# (-0.03% to +0.04% per row, fern.fern 12346904 -> 12344952). Equal to
-# fern.fern in size on that tree: five commits to examples/self_host landed
-# after the pin's source commit 32d575e60 (740b49209 ssarc.fern, 319a4a50e
+# merge of main at c2160d3ce, which changed the driver sources and the
+# stdlib they compile in (+0.004% to +0.025% per row over the previous
+# merge, fern.fern 12346904 -> 12346536 across both). Equal to fern.fern in
+# size on that tree: six commits to examples/self_host landed after the
+# pin's source commit 32d575e60 (740b49209 ssarc.fern, 319a4a50e
 # ssasem.fern, d5792c908 read_all_stdin, aee0e4136 parser.fern, 067f7462a
-# checker.fern) and none moved the stage2 byte count off stage1's. One that
-# does will part the two (docs/BOOTSTRAP.md).
-fern.fern/stage2 12344952
-fern.fern 12344952
-asm_load_run.fern 8097816
-asm_modload_run.fern 7555040
-asm_ir_run.fern 7301272
-asm_run.fern 6764128
-wasm_ir_run.fern 6703576
-wasm_run.fern 6700688
-wasm_runio_run.fern 6670496
-asm_pathprobe_run.fern 5453224
-asm_ir_elig_run.fern 4627160
-irlower_run.fern 5312848
-checker_modload_run.fern 2220656
+# checker.fern, 02196de0a irlower.fern) and none moved the stage2 byte
+# count off stage1's. One that does will part the two (docs/BOOTSTRAP.md).
+fern.fern/stage2 12346536
+fern.fern 12346536
+asm_load_run.fern 8099152
+asm_modload_run.fern 7556384
+asm_ir_run.fern 7302608
+asm_run.fern 6765464
+wasm_ir_run.fern 6704912
+wasm_run.fern 6702024
+wasm_runio_run.fern 6671832
+asm_pathprobe_run.fern 5454560
+asm_ir_elig_run.fern 4627344
+irlower_run.fern 5314192
+checker_modload_run.fern 2220984
