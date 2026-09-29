@@ -109,7 +109,8 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // holds open at once (past it, the listener is not read and connections
 // wait in its accept queue until one closes), how many workers
 // `tcp_serve_supervised_opts` forks, each running its own loop over the
-// one listener (a value below 1 behaves as 1), and the shutdown a
+// one listener (below 1: one per processing unit the process may use,
+// what `cpu_count()` answers), and the shutdown a
 // SIGTERM starts (`__serve_stopping`): how long the loop keeps accepting
 // after the signal, since whoever routes to it removes it in parallel,
 // the path it answers 503 from the signal on (a readiness probe; "" for
@@ -131,10 +132,10 @@ pub struct ServeOptions {
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
-// by one listener, the 10 s read deadline, a 130 s keep-alive idle span
-// and 1000 requests per connection.
+// by one listener, the 10 s read deadline, a 130 s keep-alive idle span,
+// 1000 requests per connection and a worker per processing unit.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, workers: 1, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64) };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64) };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -1078,9 +1079,10 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 }
 
 // tcp_serve_supervised_opts(port, opts, handler) — `tcp_serve_supervised`
-// with `ServeOptions`: `opts.workers` workers are forked, each running
-// its own loop over the one listener, watched exclusively so a
-// connection wakes one of them; whichever dies is replaced, the backoff
+// with `ServeOptions`: `opts.workers` workers are forked (below 1: one
+// per processing unit), each running its own loop over the one
+// listener, watched exclusively so a connection wakes one of them;
+// whichever dies is replaced, the backoff
 // and the fast-death count shared among them. SIGTERM is forwarded to
 // every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
@@ -1092,7 +1094,9 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
         return listener;
     }
     var workers: i32 = opts.workers;
+    if (workers < 1) { workers = cpu_count(); }
     if (workers < 1) { workers = 1; }
+    var resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
     var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fast_deaths: 0, stopping: false, worst: 0 };
     var drv: async.RealDriver = async.real_driver();
     var chld: i32 = drv.watch_signal(17);
@@ -1100,7 +1104,7 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
     drv.watch_signal(15);
     while (true) {
         while (!sup.stopping && sup.pids.len() < workers) {
-            var forked: (__Supervisor, i32) = __supervisor_fork(drv, listener, handler, opts, sup);
+            var forked: (__Supervisor, i32) = __supervisor_fork(drv, listener, handler, resolved, sup);
             sup = forked.0;
             if (forked.1 != 0 - 1) { return forked.1; }
         }

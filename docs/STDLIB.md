@@ -1257,9 +1257,9 @@ loop and `std/fetch` the client.
   1), how many connections the loop holds open at once (at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), and
-  how many workers `tcp_serve_supervised_opts` forks (`workers`, 1: the
-  runtime does not yet report the core count, so the default stays one
-  until it does), and the shutdown SIGTERM starts: the loop keeps
+  how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
+  default, is one per processing unit the process may use, what
+  `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
   accepting for `shutdown_grace` (2 s, since whoever routes to it removes
   it in parallel), answers 503 on `readiness_path` ("" for none), then
   closes the listener, ends keep-alive, closes the connections with
@@ -1283,9 +1283,9 @@ loop and `std/fetch` the client.
 - `tcp_serve_supervised(port, handler)` — crash-only serving: the
   accept loop runs in a forked worker the parent reforks on
   death (docs/CRASH-ONLY-SERVE.md). `tcp_serve_supervised_opts(port,
-  opts, handler)` takes the `ServeOptions`, and with `workers` above
-  one forks that many, each running its own loop over the one
-  listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
+  opts, handler)` takes the `ServeOptions` and forks `workers` workers
+  (one per processing unit by default), each running its own loop over
+  the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them; whichever dies is replaced, and SIGTERM
   is forwarded to every worker and waited for. No threaded-state variant
   — a refork resets the loop frame.

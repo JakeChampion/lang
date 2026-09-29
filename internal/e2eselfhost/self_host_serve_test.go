@@ -72,6 +72,14 @@ func TestSelfHostServeInheritsListenFds(t *testing.T) {
 	e2eharness.CheckInheritedListener(t, cmd, addr)
 }
 
+func TestSelfHostSupervisedServeOneWorkerPerCPU(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.WorkersPerCPUServerSource(port))
+	cmd := binCmd(runner, bin)
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckWorkersPerCPU(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 func TestSelfHostSupervisedServeShutsDownAfterBurst(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.BurstServerSource(port))

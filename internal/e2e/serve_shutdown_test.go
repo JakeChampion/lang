@@ -40,6 +40,14 @@ func TestServeInheritsListenFds(t *testing.T) {
 	e2eharness.CheckInheritedListener(t, cmd, addr)
 }
 
+// The default worker count is one per processing unit (#9854).
+func TestSupervisedServeOneWorkerPerCPU(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.WorkersPerCPUServerSource(port))
+	cmd, _ := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckWorkersPerCPU(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 // Every worker exits on SIGTERM after a burst of connections over the
 // shared listener (#9854): a worker a wake-up reached without a
 // connection left for it is not held in accept.

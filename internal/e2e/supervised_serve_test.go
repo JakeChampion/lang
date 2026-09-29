@@ -59,7 +59,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return tcp.tcp_serve_supervised(%d, handle);
+    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, handle);
 }`
 
 // buildSupervisedServeBin compiles src (a full program with its
@@ -294,10 +294,12 @@ func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 // the bounded-backoff giveup (8 consecutive fast deaths) and the
 // supervisor EXITS with the child's code (134) instead of
 // spinning forever. A worker death needs a request to trigger the
-// trap, so the driver fires /boom in a reconnect loop: each
-// queued connection is accepted by the next worker as soon as it
-// forks, keeping every death well inside the 100ms fast-death
-// window. Deterministic but slow by design — the doubling backoff
+// trap, so the driver fires /boom in a reconnect loop over a single
+// worker: each queued connection is accepted by the next worker as
+// soon as it forks, keeping every death well inside the 100ms
+// fast-death window (with a worker per processing unit, the default,
+// a request kills whichever worker took it, which is a death at the
+// request's pace, not a crash loop). Deterministic but slow by design — the doubling backoff
 // sleeps sum to ~11.3s before giveup.
 func TestSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	if testing.Short() {

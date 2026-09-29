@@ -138,9 +138,9 @@ the native supervised path and the interp fallback.
 ## Deliberately deferred
 
 - fork-per-request — needs a real workload to justify. Prefork
-  workers exist (#9854): `tcp_serve_supervised_opts` with
-  `ServeOptions.workers` above one forks that many workers over the
-  one inherited listener, each watching it with epoll's
+  workers exist (#9854): `tcp_serve_supervised_opts` forks
+  `ServeOptions.workers` workers, one per processing unit by default,
+  over the one inherited listener, each watching it with epoll's
   `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
   one worker rather than all (the listener is non-blocking, so a worker
   a wake-up reaches after another took the connection returns to its
@@ -149,8 +149,7 @@ the native supervised path and the interp fallback.
   each) and forks its replacement under the same backoff and
   fast-death count. Per-worker `SO_REUSEPORT` listeners, and the accept
   distribution the one-listener shape gives under load, are not
-  measured yet; the default stays one worker until the runtime reports
-  the core count.
+  measured yet.
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,
