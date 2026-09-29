@@ -10268,7 +10268,20 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // is unknown, for the same reason as the index arm's element guard.
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
-            if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
+            if (ot.len() == 0) { return ""; }
+            // `p.1` on a tuple value: that element's type (#10683), which is
+            // what lets a call in a generic's body bind on a tuple element.
+            // Only the element read may not mention a type variable: an
+            // erased, unbounded `S` beside it in `(S, Result[i32, E])` is no
+            // reason to leave the call generic.
+            if (util.is_tuple_type_name(ot)) {
+                var k: i32 = tuple_index_field(fa.field);
+                if (k < 0) { return ""; }
+                var elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1) + "");
+                if (k >= elems.len() || mono_ty_mentions_var(elems[k])) { return ""; }
+                return elems[k];
+            }
+            if (mono_ty_mentions_var(ot)) { return ""; }
             var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
             if (mono_ty_mentions_var(ft)) { return ""; }
             return ft;
@@ -10276,6 +10289,21 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         _ => { return ""; }
     }
     return "";
+}
+
+// tuple_index_field is the element a field access names on a tuple
+// (`.0`, `.1`, ...), or -1 for a field that is not all digits.
+function tuple_index_field(field: string): i32 {
+    if (field.len() == 0) { return 0 - 1; }
+    var k: i32 = 0;
+    var i: i32 = 0;
+    while (i < field.len()) {
+        var b: i32 = field[i] as i32;
+        if (b < 48 || b > 57) { return 0 - 1; }
+        k = k * 10 + (b - 48);
+        i = i + 1;
+    }
+    return k;
 }
 
 // mono_expr rebuilds `e`, rewriting any call to a bounded generic into
