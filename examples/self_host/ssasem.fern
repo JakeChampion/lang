@@ -2087,20 +2087,21 @@ function gathers_views(kind: i32): boolean {
 // A value that gathers views is anchored to the bytes they read, which its own
 // operands' anchors stop short of once it holds them: to every source, when
 // they read more than one, so each stays alive until the value's last read.
-function view_roots(f: Func, own parents: i32[][]): i32[][] {
+function view_roots(f: Func, parents: i32[][]): i32[][] {
     var defs: ssa.SInst[] = definitions(f);
     var none: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { none = none.append(false); i = i + 1; }
+    var out: i32[][] = parents;
     for b in f.graph.blocks {
         for ins in b.insts {
             if (ins.result < 0 || !gathers_views(ins.kind_tag) || !semtypes.holds_view(f.values[ins.result])) { continue; }
             var roots: i32[] = [];
             for r in bytes_roots(f, defs, ins.result, none) { if (r != ins.result) { roots = roots.append(r); } }
-            if (roots.len() > 0) { parents = parents.with(ins.result, roots); }
+            if (roots.len() > 0) { out = out.with(ins.result, roots); }
         }
     }
-    return parents;
+    return out;
 }
 
 function borrow_parents(f: Func): i32[][] {
