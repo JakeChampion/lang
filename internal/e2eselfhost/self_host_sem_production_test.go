@@ -5619,6 +5619,28 @@ function main(): i32 {
     return t + out.get() * 7;
 }
 `},
+	// An if/match-expression choosing between an array literal holding a
+	// capturing lambda and a function array the function did not build: a
+	// parameter, a call's result, and a non-generic call of a literal (#10715).
+	// Every function array is on the env-box ABI, so only the literal arm needs
+	// boxing. Answers 44.
+	{name: "an-arm-array-beside-a-parameter-or-call-result", atLeast: 9, noLeak: true, src: `
+function pick(ys: ((i32) => i32)[], c: boolean): i32 {
+    var v1: i32 = 3;
+    var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => x + v1)] } else { ys });
+    return xs[0](1);
+}
+function mk(k: i32): ((i32) => i32)[] { return [((z: i32) => z + k)]; }
+function keep(ys: ((i32) => i32)[]): ((i32) => i32)[] { return ys; }
+function main(): i32 {
+    var v2: i32 = 7;
+    var zs: ((i32) => i32)[] = [((z: i32) => z + 10)];
+    var ws: ((i32) => i32)[] = (if (v2 > 100) { [((x: i32) => x + v2)] } else { mk(20) });
+    var w: i32 = 5;
+    var qs: ((i32) => i32)[] = (match (w) { 5 => keep([((y: i32) => y + v2)]), _ => zs });
+    return pick(zs, true) + pick(zs, false) + ws[0](1) + qs[0](1);
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
