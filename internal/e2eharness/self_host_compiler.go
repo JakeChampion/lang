@@ -96,26 +96,30 @@ func driverCompilerKey(t testing.TB) string {
 	t.Helper()
 	compiler := Stage0Compiler(t)
 	driverCompilerKeyOnce.Do(func() {
-		h := sha256.New()
-		fmt.Fprintf(h, "stage0=%s\x00stdlib=%s\x00", fileSHA256(t, compiler), stdlibHash(t))
-		driverCompilerKeyVal = hex.EncodeToString(h.Sum(nil))
+		driverCompilerKeyVal = driverCompilerKeyFor(fileSHA256(t, compiler), stdlibHash(t))
 	})
 	return driverCompilerKeyVal
 }
 
-// driverBuildWeightMB is the RAM reservation for a driver build: the
+func driverCompilerKeyFor(compilerSHA256, stdlibHash string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "stage0=%s\x00stdlib=%s\x00", compilerSHA256, stdlibHash)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// DriverBuildWeightMB is the RAM reservation for a driver build: the
 // self-host compiler peaks at 4.0 GB compiling asm_ir_run and 5.7 GB
 // compiling fern.fern, the whole compiler (docs/LOCAL-DEV-LOOP.md).
-func driverBuildWeightMB(fernName string) int {
+func DriverBuildWeightMB(fernName string) int {
 	if fernName == "fern.fern" {
 		return 6000
 	}
 	return 4300
 }
 
-// compileWithSelfHost runs `compiler -target x86-64-linux -o binPath src
+// CompileWithSelfHost runs `compiler -target x86-64-linux -o binPath src
 // <stdlib>` under a RAM reservation of weightMB.
-func compileWithSelfHost(t testing.TB, compiler, src, binPath string, weightMB int) error {
+func CompileWithSelfHost(t testing.TB, compiler, src, binPath string, weightMB int) error {
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)
 	return withBuildMemory(weightMB, func() error {
@@ -179,38 +183,42 @@ func publishToDiskCache(binPath, diskName string) {
 func stdlibHash(t testing.TB) string {
 	t.Helper()
 	stdlibHashOnce.Do(func() {
-		root := SelfHostStdlibRoot(t)
-		var paths []string
-		stdlibHashErr = filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if !fi.IsDir() {
-				paths = append(paths, path)
-			}
-			return nil
-		})
-		if stdlibHashErr != nil {
-			return
-		}
-		sort.Strings(paths)
-		h := sha256.New()
-		for _, p := range paths {
-			src, err := os.ReadFile(p)
-			if err != nil {
-				stdlibHashErr = err
-				return
-			}
-			rel, _ := filepath.Rel(root, p)
-			fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), len(src))
-			h.Write(src)
-		}
-		stdlibHashVal = hex.EncodeToString(h.Sum(nil))
+		stdlibHashVal, stdlibHashErr = treeHash(SelfHostStdlibRoot(t))
 	})
 	if stdlibHashErr != nil {
 		t.Fatalf("hash internal/stdlib: %v", stdlibHashErr)
 	}
 	return stdlibHashVal
+}
+
+// treeHash hashes every file under root by relative path and content, so a
+// file's edit, rename, addition or removal all change it.
+func treeHash(root string) (string, error) {
+	var paths []string
+	err := filepath.Walk(root, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			paths = append(paths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(paths)
+	h := sha256.New()
+	for _, p := range paths {
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return "", err
+		}
+		rel, _ := filepath.Rel(root, p)
+		fmt.Fprintf(h, "%s\x00%d\x00", filepath.ToSlash(rel), len(src))
+		h.Write(src)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func fileSHA256(t testing.TB, path string) string {

@@ -150,11 +150,11 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 // runtime-helper symbols fails here instead of silently going green.
 //
 // This is an x86-HOST test that cross-emits for arm64, and the reason is
-// structural rather than a choice: buildSelfHostBin's emit is
-// e2eharness.emitDriverAsm, which calls x86_64.Emit unconditionally, so a
-// self-host DRIVER binary is always x86-64 asm. There is no arm64 driver to
-// build, which is why the whole TestSelfHost*Arm64 family runs the driver on x86
-// and only the EMITTED program is arm64.
+// structural rather than a choice: buildSelfHostBin compiles every driver
+// for x86-64-linux (e2eharness.CompileWithSelfHost), so a self-host DRIVER
+// binary is always x86-64. There is no arm64 driver to build, which is why
+// the whole TestSelfHost*Arm64 family runs the driver on x86 and only the
+// EMITTED program is arm64.
 //
 // So the requirements are: a native x86-64 host to exec the driver, plus the
 // aarch64 cross toolchain to assemble/link/run the emitted program. On a native
@@ -169,7 +169,7 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 func TestSelfHostPerModuleConcatArm64(t *testing.T) {
 	hostGcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
-		t.Skip("the self-host driver is emitted as x86-64 asm (x86_64.Emit), so it must run on a native x86-64 host")
+		t.Skip("the self-host driver is built for x86-64-linux, so it must run on a native x86-64 host")
 	}
 	armGcc, qemu := arm64Tooling(t) // skips when the aarch64 cross toolchain is absent
 	dir, mmr := buildConcatDriver(t, hostGcc)

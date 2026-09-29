@@ -20,7 +20,7 @@ import (
 //
 // buildMemLimiter is a weighted counting semaphore over an estimated-RSS
 // budget: each cold driver build acquires its estimated peak
-// (driverBuildWeightMB) before the compiler starts and releases it when the
+// (DriverBuildWeightMB) before the compiler starts and releases it when the
 // binary is written, so the harness never runs more heavy builds at once
 // than the host's RAM can hold. On a 16 GB host that serialises the heavy
 // builds (correct — you cannot build two 8 GB things at once in 16 GB, and

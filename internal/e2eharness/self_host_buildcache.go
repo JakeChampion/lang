@@ -311,7 +311,7 @@ func CachedDriverBin(t testing.TB, gcc, dir, fernName string) string {
 			// (and parallelises up to the budget on a big one): two cold
 			// driver builds peaking at once used to cross a 16 GB host's RAM
 			// and OOM-kill the run (exit 137) — see buildMemLimiter.
-			return compileWithSelfHost(t, compiler, filepath.Join(dir, fernName), binPath, driverBuildWeightMB(fernName))
+			return CompileWithSelfHost(t, compiler, filepath.Join(dir, fernName), binPath, DriverBuildWeightMB(fernName))
 		})
 	})
 	if err != nil {

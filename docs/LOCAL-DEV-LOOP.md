@@ -209,7 +209,7 @@ the same duration-weighted LPT partition CI uses.
 2026-09-02, 4-core container) and at the default panics before it finishes. The
 `--- FAIL` rule below applies with a twist that makes this one read even more
 like a breakage — the panic can land while the suite is still BUILDING a driver
-binary, so the goroutine dump bottoms out in `e2eharness.compileWithSelfHost`
+binary, so the goroutine dump bottoms out in `e2eharness.CompileWithSelfHost`
 waiting on the compiler subprocess, with no test body having run at all. The
 `running tests:` header naming a single test seconds in is the tell.
 
@@ -259,7 +259,7 @@ under a 16 GB host:
 
 - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted semaphore
   around each cold driver build: it reserves the build's estimated peak
-  (`driverBuildWeightMB`: 4300 MB, 6000 MB for `fern.fern`) against a budget
+  (`DriverBuildWeightMB`: 4300 MB, 6000 MB for `fern.fern`) against a budget
   (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy builds
   can't stack past the host's RAM and OOM the run. Two cold driver builds fit a
   16 GB host concurrently; bigger hosts parallelise further up to the budget.
