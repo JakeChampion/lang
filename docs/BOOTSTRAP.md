@@ -8,7 +8,7 @@ selfhost-cli` produces via `./bin/fern`. `make distcheck` is the reproducibility
 half: that compiler recompiles its own source, the result does so once more,
 and the last two binaries must be byte-identical. This is
 `NATIVE-CONVERGENCE.md §3a` precondition 1, the shape `BOOTSTRAP-RESEARCH.md
-§2` specified, and the runbook its §10 asked for. Both run in CI on both Linux
+§2` specified, and the runbook its §10 asked for. Both run in CI on all three
 hosts (`bootstrap.yml`, `verify`).
 
 ```
