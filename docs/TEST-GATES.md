@@ -281,6 +281,47 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
+`TestServeShutdownDrainsAndExitsClean`, `TestServeShutdownAbortsAtDrainDeadline`,
+`TestSupervisedServeForwardsShutdown` and `TestServeInheritsListenFds`
+(`internal/e2e`, native x86-64) pin the shutdown (#9854): after SIGTERM
+a request in flight is answered with close, the readiness path answers
+503 within the grace, an idle keep-alive connection is closed and the
+process exits 0; a request that never completes is cut off at the drain
+deadline and the process exits 1; the supervisor forwards the signal to
+two workers and exits 0 once they drained, logging no death; and a
+listener handed in through `LISTEN_FDS` is served. The scenarios are
+`internal/e2eharness/serve_shutdown.go`'s, and their self-host twins
+(`TestSelfHostServeShutdownDrainsAndExitsClean`,
+`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
+`TestSelfHostSupervisedServeForwardsShutdown`,
+`TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
+the self-host compiler.
+`TestSupervisedServeWorkersServeSideBySide` pins two workers over one
+listener answering side by side and surviving one worker's death;
+`TestSupervisedServeOneWorkerPerCPU` counts the default worker set
+against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
+requires every one of four workers to exit on SIGTERM after a burst of
+connections over the shared listener.
+`TestServeResponseRateCutsStalledReaderX86_64` and
+`TestServeResponseRateKeepsSteadyReaderX86_64` (`internal/e2e`, with
+self-host twins) pin the minimum data rate on the write side: an 8 MiB
+response to a reader that stops reading is cut off after the grace, and
+one to a reader pacing itself above the rate goes out whole however long
+it takes, which needs the socket's send queue (`tcp_socket_ctl` op 6)
+rather than a writable event for the peer's progress.
+The remaining serve-loop scenarios live in
+`internal/e2eharness/serve_scenarios.go` as well, each a server program
+and a client-side check, so `TestServeWithThreadedStateX86_64`,
+`TestServeLargeResponseX86_64`, `TestServeRecvDeadlineX86_64`,
+`TestSupervisedServeWorkersServeSideBySide`,
+`TestSupervisedServeSurvivesHandlerTrap` and
+`TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
+driving the same server compiled by the self-host compiler
+(`internal/e2eselfhost/self_host_serve_test.go`). The one server test
+without a twin is `TestServeInitProvidedStateX86_64`: its program has no
+`main`, and the self-host compiler does not synthesise one from `init`
+and `handle` yet.
+
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
 522 requests, its README for the columns and the sources) through

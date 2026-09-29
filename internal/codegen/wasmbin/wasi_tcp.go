@@ -1057,10 +1057,10 @@ func buildTcpListenWithBody(idxs map[string]uint32) []byte {
 
 // buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
 // or listener record. op 2 (keep-alive) and op 4 (shutdown) are the two
-// controls wasi:sockets 0.2 has; op 1 (no-delay) and op 3 (non-blocking)
-// have none and answer -ENOTSUP (58), so a caller learns the host owns
-// Nagle and the blocking mode rather than believing it set them. Any other
-// op is -EINVAL (28).
+// controls wasi:sockets 0.2 has; op 1 (no-delay), op 3 (non-blocking) and
+// op 6 (the send queue) have none and answer -ENOTSUP (58), so a caller
+// learns the host owns Nagle, the blocking mode and the queue rather than
+// believing it set or read them. Any other op is -EINVAL (28).
 //
 // Signature: (conn, op, arg: i32) → i32.
 //
@@ -1088,15 +1088,13 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	}
 
 	var body []byte
-	// op 1 and 3: no control on this target.
-	body = opIs(body, 1)
-	body = inst.InstI32Const(body, -58)
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
-	body = opIs(body, 3)
-	body = inst.InstI32Const(body, -58)
-	body = inst.InstReturn(body)
-	body = inst.InstEnd(body)
+	// op 1, 3 and 6: no control on this target.
+	for _, op := range []int32{1, 3, 6} {
+		body = opIs(body, op)
+		body = inst.InstI32Const(body, -58)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+	}
 	// A datagram record (wasi_udp.go) has neither control either.
 	body = emitIsUdpRecord(body, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
