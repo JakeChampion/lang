@@ -34,8 +34,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOCK="$ROOT/bootstrap/stage0.lock"
-OUT="$ROOT/build/bootstrap"
+# BOOTSTRAP_LOCK / BOOTSTRAP_OUT point a test at a lock and a cache of its own.
+LOCK="${BOOTSTRAP_LOCK:-$ROOT/bootstrap/stage0.lock}"
+OUT="${BOOTSTRAP_OUT:-$ROOT/build/bootstrap}"
 ENTRY="$ROOT/examples/self_host/fern.fern"
 STDLIB="$ROOT/internal/stdlib"
 
@@ -83,20 +84,27 @@ resolve_stage0() {
   tag="${url##*/}"
   stage0="$OUT/stage0/$tag/fern-selfhost-$HOST"
   if [ ! -x "$stage0" ]; then
+    # Per-process scratch names, published by one rename: the two worker
+    # processes of a CI shard resolve the pin at the same moment, and a
+    # shared scratch name let one rename the file the other was still
+    # checking. Both end up with the same verified bytes either way.
+    local gz tmp
+    gz="$stage0.$$.gz"
+    tmp="$stage0.$$.tmp"
     asset="$url/fern-selfhost-$HOST.gz"
     echo "stage0: downloading $asset" >&2
     mkdir -p "$(dirname "$stage0")"
-    curl -fsSL --retry 3 --retry-delay 2 -o "$stage0.gz" "$asset" \
+    curl -fsSL --retry 3 --retry-delay 2 -o "$gz" "$asset" \
       || die "download failed: $asset"
-    gzip -dc "$stage0.gz" > "$stage0.tmp" || die "$asset is not gzip data"
-    rm -f "$stage0.gz"
-    got="$(sha256 "$stage0.tmp")"
+    gzip -dc "$gz" > "$tmp" || die "$asset is not gzip data"
+    rm -f "$gz"
+    got="$(sha256 "$tmp")"
     if [ "$got" != "$want" ]; then
-      rm -f "$stage0.tmp"
+      rm -f "$tmp"
       die "sha256 mismatch for $asset: lock pins $want, downloaded $got"
     fi
-    chmod +x "$stage0.tmp"
-    mv "$stage0.tmp" "$stage0"
+    chmod +x "$tmp"
+    mv -f "$tmp" "$stage0"
   fi
   got="$(sha256 "$stage0")"
   [ "$got" = "$want" ] || die "cached $stage0 has sha256 $got, lock pins $want — delete it and re-run"
