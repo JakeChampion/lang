@@ -72,6 +72,7 @@ function census_burn(n: i32): i32 {
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/chunked") { return http.http_response_ok(req.body_string()); }
     if (req.path == "/nocontent") { return http.http_response_no_content(); }
+    if (req.path == "/expect") { return http.http_response_ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
@@ -87,7 +88,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 279
+const KeepAliveCycle = 280
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -112,7 +113,10 @@ const KeepAliveCycle = 279
 // body the handler echoes and whose framing must leave exactly the second
 // request to answer; a HEAD with a GET pipelined behind it, answered
 // with the Content-Length and none of the body, then a 204, answered
-// with neither; and an HTTP/1.0 keep-alive request followed by an
+// with neither; a request whose header block says `Expect: 100-continue`,
+// answered `100 Continue` before its body is sent and then with the
+// body's echo, and one whose expectation the server cannot meet,
+// answered 417; and an HTTP/1.0 keep-alive request followed by an
 // HTTP/1.1 one on the same connection. Every response is checked, its
 // `Date` included, and every close the server owes is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
@@ -185,6 +189,19 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatalf("%s: status=%d length=%d body=%q close=%v error=%v, want %d, empty, close", label, resp.StatusCode, resp.ContentLength, body, resp.Close, err, wantStatus)
 		}
 		dated(conn, resp, label)
+	}
+	// interim reads the `100 Continue` the loop sends before a body.
+	interim := func(conn net.Conn, r *bufio.Reader, label string) {
+		t.Helper()
+		line, err := r.ReadString('\n')
+		if err != nil || line != "HTTP/1.1 100 Continue\r\n" {
+			conn.Close()
+			t.Fatalf("%s: %q, %v", label, line, err)
+		}
+		if line, err = r.ReadString('\n'); err != nil || line != "\r\n" {
+			conn.Close()
+			t.Fatalf("%s: after the status line: %q, %v", label, line, err)
+		}
 	}
 	// bodiless checks a response that carries no body: to a HEAD, with
 	// the Content-Length the body would have, or a 204, with none.
@@ -387,6 +404,22 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, "GET /nocontent HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		bodiless(conn, r, "204", "GET", 204, "")
 		conn.Close()
+		// `Expect: 100-continue` (RFC 9110 §10.1.1): the header block alone
+		// is answered `100 Continue`, the body is sent only then, and the
+		// handler's echo of it follows. The client ends this one. Then an
+		// expectation the server cannot meet, answered 417 and closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /expect HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+		interim(conn, r, "100 Continue")
+		write(conn, "hello")
+		readBody(conn, r, "after 100 Continue", "hello", "keep-alive")
+		conn.Close()
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /expect HTTP/1.1\r\nHost: localhost\r\nExpect: nope\r\nContent-Length: 5\r\n\r\n")
+		refused(conn, r, "an expectation the server cannot meet", 417)
+		eof(conn, r, "after 417")
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()

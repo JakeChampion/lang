@@ -185,6 +185,7 @@ function framing_of(wire: string): i32 {
     match (http.http_parse_request_framed(wire.bytes())) {
         http.Framed(_) => { return 2; },
         http.Incomplete => { return 1; },
+        http.Continue => { return 3; },
         http.Malformed(_) => { return 0; }
     }
     return -1;
@@ -249,6 +250,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
     match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len())) {
         http.Framed(f) => { if (f.request.path != "/next") { return test.fail("behind the chunked request: " + f.request.path); } },
         http.Incomplete => { return test.fail("the request behind is incomplete"); },
+        http.Continue => { return test.fail("the request behind expects 100"); },
         http.Malformed(_) => { return test.fail("the request behind is malformed"); }
     }
     if (body_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: Chunked\r\n\r\n0A\r\n0123456789\r\n000\r\n\r\n") != "0123456789") { return test.fail("an uppercase coding, hex digit and leading zeros refused"); }
@@ -316,6 +318,7 @@ function status_of(wire: string): i32 {
     match (http.http_parse_request_framed(wire.bytes())) {
         http.Framed(_) => { return 0; },
         http.Incomplete => { return 0; },
+        http.Continue => { return 0; },
         http.Malformed(status) => { return status; }
     }
     return 0;
@@ -341,6 +344,22 @@ function test_refusal_statuses(): test.TestOutcome {
     if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n") != 501) { return test.fail("a coding the parser cannot decode"); }
     if (status_of("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n") != 400) { return test.fail("Transfer-Encoding beside Content-Length"); }
     if (status_of(chunked("5\r\nhelloX")) != 400) { return test.fail("a byte where a chunk's CR must be"); }
+    if (status_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: nope\r\nContent-Length: 5\r\n\r\n") != 417) { return test.fail("an expectation the server cannot meet"); }
+    return test.pass();
+}
+
+// `Expect: 100-continue` (RFC 9110 §10.1.1) is answered while the body is
+// still to come, and only then: a request whose body has arrived is
+// framed, one whose body is short says so, and the field is read
+// case-insensitively.
+function test_expect_continue(): test.TestOutcome {
+    var head: string = "POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n";
+    if (framing_of(head) != 3) { return test.fail("headers alone do not ask for 100"); }
+    if (framing_of(head + "hel") != 3) { return test.fail("a short body does not ask for 100"); }
+    if (framing_of(head + "hello") != 2) { return test.fail("a complete body is not framed"); }
+    if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-Continue\r\nTransfer-Encoding: chunked\r\n\r\n") != 3) { return test.fail("a chunked body does not ask for 100"); }
+    if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n") != 1) { return test.fail("an unterminated block asks for 100"); }
+    if (framing_of("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n") != 1) { return test.fail("a request without Expect asks for 100"); }
     return test.pass();
 }
 
@@ -351,6 +370,7 @@ function framed(wire: string): Option[http.HttpFramed] {
     match (http.http_parse_request_framed(wire.bytes())) {
         http.Framed(f) => { return Some(f); },
         http.Incomplete => { return None; },
+        http.Continue => { return None; },
         http.Malformed(_) => { return None; }
     }
     return None;
@@ -377,6 +397,7 @@ function test_framed_from_reads_the_request_behind(): test.TestOutcome {
             return test.assert_eq(f.len, wire.len() - wire_post().len());
         },
         http.Incomplete => { return test.fail("incomplete"); },
+        http.Continue => { return test.fail("expects 100"); },
         http.Malformed(_) => { return test.fail("malformed"); }
     }
     return test.fail("unreachable");
@@ -457,6 +478,7 @@ function main(): i32 {
     r = r.it("chunked refusals", test_chunked_refusals);
     r = r.it("chunked framing tells incomplete from malformed", test_chunked_framing_tells_incomplete_from_malformed);
     r = r.it("refusal statuses", test_refusal_statuses);
+    r = r.it("expect continue", test_expect_continue);
     r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
     r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
     r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);

@@ -71,6 +71,7 @@ function __status_text_4xx(code: i32): string {
     if (code == 413) { return "Payload Too Large"; }
     if (code == 414) { return "URI Too Long"; }
     if (code == 415) { return "Unsupported Media Type"; }
+    if (code == 417) { return "Expectation Failed"; }
     if (code == 418) { return "I'm a teapot"; }
     if (code == 422) { return "Unprocessable Entity"; }
     if (code == 429) { return "Too Many Requests"; }
@@ -788,6 +789,7 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     match (http_parse_request_framed(buf)) {
         Framed(f) => { return Some(f.request); },
         Incomplete => { return None; },
+        Continue => { return None; },
         Malformed(_) => { return None; }
     }
     return None;
@@ -802,16 +804,51 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
 pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
 
 // HttpFraming — what a buffer holds at an offset: a complete request with
-// its framing, less than one (the loop keeps reading), or a malformed
-// one, carrying the status the loop answers it with before closing the
-// connection: 400 for a request the grammar refuses (RFC 9112 §2.2,
-// §3, §5, §6.3, §7.1) or that breaks the `Host` rule (§3.2), 413 for a
-// body past its cap, 414 for a request line past its cap, 431 for a
-// header block past its byte or field cap or chunk framing past its
-// budget, 501 for a transfer coding this parser cannot decode. There is
-// no lenient mode, and a request past a cap is malformed as soon as the
-// cap is passed, before its end has arrived.
-pub enum HttpFraming { Framed(HttpFramed), Incomplete, Malformed(i32) }
+// its framing; less than one (the loop keeps reading); less than one
+// whose header block has arrived and says `Expect: 100-continue`, so the
+// loop sends `100 Continue` once and then keeps reading (RFC 9110
+// §10.1.1; a request whose body has already arrived is `Framed` and
+// gets no interim response); or a malformed one, carrying the status
+// the loop answers it with before closing the connection: 400 for a
+// request the grammar refuses (RFC 9112 §2.2, §3, §5, §6.3, §7.1) or
+// that breaks the `Host` rule (§3.2), 413 for a body past its cap, 414
+// for a request line past its cap, 417 for an expectation other than
+// `100-continue`, 431 for a header block past its byte or field cap or
+// chunk framing past its budget, 501 for a transfer coding this parser
+// cannot decode. There is no lenient mode, and a request past a cap is
+// malformed as soon as the cap is passed, before its end has arrived.
+pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
+
+// `__expectation(h)` — what the `Expect` field asks (RFC 9110 §10.1.1):
+// 0 with none, 1 for `100-continue`, 417 for anything else, which this
+// server cannot meet.
+function __expectation(h: HeaderMap): i32 {
+    var expect: string[] = h.get_all("expect");
+    if (expect.len() == 0) { return 0; }
+    for v in expect {
+        if (!__token_is(v, "100-continue")) { return 417; }
+    }
+    return 1;
+}
+
+// `__header_rules(h, version)` — the status that refuses a parsed header
+// block on its own terms, or 0: 400 for the `Host` rule, 417 for an
+// expectation the server cannot meet.
+function __header_rules(h: HeaderMap, version: string): i32 {
+    if (!__host_ok(h, version)) { return 400; }
+    if (__expectation(h) == 417) { return 417; }
+    return 0;
+}
+
+// `__unframed(kind, h)` — the answer for a body that has not framed:
+// `Malformed` with `kind` when it is a status, `Continue` when the
+// request expects `100 Continue` before sending its body, `Incomplete`
+// otherwise.
+function __unframed(kind: i32, h: HeaderMap): HttpFraming {
+    if (kind >= 400) { return Malformed(kind); }
+    if (__expectation(h) == 1) { return Continue; }
+    return Incomplete;
+}
 
 // `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
 // framing a persistent connection needs, and the three-way answer.
@@ -870,15 +907,15 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         Err(status) => { return Malformed(status); }
     }
     var version: string = __bytes_string(buf, sp2 + 1, first_crlf);
-    if (!__host_ok(req_headers, version)) { return Malformed(400); }
+    var refused: i32 = __header_rules(req_headers, version);
+    if (refused > 0) { return Malformed(refused); }
     var framing: __BodyFraming = Length(0);
     match (__http_body_framing(req_headers)) {
         Ok(f) => { framing = f; },
         Err(status) => { return Malformed(status); }
     }
     var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
-    if (body.0 >= 400) { return Malformed(body.0); }
-    if (body.0 == 1) { return Incomplete; }
+    if (body.0 != 2) { return __unframed(body.0, req_headers); }
     var request: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
         path: __bytes_string(buf, sp1 + 1, sp2),
