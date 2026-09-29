@@ -2864,11 +2864,17 @@ function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, lay
 
 // A struct-union member's box is the value itself, so the arm's binding names
 // the scrutinee narrowed to that member rather than a field of it.
+// A binding a defer replays outside the arm is prebound; the arm overwrites
+// that slot, as payloads does, rather than shadowing it.
 function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
     if (pv.binding == "" || pv.binding == "_") { return s; }
-    var ty: typeinfo.Type = typeinfo.TypeStruct { name: pv.type_name, args: [] };
-    var v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, ty);
+    var v: Value = define(s, ssasem.variant_as(), [scrut], 0, pv.type_name, member_type(pv));
+    if (util.index_of_str(s.names, pv.binding) >= 0) { return replace(v.s, pv.binding, v.id); }
     return bind(v.s, pv.binding, v.id);
+}
+
+function member_type(pv: ast.PatVariant): typeinfo.Type {
+    return typeinfo.TypeStruct { name: pv.type_name, args: [] };
 }
 
 // `@` names the complete scrutinee alongside the pattern's own bindings. The
@@ -3061,6 +3067,9 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
         if let ast.PatVariant(raw) = a.pattern {
             var pv: ast.PatVariant = unqualified(raw, owner);
             var shape: Payloads = arm_payloads(s, whole, pv.type_name, layout);
+            // A member arm binds the member itself, as narrowed does, not a
+            // field of it.
+            if (layout == semrecords.layout_member()) { shape = Payloads { ...shape, types: [member_type(pv)] }; }
             var names: string[] = [pv.binding];
             for n in pv.extra_bindings { names = names.append(n); }
             var k: i32 = 0;
