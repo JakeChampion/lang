@@ -472,6 +472,79 @@ function total(xs: i32[]): i32 {
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }
 `},
+	// An unannotated binding takes its type from the checker, so a builtin
+	// whose result the checker left unknown refused the body that named it.
+	{name: "a-chr-result-types-its-binding", atLeast: 1, src: `
+function main(): i32 {
+    var a = chr(72);
+    var s = a + chr(105);
+    return s.len() * 100 + (s[0] as i32);
+}
+`},
+	// A match whose only arm is `_` stays a match on a scalar (only a literal
+	// arm desugars it), and it tests nothing, so it needs no union. The heap
+	// string scrutinee is still released.
+	{name: "a-wildcard-only-match-on-a-scalar", atLeast: 3, noLeak: true, src: `
+function label(n: i32): string {
+    if (n > 3) { return "big" + "-past-the-sso-inline-threshold"; }
+    return "small" + "-past-the-sso-inline-threshold";
+}
+function pick(n: i32): i32 {
+    var t: i32 = 0;
+    match (n > 3) { _ => { t = n; } }
+    match (label(n)) { _ => { t = t + 1; } }
+    return t;
+}
+function main(): i32 { return pick(5) * 10 + pick(2); }
+`},
+	// An array literal takes its element type from its most settled element:
+	// `None` after `Some(1)` keeps `Option[i32]`, as native types it, rather
+	// than leaving the binding with a bare `Option`.
+	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, src: `
+function total(c: i32): i32 {
+    var a = [Some(1), Some(2), None];
+    var n: i32 = 0;
+    for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } }
+    var b = if (c > 3) { [Some(7), None] } else { [Some(1)] };
+    return match (b[0]) { Some(v) => n + v, None => n };
+}
+function main(): i32 { return total(5) * 10 + total(1); }
+`},
+	// A method declared on a concrete map receiver is keyed `Map.<name>`, as
+	// every receiver's method is keyed by its base type; the call looked for
+	// the receiver's full spelling and found no contract.
+	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, noLeak: true, src: `
+import "core/map";
+function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
+    if (m.has(k)) { return m.get_or(k, 0); }
+    return fallback;
+}
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("a", 10);
+    return m.goi("a", 1) + m.goi("b", 2) * 100;
+}
+`},
+	// A map column of function values is a column of environment boxes: the
+	// map owns a unit of each, a read retains the box it answers, and the
+	// column's release walks each box's captures. Overwriting and deleting
+	// an entry release the box it held.
+	{name: "a-map-column-of-closures", atLeast: 2, noLeak: true, src: `
+import "core/map";
+function run(k: i32): i32 {
+    var tag: string = "t" + "-past-the-sso-inline-threshold";
+    var m: Map[i32, () => i32] = map_new(4);
+    m = m.insert(1, (): i32 => { return tag.len() + k; });
+    m = m.insert(2, (): i32 => { return 7; });
+    m = m.insert(1, (): i32 => { return tag.len() * 2 + k; });
+    var got: i32 = 0;
+    match (m.get(1)) { Some(f) => { got = f(); }, None => { got = 0 - 1; } }
+    let (rest, had) = m.without(2);
+    if (!had || rest.len() != 1) { return 0 - 2; }
+    return got;
+}
+function main(): i32 { return run(3) - run(1); }
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }

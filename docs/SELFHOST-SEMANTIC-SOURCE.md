@@ -582,9 +582,10 @@ Unsupported constructs refuse the whole function with a reason.
   `_vs`, `_vsa`, `_vf`). The `_vf` members take the release as a second
   argument: `__sem_release_<T>`, a body the physical lowering emits beside the
   drop helpers, which does for one value what the frame does for a unit of
-  its type. A key column of records, a value column of function values
-  (lent everywhere, owned nowhere) and one of maps (whose box a read could
-  not retain) stay refused ("unsupported map shape").
+  its type. A value column of function values is a column of
+  environment boxes, released through the `_vf` members like any other box.
+  A value column of maps (whose box a read could not retain) and a key column
+  of generic records stay refused ("unsupported map shape").
 
   A map's unit is counted like any box's. The box carries the array header
   on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)
