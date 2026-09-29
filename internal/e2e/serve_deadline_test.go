@@ -5,7 +5,8 @@
 //     connects and trickles a partial header is disconnected at
 //     the per-request read deadline WITHOUT a response, and the
 //     single-threaded accept loop is not pinned — a well-formed
-//     request right after still answers 200.
+//     request right after still answers 200 (the scenario is
+//     e2eharness's, shared with the self-host twin).
 //  2. `fetch_get_deadline`: against an upstream that accepts and
 //     never replies the call returns `None` at the deadline;
 //     against a live upstream it returns `Some(response)`.
@@ -18,7 +19,6 @@ package e2e
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os/exec"
 	"testing"
@@ -27,56 +27,11 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-const serveDeadlineSrc = `
-import "std/http";
-import "std/time";
-import "std/tcp";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
-}
-function main(): i32 {
-    return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
-}`
-
 func TestServeRecvDeadlineX86_64(t *testing.T) {
 	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(serveDeadlineSrc, port))
-	_, _ = startSupervisedServer(t, bin, runner)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	e2eharness.WaitServerReady(t, addr, 10*time.Second)
-
-	// Slow-loris: send a partial header, never finish. The server must
-	// close the connection at the ~400ms deadline (no response bytes),
-	// well before our own 10s client-side guard.
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	start := time.Now()
-	if _, err := conn.Write([]byte("GET / HTTP/1.1\r\nHost:")); err != nil {
-		t.Fatalf("partial write: %v", err)
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	got, _ := io.ReadAll(conn) // EOF when the server closes us
-	elapsed := time.Since(start)
-	conn.Close()
-	if len(got) != 0 {
-		t.Fatalf("slow client got a response to an incomplete request: %q", got)
-	}
-	if elapsed >= 8*time.Second {
-		t.Fatalf("server never enforced the read deadline (waited %v)", elapsed)
-	}
-
-	// The accept loop must not be pinned: a well-formed request right
-	// after the timed-out one still answers 200.
-	resp := httpRoundTrip(t, addr, "/ok", 3*time.Second)
-	if !containsStatus200(resp) {
-		t.Fatalf("request after a timed-out connection did not answer 200:\n%s", resp)
-	}
-}
-
-func containsStatus200(resp string) bool {
-	return len(resp) >= 15 && resp[:15] == "HTTP/1.1 200 OK"
+	bin, runner := buildSupervisedServeBin(t, e2eharness.RecvDeadlineServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckRecvDeadline(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
 const fetchDeadlineSrc = `

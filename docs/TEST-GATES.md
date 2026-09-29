@@ -309,6 +309,18 @@ response to a reader that stops reading is cut off after the grace, and
 one to a reader pacing itself above the rate goes out whole however long
 it takes, which needs the socket's send queue (`tcp_socket_ctl` op 6)
 rather than a writable event for the peer's progress.
+The remaining serve-loop scenarios live in
+`internal/e2eharness/serve_scenarios.go` as well, each a server program
+and a client-side check, so `TestServeWithThreadedStateX86_64`,
+`TestServeLargeResponseX86_64`, `TestServeRecvDeadlineX86_64`,
+`TestSupervisedServeWorkersServeSideBySide`,
+`TestSupervisedServeSurvivesHandlerTrap` and
+`TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
+driving the same server compiled by the self-host compiler
+(`internal/e2eselfhost/self_host_serve_test.go`). The one server test
+without a twin is `TestServeInitProvidedStateX86_64`: its program has no
+`main`, and the self-host compiler does not synthesise one from `init`
+and `handle` yet.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

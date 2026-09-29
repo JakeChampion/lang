@@ -101,3 +101,51 @@ func TestSelfHostServeResponseRateKeepsSteadyReader(t *testing.T) {
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
 	e2eharness.CheckResponseRateKeepsSteadyReader(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+func TestSelfHostServeWithThreadedState(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ThreadedStateServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckThreadedState(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeLargeResponse(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.LargeResponseServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckLargeResponse(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeRecvDeadline(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.RecvDeadlineServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckRecvDeadline(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostSupervisedServeWorkersServeSideBySide(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.WorkersServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckWorkersServeSideBySide(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+func TestSelfHostSupervisedServeSurvivesHandlerTrap(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.TrappingServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+func TestSelfHostSupervisedServeCrashLoopGivesUp(t *testing.T) {
+	if testing.Short() {
+		t.Skip("crash-loop giveup waits out ~11s of supervisor backoff")
+	}
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.TrappingServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}

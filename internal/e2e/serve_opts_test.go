@@ -46,7 +46,7 @@ func TestServeOptionsX86_64(t *testing.T) {
 		t.Fatalf("a second SO_REUSEPORT socket could not bind the served port, so reuse_port did not reach the listener: %v", err)
 	}
 
-	if resp := httpRoundTrip(t, addr, "/ok", 3*time.Second); !containsStatus200(resp) {
+	if resp := e2eharness.HTTPRoundTrip(t, addr, "/ok", 3*time.Second); !e2eharness.ContainsStatus200(resp) {
 		t.Fatalf("the loop did not answer 200:\n%s", resp)
 	}
 }
