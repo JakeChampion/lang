@@ -102,7 +102,16 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 			t.Errorf("expected a retain (__fern_rc_inc) at the live-source array alias; not found in emitted asm")
 		}
 		if code, _ := cli.runX86(t, asm); code != 6 {
-			t.Errorf("exited %d, want 6 (10 = the retain did nothing and .with wrote through ys; above 6 otherwise = rc underflows)", code)
+			t.Errorf("exited %d, want 6 (11 = the retain did nothing: .with wrote through ys, and the sweep over-released)", code)
+		}
+		// A retain emitted twice still answers 6; only the census sees the leak.
+		stderr, code := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "alias", cli.emit(t, "x86-64-linux", rcAliasUpdateSrc, "FERN_LEAKCHECK=1")))
+		if code != 6 {
+			t.Errorf("leakcheck build exited %d, want 6", code)
+		}
+		allocs, frees, live := parseLeakcheck(t, "emits-retain-at-alias", stderr)
+		if allocs == 0 || allocs != frees || live != 0 {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d, want allocs == frees and live_bytes 0", allocs, frees, live)
 		}
 	})
 
@@ -162,7 +171,7 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
 		}
 		if code, _ := cli.runX86(t, asm); code != 6 {
-			t.Errorf("exited %d, want 6 (10 = the retain did nothing and .with wrote through ys; above 6 otherwise = rc underflows)", code)
+			t.Errorf("exited %d, want 6 (11 = the retain did nothing: .with wrote through ys, and the sweep over-released)", code)
 		}
 		// The scope-exit sweep calls __fern_arr_dec whether or not the rebind
 		// releases ys's old buffer; only the census tells the two apart.
