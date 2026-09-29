@@ -1850,8 +1850,8 @@ function operations_error(f: Func): string {
 // The parameters whose storage the views a value holds read, following each
 // view to the storage it projects whatever that storage's type. A literal's
 // bytes are static and read none. Storage of anything else escapes, and so
-// does a call to a callee outside the module; a module callee whose anchor is
-// not known yet leaves the answer pending.
+// does a call to a callee outside the module or one with an owned result; a
+// module callee whose view anchor is not known yet leaves the answer pending.
 struct ViewSources { params: i32[], escapes: boolean, pending: boolean, seen: boolean[] }
 
 function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: string[], v: i32, acc: ViewSources): ViewSources {
@@ -1875,7 +1875,9 @@ function view_sources(f: Func, defs: ssa.SInst[], anchors: Anchor[], names: stri
     if (d.kind_tag == call()) {
         var k: i32 = anchor_of(anchors, d.str);
         if (k == 0 - 2) {
-            if (util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
+            // Only a view-holding result is ever anchored; an owned one is
+            // this frame's storage however the callee settles.
+            if (semtypes.holds_view(f.values[v]) && util.index_of_str(names, d.str) >= 0) { return ViewSources { ...out, pending: true }; }
             return ViewSources { ...out, escapes: true };
         }
         if (k < 0 || k >= d.args.len()) { return out; }
