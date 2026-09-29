@@ -126,7 +126,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- Go-built consumer importing local:test/math#add. ---
+	// --- Self-host-built consumer importing local:test/math#add. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -161,7 +161,7 @@ function main(): i32 {
 	if (add(20 as u32, 3 as u32) == 23 as u32) { write("` + want + `"); } else { write("export-bad"); }
 	return 0;
 }`
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -267,7 +267,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Go-built consumer that imports greet() -> string and writes it.
+	// Self-host-built consumer that imports greet() -> string and writes it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -299,7 +299,7 @@ function main(): i32 { return 0; }`
 function greet(): string;
 
 function main(): i32 { write(greet()); return 0; }`
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -436,7 +436,7 @@ function main(): i32 {
 	if (len_of("hello") == 5) { write("` + want + `"); } else { write("len-bad"); }
 	return 0;
 }`
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

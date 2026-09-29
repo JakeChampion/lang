@@ -151,9 +151,10 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 //
 // This is an x86-HOST test that cross-emits for arm64: the driver is the
 // x86-64 build (buildSelfHostBin) run on the host, and only the EMITTED
-// program is arm64, the shape the whole TestSelfHost*Arm64 family shares.
-// The pin can build an arm64 driver too (buildSelfHostBinFor), but the path
-// under test here is the cross-emit one.
+// program is arm64, the shape the driver legs of the TestSelfHost*Arm64
+// family share. The module self-tests are the family's other shape: the pin
+// builds the module itself for arm64 (buildSelfHostBinFor) and qemu runs it.
+// The path under test here is the cross-emit one.
 //
 // So the requirements are: a native x86-64 host to exec the driver, plus the
 // aarch64 cross toolchain to assemble/link/run the emitted program. On a native

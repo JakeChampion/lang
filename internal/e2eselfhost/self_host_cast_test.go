@@ -9,7 +9,8 @@ import (
 
 // castCases are valid-Fern programs exercising `expr as Type` integer
 // casts (the self-host emitter masks unsigned / sign-extends signed to
-// the target width). Each returns an i32 exit code.
+// the target width). Each returns an i32 exit code; the expected values were
+// cross-checked against the Go x86-64 backend, the suite's oracle.
 var castCases = []struct {
 	name string
 	src  string

@@ -34,7 +34,7 @@ func writeSelfHostCheckerProject(t *testing.T) string {
 }
 
 func TestSelfHostCheckerX86_64(t *testing.T) {
-	_, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := writeSelfHostCheckerProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "checker.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
@@ -45,7 +45,7 @@ func TestSelfHostCheckerX86_64(t *testing.T) {
 }
 
 func TestSelfHostCheckerArm64(t *testing.T) {
-	_, qemu := arm64Tooling(t)
+	qemu := arm64Runner(t)
 	dir := writeSelfHostCheckerProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "checker.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)

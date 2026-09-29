@@ -101,7 +101,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Go-built consumer that imports sum(xs: list<s32>) -> s32 and checks it.
+	// Self-host-built consumer that imports sum(xs: list<s32>) -> s32 and checks it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -137,7 +137,7 @@ function main(): i32 {
 	if (sum(xs) == 100) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

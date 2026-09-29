@@ -37,7 +37,7 @@ func writeSelfHostParserProject(t *testing.T) string {
 }
 
 func TestSelfHostParserX86_64(t *testing.T) {
-	_, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := writeSelfHostParserProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "parser.fern", "prog", e2eharness.TargetX86_64Linux)
 	cmd := runX86_64Bin(runner, binPath)
@@ -48,7 +48,7 @@ func TestSelfHostParserX86_64(t *testing.T) {
 }
 
 func TestSelfHostParserArm64(t *testing.T) {
-	_, qemu := arm64Tooling(t)
+	qemu := arm64Runner(t)
 	dir := writeSelfHostParserProject(t)
 	binPath := buildSelfHostBinFor(t, dir, "parser.fern", "prog", e2eharness.TargetArm64Linux)
 	cmd := runArm64Bin(qemu, binPath)

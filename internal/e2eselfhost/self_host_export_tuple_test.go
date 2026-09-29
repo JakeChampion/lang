@@ -129,7 +129,7 @@ function main(): i32 {
 	if (p.0 == 11 && p.1 == 42) { write("` + want + `"); } else { write("tup-bad"); }
 	return 0;
 }`
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

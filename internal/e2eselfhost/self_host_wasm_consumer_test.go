@@ -11,9 +11,9 @@ import (
 // self-host emitter of a run-io core (WAT out, wasi:cli/stdout imported, the
 // program's @imports surfaced as core imports), and assembles it with
 // wasm-tools into the core-module bytes the Go composer takes.
-func selfHostRunIOCore(t *testing.T, gcc string, runner []string, driverBin, wasmtools, dir string, src []byte) []byte {
+func selfHostRunIOCore(t *testing.T, runner []string, driverBin, wasmtools, dir string, src []byte) []byte {
 	t.Helper()
-	wat := runCapture(t, gcc, runner, driverBin, src)
+	wat := runCapture(t, "", runner, driverBin, src)
 	watPath := filepath.Join(dir, "consumer_core.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 		t.Fatalf("write consumer wat: %v", err)
