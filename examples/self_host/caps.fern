@@ -204,10 +204,9 @@ pub function ungated(): string[] {
 // the shared half to an exact match and still see these named.
 //
 // Every one is a channel or a pure computation, by the same rules as the list
-// above: read_all_stdin is a stdin read, and __map_new_i32 / chr allocate or
-// compute.
+// above: __map_new_i32 / chr allocate or compute.
 pub function frontend_ungated(): string[] {
-    return ["read_all_stdin", "__map_new_i32", "chr"];
+    return ["__map_new_i32", "chr"];
 }
 
 // capability_of returns the capability a builtin reaches, or "" when the name

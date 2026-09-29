@@ -2096,7 +2096,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "heap", "i32_to_string", "u32_to_string", "chr",
-        "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
+        "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
@@ -3034,8 +3034,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lstrfree_box\n");
     // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
     // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
-    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
-    // the freelist a block bigger than the class it lands in, which wastes the
+    // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
     // slack but never overruns — the same trade the separate-buffer path above has
     // always made when it freed at ceil(len/8).
     s = s.write(".Lstrfree_fused:\n");
@@ -3408,11 +3407,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_large_push\n");
     s = s.write("    popq %rax\n");
     s = s.write("    ret\n");                      // %rax = new
-    // __fern_print_str and __fern_read_all_stdin are Fern runtime functions (#2649):
-    // asmcore.rt_src_print_str / rt_src_read_all_stdin, lowered through the IR
-    // pipeline via emit_ir_runtime_fern_fn in the entry block, not hand-written
-    // bodies here. read_all_stdin allocates its own 32 MiB buffer and so stays
-    // with the heap runtime.
+    // __fern_print_str is a Fern runtime function (#2649):
+    // asmcore.rt_src_print_str, lowered through the IR pipeline via
+    // emit_ir_runtime_fern_fn in the entry block, not a hand-written body here.
     // __fern_read_line, __fern_reader_read_chunk and __fern_reader_close are Fern
     // runtime functions (#2649): asmcore.rt_src_read_line / rt_src_reader_read_chunk
     // / rt_src_reader_close, lowered through the IR pipeline via
@@ -7689,12 +7686,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = emit_ir_op_heap_mark(o, s);
     } else if (o.kind_tag == 230) {  // heap_release_to
         s = emit_ir_op_heap_release_to(o, s);
-    } else if (o.kind_tag == 209) {  // read_all_stdin
-        // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
-        // fd 0 to EOF in ONE fresh string box, pushed as a value op. Allocates,
-        // so it pulls in the heap runtime.
-        s = s.write("    call __fn___fern_read_all_stdin\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("read_all_stdin");
     } else if (o.kind_tag == 260) {  // create_dir
         // [pathbox][mode] (mode on top) -> Result[void, IoError]. The
         // same two-operand shuffle `access` does: the stack ABI wants
@@ -9896,10 +9887,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
     // they sit with the clocks rather than in the heap runtime: a program that only
     // prints must still link.
-    if (s.has_need("read_all_stdin")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin("x86_64"), all_structs, s);
-    }
     if (s.has_need("str_read_line")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), all_structs, s);

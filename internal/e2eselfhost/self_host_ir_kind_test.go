@@ -57,7 +57,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	const want = "kind_count=189\n" +
 		"bijection_ok=189\n" +
 		"bijection_failures=0\n" +
-		"ext_ok=135\n" +
+		"ext_ok=134\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +

@@ -604,6 +604,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"unknown-byte-var-type", "function main(): i32 { var x: byte = q(); return 0; }\n", []string{"E001", "E064"}},
 		// Only the method spelling `a.len()` exists; a free `len(a)` names nothing.
 		{"free-len-is-undefined", "function main(): i32 { var a: i32[] = [1, 2]; return len(a); }\n", []string{"E001"}},
+		// Reading all of stdin is std/io's `io.read_all_stdin()`; there is no bare builtin.
+		{"free-read-all-stdin-is-undefined", "function main(): i32 { var s: string = read_all_stdin(); return s.len(); }\n", []string{"E001"}},
 		// isize/i8/i16/u16 were retired (#4408): neither is a lexer keyword
 		// any more, so a reference to one is an unknown nominal type — both
 		// checkers must now flag E064 here, the mirror image of the
