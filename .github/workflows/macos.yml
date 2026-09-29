@@ -378,22 +378,19 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- -run '^(TestSelfHostArm64Darwin.*|TestSelfHostCheckerFallbackHint)$' ./internal/e2eselfhost/
 
-      # THE DARWIN STAGE 3 (#8479), measured rather than gated. A compiler the
-      # self-host arm64 emitter built for arm64-darwin exits 125 (arena
-      # exhausted) compiling fern.fern, where the native-built compiler finishes
-      # the same build at 1.4 GB — and this is the one runner that can execute
-      # either. bootstrap.yml skips distcheck on darwin for the same bug, so
-      # without this step nothing in CI runs the failing build at all. The
-      # compiler's own per-phase heap readout (FERN_CLIFF_REPORT: bump bytes at
-      # each sem/emit/assemble/link phase) is what the issue asks for next, and
-      # it costs nothing to print on every round.
-      #
-      # Stage 2 (the native-built stage 1 compiling fern.fern) is what the pin
-      # refresh relies on and it works, so a failure there fails the step. Stage
-      # 3's exit is reported, not returned — the same shape as the corpus step
-      # above — because it cannot decide the lane while the bug is open. When
-      # it passes here, make it decide: turn the warning into an exit and let
-      # bootstrap.yml run distcheck on darwin.
+      # THE DARWIN STAGE 3 (#8479). A self-host-built compiler compiling
+      # fern.fern on Darwin exhausted the 16 GiB arena for months while the
+      # native-built compiler finished the same build, and bootstrap.yml still
+      # skips distcheck on darwin for it. The first round of this step (run
+      # 36534604714) showed the fixed point holding: 56 s, 3.8 GB RSS, 5.85 GB
+      # bumped, stage2 == stage3. So this is a gate, on the one runner that
+      # can execute the build: stage 2 (the native-built stage 1 compiling
+      # fern.fern, which the pin refresh relies on), stage 3, and the
+      # byte-identity of the two. The compiler's per-phase heap readout
+      # (FERN_CLIFF_REPORT) and /usr/bin/time -l are printed and kept in the
+      # step summary either way: the peak footprint was 5.66 GB on a 7 GB
+      # runner, so a regression here reads as a number before it reads as a
+      # kill. The bootstrap lane's darwin distcheck is what retires this step.
       - name: self-host stage 3 on Darwin, with the heap readout (#8479)
         if: "!cancelled() && matrix.shard == 0"
         timeout-minutes: 15
@@ -408,15 +405,13 @@ jobs:
             exit 1
           fi
           echo "stage 2 (self-host-built): $(wc -c < "$B/fern-s2" | tr -d ' ') bytes"
-          # The step runs under bash -e, and this exit is the one being
-          # measured: capture it instead of letting it end the step.
+          # The step runs under bash -e; capture the exit so the readout is
+          # printed before it decides the step.
           code=0
           FERN_CLIFF_REPORT=1 /usr/bin/time -l "$B/fern-s2" -target arm64-darwin -o "$B/fern-s3" "$PWD/examples/self_host/fern.fern" "$PWD/internal/stdlib" 2> "$B/s3.log" || code=$?
           echo "::group::stage 3 heap readout and rusage"
           cat "$B/s3.log"
           echo "::endgroup::"
-          # The readout is the deliverable, so it also goes where it outlives
-          # the scrolled log.
           {
             echo "### Darwin stage 3 (#8479): exit $code"
             echo '```'
@@ -424,11 +419,14 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$code" -ne 0 ]; then
-            echo "::warning::stage 3 exited $code on Darwin (#8479): the self-host-built compiler cannot compile fern.fern here yet; the readout above is the measurement"
-          else
-            echo "::notice::stage 3 succeeded on Darwin: #8479 no longer reproduces, so make this step fail on a non-zero exit and enable distcheck on darwin in bootstrap.yml"
-            if cmp -s "$B/fern-s2" "$B/fern-s3"; then echo "stage2 == stage3"; else echo "stage2 != stage3"; fi
+            echo "::error::stage 3 exited $code on Darwin: the self-host-built compiler could not compile fern.fern (#8479 again); the readout above says at which phase the heap ran away"
+            exit 1
           fi
+          if ! cmp -s "$B/fern-s2" "$B/fern-s3"; then
+            echo "::error::stage2 != stage3 on Darwin: the self-host-built compiler does not reproduce itself (docs/BOOTSTRAP.md has the bisection recipe)"
+            exit 1
+          fi
+          echo "stage2 == stage3"
 
       - name: Compile + run every example for arm64-darwin (native, default)
         if: "!cancelled() && matrix.shard == 1"
