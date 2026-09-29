@@ -317,7 +317,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
         "str_split", "tcp_accept", "tcp_close", "tcp_connect", "tcp_listen", "tcp_listen_with",
         "tcp_local_port", "tcp_pollable", "tcp_recv", "tcp_send", "tcp_socket_ctl", "temp_dir",
         "udp_bind", "udp_connect", "udp_recvfrom", "udp_send", "udp_sendto", "tcp_connect_with", "wasm_block",
-        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+        "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
         "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "open_file",
         "writer_write", "write_some"
     ];
@@ -3038,6 +3038,13 @@ pub function wasi_sockets_local_address_import(): string {
 // the FIRST field of both the ipv4 and the ipv6 case, so the u16 at +8 is the
 // port whichever family the host answered with. The ipv6 case is 28 bytes, so
 // the retptr is 4 + 4 + 28 = 36.
+// $__fern_tcp_sendfile(conn, file, max) -> -ENOTSUP (58): wasi:sockets moves
+// bytes through streams only, so the serve loop reads the file and sends the
+// piece itself.
+pub function tcp_sendfile_func(): string {
+    return "  (func $__fern_tcp_sendfile (param $c i32) (param $file i32) (param $max i32) (result i32)\n    (i32.const -58))\n";
+}
+
 pub function tcp_local_port_func(udp: boolean): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_local_port (param $c i32) (result i32)\n";
@@ -4813,6 +4820,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else if (o.kind_tag == 333) {  // tcp_socket_ctl
         // tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Three args on the stack.
         parts = parts.append("    call $__fern_tcp_socket_ctl\n");
+    } else if (o.kind_tag == 346) {  // tcp_sendfile
+        // tcp_sendfile(conn, file, max) -> -ENOTSUP: wasi:sockets has no sendfile.
+        parts = parts.append("    call $__fern_tcp_sendfile\n");
     } else if (o.kind_tag == 201) {  // tcp_accept
         // tcp_accept(listener) -> a fresh connection struct, or -errno.
         parts = parts.append("    call $__fern_tcp_accept\n");
@@ -11127,6 +11137,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "tcp_listen")) { parts = parts.append(tcp_listen_func()); }
     if (need(needs, "tcp_listen_with")) { parts = parts.append(tcp_listen_with_func()); }
     if (need(needs, "tcp_socket_ctl")) { parts = parts.append(tcp_socket_ctl_func()); }
+    if (need(needs, "tcp_sendfile")) { parts = parts.append(tcp_sendfile_func()); }
     if (need(needs, "tcp_accept")) { parts = parts.append(tcp_accept_func()); }
     if (need(needs, "tcp_local_port")) { parts = parts.append(tcp_local_port_func(need(needs, "udp_bind"))); }
     if (need(needs, "tcp_pollable")) { parts = parts.append(tcp_pollable_func()); }

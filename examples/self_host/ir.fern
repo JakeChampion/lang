@@ -1003,6 +1003,11 @@ pub function op_reactor_new(): Op { return op0(341); }
 pub function op_reactor_ctl(): Op { return op0(342); }
 pub function op_reactor_wait(): Op { return op0(343); }
 pub function op_tcp_recv_into(): Op { return op0(344); }
+// `tcp_sendfile` [fd, file, max] -> i32 bytes sent (0 at the file's end, or
+// -errno): up to max bytes of the open file, from its position, moved to the
+// socket with no copy through the process; -ENOTSUP where the target has no
+// sendfile.
+pub function op_tcp_sendfile(): Op { return op0(346); }
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -2608,6 +2613,7 @@ function kind_id_len12(name: string): i32 {
     if (c == b'u' && name == "udp_recvfrom") { return 337; }
     if (c == b'u' && name == "unix_connect") { return 340; }
     if (c == b'w' && name == "writer_write") { return 202; }
+    if (c == b't' && name == "tcp_sendfile") { return 346; }
     return 0;
 }
 
@@ -2932,6 +2938,7 @@ function kind_name_4(id: i32): string {
     if (id == 320) { return "tcp_local_port"; }
     if (id == 332) { return "tcp_listen_with"; }
     if (id == 333) { return "tcp_socket_ctl"; }
+    if (id == 346) { return "tcp_sendfile"; }
     if (id == 334) { return "udp_bind"; }
     if (id == 335) { return "udp_connect"; }
     if (id == 336) { return "udp_sendto"; }
@@ -3237,6 +3244,7 @@ function pops3(t: i32): boolean {
         || t == 125 || t == 129                                          // map_set, map_get_or
         || t == 177 || t == 208 || t == 225 || t == 234                  // subprocess, udp_send, memchr, rmemchr
         || t == 333 || t == 335 || t == 337 || t == 338                  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
+        || t == 346                                                      // tcp_sendfile (fd, file, max)
         || t == 343                                                      // reactor_wait (r, events, timeout_ms)
         || t == 242                                                      // reader_seek (fd, offset, whence)
         || t == 330                                                      // reader_splice (fd, out_fd, max)

@@ -151,6 +151,16 @@ function __sys_shutdown(): i32 {
     if (target_os() == "darwin") { return 134; }
     return 210;
 }
+function __sys_lseek(): i32 {
+    if (target_arch() == "x86-64") { return 8; }
+    if (target_os() == "darwin") { return 199; }
+    return 62;
+}
+function __sys_sendfile(): i32 {
+    if (target_arch() == "x86-64") { return 40; }
+    if (target_os() == "darwin") { return 337; }
+    return 71;
+}
 function __sys_read(): i32 {
     if (target_arch() == "x86-64") { return 0; }
     if (target_os() == "darwin") { return 3; }
@@ -981,6 +991,32 @@ function __send_str(fd: i32, s: string, sa: usize, salen: i32): i32 {
 // __fern_tcp_send(fd, s) writes s's bytes to a connected socket.
 function __fern_tcp_send(fd: i32, s: string): i32 {
     return __send_str(fd, s, 0 as usize, 0);
+}
+
+// __fern_tcp_sendfile(fd, file, max) moves up to max bytes from the file
+// at its current position to the socket without a copy through user
+// space: the bytes sent (0 at the file's end), or -errno (-EAGAIN when a
+// non-blocking socket took none). The file advances by what was sent.
+// Darwin's sendfile takes an explicit offset and an in-out length, so the
+// position is read and moved around the call.
+function __fern_tcp_sendfile(fd: i32, file: i32, max: i32): i32 {
+    if (max <= 0) { return 0; }
+    if (target_os() == "darwin") {
+        var pos: i64 = __syscall3(__sys_lseek(), file as i64, 0, 1);
+        if (pos < 0) { return pos as i32; }
+        var lenp: usize = __alloc(8);
+        __store_i64(lenp, max as i64);
+        var r: i64 = __syscall6(__sys_sendfile(), file as i64, fd as i64, pos, lenp as i64, 0, 0);
+        var sent: i64 = __load_i64(lenp);
+        __free(lenp, 8);
+        if (sent > 0) {
+            __syscall3(__sys_lseek(), file as i64, pos + sent, 0);
+            return sent as i32;
+        }
+        if (r < 0) { return r as i32; }
+        return 0;
+    }
+    return __syscall4(__sys_sendfile(), fd as i64, file as i64, 0, max as i64) as i32;
 }
 
 // __fern_udp_bind(addr, port) is a datagram socket bound to addr:port (4

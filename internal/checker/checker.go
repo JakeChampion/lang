@@ -2041,6 +2041,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_sendfile(fd, file, max): number — up to max bytes of the open
+	// file (a Reader's fd, from its current position) sent on the socket
+	// without a copy through user space: the bytes sent, 0 at the file's
+	// end, or -errno; -EAGAIN when a non-blocking socket took none and
+	// -ENOTSUP where the target has no sendfile, so the caller reads and
+	// sends the piece itself.
+	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// tcp_connect_with(addr, port, nonblocking): number — a socket
 	// connected to addr:port, or with `nonblocking` a non-blocking socket
 	// whose connect is only started: the descriptor while it is under way
