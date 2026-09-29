@@ -40,52 +40,17 @@ import "std/stream";
 // unknown codes — callers should fall back to a generic
 // phrase rather than emitting nothing.
 pub function http_status_text(code: i32): string {
-    if (code < 400) { return __status_text_below_400(code); }
-    if (code < 500) { return __status_text_4xx(code); }
-    return __status_text_5xx(code);
-}
-
-function __status_text_below_400(code: i32): string {
-    if (code == 100) { return "Continue"; }
-    if (code == 101) { return "Switching Protocols"; }
-    if (code == 200) { return "OK"; }
-    if (code == 201) { return "Created"; }
-    if (code == 204) { return "No Content"; }
-    if (code == 301) { return "Moved Permanently"; }
-    if (code == 302) { return "Found"; }
-    if (code == 304) { return "Not Modified"; }
-    if (code == 307) { return "Temporary Redirect"; }
-    if (code == 308) { return "Permanent Redirect"; }
-    return "";
-}
-
-function __status_text_4xx(code: i32): string {
-    if (code == 400) { return "Bad Request"; }
-    if (code == 401) { return "Unauthorized"; }
-    if (code == 403) { return "Forbidden"; }
-    if (code == 404) { return "Not Found"; }
-    if (code == 405) { return "Method Not Allowed"; }
-    if (code == 408) { return "Request Timeout"; }
-    if (code == 409) { return "Conflict"; }
-    if (code == 410) { return "Gone"; }
-    if (code == 413) { return "Payload Too Large"; }
-    if (code == 414) { return "URI Too Long"; }
-    if (code == 415) { return "Unsupported Media Type"; }
-    if (code == 417) { return "Expectation Failed"; }
-    if (code == 418) { return "I'm a teapot"; }
-    if (code == 422) { return "Unprocessable Entity"; }
-    if (code == 429) { return "Too Many Requests"; }
-    if (code == 431) { return "Request Header Fields Too Large"; }
-    return "";
-}
-
-function __status_text_5xx(code: i32): string {
-    if (code == 500) { return "Internal Server Error"; }
-    if (code == 501) { return "Not Implemented"; }
-    if (code == 502) { return "Bad Gateway"; }
-    if (code == 503) { return "Service Unavailable"; }
-    if (code == 504) { return "Gateway Timeout"; }
-    if (code == 505) { return "HTTP Version Not Supported"; }
+    var codes: i32[] = [100, 101, 200, 201, 204, 301, 302, 304, 307, 308,
+        400, 401, 403, 404, 405, 408, 409, 410, 413, 414, 415, 417, 418, 422, 429, 431,
+        500, 501, 502, 503, 504, 505];
+    var phrases: string[] = ["Continue", "Switching Protocols", "OK", "Created", "No Content", "Moved Permanently", "Found", "Not Modified", "Temporary Redirect", "Permanent Redirect",
+        "Bad Request", "Unauthorized", "Forbidden", "Not Found", "Method Not Allowed", "Request Timeout", "Conflict", "Gone", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Expectation Failed", "I'm a teapot", "Unprocessable Entity", "Too Many Requests", "Request Header Fields Too Large",
+        "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported"];
+    var i: i32 = 0;
+    while (i < codes.len()) {
+        if (codes[i] == code) { return phrases[i]; }
+        i = i + 1;
+    }
     return "";
 }
 
@@ -910,6 +875,26 @@ function __unframed(kind: i32, h: HeaderMap): HttpFraming {
     return Incomplete;
 }
 
+// `__request_line(buf, from, end)` — the request line buf[from, end)
+// read: `(0, sp1, sp2, path)` with the offsets of its two spaces and the
+// path `http_request_target` gives, or `(status, _, _, _)` refusing it:
+// 400 for a method that is not a token, a missing space, an empty
+// target or a version that is not an HTTP-version, 505 for another
+// major version, and the target's own refusals.
+function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string) {
+    var sp1: i32 = __find_byte(buf, from, end, 32 as u8);
+    if (sp1 < 0 || !__is_token(buf, from, sp1)) { return (400, -1, -1, ""); }
+    var sp2: i32 = __find_byte(buf, sp1 + 1, end, 32 as u8);
+    if (sp2 < 0 || sp2 == sp1 + 1) { return (400, -1, -1, ""); }
+    var version_status: i32 = __version_status(buf, sp2 + 1, end);
+    if (version_status != 0) { return (version_status, -1, -1, ""); }
+    match (http_request_target(__bytes_string(buf, from, sp1), __bytes_string(buf, sp1 + 1, sp2))) {
+        Ok(p) => { return (0, sp1, sp2, p); },
+        Err(status) => { return (status, -1, -1, ""); }
+    }
+    return (400, -1, -1, "");
+}
+
 // `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
 // framing a persistent connection needs, and the three-way answer.
 pub function http_parse_request_framed(buf: u8[]): HttpFraming {
@@ -940,21 +925,14 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     // The request line (RFC 9112 §3): a method token, a space, a
     // request-target, a space, an HTTP-version. It is refused as soon as
     // its CRLF has arrived, before the rest of the block.
-    var sp1: i32 = -1;
-    var sp2: i32 = -1;
-    var path: string = "";
+    var line: (i32, i32, i32, string) = (0, -1, -1, "");
     if (first_crlf >= 0) {
-        sp1 = __find_byte(buf, from, first_crlf, 32 as u8);
-        if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed(400); }
-        sp2 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
-        if (sp2 < 0 || sp2 == sp1 + 1) { return Malformed(400); }
-        var version_status: i32 = __version_status(buf, sp2 + 1, first_crlf);
-        if (version_status != 0) { return Malformed(version_status); }
-        match (http_request_target(__bytes_string(buf, from, sp1), __bytes_string(buf, sp1 + 1, sp2))) {
-            Ok(p) => { path = p; },
-            Err(status) => { return Malformed(status); }
-        }
+        line = __request_line(buf, from, first_crlf);
+        if (line.0 != 0) { return Malformed(line.0); }
     }
+    var sp1: i32 = line.1;
+    var sp2: i32 = line.2;
+    var path: string = line.3;
     if (first_crlf < 0 || headers_end < 0) { return Incomplete; }
     var headers_len: i32 = headers_end + 4 - from;
     // Parse the header block into a HeaderMap *first*, then derive
@@ -1021,20 +999,17 @@ pub function http_request_target(method: string, target: string): Result[string,
         if (path_from < 0) { return Err(400); }
     }
     var q: i32 = __find_char(target, path_from, target.len(), 63 as u8);
+    if (q >= 0 && !__query_ok(target, q + 1, target.len())) { return Err(400); }
     var path_end: i32 = target.len();
-    if (q >= 0) {
-        path_end = q;
-        if (!__query_ok(target, q + 1, target.len())) { return Err(400); }
+    if (q >= 0) { path_end = q; }
+    match (__decoded_path(target, path_from, path_end)) {
+        Ok(p) => {
+            if (q < 0) { return Ok(p); }
+            return Ok(p + slice_unchecked(target, q, target.len()) + "");
+        },
+        Err(status) => { return Err(status); }
     }
-    var path: string = "/";
-    if (path_end > path_from) {
-        match (__decoded_path(target, path_from, path_end)) {
-            Ok(p) => { path = p; },
-            Err(status) => { return Err(status); }
-        }
-    }
-    if (q < 0) { return Ok(path); }
-    return Ok(path + slice_unchecked(target, q, target.len()) + "");
+    return Err(400);
 }
 
 // `__absolute_form_path(target)` — where the path of an absolute-form
@@ -1092,10 +1067,14 @@ function __is_unreserved(b: i32): boolean {
         || b == 45 || b == 46 || b == 95 || b == 126;
 }
 
-// `!$&'()*+,;=`
 function __is_sub_delim(b: i32): boolean {
-    return b == 33 || b == 36 || b == 38 || b == 39 || b == 40 || b == 41
-        || b == 42 || b == 43 || b == 44 || b == 59 || b == 61;
+    var delims: string = "!$&'()*+,;=";
+    var i: i32 = 0;
+    while (i < delims.len()) {
+        if ((delims[i] as i32) == b) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 
 // `__query_ok(s, from, end)` — whether s[from, end) is a query (RFC 3986
@@ -1129,6 +1108,7 @@ function __pct_byte(s: string, at: i32, end: i32): i32 {
 // decoded once and with its dot segments removed, or the status refusing
 // it.
 function __decoded_path(s: string, from: i32, end: i32): Result[string, i32] {
+    if (end <= from) { return Ok("/"); }
     var out: u8[] = [];
     var i: i32 = from;
     while (i < end) {
