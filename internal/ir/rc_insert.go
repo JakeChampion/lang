@@ -672,7 +672,7 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Ty
 }
 
 // bindingReleasableInAll is bindingConfinedInAll over the weaker per-node
-// question bindingReleasableInArm asks. A guard counts the same as a body: an
+// question bindingReleasableFromBox asks. A guard counts the same as a body: an
 // alias it takes is balanced by the join's drop whichever arm ends up running,
 // since that drop is emitted once for the whole match.
 func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.Type) bool {
@@ -683,7 +683,7 @@ func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.
 		if n == nil {
 			continue
 		}
-		if !b.bindingReleasableInArm(n, name, bt) {
+		if !b.bindingReleasableFromBox(n, name, bt) {
 			return false
 		}
 	}
@@ -842,7 +842,7 @@ func pairFormPayloadIsMap(et ast.EnumType) bool {
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
 func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) bool {
-	return b.bindingUsesExcused(body, name, bt, false)
+	return b.bindingUsesExcused(body, name, bt, false, false)
 }
 
 // bindingReleasableInArm is the weaker question the two match-scrutinee
@@ -868,12 +868,24 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // ones. The for-in leg keeps the strict reading; its source's release is not
 // the arm's to see, and it has not been measured against a counted escape.
 func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
-	return b.bindingUsesExcused(body, name, bt, true)
+	return b.bindingUsesExcused(body, name, bt, true, false)
+}
+
+// bindingReleasableFromBox is bindingReleasableInArm for a binding that reads
+// a heap box's payload (#10673): `return c` retains it (the Return lowering's
+// return-transfer inc), so the caller holds a reference of its own and the
+// box's deep drop, replayed on the way out, takes the payload back to that
+// one. A pair-form binding IS the count the callee handed over, and its
+// return hands that count on, so the pair-form caller keeps the stricter
+// question.
+func (b *builder) bindingReleasableFromBox(body ast.Node, name string, bt ast.Type) bool {
+	return b.bindingUsesExcused(body, name, bt, true, true)
 }
 
 // bindingUsesExcused is the shared walk. `countedAliasOK` admits the alias
-// sites of bindingReleasableInArm on top of the read shapes both callers take.
-func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK bool) bool {
+// sites of bindingReleasableInArm on top of the read shapes every caller
+// takes, and `returnCounted` the return of bindingReleasableFromBox.
+func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK, returnCounted bool) bool {
 	if body == nil {
 		return false
 	}
@@ -935,6 +947,13 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 			tgt, toLocal := x.Target.(*ast.Ident)
 			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
 				countedAliasOK && toLocal && tgt.Name != name && b.assignTakesAliasInc(x, bt) {
+				excused[id] = true
+			}
+		case *ast.Return:
+			// A local the move-on-return leg hands over uninc'd is not a
+			// match binding, and stays unexcused.
+			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
+				returnCounted && b.retainsOnAlias(bt) && !b.isOwnedRcLocal(name) {
 				excused[id] = true
 			}
 		case *ast.MakeClosure:

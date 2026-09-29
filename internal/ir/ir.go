@@ -3731,6 +3731,8 @@ func addressTakenFuncs(prog *ast.Program, info *checker.Info) map[string]bool {
 		}
 		return true
 	})
+	// An Ident spelled like a function is the function: shadowrename gives a
+	// local or param that shares a function's name a `name$N` form.
 	out := map[string]bool{}
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		switch x := n.(type) {
