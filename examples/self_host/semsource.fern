@@ -4400,10 +4400,39 @@ function known_callee(c: ast.ExprCall, known: string[]): boolean {
     return false;
 }
 
+// A name a statement binds and the expression it binds it to: a `var`, or an
+// assignment to a bare name.
+struct Bound { name: string, value: ast.Expr }
+
+function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
+    if let ast.StmtVar(v) = st { return acc.append(Bound { name: v.name, value: v.init }); }
+    if let ast.StmtAssign(a) = st { return acc.append(Bound { name: a.target, value: a.value }); }
+    return acc;
+}
+
+// A parameter hands out through a local as well as directly: `var st = s;
+// st = st.emit(ir.op_call_direct(freefn, 1)); return st;` returns `freefn`
+// inside `st`. So the names that carry a parameter close over the body's
+// bindings first — a local bound from an expression that hands one of them
+// out carries it too — and the returns are read against that set.
 function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
     var names: string[] = decl_param_names(fd);
+    var binds: Bound[] = [];
     var outs: ast.Expr[] = [];
-    for st in fd.body { outs = astwalk.fold_stmt_spine(st, outs, return_exprs); }
+    for st in fd.body {
+        binds = astwalk.fold_stmt_spine(st, binds, bound_exprs);
+        outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
+    }
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for b in binds {
+            if (util.index_of_str(names, b.name) < 0 && escapes_in(b.value, names, known)) {
+                names = names.append(b.name);
+                grew = true;
+            }
+        }
+    }
     for e in outs { if (escapes_in(e, names, known)) { return true; } }
     return false;
 }

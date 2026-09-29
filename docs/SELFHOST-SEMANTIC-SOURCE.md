@@ -1656,12 +1656,18 @@ separates "keeps the argument" from "builds something new" — only the body doe
 — so `semsource.handers` reads the bodies: a parameter escapes when it reaches a
 `return` as itself, inside an aggregate the return builds, or as an argument of
 a call to a declaration that already escapes its own, closed to a fixpoint over
-the module. `escapes_in` is that predicate and it is deliberately narrow: `s + ""`
-and `s.len()` read the value and build something of their own, which is what
-keeps `lent_views`' `copied()` calls reclaiming the views they are lent. The
-container builtins — `append`, `with`, `insert`, `cell_new` — and the union
-constructors count as keeping, because `return acc.append(w)` hands `w` out
-inside the array. `semsource.lend` consults the set: where the callee is in
+the module. A local carries a parameter the same way once it is bound from an
+expression that hands one out — `var st = s; st = st.emit(ir.op_call_direct(freefn,
+1)); return st;` returns `freefn` inside `st` — so `hands_back` closes the body's
+`var` and assignment bindings over the names first and reads the returns against
+that set; reading the returns alone left `emit_opt_payload_drop_via` out of the
+set, and the self-host-built compiler stored a frame-resident view of a callee
+name in an `ir.Op` that outlived the frame (#10680). `escapes_in` is the
+predicate and it is deliberately narrow: `s + ""` and `s.len()` read the value
+and build something of their own, which is what keeps `lent_views`' `copied()`
+calls reclaiming the views they are lent. The container builtins — `append`,
+`with`, `insert`, `cell_new` — and the union constructors count as keeping,
+because `return acc.append(w)` hands `w` out inside the array. `semsource.lend` consults the set: where the callee is in
 it, a view is not retagged but COPIED (`v + ""`, an owned string), and that
 copy is what the call is handed.
 

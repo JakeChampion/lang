@@ -2216,6 +2216,42 @@ function main(): i32 {
 	// it in the array it hands back, which is what every `*_tok` constructor in
 	// the self-host lexer does. Both reach the caller through the callee's
 	// result, so both callees are handed a copy the result may keep.
+	// A callee that keeps its argument through a LOCAL: `st` is bound from
+	// `acc`, rebound from a call that stores `name`, and returned. Reading
+	// only the returns left `add` out of `handers`, so its caller lent the view
+	// as a frame-resident retag and `add` stored a pointer into a frame that
+	// was gone by the time main read the item (#10680: the self-host-built
+	// asm_ir_run stored a callee name this way and faulted in the IR verifier).
+	{name: "lent-view-kept-through-a-local", atLeast: 6, src: `
+struct Item { name: string }
+struct Acc { items: Item[] }
+function mk(name: string): Item { return Item { name: name }; }
+function (a: Acc) with_item(it: Item): Acc { return Acc { items: a.items.append(it) }; }
+function add(acc: Acc, name: string): Acc {
+    var st: Acc = acc;
+    st = st.with_item(mk(name));
+    return st;
+}
+function build(): Acc {
+    var src: string = "hello:" + "world";
+    var acc: Acc = Acc { items: [] };
+    acc = add(acc, slice_unchecked(src, 6, 11));
+    return acc;
+}
+function churn(n: i32): i32 {
+    var a: i32[] = [n, n + 1, n + 2];
+    var s: string = "abcdefghijklmnop" + "qrstuvwxyz";
+    var t: string = s + s;
+    return a.len() + t.len();
+}
+function main(): i32 {
+    var acc: Acc = build();
+    var z: i32 = churn(3) + churn(4) + churn(5);
+    var s: string = acc.items[0].name;
+    if (s == "world" && z > 0) { return 0; }
+    return 1;
+}
+`},
 	{name: "lent-view-stored", atLeast: 5, src: `
 struct Tok { text: string, line: i32 }
 function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
