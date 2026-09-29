@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // strSourceMethodBindingCases pin the reclaim credit a `var t: string = <expr>.m()`
 // binding earns, and which methods must not earn it.
@@ -78,7 +71,8 @@ function main(): i32 {
 }`, 0},
 	// The control the two above are measured against: a builtin-method binding, flat
 	// before and after.
-	{"str-builtin-method-binding-reclaimed", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-builtin-method-binding-reclaimed", `import "std/string";
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 function round(pre: string): i32 { var b: string = w(pre); var t: string = b.to_ascii_upper(); return t.len(); }
 function churn(pre: string, n: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
@@ -132,10 +126,10 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// observable, so unlike the two above this case does not fail when the rule is
 	// relaxed. It pins the contract, not a witnessed fault.
 	{"str-view-return-method-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
-function (s: string) rest(): string { return slice_unchecked(s, 2, s.len()); }
+function (s: string) rest(): str { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {
     var b: string = w(pre);
-    var t: string = b.rest();
+    var t: str = b.rest();
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
@@ -148,12 +142,12 @@ function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 
 	// NEGATIVE: a user type declaring a strictly-fresh `trim` must not license the
 	// string BUILTIN of that name, which returns a view. Same correctness-only
 	// standing as the case above.
-	{"str-builtin-name-collision-binding-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
+	{"str-builtin-name-collision-binding-refused", "import \"std/string\";\n" + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-string-dominates-0123456789"; }
 struct Box { v: string }
 function (x: Box) trim(): string { return x.v + ""; }
 function round(pre: string): i32 {
     var b: string = w(pre);
-    var t: string = b.trim();
+    var t: str = b.trim();
     var p1: string = w("ZZZZZZZZ");
     var p2: string = w("YYYYYYYY");
     var p3: string = w("XXXXXXXX");
@@ -165,30 +159,16 @@ function round(pre: string): i32 {
 function main(): i32 { var pre: string = "abcdefgh"; var i: i32 = 0; while (i < 2000) { var r: i32 = round(pre); if (r != 113) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 }
 
+const strSourceMethodBindingExitHint = "98 = the bound box was stranded; 99 = over-release; 97 = value corrupted"
+
 // TestSelfHostStrSourceMethodBindingIRX86_64 drives the cases through the
 // self-hosted x86-64 compiler.
 func TestSelfHostStrSourceMethodBindingIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strSourceMethodBindingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the bound box was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
+				t.Errorf("%s = %d, want %d (%s)", tc.name, code, tc.want, strSourceMethodBindingExitHint)
 			}
 		})
 	}
@@ -197,23 +177,12 @@ func TestSelfHostStrSourceMethodBindingIRX86_64(t *testing.T) {
 // TestSelfHostStrSourceMethodBindingIRArm64 is the arm64 leg; the credit is shared
 // irlower and the release is a per-backend transcription.
 func TestSelfHostStrSourceMethodBindingIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strSourceMethodBindingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the bound box was stranded; 99 = over-release; 97 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
+				t.Errorf("%s = %d, want %d (%s)", tc.name, code, tc.want, strSourceMethodBindingExitHint)
 			}
 		})
 	}
@@ -222,38 +191,11 @@ func TestSelfHostStrSourceMethodBindingIRArm64(t *testing.T) {
 // TestSelfHostStrSourceMethodBindingWasmIR is the wasm leg, where the release maps
 // to $__fern_arr_dec on the rc-headered block.
 func TestSelfHostStrSourceMethodBindingWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping source-method binding reclaim wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strSourceMethodBindingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, strings.ReplaceAll(tc.name, "/", "_")+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the bound box was stranded; 99 = over-release; 97 = value corrupted)", tc.name, got, tc.want)
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
+				t.Errorf("%s = %d, want %d (%s)", tc.name, got, tc.want, strSourceMethodBindingExitHint)
 			}
 		})
 	}
