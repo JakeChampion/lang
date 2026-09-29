@@ -10248,7 +10248,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 // per-argument loop it runs for an ordinary function, and no other pass looked
 // at the arguments, so `Wrap("x")` for `enum W { Wrap(i32) }` was accepted.
 //
-// Only a variant of a DECLARED enum with a `__ev` payload marker is checked.
+// Only an enum variant with a `__ev` payload marker is checked.
 // A builtin `Ok` / `Some` / `Err` has no backing StructSig, and a variant
 // without `__ev` is either payload-less (`Nil`) or a struct-union member
 // (`type U = A | B`) — indistinguishable here, which is why
@@ -10261,7 +10261,9 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
   var vname: string = variant_pattern_name(qname);
   var out: util.Diag[] = [];
-  if (union_of_variant(vname, s.unions).len() == 0) {
+  // An injected enum (JsonValue, IoError) has no union declaration; its
+  // variants are known by their owner in the struct table.
+  if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs.structs, qname).enum_owner.len() == 0) {
     return out;
   }
   if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
