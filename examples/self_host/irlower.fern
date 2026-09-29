@@ -78294,8 +78294,8 @@ function expr_is_closure_array(e: ast.Expr, s: LowerState): boolean {
 // expr_is_closure_box reports whether a value is already a closure box: a
 // closure LOCAL (the `v0` alias shape), a `__mkclo$…` env-box marker the lift
 // pass produced, a call of a closure-RETURNING function (closure_fns, which the
-// hoisted `<fd>$iifeN` value-position desugar joins), or a nested value-position
-// if/match whose own arms are all boxed. Anything else — a bare fn name, a
+// hoisted `<fd>$iifeN` value-position desugar joins), a generic passthrough of
+// a box, or a nested value-position if/match whose own arms are all boxed. Anything else — a bare fn name, a
 // scalar-returning call, a literal — answers false.
 function expr_is_closure_box(e: ast.Expr, s: LowerState): boolean {
     match (e) {
@@ -78304,7 +78304,16 @@ function expr_is_closure_box(e: ast.Expr, s: LowerState): boolean {
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") { return true; }
-                    return util.index_of_str(s.frame.sigs.closure_fns, cid.name) >= 0;
+                    if (util.index_of_str(s.frame.sigs.closure_fns, cid.name) >= 0) { return true; }
+                    // A generic passthrough hands its argument back, so
+                    // `id(id(<box>))` is a box as `id(<box>)` is.
+                    var pa: i32 = 0;
+                    while (pa < c.args.len()) {
+                        if (util.index_of_str(s.frame.sigs.closure_fns, "PASSTHRU:" + cid.name + ":" + util.i32_to_string(pa)) >= 0
+                                && expr_is_closure_box(c.args[pa], s)) { return true; }
+                        pa = pa + 1;
+                    }
+                    return false;
                 },
                 ast.ExprLambda(_) => { return c.args.len() == 0 && iife_callee_boxed_arms(c.callee, s); },
                 _ => { return false; }
