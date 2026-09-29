@@ -1,9 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -55,24 +52,11 @@ func TestSelfHostRcRuntimeArm64(t *testing.T) {
 	}
 }
 
-// Phase 1d: the self-host x86-64 backend retains (inc) an rc-tracked
-// array buffer when a `var y = x` binding creates a second reference to
-// it. With free off (safe-leak) the inc has no observable effect on
-// values, so these tests check (1) aliasing programs still compute the
-// right result, (2) the over-release detector stays 0 (inc-only never
-// drives an rc <= 0), and (3) the emitter actually emits the retain at
-// the alias site. Mirrors docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
+// A `var y = x` binding of an rc-tracked array: aliasing programs compute the
+// right result, the over-release detector stays 0, and the retain is emitted
+// where the alias really is a second owner and elided where it is a move.
 func TestSelfHostRcAliasIncX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cli := newStrictCLI(t)
 
 	cases := []struct {
 		name string
@@ -93,31 +77,20 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 
-	// Emission: a `var ys = xs` alias with xs still LIVE afterwards must
-	// emit a retain on the array buffer. A fresh literal binding
-	// (`var xs = [...]`) must NOT.
+	// Emission: a `var ys = xs` alias that must outlive an update of xs
+	// retains the heap buffer, so the `.with` copies instead of writing
+	// through ys. An alias only ever read shares xs's one reference and
+	// needs no retain.
 	t.Run("emits-retain-at-alias", func(t *testing.T) {
-		asm := runCapture(t, gcc, runner, driverBin,
-			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0] + xs[1]; }"))
-		if rcIncSites(string(asm)) == 0 {
+		asm := cli.emit(t, "x86-64-linux", "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n"+
+			"function main(): i32 { var xs: i32[] = mk(1); var ys = xs; xs = xs.with(0, 5); return ys[0] + xs[0]; }")
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the live-source array alias; not found in emitted asm")
 		}
 	})
@@ -127,40 +100,26 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	// note_moved_elided), the pair cancellation native performs at this
 	// site — so the moved shape must emit no inc at all.
 	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
-		asm := runCapture(t, gcc, runner, driverBin,
-			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }"))
-		if rcIncSites(string(asm)) > 0 {
+		asm := cli.emit(t, "x86-64-linux", "function main(): i32 { var xs: i32[] = [1, 2]; var ys = xs; return ys[0]; }")
+		if rcIncSites(asm) > 0 {
 			t.Errorf("expected NO retain at the move-alias (the source's last mention transfers); found __fern_rc_inc in emitted asm")
 		}
 	})
 
 	// Emission: aliasing an array struct field also retains.
 	t.Run("emits-retain-at-field-alias", func(t *testing.T) {
-		asm := runCapture(t, gcc, runner, driverBin,
-			[]byte("struct H { items: i32[] } function main(): i32 { var h: H = H { items: [1, 2] }; var y = h.items; return y[0]; }"))
-		if rcIncSites(string(asm)) == 0 {
+		asm := cli.emit(t, "x86-64-linux", "struct H { items: i32[] } function main(): i32 { var h: H = H { items: [1, 2] }; var y = h.items; return y[0]; }")
+		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct-field array alias; not found in emitted asm")
 		}
 	})
 }
 
-// Phase 1d (cont.): reassigning an array slot `y = x` retains the new
-// reference and releases (dec) the OLD value the slot held. With free
-// off this is observably a no-op on values, so we check value-
-// correctness, a clean over-release detector (the old value had rc>=1),
-// and that the reassignment emits both a retain (new) and a release
-// (old). Mirrors docs/RC-PERCEUS-SELF-HOST-PORT.md Phase 1d.
+// Reassigning an array slot `y = x`: values stay correct, the over-release
+// detector stays 0, and the reassignment releases the old value and retains
+// the new one when it is a second owner.
 func TestSelfHostRcReassignX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cli := newStrictCLI(t)
 
 	cases := []struct {
 		name string
@@ -178,28 +137,17 @@ func TestSelfHostRcReassignX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 
-	// Emission: `ys = xs` retains the new ref AND releases the old value.
+	// Emission: `ys = xs` releases the old value, and retains the new ref
+	// when ys must outlive an update of xs.
 	t.Run("emits-retain-and-release", func(t *testing.T) {
-		asm := string(runCapture(t, gcc, runner, driverBin,
-			[]byte("function main(): i32 { var xs: i32[] = [1, 2]; var ys: i32[] = [3, 4]; ys = xs; return ys[0]; }")))
+		asm := cli.emit(t, "x86-64-linux", "@noinline\nfunction mk(n: i32): i32[] { return [n, n + 1]; }\n"+
+			"function main(): i32 { var xs: i32[] = mk(1); var ys: i32[] = mk(3); ys = xs; xs = xs.with(0, 5); return ys[0] + xs[0]; }")
 		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) for the reassigned alias")
 		}
@@ -396,22 +344,11 @@ func TestSelfHostRcSelfMutateX86_64(t *testing.T) {
 	}
 }
 
-// Phase 1d (construction store): a struct field initialised from an
-// rc-tracked array alias retains the buffer, so the struct's reference
-// is counted. This is the free-readiness prerequisite — without it, a
-// struct outliving the source local would dangle once free is on.
-// inc-only here (struct drop isn't wired), so detector-clean + safe.
+// A struct field initialised from an rc-tracked array: the struct's reference
+// is counted, so a struct outliving the source local does not dangle. The
+// field init retains when the source stays live and moves at its last use.
 func TestSelfHostRcConstructX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	cli := newStrictCLI(t)
 	cases := []struct {
 		name string
 		src  string
@@ -430,19 +367,7 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
@@ -457,19 +382,18 @@ func TestSelfHostRcConstructX86_64(t *testing.T) {
 	// used to cancel it, so this assertion would be pinning the redundant pair
 	// it was written before anyone noticed.
 	t.Run("emits-retain-at-field-init", func(t *testing.T) {
-		asm := string(runCapture(t, gcc, runner, driverBin,
-			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0] + xs[1]; }")))
+		asm := cli.emit(t, "x86-64-linux", "struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0] + xs[1]; }")
 		if rcIncSites(asm) == 0 {
 			t.Errorf("expected a retain (__fern_rc_inc) at the struct field init of an aliased local")
 		}
 	})
 
-	// The other half of that rule, pinned here because this is where the
-	// always-retain assumption lived: the same construction over a local at its
-	// LAST use is a move, and emits no retain at all.
+	// The other half of that rule: the same construction over a local at its
+	// LAST use is a move, and emits no retain at all. The field is read in a
+	// callee that borrows h, so no field read in main can retain either.
 	t.Run("no-retain-when-the-field-init-moves", func(t *testing.T) {
-		asm := string(runCapture(t, gcc, runner, driverBin,
-			[]byte("struct H { items: i32[] } function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return h.items[0]; }")))
+		asm := cli.emit(t, "x86-64-linux", "struct H { items: i32[] }\n@noinline\nfunction first(h: H): i32 { return h.items[0]; }\n"+
+			"function main(): i32 { var xs: i32[] = [1, 2]; var h: H = H { items: xs }; return first(h); }")
 		if rcIncSites(asm) > 0 {
 			t.Errorf("a moved local needs no retain at the field init — the box takes over its reference (#6726)")
 		}
