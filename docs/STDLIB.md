@@ -1052,8 +1052,11 @@ serializer.
   reach the file system (E080), and `http_materialize(resp)` reads one whole
   for a test. The serve loop produces a file body and a chunks body as the
   socket takes them, after the handler has answered: a file is opened and
-  streamed from a `Reader` under its size as the `Content-Length`, or
-  answered 404 when it cannot be opened; chunks go out under chunked transfer
+  streamed from a `Reader` under its size as the `Content-Length`, moved
+  from the file to the socket by `sendfile(2)` where the target has it
+  (Linux and Darwin; `tcp_sendfile(fd, file, max)` is the builtin, -ENOTSUP
+  on wasm, where the loop reads and sends each piece), or answered 404 when
+  it cannot be opened; chunks go out under chunked transfer
   coding to an HTTP/1.1 client, and close-delimited (the connection ending
   with the body) to an HTTP/1.0 one, so the length need not be known up
   front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no

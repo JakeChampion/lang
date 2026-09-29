@@ -20319,7 +20319,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesStringFromBytes = true
 			g.usesAlloc = true
 			g.usesMemcpy = true
-		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect", "tcp_listen_with", "tcp_socket_ctl", "tcp_recv", "tcp_send", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into":
+		case "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_close", "tcp_pollable", "tcp_connect", "tcp_listen_with", "tcp_socket_ctl", "tcp_recv", "tcp_send", "udp_send", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile":
 			target = "__fern_" + target
 		case "wasm_pollable_drop":
 			target = "__fern_wasm_pollable_drop"

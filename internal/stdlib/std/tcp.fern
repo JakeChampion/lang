@@ -319,6 +319,12 @@ function __eagain(): i32 {
     return 11;
 }
 
+function __enotsup(): i32 {
+    if (target_os() == "darwin") { return 45; }
+    if (target_os() == "wasi") { return 58; }
+    return 95;
+}
+
 // __recv_scratch() — the loop's one read buffer, filled per readable
 // connection and copied out; owned by the loop, never by a request.
 function __recv_scratch(): u8[] {
@@ -952,6 +958,9 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: str
 // honoured is Failed, for the caller to close.
 function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, __Sent) {
     if (!__in_flight(c, at)) { return (c, Whole); }
+    var moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
+    c = moved.0;
+    if (moved.2) { return (c, moved.1); }
     var produced: (__Conns, string, boolean) = __tail_piece(c, at);
     c = produced.0;
     if (!produced.2) { return (c, Failed); }
@@ -964,6 +973,34 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Ser
     if (!__in_flight(c, at)) { return (c, Whole); }
     drv.watch(c.fds[at], 2);
     return (c, Partial);
+}
+
+// __file_tail_send(drv, c, at, opts) — the next piece of a file tail
+// moved from the file to the socket with no copy through the process
+// (tcp_sendfile): `(conns, sent, moved)`, `moved` false where the target
+// has no sendfile or the tail is not a file's, so the caller reads and
+// sends the piece itself. A file shorter than its head announced is
+// Failed, as the read path answers it.
+function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, __Sent, boolean) {
+    match (c.tails[at]) {
+        FileTail(r, left) => {
+            var want: i32 = 65536;
+            if (left < (want as i64)) { want = left as i32; }
+            var n: i32 = tcp_sendfile(c.fds[at], r.fd, want);
+            if (n == 0 - __enotsup()) { return (c, Whole, false); }
+            if (n == 0 - __eagain()) {
+                drv.watch(c.fds[at], 2);
+                return (__drain_deadline(c, at, opts, true), Partial, true);
+            }
+            if (n <= 0) { return (__tail_drop(c, at), Failed, true); }
+            var rest: i64 = left - (n as i64);
+            if (rest <= (0 as i64)) { return (__tail_drop(c, at), Whole, true); }
+            drv.watch(c.fds[at], 2);
+            return (__Conns { ...c, tails: c.tails.with(at, FileTail(r, rest)) }, Partial, true);
+        },
+        _ => { return (c, Whole, false); }
+    }
+    return (c, Whole, false);
 }
 
 // __drain_deadline(c, at, opts, first) — the deadline of a response being

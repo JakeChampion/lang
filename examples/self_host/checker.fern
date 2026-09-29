@@ -3814,6 +3814,7 @@ function builtin_sigs(): string[] {
     "tcp_recv(i32, i32): u8[]",
     "tcp_send(i32, string): i32",
     "tcp_socket_ctl(i32, i32, i32): i32",
+    "tcp_sendfile(i32, i32, i32): i32",
     "temp_dir(string): Result[string, IoError]",
     "reactor_ctl(i32, i32, i32, i32): i32",
     "reactor_new(): i32",

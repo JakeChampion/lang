@@ -891,6 +891,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__free")
 					needs.add("__fern_alloc")
 					needs.add("__fern_tcp_socket_ctl")
+				case "__fern_tcp_sendfile":
+					needs.add("__fern_tcp_sendfile")
 				case "__fern_tcp_accept":
 					needs.add("__free")
 					// (listener) → i32 — heap pointer to a
@@ -2882,6 +2884,14 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildTcpSocketCtlBody,
+	},
+	"__fern_tcp_sendfile": {
+		// (conn, file, max: i32) → i32 — wasi:sockets has no sendfile,
+		// so every call is -ENOTSUP (58) and the caller sends the
+		// bytes itself.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildTcpSendfileBody,
 	},
 	"__fern_tcp_listen": {
 		// (port: i32) → i32 — heap pointer to a 16-byte

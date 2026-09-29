@@ -1388,6 +1388,7 @@ func New() *Interp {
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
 	i.Builtins["tcp_recv"] = &Builtin{Fn: builtinTcpRecv}
 	i.Builtins["tcp_send"] = &Builtin{Fn: builtinTcpSend}
+	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_connect_with"] = &Builtin{Fn: builtinTcpConnectWith}
 	i.Builtins["unix_listen"] = &Builtin{Fn: builtinUnixListen}
 	i.Builtins["unix_connect"] = &Builtin{Fn: builtinUnixConnect}
@@ -1491,6 +1492,58 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 		out.E[j] = Number(buf[j])
 	}
 	return out, nil
+}
+
+// builtinTcpSendfile answers tcp_sendfile(fd, file, max) as a read of the
+// open file followed by one socket write: the bytes the socket took, 0 at
+// the file's end, or -errno. The file is moved back over the bytes the
+// socket did not take, so the position advances by what was sent, as
+// sendfile(2) leaves it.
+func builtinTcpSendfile(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_sendfile: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number fd arg, got %T", args[0])
+	}
+	file, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number file arg, got %T", args[1])
+	}
+	max, ok := args[2].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_sendfile: expected number max arg, got %T", args[2])
+	}
+	conn, ok := i.tcpConns[int64(id)]
+	if !ok {
+		return Number(-9), nil
+	}
+	f, ok := i.openFiles[int64(file)]
+	if !ok {
+		return Number(-9), nil
+	}
+	if max <= 0 {
+		return Number(0), nil
+	}
+	buf := make([]byte, int(max))
+	n, err := f.Read(buf)
+	if n == 0 {
+		if err == nil || err == io.EOF {
+			return Number(0), nil
+		}
+		return Number(errnoOf(err)), nil
+	}
+	sent, werr := writeSocket(conn, buf[:n], i.tcpNonblocking[int64(id)])
+	if sent < n {
+		if _, serr := f.Seek(int64(sent-n), io.SeekCurrent); serr != nil {
+			return Number(errnoOf(serr)), nil
+		}
+	}
+	if werr != nil && sent == 0 {
+		return Number(errnoOf(werr)), nil
+	}
+	return Number(sent), nil
 }
 
 func builtinTcpSend(i *Interp, args []Value) (Value, error) {
