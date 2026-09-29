@@ -129,7 +129,7 @@ func TestSelfHostWarmStockDriver(t *testing.T) {
 			}
 			stage1 := cachedDriverBin(t, gcc, dir, "fern.fern")
 			stage2 := filepath.Join(t.TempDir(), "fern_stage2")
-			if err := e2eharness.CompileWithSelfHost(t, stage1, filepath.Join(dir, "fern.fern"), stage2, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
+			if err := e2eharness.CompileWithSelfHost(t, stage1, e2eharness.TargetX86_64Linux, filepath.Join(dir, "fern.fern"), stage2, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
 				t.Fatal(err)
 			}
 			recordDriverSize(t, driver, stage2)

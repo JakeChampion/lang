@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -135,17 +134,7 @@ function main(): i32 {
 	if (xs.len() == 4 && xs[0] == 10 && xs[3] == 40) { write("` + want + `"); } else { write("iota-bad"); }
 	return 0;
 }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

@@ -5,12 +5,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // fsBuiltinsProgram is the shared end-to-end exercise for the fs
@@ -101,25 +95,7 @@ func TestSelfHostFsBuiltinsArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
-	if err != nil {
-		t.Fatalf("modload: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverBin := buildBin(t, x86gcc, dir, "driver", asm)
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
 
 	fsAsm := runCapture(t, x86gcc, x86runner, driverBin, []byte(fsBuiltinsProgram), "-target", "arm64-linux")
 	if len(fsAsm) == 0 {
