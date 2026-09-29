@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -198,6 +199,30 @@ func TestSelfHostServeStatefulResultHandler(t *testing.T) {
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckStatefulResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+// A target without processes gets the single-process serve loop from the
+// synthesised main, as native's TestHandlerKindsMatchWhatTheCompilerAccepts
+// pins: the wasm32-wasi build of a handle-only program reaches
+// `tcp_serve_opts` and never the supervisor.
+func TestSelfHostWasiCliHandlerProgramBuilds(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "handler.fern")
+	if err := os.WriteFile(prog, []byte(e2eharness.HandleOnlyServerSource()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wat := filepath.Join(dir, "handler.wat")
+	if msg, err := exec.Command(cli, "-target", "wasm32-wasi", "-emit", "asm", "-o", wat, prog, stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("self-host CLI: %v\n%s", err, msg)
+	}
+	text, err := os.ReadFile(wat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "tcp__tcp_serve_opts") || strings.Contains(string(text), "__supervise") {
+		t.Fatal("the wasm32-wasi handler program does not serve through tcp_serve_opts alone")
+	}
 }
 
 func TestSelfHostServeShutdownHook(t *testing.T) {

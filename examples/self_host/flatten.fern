@@ -309,18 +309,29 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 }
 
 // with_handler_main gives a handler-shaped entry (a top-level `handle`, no
-// `main`) the `main` the native checker synthesises for one:
+// `main`) the `main` the native checker synthesises for one: the handler
+// served under the supervisor on `PORT`, with `init`'s options and state
+// where it answers them —
 //
-//     function main(): i32 { return tcp.tcp_serve(tcp.__port_from_env("PORT", 8080), handle); }
+//     function main(): i32 { return tcp.tcp_serve_supervised_opts(tcp.__port_from_env("PORT", 8080), tcp.serve_options(), handle); }
 //
-// or, when `init` returns the state a three-parameter `handle` threads,
-// `tcp.tcp_serve_with(port, init(), handle)`; a void `init` runs before the
-// loop; with a `shutdown` hook declared, the `_shutdown` entry of either,
-// handed `tcp.serve_options()` and the hook. `tcp` is whatever the entry
-// imports std/tcp as; without the import
-// the names stay bare, so the checker reports them undefined as native does.
-// A mispaired `init` and `handle` is left alone: E075 is the checker's, and
-// a main calling the wrong serve would only add a second error.
+// or, for `init(plat: Platform): (tcp.ServeOptions, S)` beside a handler
+// threading `S` and a `shutdown(reason, state)` hook,
+//
+//     var (__fern_opts, __fern_state) = init(tcp.__init_platform());
+//     return tcp.tcp_serve_supervised_with_shutdown(port, __fern_opts, __fern_state, handle, shutdown);
+//
+// An `init` answering only the state goes as the state argument, one
+// answering only the options as the options argument, and a void one runs
+// as a statement before the serve call. Where the target has no processes
+// (wasm32-wasi) the single-process entries of the same arity serve
+// instead, `tcp_serve_opts`, `tcp_serve_with_opts` and their `_shutdown`
+// twins; an empty target is the hosted shape, as native's Check is. `tcp`
+// is whatever the entry imports std/tcp as; without the import the names
+// stay bare, so the checker reports them undefined as native does. A
+// mispaired `init`, `handle` and `shutdown` is left alone: E075 is the
+// checker's, and a main calling the wrong serve would only add a second
+// error.
 pub function with_handler_main(entry0: parser.Module, target: string): parser.Module {
     var entry: parser.Module = with_result_handler(entry0);
     if (top_fn_index(entry, "main") >= 0) { return entry; }
@@ -331,33 +342,58 @@ pub function with_handler_main(entry0: parser.Module, target: string): parser.Mo
     var hi: i32 = top_fn_index(entry, "handle");
     if (hi < 0) { return entry; }
     var ii: i32 = top_fn_index(entry, "init");
-    var returns_state: boolean = false;
+    var init_kind: i32 = 0;
+    var init_args: ast.Expr[] = [];
+    var qual: string = std_qualifier(entry, "tcp");
     if (ii >= 0) {
-        var rt: string = entry.funcs[ii].ret_type;
-        returns_state = rt.len() > 0 && rt != "void";
+        init_kind = parser.init_return_kind(entry.funcs[ii].ret_type);
+        if (entry.funcs[ii].params.len() > 1) { return entry; }
+        if (entry.funcs[ii].params.len() == 1) {
+            if (entry.funcs[ii].params[0].type_name != "Platform") { return entry; }
+            var plat: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__init_platform"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+            init_args = [plat];
+        }
     }
+    var returns_state: boolean = init_kind == 1 || init_kind == 3;
     var takes_state: boolean = entry.funcs[hi].params.len() == 3;
     if (returns_state != takes_state) { return entry; }
     var si: i32 = top_fn_index(entry, "shutdown");
     if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) { return entry; }
-    var qual: string = std_qualifier(entry, "tcp");
     var port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
     var handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
-    var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
-    // A `shutdown` hook goes to the `_shutdown` entry, which takes the
-    // options too (`serve_options()`, the defaults) and calls the hook
-    // once the loop has stopped.
-    var opts_call: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "serve_options"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+    var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
     var hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
     var body: ast.Stmt[] = [];
-    var serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve"), args: [port, handle], line: 0, col: 0, type_args: [], ty: "" };
-    if (takes_state) {
-        serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_with"), args: [port, init_call, handle], line: 0, col: 0, type_args: [], ty: "" };
-        if (si >= 0) { serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_with_shutdown"), args: [port, opts_call, init_call, handle, hook], line: 0, col: 0, type_args: [], ty: "" }; }
-    } else {
-        if (ii >= 0) { body = body.append(ast.StmtExpr { value: init_call, line: 0 }); }
-        if (si >= 0) { serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_shutdown"), args: [port, opts_call, handle, hook], line: 0, col: 0, type_args: [], ty: "" }; }
+    // The options are `init`'s when it answers them, else the defaults;
+    // the state is `init`'s value, destructured from beside the options
+    // when it answers both.
+    var opts: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "serve_options"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+    var state: ast.Expr = init_call;
+    if (init_kind == 3) {
+        body = body.append(ast.StmtVar { name: "__fern_opts,__fern_state", type_name: "", init: init_call, line: 0, col: 0, is_view: false, fn_ret: "", fn_param_types: "" });
+        opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "" };
+        state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "" };
+    } else if (init_kind == 2) {
+        opts = init_call;
+    } else if (ii >= 0 && init_kind == 0) {
+        body = body.append(ast.StmtExpr { value: init_call, line: 0 });
     }
+    var supervised: boolean = target.len() == 0 || platforms.has_capability(target, "proc");
+    var entry_name: string = "tcp_serve_opts";
+    if (supervised) { entry_name = "tcp_serve_supervised_opts"; }
+    var args: ast.Expr[] = [port, opts, handle];
+    if (takes_state) {
+        entry_name = "tcp_serve_with_opts";
+        if (supervised) { entry_name = "tcp_serve_supervised_with"; }
+        args = [port, opts, state, handle];
+    }
+    if (si >= 0) {
+        entry_name = "tcp_serve_shutdown";
+        if (takes_state) { entry_name = "tcp_serve_with_shutdown"; }
+        if (supervised) { entry_name = "tcp_serve_supervised_" + slice_unchecked(entry_name, 10, entry_name.len()); }
+        args = args.append(hook);
+    }
+    var serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
     body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
     var main: parser.FuncDecl = parser.FuncDecl { no_inline: false,
         name: "main", receiver_name: "", receiver_type: "", type_params: [],

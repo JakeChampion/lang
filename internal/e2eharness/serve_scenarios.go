@@ -397,16 +397,18 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 
 // InitStateServerSource is ThreadedStateServerSource with no `main`: an
 // `init(): S` and a state-taking `handle` are the two-phase lifecycle the
-// compilers synthesise a main for, which serves on `PORT` and hands
-// init()'s value to the loop rather than building the state per request
-// or dropping it.
+// compilers synthesise a main for, which serves on `PORT` under the
+// supervisor and hands init()'s value to the loop rather than building
+// the state per request or dropping it. `init` takes the platform and
+// answers the serve options beside the state: one worker, so the count
+// every request sees is the one the request before it left.
 func InitStateServerSource() string {
 	return `import "std/http";
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
@@ -484,8 +486,8 @@ func StatefulResultHandlerServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): Map[string, i32] {
-    return map_new(8);
+function init(plat: Platform): (tcp.ServeOptions, Map[string, i32]) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, map_new(8));
 }
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
@@ -544,8 +546,8 @@ func ShutdownHookServerSource() string {
 import "std/tcp";
 import "core/int";
 
-function init(): i32 {
-    return 0;
+function init(plat: Platform): (tcp.ServeOptions, i32) {
+    return (tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, 0);
 }
 
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {

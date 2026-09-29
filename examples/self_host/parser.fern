@@ -9036,6 +9036,42 @@ pub function split_top_commas(s: string): string[] {
     return out;
 }
 
+// is_serve_options_type reports whether the type text is std/tcp's
+// `ServeOptions`: bare (a flat load), qualified as the entry imports the
+// module (`tcp.ServeOptions`), or mangled once the bundle has run
+// (`tcp__ServeOptions`).
+pub function is_serve_options_type(t: string): boolean {
+    var s: string = strip_type_spaces(t);
+    if (s == "ServeOptions") { return true; }
+    var n: i32 = s.len();
+    if (n > 13 && slice_unchecked(s, n - 13, n) + "" == ".ServeOptions") { return true; }
+    return n > 14 && slice_unchecked(s, n - 14, n) + "" == "__ServeOptions";
+}
+
+// init_return_kind classifies what a handler program's `init` answers, by
+// its return type text: 0 nothing, 1 a state for the handler to carry, 2
+// the serve options, 3 the serve options beside a state (`(ServeOptions, S)`).
+pub function init_return_kind(rt: string): i32 {
+    var s: string = strip_type_spaces(rt);
+    if (s.len() == 0 || s == "void") { return 0; }
+    if (is_serve_options_type(s)) { return 2; }
+    if (s.len() > 2 && s[0] == b'(' && s[s.len() - 1] == b')') {
+        var parts: string[] = split_top_commas(slice_unchecked(s, 1, s.len() - 1) + "");
+        if (parts.len() == 2 && is_serve_options_type(parts[0])) { return 3; }
+    }
+    return 1;
+}
+
+function strip_type_spaces(t: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] != b' ') { out = out + slice_unchecked(t, i, i + 1); }
+        i = i + 1;
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // Structured type references (SH-021, foundation slice — unblocks #4394 lever 1).
 //
