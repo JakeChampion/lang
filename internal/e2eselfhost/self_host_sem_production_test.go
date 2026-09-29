@@ -472,6 +472,15 @@ function total(xs: i32[]): i32 {
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }
 `},
+	// An unannotated binding takes its type from the checker, so a builtin
+	// whose result the checker left unknown refused the body that named it.
+	{name: "a-chr-result-types-its-binding", atLeast: 1, src: `
+function main(): i32 {
+    var a = chr(72);
+    var s = a + chr(105);
+    return s.len() * 100 + (s[0] as i32);
+}
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
