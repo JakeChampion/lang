@@ -85,7 +85,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 273
+const KeepAliveCycle = 274
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -93,15 +93,20 @@ const KeepAliveCycle = 273
 // order across several waits and closed by the cap; HTTP/1.0 and
 // `Connection: close` requests that end theirs; a pipeline of 33 requests
 // whose peer half-closes behind them, one more than the loop's burst so
-// the last is answered from the backlog after the end of stream has been
-// read, and must say close; a complete request followed by the start of
-// another, whose connection the read deadline closes; a pipeline of 33
-// requests whose handlers together outlast that deadline, all of which
-// must be answered; a pipelined request answered to a peer that has
+// the last is answered from the backlog on a later wait, all of which
+// must be answered before the connection closes; a complete request
+// followed by the start of another, whose connection the read deadline
+// closes; a pipeline of 33 requests whose handlers together outlast that
+// deadline, all of which must be answered, and whose peer half-closes
+// behind them, so the last, answered after the end of stream has been
+// read, must say close; a pipelined request answered to a peer that has
 // reset the connection, whose failed write must close it before the
-// request behind it is answered; and an HTTP/1.0 keep-alive request
-// followed by an HTTP/1.1 one on the same connection. Every response is
-// checked, and every close the server owes is read as EOF.
+// request behind it is answered; a request with a malformed one pipelined
+// behind it, answered with close and then closed with no response to the
+// second; a request of 101 header fields, refused before any handler sees
+// it; and an HTTP/1.0 keep-alive request followed by an HTTP/1.1 one on
+// the same connection. Every response is checked, and every close the server owes
+// is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -197,6 +202,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		// write and the half-close are separate calls, so the server may
 		// answer even the 33rd before the end of stream arrives: that one
 		// may say either, but the connection must end straight after it.
+		// The slow pipeline below pins the close, with the race settled.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -230,6 +236,10 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		// deadline. The 33 answers are a second of the server's CPU on the
 		// slowest backend, and a two-CPU runner shares that CPU with a
 		// second worker, so this connection waits longer than the others.
+		// The peer half-closes behind the pipeline: the 32 slow answers
+		// leave the end of stream long arrived by the time the 33rd is
+		// read from the backlog, so its response must say close, and the
+		// close must follow it.
 		conn = dial()
 		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
 			conn.Close()
@@ -241,10 +251,12 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			fmt.Fprintf(&pipeline, "GET /slow%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
 		write(conn, pipeline.String())
-		for i := 0; i < 33; i++ {
+		halfClose(conn)
+		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "keep-alive")
 		}
-		conn.Close()
+		read(conn, r, "slow pipeline, last", "close")
+		eof(conn, r, "after the slow pipeline")
 		// A request, a slow one and a third behind it in one write; the
 		// peer resets the connection once the first is answered, so the
 		// second response is written to a peer that is gone. That write
@@ -260,6 +272,30 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatal(err)
 		}
 		conn.Close()
+		// A request with a malformed one pipelined behind it (a bare LF ends
+		// its request line): a parser with no lenient mode refuses the
+		// second (RFC 9112 §2.2) rather than read on, so the first's
+		// response says close, since the close follows it, and no response
+		// follows for the second. The header is what pins that the loop saw
+		// the malformed tail when it answered, rather than leaving it to
+		// the read deadline.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /o HTTP/1.1\r\nHost: localhost\r\n\r\nGET /bare HTTP/1.1\nHost: localhost\r\n\r\n")
+		read(conn, r, "before a malformed request", "close")
+		eof(conn, r, "after a malformed request")
+		// 101 header fields, one past the cap: refused before any handler
+		// sees the request, so the connection closes with no response.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		pipeline.Reset()
+		pipeline.WriteString("GET /many HTTP/1.1\r\nHost: localhost\r\n")
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(&pipeline, "X-%d: %d\r\n", i, i)
+		}
+		pipeline.WriteString("\r\n")
+		write(conn, pipeline.String())
+		eof(conn, r, "a request with 101 header fields")
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()
