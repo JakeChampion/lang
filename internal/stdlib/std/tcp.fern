@@ -26,7 +26,9 @@
 //      has delivered: after a grace (5 s) it may take as long as its
 //      bytes buy at the minimum rate (240 bytes per second), so a large
 //      upload that keeps flowing outlasts the deadline and a trickle
-//      does not.
+//      does not. At `max_connections` open the listener is left
+//      unwatched, so further connections wait in the accept queue until
+//      one closes.
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
@@ -93,8 +95,10 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // is in (bytes per second, judged after the grace: the body may take as
 // long as its bytes buy at that rate, beyond the read deadline), how
 // long an idle persistent connection is kept waiting for its next
-// request, and how many requests one connection may carry before its
-// response says `Connection: close`.
+// request, how many requests one connection may carry before its
+// response says `Connection: close`, and how many connections the loop
+// holds open at once (past it, the listener is not read and connections
+// wait in its accept queue until one closes).
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
@@ -103,13 +107,14 @@ pub struct ServeOptions {
     body_rate_grace: Duration,
     keep_alive_idle: Duration,
     keep_alive_requests: i32,
+    max_connections: i32,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span
 // and 1000 requests per connection.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000 };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024 };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -690,6 +695,21 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: str
     return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, Partial);
 }
 
+// __serve_gate(drv, listener, c, opts, accepting) — whether the listener
+// is watched after this pass: unwatched once `max_connections` are open,
+// so the accept queue holds the rest, and watched again once one has
+// closed. A watch the reactor refuses leaves the listener unwatched
+// until the next pass tries again.
+function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, accepting: boolean): boolean {
+    var full: boolean = c.fds.len() >= opts.max_connections;
+    if (accepting && full) {
+        drv.unwatch(listener);
+        return false;
+    }
+    if (!accepting && !full) { return drv.watch(listener, 1) >= 0; }
+    return accepting;
+}
+
 // __serve_expire(drv, c, now) — every connection whose deadline is due
 // closed, without a response or with the rest of one unsent. A
 // connection whose backlog holds a request is not waiting on the peer:
@@ -733,6 +753,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var accepting: boolean = true;
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], body_since: [], body_base: [] };
     var scratch: u8[] = __recv_scratch();
@@ -783,10 +804,11 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             conns = __serve_finish(drv, conns, fd, ev.2);
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
+        accepting = __serve_gate(drv, listener, conns, opts, accepting);
     }
     // A bounded loop (the census fixtures) hands the listener back with
     // nothing watching it: on wasm a socket still subscribed cannot close.
-    drv.unwatch(listener);
+    if (accepting) { drv.unwatch(listener); }
     drv.close();
     return 0;
 }
@@ -800,6 +822,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
+    var accepting: boolean = true;
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], body_since: [], body_base: [] };
     var scratch: u8[] = __recv_scratch();
@@ -851,10 +874,11 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
             conns = __serve_finish(drv, conns, fd, ev.2);
         }
         conns = __serve_expire(drv, conns, monotonic_ns());
+        accepting = __serve_gate(drv, listener, conns, opts, accepting);
     }
     // A bounded loop (the census fixtures) hands the listener back with
     // nothing watching it: on wasm a socket still subscribed cannot close.
-    drv.unwatch(listener);
+    if (accepting) { drv.unwatch(listener); }
     drv.close();
     return 0;
 }
