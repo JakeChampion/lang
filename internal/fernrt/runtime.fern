@@ -192,6 +192,20 @@ function __so_error(): i64 {
     if (target_os() == "darwin") { return 4103; }
     return 4;
 }
+// SO_NWRITE: Darwin's count of the bytes in a socket's send buffer.
+function __so_nwrite(): i64 {
+    return 4132;
+}
+// SIOCOUTQ (TIOCOUTQ): Linux's count of the bytes queued to send, unsent
+// and unacknowledged alike.
+function __siocoutq(): i64 {
+    return 21521;
+}
+function __sys_ioctl(): i32 {
+    if (target_arch() == "x86-64") { return 16; }
+    if (target_os() == "darwin") { return 54; }
+    return 29;
+}
 // EINPROGRESS: what a non-blocking connect answers while it is under way.
 function __einprogress(): i64 {
     if (target_os() == "darwin") { return 36; }
@@ -357,11 +371,14 @@ function __fern_tcp_listen(port: i32): i32 {
 // shutdown(2) with arg 0 read, 1 write or 2 both; op 5 is the result of a
 // connect under way: 0 once a peer is attached, -EINPROGRESS while none is
 // and no error is pending, else the -errno the connect failed with (read
-// through SO_ERROR, which clears it). 0, -errno, or -EINVAL for an op that
-// names no control.
+// through SO_ERROR, which clears it); op 6 is how many bytes handed to
+// the socket the peer has not acknowledged yet (unsent and in flight:
+// SIOCOUTQ on Linux, SO_NWRITE on Darwin). 0 or the count, -errno, or
+// -EINVAL for an op that names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     var f: i64 = fd as i64;
     if (op == 5) { return __connect_result(f); }
+    if (op == 6) { return __send_queue(f); }
     if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
     if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
     if (op == 3) {
@@ -373,6 +390,24 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     }
     if (op == 4) { return __syscall3(__sys_shutdown(), f, arg as i64, 0) as i32; }
     return 0 - 22;
+}
+
+// The bytes queued to send on the socket: a four-byte count the kernel
+// fills, read through the ioctl on Linux and the socket option on Darwin.
+function __send_queue(f: i64): i32 {
+    var n: usize = __alloc(8);
+    __store_i32(n, 0);
+    __store_i32(n + 4, 4);
+    var r: i64 = 0;
+    if (target_os() == "darwin") {
+        r = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_nwrite(), n as i64, (n + 4) as i64);
+    } else {
+        r = __syscall3(__sys_ioctl(), f, __siocoutq(), n as i64);
+    }
+    var queued: i32 = __load_i32(n);
+    __free(n, 8);
+    if (r < 0) { return r as i32; }
+    return queued;
 }
 
 // A peer name in the block means the connect completed; otherwise the
@@ -614,12 +649,17 @@ function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
 }
 
 // EPOLL_CTL_ADD, or EPOLL_CTL_MOD once the fd is in the set (EEXIST), for
-// an interest; EPOLL_CTL_DEL for none.
+// an interest; EPOLL_CTL_DEL for none. Interest 4 is EPOLLEXCLUSIVE: of the
+// processes watching one descriptor, a readiness wakes one rather than all,
+// which is how forked workers share a listener without every worker racing
+// for each connection. The kernel refuses it on a MOD, so a watch that
+// changes to or from it goes through an unwatch first.
 function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
     var ev: usize = __alloc(16);
     var bits: i32 = 0;
     if ((interest & 1) != 0) { bits = bits | 1; }
     if ((interest & 2) != 0) { bits = bits | 4; }
+    if ((interest & 4) != 0) { bits = bits | 268435456; }
     __store_i32(ev, bits);
     __store_i32(ev + (__epoll_data_at() as usize), fd);
     __store_i32(ev + (__epoll_data_at() as usize) + 4, 0);

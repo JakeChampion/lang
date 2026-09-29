@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -27,7 +26,7 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -37,13 +36,13 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/pairs@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/pairs@0.1.0#make-pair")) {
 		t.Fatalf("self-host core missing the surfaced tuple @export:\n%s", watBytes)
 	}
@@ -130,17 +129,7 @@ function main(): i32 {
 	if (p.0 == 11 && p.1 == 42) { write("` + want + `"); } else { write("tup-bad"); }
 	return 0;
 }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

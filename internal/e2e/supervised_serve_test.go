@@ -23,44 +23,21 @@ package e2e
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
-
-// supervisedServeSrc is the handler-under-test: 200 on /ok, an
-// array out-of-bounds trap (exit 134) on /boom. The index is
-// computed from a.len() so neither the checker's static bounds
-// check nor constfold can reject/fold it — the trap must fire at
-// runtime, in the worker.
-const supervisedServeSrc = `
-import "std/http";
-import "std/tcp";
-import "core/int";
-function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    if (req.path == "/boom") {
-        var a: i32[] = [1, 2, 3];
-        var i: i32 = a.len() + 5;
-        var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
-    }
-    return http.http_response_ok("ok");
-}
-function main(): i32 {
-    return tcp.tcp_serve_supervised(%d, handle);
-}`
 
 // buildSupervisedServeBin compiles src (a full program with its
 // own main) for x86-64 and returns the binary path plus the
@@ -118,200 +95,54 @@ func freeLoopbackPort(t *testing.T) int {
 	return port
 }
 
-// startSupervisedServer launches bin (via runner) in its own
-// process group — the supervisor forks worker children, and
-// killing only the parent would orphan a worker still holding
-// the listener — with stderr teed to a file the caller can poll.
-// Cleanup kills the whole group.
-// extraEnv entries are `KEY=VALUE` additions to the child's environment —
-// what a server whose port comes from `PORT` needs, rather than from a
-// literal baked into its source.
+// startSupervisedServer launches bin (via runner) through
+// e2eharness.StartServerProcess, in its own process group with stderr
+// in a file the caller can poll. extraEnv entries are `KEY=VALUE`
+// additions to the child's environment, for a server whose port comes
+// from `PORT` rather than from a literal baked into its source.
 func startSupervisedServer(t *testing.T, bin string, runner []string, extraEnv ...string) (cmd *exec.Cmd, stderrPath string) {
 	t.Helper()
-	var c *exec.Cmd
-	if len(runner) == 0 {
-		c = exec.Command(bin)
-	} else {
-		c = exec.Command(runner[0], append(runner[1:], bin)...)
-	}
+	cmd = e2eharness.RunX86_64Bin(runner, bin)
 	if len(extraEnv) > 0 {
-		c.Env = append(os.Environ(), extraEnv...)
+		cmd.Env = append(os.Environ(), extraEnv...)
 	}
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stderrPath = filepath.Join(t.TempDir(), "stderr.log")
-	errFile, err := os.Create(stderrPath)
-	if err != nil {
-		t.Fatalf("create stderr file: %v", err)
-	}
-	c.Stderr = errFile
-	if err := c.Start(); err != nil {
-		errFile.Close()
-		t.Fatalf("start server: %v", err)
-	}
-	t.Cleanup(func() {
-		// Negative pid = the whole process group (parent + any
-		// live worker). The parent may already be gone (giveup
-		// path); ignore errors.
-		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-		_, _ = c.Process.Wait()
-		errFile.Close()
-	})
-	return c, stderrPath
+	return cmd, e2eharness.StartServerProcess(t, cmd)
 }
 
-// waitServerReady dials until the listener accepts (the probe
-// connection closes without sending a request — the accept loop
-// treats first-read EOF as a malformed request and moves on).
-func waitServerReady(t *testing.T, addr string, deadline time.Duration) {
-	t.Helper()
-	limit := time.Now().Add(deadline)
-	for time.Now().Before(limit) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			c.Close()
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("server never bound on %s within %v", addr, deadline)
+// Design-doc test bar items 1–4 on the native backend; the scenarios are
+// e2eharness's, shared with the self-host twins.
+
+// Two workers over one listener (#9854): a request on a second
+// connection is answered while the first worker is deep in /slow, and a
+// worker's death leaves the other serving.
+func TestSupervisedServeWorkersServeSideBySide(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.WorkersServerSource(port))
+	_, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckWorkersServeSideBySide(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
-// httpRoundTrip sends one GET on a fresh connection and returns
-// whatever bytes came back ("" = reset / no response).
-func httpRoundTrip(t *testing.T, addr, path string, timeout time.Duration) string {
-	t.Helper()
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		t.Fatalf("dial for %s: %v", path, err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	// The read runs to end of stream, which a persistent connection
-	// never gives, so the request asks for the close.
-	req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", path)
-	if _, err := conn.Write([]byte(req)); err != nil {
-		// Write can race the worker death on /boom — treat as
-		// "no response", same as a read-side reset.
-		return ""
-	}
-	resp, _ := io.ReadAll(conn) // reset surfaces as err; bytes-so-far still returned
-	return string(resp)
-}
-
-// waitStderrContains polls the server's stderr file until the
-// needle shows up (the supervisor's log write races the client's
-// observation of the reset).
-func waitStderrContains(t *testing.T, path, needle string, deadline time.Duration) string {
-	t.Helper()
-	limit := time.Now().Add(deadline)
-	var last string
-	for time.Now().Before(limit) {
-		b, _ := os.ReadFile(path)
-		last = string(b)
-		if strings.Contains(last, needle) {
-			return last
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("stderr never contained %q within %v\n--- stderr ---\n%s", needle, deadline, last)
-	return last
-}
-
-// Design-doc test bar items 1–3 (partial: N=1 crash/restart round;
-// the crash-loop giveup is the next test): /ok answers 200, /boom
-// traps the worker (reset + worker-death line, raw exit code 134),
-// and /ok answers 200 again — the service survived what one
-// request did.
+// /ok answers 200, /boom traps the worker (a reset and a worker-death
+// line with the raw exit code 134), and /ok answers 200 again: the
+// service survived what one request did.
 func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(supervisedServeSrc, port))
+	bin, runner := buildSupervisedServeBin(t, e2eharness.TrappingServerSource(port))
 	_, stderrPath := startSupervisedServer(t, bin, runner)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
-
-	if resp := httpRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
-		t.Fatalf("first /ok: want 200, got\n%s", resp)
-	}
-
-	// /boom: the worker traps mid-request — no response bytes (or
-	// at least no 200) come back on this connection.
-	if resp := httpRoundTrip(t, addr, "/boom", 5*time.Second); strings.Contains(resp, "HTTP/1.1 200") {
-		t.Fatalf("/boom unexpectedly answered 200:\n%s", resp)
-	}
-	// The supervisor logs the death with the RAW exit code — a
-	// bounds trap is 134 (the taxonomy in docs/CRASH-ONLY-SERVE.md).
-	waitStderrContains(t, stderrPath, "worker died with exit code 134", 10*time.Second)
-
-	// The refork backoff starts at 100ms; the parent-owned
-	// listener keeps this connection in its backlog meanwhile, so
-	// a generous timeout is all the client needs.
-	if resp := httpRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
-		t.Fatalf("post-crash /ok: want 200 (service should have survived), got\n%s", resp)
-	}
+	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
-// Design-doc test bar item 4: a crash-looping worker — every
-// request traps, so each refork dies within 100ms of spawn — hits
-// the bounded-backoff giveup (8 consecutive fast deaths) and the
-// supervisor EXITS with the child's code (134) instead of
-// spinning forever. A worker death needs a request to trigger the
-// trap, so the driver fires /boom in a reconnect loop: each
-// queued connection is accepted by the next worker as soon as it
-// forks, keeping every death well inside the 100ms fast-death
-// window. Deterministic but slow by design — the doubling backoff
-// sleeps sum to ~11.3s before giveup.
+// A crash-looping worker makes the supervisor give up with the child's
+// code instead of reforking forever. Slow by design: the doubling
+// backoff sleeps sum to about 11 s.
 func TestSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	if testing.Short() {
 		t.Skip("crash-loop giveup waits out ~11s of supervisor backoff")
 	}
 	port := freeLoopbackPort(t)
-	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(supervisedServeSrc, port))
+	bin, runner := buildSupervisedServeBin(t, e2eharness.TrappingServerSource(port))
 	cmd, stderrPath := startSupervisedServer(t, bin, runner)
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	// Keep /boom requests flowing until the supervisor gives up.
-	// Dial errors are expected once it exits (and transiently
-	// while a dead worker is being replaced) — just keep going.
-	deadline := time.Now().Add(90 * time.Second)
-	var exited bool
-	for !exited && time.Now().Before(deadline) {
-		select {
-		case <-done:
-			exited = true
-		default:
-			conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
-			if err != nil {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-			_, _ = conn.Write([]byte("GET /boom HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n"))
-			_, _ = io.ReadAll(conn) // wait for the reset so requests serialise
-			conn.Close()
-		}
-	}
-	if !exited {
-		select {
-		case <-done:
-		case <-time.After(15 * time.Second):
-			t.Fatalf("supervisor never gave up within the deadline\n--- stderr ---\n%s", readFileString(stderrPath))
-		}
-	}
-
-	if code := cmd.ProcessState.ExitCode(); code != 134 {
-		t.Errorf("supervisor exit = %d, want 134 (the crash-looping child's code)\n--- stderr ---\n%s", code, readFileString(stderrPath))
-	}
-	stderr := readFileString(stderrPath)
-	if !strings.Contains(stderr, "giving up after 8 consecutive fast worker deaths") {
-		t.Errorf("giveup line missing from stderr:\n%s", stderr)
-	}
-	if n := strings.Count(stderr, "worker died with exit code 134"); n < 8 {
-		t.Errorf("worker-death lines = %d, want >= 8:\n%s", n, stderr)
-	}
+	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
 // Design-doc "interp parity": the interpreter cannot bare-fork
@@ -327,7 +158,7 @@ func TestSupervisedServeInterpFallback(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(fmt.Sprintf(supervisedServeSrc, port)), 0o644); err != nil {
+	if err := os.WriteFile(srcPath, []byte(e2eharness.TrappingServerSource(port)), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
 	cmd := exec.Command(bin, "-interp", srcPath)
@@ -348,17 +179,12 @@ func TestSupervisedServeInterpFallback(t *testing.T) {
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 30*time.Second) // interp startup is slower than a native binary
+	e2eharness.WaitServerReady(t, addr, 30*time.Second) // interp startup is slower than a native binary
 
-	if resp := httpRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+	if resp := e2eharness.HTTPRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("interp fallback /ok: want 200, got\n%s", resp)
 	}
-	waitStderrContains(t, stderrPath, "supervision unavailable; serving single-process", 10*time.Second)
-}
-
-func readFileString(path string) string {
-	b, _ := os.ReadFile(path)
-	return string(b)
+	e2eharness.WaitStderrContains(t, stderrPath, "supervision unavailable; serving single-process", 10*time.Second)
 }
 
 // procForkProbeSrc pins the builtin-level contract on the native

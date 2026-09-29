@@ -46,10 +46,10 @@ func writeWasmSelfHostSources(t *testing.T, dir, driver string) string {
 // TestSelfHostWasmExternBridgeIRLayout checks the emitted core for each bridge
 // shape: it routes IR, and the wrapper writes the IR consumer's 8-byte slots.
 func TestSelfHostWasmExternBridgeIRLayout(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	driver := writeWasmSelfHostSources(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, driver, "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, driver, "wasm_runio_run")
 
 	cases := []struct {
 		name string
@@ -99,6 +99,23 @@ function main(): i32 { return sum3((1, 2, 3)); }`,
 			},
 		},
 		{
+			// A tuple result: the canonical tuple returns indirectly (a trailing
+			// return-area pointer, no result), element i at i*4; the wrapper
+			// materializes the IR consumer's tuple box (2*8 = 16 bytes, no id
+			// word) with element i at i*8.
+			name: "tuple-result-retptr",
+			src: `@import("local:test/src@0.1.0", "make-pair")
+function make_pair(a: i32, b: i32): (i32, i32);
+function main(): i32 { var p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
+			want: []string{
+				`(import "local:test/src@0.1.0" "make-pair" (func $make_pair__import (param i32) (param i32) (param i32)))`,
+				"(call $make_pair__import (local.get $ep0) (local.get $ep1) (local.get $rb))",
+				"(local.set $s (call $__fern_str_box (i32.const 16)))",
+				"(i32.const 0)) (i32.load (i32.add (local.get $rb) (i32.const 0))))",
+				"(i32.const 8)) (i32.load (i32.add (local.get $rb) (i32.const 4))))",
+			},
+		},
+		{
 			// A VOID extern: the IR path emits every Fern-callable with
 			// `(result i32)` and drops a discarded call, so the bridge shims the
 			// import to push the promised 0. Without it the core fails to
@@ -131,7 +148,7 @@ function on_request(x: i32): void { return; }`,
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := string(runCapture(t, gcc, runner, driverBin, []byte(tc.src)))
+			wat := string(runCapture(t, "", runner, driverBin, []byte(tc.src)))
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
@@ -158,10 +175,10 @@ func TestSelfHostWasmVariantF32ArmMatchIR(t *testing.T) {
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	driver := writeWasmSelfHostSources(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, driver, "wasm_run")
+	driverBin := buildSelfHostBin(t, "", dir, driver, "wasm_run")
 
 	// F(2.5) round-trips through the box: exit 0 only if the bound f32 compares
 	// equal to 2.5 AND the i32 arm still reads its own 4-byte payload.
@@ -175,7 +192,7 @@ function rank(n: i32): i32 {
 }
 function main(): i32 { return (rank(5) - 100) + (rank(50) - 200); }`
 
-	wat := runCapture(t, gcc, runner, driverBin, []byte(src))
+	wat := runCapture(t, "", runner, driverBin, []byte(src))
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
 	}
