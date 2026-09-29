@@ -10,9 +10,8 @@ import (
 // method NAME called `make` with the dyn value prepended as an argument it does
 // not take: `P { v: 0 }` was read as the `Box` the body projects, so the
 // program answered 0 where 7 is the only number the source can mean (#7398).
-// The CLI's checker rejects the call (E021) before any emitter sees it; the
-// emitter's own guard (the dispatch chain's fall-through aborts, 134) is
-// pinned through asm_ir_run, which runs no checker.
+// The CLI's checker rejects the call (E021) before any emitter sees it, and
+// asm_ir_run, which runs no checker, has the typed lowering refuse it by name.
 const dynAssocFnSrc = `struct Box { v: i32 }
 trait Mk { function make(own b: Box): i32; }
 struct P { v: i32 }
@@ -57,9 +56,14 @@ func TestSelfHostDynAssocFnDispatchX86_64(t *testing.T) {
 		dir := t.TempDir()
 		copySelfHostDriver(t, dir, "asm_ir_run.fern")
 		driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-		asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(dynAssocFnSrc), "-ir")
-		if code, _ := cli.runX86(t, string(asm)); code != 134 {
-			t.Errorf("an unchecked associated-function call through dyn exited %d, want the fall-through abort (134)", code)
+		cmd := runX86_64Bin(runner, driverBin)
+		cmd.Stdin = strings.NewReader(dynAssocFnSrc)
+		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 3 || !strings.Contains(stderr.String(), "dyn method has no implementation: make") {
+			t.Errorf("an unchecked associated-function call through dyn: driver exited %d, want 3 naming the method:\n%s", code, stderr.String())
 		}
 	})
 	for _, tc := range dynAssocFnCases {

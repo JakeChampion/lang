@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -35,41 +33,27 @@ function onparam(ys: i32[]): i32[] {
 function main(): i32 { var a: i32[] = build(4); var b: i32[] = onparam(a); return b.len(); }
 `
 
-// compileCaptureStderr runs the self-host driver over src with env applied and
-// returns its stderr. The report is written during LOWERING, so it lands on the
-// compiler's stderr rather than in the emitted asm on stdout.
-func compileCaptureStderr(t *testing.T, runner []string, driverBin, src string, env []string) string {
+// appendReportStderr compiles src through the CLI on the AST lowering, which is
+// the only lowering that writes the report, and returns the compiler's stderr.
+func appendReportStderr(t *testing.T, cli *strictCLI, src string, env ...string) string {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin)
-	} else {
-		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+	_, diags, err := cli.tryEmit(t, "x86-64-linux", src, append([]string{"FERN_SEM_IR="}, env...)...)
+	if err != nil {
+		t.Fatalf("compile: %v\n%s", err, diags)
 	}
-	cmd.Stdin = strings.NewReader(src)
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
-	cmd.Env = append([]string{"PATH=/usr/bin:/bin"}, env...)
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("self-host driver: %v (stderr: %q)", err, errBuf.String())
-	}
-	return errBuf.String()
+	return diags
 }
 
 func TestSelfHostAppendReport(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	cli := newStrictCLI(t)
 
 	// Off by default: a run without the variable prints nothing, the same
 	// contract util.arr_push_cliff_report keeps.
-	if quiet := compileCaptureStderr(t, runner, driverBin, appendReportSrc, nil); strings.Contains(quiet, "append-report:") {
+	if quiet := appendReportStderr(t, cli, appendReportSrc); strings.Contains(quiet, "append-report:") {
 		t.Fatalf("report printed without FERN_APPEND_REPORT set:\n%s", quiet)
 	}
 
-	got := compileCaptureStderr(t, runner, driverBin, appendReportSrc,
-		[]string{"FERN_APPEND_REPORT=1"})
+	got := appendReportStderr(t, cli, appendReportSrc, "FERN_APPEND_REPORT=1")
 
 	var lines []string
 	for _, ln := range strings.Split(got, "\n") {
@@ -127,17 +111,13 @@ function main(): i32 {
 `
 
 func TestSelfHostAppendReportExprPosition(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	cli := newStrictCLI(t)
 
-	if quiet := compileCaptureStderr(t, runner, driverBin, exprAppendSrc, nil); strings.Contains(quiet, "append-report:") {
+	if quiet := appendReportStderr(t, cli, exprAppendSrc); strings.Contains(quiet, "append-report:") {
 		t.Fatalf("report printed without FERN_APPEND_REPORT set:\n%s", quiet)
 	}
 
-	got := compileCaptureStderr(t, runner, driverBin, exprAppendSrc,
-		[]string{"FERN_APPEND_REPORT=1"})
+	got := appendReportStderr(t, cli, exprAppendSrc, "FERN_APPEND_REPORT=1")
 
 	var lines []string
 	for _, ln := range strings.Split(got, "\n") {
