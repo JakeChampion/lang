@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -229,6 +230,16 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
 		t.Helper()
 		if _, err := r.ReadByte(); err != io.EOF {
+			conn.Close()
+			t.Fatalf("%s: the server did not close the connection: %v", label, err)
+		}
+		conn.Close()
+	}
+	// A close with input still unread in the server's socket is a reset
+	// on Darwin, where Linux delivers EOF; either is the close.
+	closed := func(conn net.Conn, r *bufio.Reader, label string) {
+		t.Helper()
+		if _, err := r.ReadByte(); err != io.EOF && !errors.Is(err, syscall.ECONNRESET) {
 			conn.Close()
 			t.Fatalf("%s: the server did not close the connection: %v", label, err)
 		}
@@ -452,7 +463,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 				break
 			}
 		}
-		eof(conn, r, "a body trickled below the minimum rate")
+		closed(conn, r, "a body trickled below the minimum rate")
 		if waited := time.Since(started); waited > 4*time.Second {
 			t.Fatalf("the trickled body was closed after %v, not by the 300 ms read deadline", waited)
 		}
