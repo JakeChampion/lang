@@ -10,22 +10,13 @@ import (
 // flatness case is DIFFERENTIAL (string-map vs i32-map growth) so the shared
 // arr_push grow-leak cancels. Lighter churn under qemu.
 func TestSelfHostMapVsReclaimIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
-		}
-		bin := buildBinArm64(t, arm64gcc, dir, name, string(asm))
-		cmd := runArm64Bin(qemu, bin)
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != want {
+		asm := cli.emit(t, "arm64-linux", "import \"core/map\";\n"+prog)
+		if code, _ := runArm64(t, gcc, qemu, asm); code != want {
 			t.Errorf("%s exited %d, want %d (1 = string values leak beyond grow-leak; 88 = live value freed; 99 = over-release)", name, code, want)
 		}
 	}

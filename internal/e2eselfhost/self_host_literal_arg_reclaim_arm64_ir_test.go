@@ -6,27 +6,17 @@ import (
 
 // TestSelfHostLiteralArgReclaimIRArm64 is the arm64 port of
 // TestSelfHostLiteralArgReclaimIRX86_64 (#4355 slice 6): the literal
-// string-arg box reclaim at borrowable call positions, on the arm64 IR
-// backend (the reclaim is emitted at the IR layer, so both natives share
-// it; arm64 additionally exercises __fern_str_free's register discipline
-// mid-expression). Lighter churn under qemu.
+// string-arg box reclaim at borrowable call positions, on the arm64
+// backend, which additionally exercises __fern_str_free's register
+// discipline mid-expression. Lighter churn under qemu.
 func TestSelfHostLiteralArgReclaimIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 
 	run := func(t *testing.T, prog, name string, want int) {
 		t.Helper()
-		asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(prog), "-target", "arm64-linux")
-		if len(asm) == 0 {
-			t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", name)
-		}
-		bin := buildBinArm64(t, arm64gcc, dir, name, string(asm))
-		cmd := runArm64Bin(qemu, bin)
-		_ = cmd.Run()
-		if code := cmd.ProcessState.ExitCode(); code != want {
+		asm := cli.emit(t, "arm64-linux", "import \"std/i32\";\n"+prog)
+		if code, _ := runArm64(t, gcc, qemu, asm); code != want {
 			t.Errorf("%s exited %d, want %d (98 = literal-arg box leaked; 99 = over-release; 88 = live value freed; 97 = value corrupted)", name, code, want)
 		}
 	}
