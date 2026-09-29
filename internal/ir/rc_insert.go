@@ -956,6 +956,40 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				returnCounted && b.retainsOnAlias(bt) && !b.isOwnedRcLocal(name) {
 				excused[id] = true
 			}
+		case *ast.Binary:
+			// A binary operator reads its operands: a string concatenation
+			// answers a fresh string and a comparison a boolean, and neither
+			// keeps the binding.
+			for _, e := range []ast.Expr{x.Left, x.Right} {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name {
+					excused[id] = true
+				}
+			}
+		case *ast.TupleLit:
+			// A literal's slot dups the binding under needsRcIncOnAlias
+			// (the inc-ing sinks of rc_analysis), so the container holds a
+			// reference of its own; a move site hands the binding's
+			// reference over instead, and stays unexcused.
+			for _, e := range x.Elems {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[e] {
+					excused[id] = true
+				}
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				if id, ok := f.Value.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[f.Value] {
+					excused[id] = true
+				}
+			}
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[e] {
+					excused[id] = true
+				}
+			}
 		case *ast.MakeClosure:
 			// A capture MakeEnv retains is the closure's own reference.
 			for _, c := range x.Captures {

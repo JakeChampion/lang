@@ -379,7 +379,7 @@ int_min_arithmetic                                   0
 int_saturating_ops                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
-io_error_other_closed_stdout                         4
+io_error_other_closed_stdout                         3
 io_error_other_is_a_directory                        2
 io_error_other_not_a_directory                       1
 iter_build_consume                                   0
@@ -530,7 +530,7 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
-result_err_path                                      1
+result_err_path                                      0
 result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0
