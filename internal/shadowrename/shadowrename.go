@@ -28,17 +28,23 @@ import (
 
 // Rename walks every function in `prog` and renames shadowed
 // local variables (Var declarations, Destructure names, match /
-// if-let payload bindings, for-init Var). Param names stay
-// fixed; user code that names two params the same in different
-// scopes never happens because params share one scope.
+// if-let payload bindings, for-init Var). A param is renamed only
+// when it shares a top-level function's name: params share one
+// scope, so nothing else shadows one.
+//
+// A local or param that shares a top-level function's name is
+// renamed even as the first declaration, so that after the pass
+// an Ident spelled like a function IS a reference to the function.
+// The IR reads function-value references by name
+// (ir.addressTakenFuncs), and a bare local of that name in one
+// scope beside a function reference in a sibling scope would
+// otherwise be indistinguishable from either.
 func Rename(prog *ast.Program, info *checker.Info) {
 	for _, fn := range prog.Funcs {
 		r := newRenamer(info)
 		r.enterBody(fn)
 		r.pushFrame()
-		for _, p := range fn.Params {
-			r.bindFresh(p.Name)
-		}
+		r.bindParams(fn.Params)
 		r.walkBlock(fn.Body)
 		r.popFrame()
 	}
@@ -158,14 +164,41 @@ func (r *renamer) bindFresh(name string) string {
 // resolved name to store on the AST node.
 func (r *renamer) bindShadow(name string) string {
 	_, shadowed := r.lookup(name)
-	if shadowed || r.declared[name] {
-		r.counter++
-		out := name + "$" + strconv.Itoa(r.counter)
-		r.stack[len(r.stack)-1][name] = out
-		r.declared[out] = true
-		return out
+	if shadowed || r.declared[name] || r.isFunc(name) {
+		return r.bindRenamed(name)
 	}
 	return r.bindFresh(name)
+}
+
+// bindRenamed binds `name` under a fresh `name$N` form in the current scope.
+func (r *renamer) bindRenamed(name string) string {
+	r.counter++
+	out := name + "$" + strconv.Itoa(r.counter)
+	r.stack[len(r.stack)-1][name] = out
+	r.declared[out] = true
+	return out
+}
+
+// bindParams binds a body's parameters in the current scope, renaming the
+// ones that share a top-level function's name.
+func (r *renamer) bindParams(params []ast.Param) {
+	for i := range params {
+		if r.isFunc(params[i].Name) {
+			params[i].Name = r.bindRenamed(params[i].Name)
+			continue
+		}
+		r.bindFresh(params[i].Name)
+	}
+}
+
+// isFunc reports whether name is a top-level function (or builtin) the
+// checker recorded a signature for.
+func (r *renamer) isFunc(name string) bool {
+	if r.info == nil {
+		return false
+	}
+	_, ok := r.info.FuncSigs[name]
+	return ok
 }
 
 func (r *renamer) walkBlock(b *ast.Block) {
@@ -270,9 +303,7 @@ func (r *renamer) walkStmt(s ast.Stmt) {
 		}
 		outer := r.enterBody(n)
 		r.pushFrame()
-		for _, p := range n.Params {
-			r.bindFresh(p.Name)
-		}
+		r.bindParams(n.Params)
 		r.walkBlock(n.Body)
 		r.popFrame()
 		r.locals = outer
@@ -492,9 +523,7 @@ func (r *renamer) walkExpr(e ast.Expr) {
 		}
 		outer := r.enterBody(n.Synthetic)
 		r.pushFrame()
-		for _, p := range n.Params {
-			r.bindFresh(p.Name)
-		}
+		r.bindParams(n.Params)
 		r.walkBlock(n.Body)
 		r.popFrame()
 		r.locals = outer
