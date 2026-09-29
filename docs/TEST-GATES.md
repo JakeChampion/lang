@@ -219,7 +219,7 @@ a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
-`TestSelfHostHttpHandlerServesWithOptionsX86_64` serve through
+`TestSelfHostServeOptions` serve through
 `tcp_serve_opts` with a backlog of 4 and `SO_REUSEPORT`, and prove the
 option reached the kernel by binding a second `SO_REUSEPORT` socket to the
 served port while the loop answers. A wasi:cli/run
