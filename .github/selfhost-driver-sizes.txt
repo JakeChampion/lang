@@ -361,8 +361,9 @@
 # its output is 12-27% smaller per driver (fern.fern 14118057 -> 12342352).
 # fern.fern/stage2 joins as the tracked artifact — the compiler's own output
 # for itself, the one row a codegen change in the current compiler moves.
-# Equal to fern.fern today because no codegen change has landed since the
-# pin's source commit; the two part when one does (docs/BOOTSTRAP.md).
+# Equal to fern.fern today: the generator changes that have landed since the
+# pin's source commit (ssarc.fern #10670, ssasem.fern #10674) leave this input's
+# output unchanged. One that does not will part the two (docs/BOOTSTRAP.md).
 # Measured with FERN_WARM_DRIVER over every row, FERN_DRIVER_SIZE_REPORT on
 # the branch.
 fern.fern/stage2 12342352
