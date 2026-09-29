@@ -8,11 +8,12 @@
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 //
 // Scope: HTTP/1.1 and HTTP/1.0, request bodies delimited by
-// Content-Length or by chunked transfer coding (trailers read and
-// discarded); a request line of at most 8 KiB, a header block of at most
+// Content-Length or by chunked transfer coding (trailers into
+// `request.trailers`); a request line of at most 8 KiB, a header block of at most
 // 32 KiB and 100 fields, a body of at most 1 MiB with at most 32 KiB of
 // chunk framing, and no lenient mode: a malformed request is refused
-// (RFC 9112 §2.2, §5, §6.1, §6.3, §7.1), never repaired.
+// (RFC 9112 §2.2, §3.2, §5, §6.1, §6.3, §7.1), never repaired, with the
+// status the serve loop answers it with.
 // Persistent connections are the serve loop's: `http_parse_request_framed`
 // says how many bytes a request occupied and whether the connection
 // outlives it, and `http_serialize_response_conn` writes the `Connection`
@@ -39,32 +40,17 @@ import "std/stream";
 // unknown codes — callers should fall back to a generic
 // phrase rather than emitting nothing.
 pub function http_status_text(code: i32): string {
-    if (code == 200) { return "OK"; }
-    if (code == 201) { return "Created"; }
-    if (code == 204) { return "No Content"; }
-    if (code == 301) { return "Moved Permanently"; }
-    if (code == 302) { return "Found"; }
-    if (code == 304) { return "Not Modified"; }
-    if (code == 307) { return "Temporary Redirect"; }
-    if (code == 308) { return "Permanent Redirect"; }
-    if (code == 400) { return "Bad Request"; }
-    if (code == 401) { return "Unauthorized"; }
-    if (code == 403) { return "Forbidden"; }
-    if (code == 404) { return "Not Found"; }
-    if (code == 405) { return "Method Not Allowed"; }
-    if (code == 408) { return "Request Timeout"; }
-    if (code == 409) { return "Conflict"; }
-    if (code == 410) { return "Gone"; }
-    if (code == 413) { return "Payload Too Large"; }
-    if (code == 415) { return "Unsupported Media Type"; }
-    if (code == 418) { return "I'm a teapot"; }
-    if (code == 422) { return "Unprocessable Entity"; }
-    if (code == 429) { return "Too Many Requests"; }
-    if (code == 500) { return "Internal Server Error"; }
-    if (code == 501) { return "Not Implemented"; }
-    if (code == 502) { return "Bad Gateway"; }
-    if (code == 503) { return "Service Unavailable"; }
-    if (code == 504) { return "Gateway Timeout"; }
+    var codes: i32[] = [100, 101, 200, 201, 204, 301, 302, 304, 307, 308,
+        400, 401, 403, 404, 405, 408, 409, 410, 413, 414, 415, 417, 418, 422, 429, 431,
+        500, 501, 502, 503, 504, 505];
+    var phrases: string[] = ["Continue", "Switching Protocols", "OK", "Created", "No Content", "Moved Permanently", "Found", "Not Modified", "Temporary Redirect", "Permanent Redirect",
+        "Bad Request", "Unauthorized", "Forbidden", "Not Found", "Method Not Allowed", "Request Timeout", "Conflict", "Gone", "Payload Too Large", "URI Too Long", "Unsupported Media Type", "Expectation Failed", "I'm a teapot", "Unprocessable Entity", "Too Many Requests", "Request Header Fields Too Large",
+        "Internal Server Error", "Not Implemented", "Bad Gateway", "Service Unavailable", "Gateway Timeout", "HTTP Version Not Supported"];
+    var i: i32 = 0;
+    while (i < codes.len()) {
+        if (codes[i] == code) { return phrases[i]; }
+        i = i + 1;
+    }
     return "";
 }
 
@@ -248,8 +234,8 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 pub function http_header_value(block: string, key: string): Option[string] {
     var bs: u8[] = block.bytes();
     match (__parse_header_bytes(bs, 0, bs.len())) {
-        Some(h) => { return h.get(key); },
-        None => { return None; }
+        Ok(h) => { return h.get(key); },
+        Err(_) => { return None; }
     }
     return None;
 }
@@ -387,16 +373,16 @@ function __field_value(buf: u8[], from: i32, end: i32): Option[string] {
 }
 
 // `__parse_header_bytes(buf, from, end)` — the CRLF-separated header
-// lines in buf[from, end) as a HeaderMap, or `None` when a line is
-// malformed (RFC 9112 §5, with no lenient mode): no colon, a name that
-// is not a token (so empty, holding whitespace before the colon — a
-// `Content-Length : 5` dropped instead would strand its body for the
-// next pipelined parse — or starting with the SP or HTAB of obs-fold,
-// §5.2), a value holding a control byte other than HTAB (RFC 9110
-// §5.5), or more fields than the cap. Names are case-folded by
-// HeaderMap.append; a value loses the SP and HTAB around it
-// (`__field_value`).
-function __parse_header_bytes(buf: u8[], from: i32, end: i32): Option[HeaderMap] {
+// lines in buf[from, end) as a HeaderMap, or the status that refuses
+// them (RFC 9112 §5, with no lenient mode): 400 for a line with no colon
+// or a name that is not a token (so empty, holding whitespace before the
+// colon — a `Content-Length : 5` dropped instead would strand its body
+// for the next pipelined parse — or starting with the SP or HTAB of
+// obs-fold, §5.2) or a value holding a control byte other than HTAB
+// (RFC 9110 §5.5), 431 for more fields than the cap. Names are
+// case-folded by HeaderMap.append; a value loses the SP and HTAB around
+// it (`__field_value`).
+function __parse_header_bytes(buf: u8[], from: i32, end: i32): Result[HeaderMap, i32] {
     var h: HeaderMap = headers.header_map_new();
     var count: i32 = 0;
     var at: i32 = from;
@@ -404,16 +390,16 @@ function __parse_header_bytes(buf: u8[], from: i32, end: i32): Option[HeaderMap]
         var e: i32 = __find_crlf(buf, at, end);
         if (e < 0) { e = end; }
         var col: i32 = __find_byte(buf, at, e, 58 as u8);
-        if (col < 0 || !__is_token(buf, at, col)) { return None; }
+        if (col < 0 || !__is_token(buf, at, col)) { return Err(400); }
         count = count + 1;
-        if (count > __header_count_cap()) { return None; }
+        if (count > __header_count_cap()) { return Err(431); }
         match (__field_value(buf, col + 1, e)) {
             Some(v) => { h = h.append(__bytes_string(buf, at, col), v); },
-            None => { return None; }
+            None => { return Err(400); }
         }
         at = e + 2;
     }
-    return Some(h);
+    return Ok(h);
 }
 
 // `__crlf_terminated(buf, from, end)` — whether every LF in buf[from, end)
@@ -513,23 +499,42 @@ function __http_content_length(h: HeaderMap): Option[i32] {
 enum __BodyFraming { Length(i32), Chunked }
 
 // `__http_body_framing(h)` — the body's framing from the parsed headers,
-// or `None` to refuse the request (RFC 9112 §6.1, §6.3): `Transfer-
-// Encoding` beside `Content-Length` is the request-smuggling shape, a
-// coding other than a single `chunked` is one this parser cannot decode,
-// and a lenient reading of either would be a framing disagreement with
-// the next parser on the path.
-function __http_body_framing(h: HeaderMap): Option[__BodyFraming] {
+// or the status that refuses the request (RFC 9112 §6.1, §6.3): 400 for
+// `Transfer-Encoding` beside `Content-Length` (the request-smuggling
+// shape), for `chunked` applied twice, or for a `Content-Length` the
+// parser cannot read; 501 for a coding other than `chunked`, which this
+// parser cannot decode. A lenient reading of any of them would be a
+// framing disagreement with the next parser on the path.
+function __http_body_framing(h: HeaderMap): Result[__BodyFraming, i32] {
     var te: string[] = h.get_all("transfer-encoding");
     if (te.len() == 0) {
         match (__http_content_length(h)) {
-            Some(n) => { return Some(Length(n)); },
-            None => { return None; }
+            Some(n) => { return Ok(Length(n)); },
+            None => { return Err(400); }
         }
-        return None;
+        return Err(400);
     }
-    if (h.get_all("content-length").len() > 0 || te.len() > 1) { return None; }
-    if (!__token_is(te[0], "chunked")) { return None; }
-    return Some(Chunked);
+    if (h.get_all("content-length").len() > 0 || te.len() > 1) { return Err(400); }
+    if (!__token_is(te[0], "chunked")) { return Err(501); }
+    return Ok(Chunked);
+}
+
+// `__host_ok(h, version)` — the `Host` rule (RFC 9112 §3.2): an
+// HTTP/1.1 request carries exactly one, any request at most one, and
+// its value is a host with an optional port, so it holds nothing but
+// visible ASCII (an empty value is the request-target's authority, and
+// allowed).
+function __host_ok(h: HeaderMap, version: string): boolean {
+    var hosts: string[] = h.get_all("host");
+    if (hosts.len() > 1) { return false; }
+    if (hosts.len() == 0) { return version != "HTTP/1.1"; }
+    var i: i32 = 0;
+    while (i < hosts[0].len()) {
+        var b: i32 = hosts[0][i] as i32;
+        if (b < 33 || b > 126) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 function __hex_digit(b: u8): i32 {
@@ -551,31 +556,38 @@ function __hex_digit(b: u8): i32 {
 // CRLF must be before the CRLF is complete, a line past the budget
 // before its end.
 //
-// `__chunked_walk(buf, from)` answers like the parse: `(0, _, _)`
-// malformed, `(1, _, _)` incomplete, `(2, end, spans)` complete, with
-// `end` the offset past the trailer section's terminator and `spans` the
-// (start, len) pairs of the chunk data.
-function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[]) {
+// The walk and its helpers answer like the parse, with a status where
+// the parse says `Malformed`: 1 incomplete, 2 complete, and 400 or more
+// refused with that status (400 malformed framing, 413 a body past its
+// cap, 431 framing or trailers past their budget).
+//
+// `__chunked_walk(buf, from)` — `(2, end, spans, trailers)` once the body
+// is complete, with `end` the offset past the trailer section's
+// terminator, `spans` the (start, len) pairs of the chunk data and
+// `trailers` the trailer section's fields.
+function __chunked_walk(buf: u8[], from: i32): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
     var at: i32 = from;
     var budget: i32 = http_header_bytes_cap();
     var room: i32 = http_body_cap();
     var spans: i32[] = [];
+    var none: HeaderMap = headers.header_map_new();
     while (true) {
         var line: (i32, i32, i32) = __chunk_size_line(buf, at, budget, room);
-        if (line.0 != 2) { return (line.0, 0, spans); }
+        if (line.0 != 2) { return (line.0, 0, spans, none); }
         var data: i32 = line.1 + 2;
         var size: i32 = line.2;
         budget = budget - (data - at) - 2;
-        if (budget < 0) { return (0, 0, spans); }
+        if (budget < 0) { return (431, 0, spans, none); }
         if (size == 0) { return __chunked_trailers(buf, data, budget + 2, spans); }
         var crlf: i32 = __crlf_at(buf, data + size);
-        if (crlf != 2) { return (crlf, 0, spans); }
+        if (crlf == 0) { return (400, 0, spans, none); }
+        if (crlf == 1) { return (1, 0, spans, none); }
         spans = spans.append(data).append(size);
         room = room - size;
         at = data + size + 2;
     }
-    return (0, 0, spans);
+    return (400, 0, spans, none);
 }
 
 // `__crlf_at(buf, at)` — whether buf[at, at + 2) is CRLF: 2 when it is,
@@ -590,11 +602,11 @@ function __crlf_at(buf: u8[], at: i32): i32 {
 
 // `__chunk_size_line(buf, at, budget, room)` — the chunk-size line at
 // `at`: `(2, crlf, size)` once it has arrived whole, `(1, _, _)` while it
-// has not, `(0, _, _)` when it is malformed: no hex digit, a chunk larger
-// than `room` (what the body cap has left, so the chunk could never fit),
-// anything but a chunk extension after the size (§7.1.1; an extension is
-// skipped unread), a bare CR or LF, or a line longer than the framing
-// budget.
+// has not; refused with 400 for no hex digit, anything but a chunk
+// extension after the size (§7.1.1; an extension is skipped unread) or a
+// bare CR or LF, 413 for a chunk larger than `room` (what the body cap
+// has left, so the chunk could never fit), 431 for a line longer than
+// the framing budget.
 function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i32, i32) {
     var n: i32 = buf.len();
     var limit: i32 = at + budget;
@@ -602,51 +614,112 @@ function __chunk_size_line(buf: u8[], at: i32, budget: i32, room: i32): (i32, i3
     var crlf: i32 = __find_crlf(buf, at, limit);
     var scanned: i32 = limit;
     if (crlf >= 0) { scanned = crlf; }
-    if (!__crlf_terminated(buf, at, scanned)) { return (0, 0, 0); }
+    if (!__crlf_terminated(buf, at, scanned)) { return (400, 0, 0); }
     if (crlf < 0) {
-        if (n >= at + budget) { return (0, 0, 0); }
+        if (n >= at + budget) { return (431, 0, 0); }
         return (1, 0, 0);
     }
-    var size: (i32, i32) = __chunk_size(buf, at, crlf, room);
-    if (size.0 < 0 || !__chunk_ext_only(buf, size.1, crlf)) { return (0, 0, 0); }
-    return (2, crlf, size.0);
+    var size: (i32, i32, i32) = __chunk_size(buf, at, crlf, room);
+    if (size.0 != 0) { return (size.0, 0, 0); }
+    if (!__chunk_exts_ok(buf, size.2, crlf)) { return (400, 0, 0); }
+    return (2, crlf, size.1);
 }
 
-// `__chunk_size(buf, at, end, room)` — the hex chunk size at `at` and
-// the offset past its digits, or `(-1, _)` with no digit or a size past
-// `room`.
-function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32) {
+// `__chunk_size(buf, at, end, room)` — the hex chunk size at `at`:
+// `(0, size, next)` with `next` the offset past its digits, `(400, _, _)`
+// with no digit, `(413, _, _)` for a size past `room`.
+function __chunk_size(buf: u8[], at: i32, end: i32, room: i32): (i32, i32, i32) {
     var size: i32 = 0;
     var i: i32 = at;
     while (i < end && __hex_digit(buf[i]) >= 0) {
         var d: i32 = __hex_digit(buf[i]);
-        if (size * 16 + d > room) { return (-1, i); }
+        if (size * 16 + d > room) { return (413, 0, i); }
         size = size * 16 + d;
         i = i + 1;
     }
-    if (i == at) { return (-1, i); }
-    return (size, i);
+    if (i == at) { return (400, 0, i); }
+    return (0, size, i);
 }
 
-// `__chunk_ext_only(buf, from, end)` — whether buf[from, end) is empty
-// or, past optional whitespace, a chunk extension (§7.1.1).
-function __chunk_ext_only(buf: u8[], from: i32, end: i32): boolean {
+// `__chunk_exts_ok(buf, from, end)` — whether buf[from, end), what
+// follows a chunk's size, is chunk extensions (RFC 9112 §7.1.1): each a
+// `;`, a name token, and at most one `=` with a token or a quoted string
+// for its value, with whitespace allowed only before a `;` and around an
+// `=`, so none may trail the size or the last extension. Nothing reads an
+// extension, so a well-formed one is skipped; an ill-formed one is refused
+// rather than guessed at.
+function __chunk_exts_ok(buf: u8[], from: i32, end: i32): boolean {
     var i: i32 = from;
-    while (i < end && (buf[i] == (32 as u8) || buf[i] == (9 as u8))) { i = i + 1; }
-    return i == end || buf[i] == (59 as u8);
+    while (i < end) {
+        var semi: i32 = __bws_end(buf, i, end);
+        if (semi >= end || buf[semi] != (59 as u8)) { return false; }
+        i = __bws_end(buf, semi + 1, end);
+        var name_end: i32 = __token_end(buf, i, end);
+        if (name_end == i) { return false; }
+        i = name_end;
+        var eq: i32 = __bws_end(buf, name_end, end);
+        if (eq < end && buf[eq] == (61 as u8)) {
+            i = __chunk_ext_val_end(buf, __bws_end(buf, eq + 1, end), end);
+            if (i < 0) { return false; }
+        }
+    }
+    return true;
+}
+
+// `__bws_end(buf, from, end)` — the offset past the SP and HTAB at `from`.
+function __bws_end(buf: u8[], from: i32, end: i32): i32 {
+    var i: i32 = from;
+    while (i < end && __is_ows(buf[i])) { i = i + 1; }
+    return i;
+}
+
+// `__token_end(buf, from, end)` — the offset past the tchars at `from`.
+function __token_end(buf: u8[], from: i32, end: i32): i32 {
+    var i: i32 = from;
+    while (i < end && __is_tchar(buf[i])) { i = i + 1; }
+    return i;
+}
+
+// `__chunk_ext_val_end(buf, from, end)` — the offset past a chunk
+// extension's value at `from`, a token or a quoted string (RFC 9110
+// §5.6.4: qdtext or a `\`-escaped byte, between two `"`), or -1 when
+// neither is there whole.
+function __chunk_ext_val_end(buf: u8[], from: i32, end: i32): i32 {
+    if (from >= end) { return -1; }
+    if (buf[from] != (34 as u8)) {
+        var tok: i32 = __token_end(buf, from, end);
+        if (tok == from) { return -1; }
+        return tok;
+    }
+    var i: i32 = from + 1;
+    while (i < end) {
+        var b: u8 = buf[i];
+        if (b == (34 as u8)) { return i + 1; }
+        if (b == (92 as u8)) { i = i + 1; }
+        if (i >= end || !__is_quoted_byte(buf[i])) { return -1; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// `__is_quoted_byte(b)` — a byte a quoted string may hold, as itself or
+// after a `\`: HTAB, SP, a visible byte or obs-text.
+function __is_quoted_byte(b: u8): boolean {
+    return b == (9 as u8) || (b >= (32 as u8) && b != (127 as u8));
 }
 
 // `__chunked_trailers(buf, at, budget, spans)` — the trailer section that
 // follows the last chunk's CRLF, at `at`, through the CRLF that ends it:
-// `(2, end, spans)` with `end` past that CRLF, `(1, _, _)` while it has
-// not arrived, `(0, _, _)` when a line breaks the header rules
-// (`__parse_header_bytes`, count cap included), a bare CR or LF appears,
-// or the section outgrows the framing budget. The fields are read and
-// then discarded: nothing here knows a trailer's semantics, so none may
-// merge into the headers (RFC 9110 §6.5.1), and HttpRequest carries no
-// trailers yet.
-function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32, i32, i32[]) {
+// `(2, end, spans, trailers)` with `end` past that CRLF, `(1, _, _, _)`
+// while it has not arrived; refused with `__parse_header_bytes`'s status
+// when a line breaks the header rules (the count cap included), 400 for
+// a bare CR or LF, 431 when the section outgrows the framing budget. The
+// fields are the request's `trailers`, kept apart from its headers:
+// nothing here knows a trailer's semantics, so none may merge (RFC 9110
+// §6.5.1).
+function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32, i32, i32[], HeaderMap) {
     var n: i32 = buf.len();
+    var trailers: HeaderMap = headers.header_map_new();
     var limit: i32 = at + budget;
     if (limit > n) { limit = n; }
     // The last chunk's own CRLF, at `at - 2`, starts the CRLF CRLF when
@@ -654,18 +727,18 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[]): (i32
     var sep: i32 = __find_crlf_crlf(buf, at - 2, limit);
     var scanned: i32 = limit;
     if (sep >= 0) { scanned = sep; }
-    if (scanned > at && !__crlf_terminated(buf, at, scanned)) { return (0, 0, spans); }
+    if (scanned > at && !__crlf_terminated(buf, at, scanned)) { return (400, 0, spans, trailers); }
     if (sep < 0) {
-        if (n >= at + budget) { return (0, 0, spans); }
-        return (1, 0, spans);
+        if (n >= at + budget) { return (431, 0, spans, trailers); }
+        return (1, 0, spans, trailers);
     }
     if (sep > at) {
         match (__parse_header_bytes(buf, at, sep)) {
-            Some(_) => { },
-            None => { return (0, 0, spans); }
+            Ok(h) => { trailers = h; },
+            Err(status) => { return (status, 0, spans, trailers); }
         }
     }
-    return (2, sep + 4, spans);
+    return (2, sep + 4, spans, trailers);
 }
 
 // `__chunked_body(buf, spans)` — the chunk data the walk recorded, as
@@ -694,29 +767,31 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
 }
 
 // `__framed_body(buf, at, framing, version)` — the body that starts at
-// `at` under its framing: `(2, body, end)` with `end` past it, `(1, _, _)`
-// while it has not arrived, `(0, _, _)` when it is malformed: a declared
-// length past the body cap (known before the body arrives), a chunked
-// body that breaks `__chunked_walk`'s rules, or chunked coding on a
-// request that is not HTTP/1.1 (§6.1 gives the coding to HTTP/1.1; an
-// older peer cannot have sent it, and reading its body as empty would be
-// a framing disagreement).
-function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string): (i32, u8[], i32) {
+// `at` under its framing: `(2, body, end, trailers)` with `end` past it,
+// `(1, _, _, _)` while it has not arrived; refused with 413 for a
+// declared length past the body cap (known before the body arrives),
+// with `__chunked_walk`'s status for a chunked body that breaks its
+// rules, and with 400 for chunked coding on a request that is not
+// HTTP/1.1 (§6.1 gives the coding to HTTP/1.1; an older peer cannot have
+// sent it, and reading its body as empty would be a framing
+// disagreement). Only a chunked body has trailers.
+function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string): (i32, u8[], i32, HeaderMap) {
     var empty: u8[] = [];
+    var none: HeaderMap = headers.header_map_new();
     match (framing) {
         Length(content_length) => {
-            if (content_length > http_body_cap()) { return (0, empty, 0); }
-            if (at + content_length > buf.len()) { return (1, empty, 0); }
-            return (2, __bytes_range(buf, at, at + content_length), at + content_length);
+            if (content_length > http_body_cap()) { return (413, empty, 0, none); }
+            if (at + content_length > buf.len()) { return (1, empty, 0, none); }
+            return (2, __bytes_range(buf, at, at + content_length), at + content_length, none);
         },
         Chunked => {
-            if (version != "HTTP/1.1") { return (0, empty, 0); }
-            var walk: (i32, i32, i32[]) = __chunked_walk(buf, at);
-            if (walk.0 != 2) { return (walk.0, empty, 0); }
-            return (2, __chunked_body(buf, walk.2), walk.1);
+            if (version != "HTTP/1.1") { return (400, empty, 0, none); }
+            var walk: (i32, i32, i32[], HeaderMap) = __chunked_walk(buf, at);
+            if (walk.0 != 2) { return (walk.0, empty, 0, none); }
+            return (2, __chunked_body(buf, walk.2), walk.1, walk.3);
         }
     }
-    return (0, empty, 0);
+    return (400, empty, 0, none);
 }
 
 // `http_parse_request_bytes(buf)` parses a full HTTP/1.1 request
@@ -739,7 +814,8 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
     match (http_parse_request_framed(buf)) {
         Framed(f) => { return Some(f.request); },
         Incomplete => { return None; },
-        Malformed => { return None; }
+        Continue => { return None; },
+        Malformed(_) => { return None; }
     }
     return None;
 }
@@ -753,11 +829,71 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
 pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
 
 // HttpFraming — what a buffer holds at an offset: a complete request with
-// its framing, less than one (the loop keeps reading), or a malformed one,
-// which the loop answers by closing the connection: there is no lenient
-// mode (RFC 9112 §2.2, §5.1, §5.2, §6.3), and a request past a cap is
+// its framing; less than one (the loop keeps reading); less than one
+// whose header block has arrived and says `Expect: 100-continue`, so the
+// loop sends `100 Continue` once and then keeps reading (RFC 9110
+// §10.1.1; a request whose body has already arrived is `Framed` and
+// gets no interim response); or a malformed one, carrying the status
+// the loop answers it with before closing the connection: 400 for a
+// request the grammar refuses (RFC 9112 §2.2, §3, §5, §6.3, §7.1) or
+// that breaks the `Host` rule (§3.2), 413 for a body past its cap, 414
+// for a request line past its cap, 417 for an expectation other than
+// `100-continue`, 431 for a header block past its byte or field cap or
+// chunk framing past its budget, 501 for a transfer coding this parser
+// cannot decode. There is no lenient mode, and a request past a cap is
 // malformed as soon as the cap is passed, before its end has arrived.
-pub enum HttpFraming { Framed(HttpFramed), Incomplete, Malformed }
+pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
+
+// `__expectation(h)` — what the `Expect` field asks (RFC 9110 §10.1.1):
+// 0 with none, 1 for `100-continue`, 417 for anything else, which this
+// server cannot meet.
+function __expectation(h: HeaderMap): i32 {
+    var expect: string[] = h.get_all("expect");
+    if (expect.len() == 0) { return 0; }
+    for v in expect {
+        if (!__token_is(v, "100-continue")) { return 417; }
+    }
+    return 1;
+}
+
+// `__header_rules(h, version)` — the status that refuses a parsed header
+// block on its own terms, or 0: 400 for the `Host` rule, 417 for an
+// expectation the server cannot meet.
+function __header_rules(h: HeaderMap, version: string): i32 {
+    if (!__host_ok(h, version)) { return 400; }
+    if (__expectation(h) == 417) { return 417; }
+    return 0;
+}
+
+// `__unframed(kind, h)` — the answer for a body that has not framed:
+// `Malformed` with `kind` when it is a status, `Continue` when the
+// request expects `100 Continue` before sending its body, `Incomplete`
+// otherwise.
+function __unframed(kind: i32, h: HeaderMap): HttpFraming {
+    if (kind >= 400) { return Malformed(kind); }
+    if (__expectation(h) == 1) { return Continue; }
+    return Incomplete;
+}
+
+// `__request_line(buf, from, end)` — the request line buf[from, end)
+// read: `(0, sp1, sp2, path)` with the offsets of its two spaces and the
+// path `http_request_target` gives, or `(status, _, _, _)` refusing it:
+// 400 for a method that is not a token, a missing space, an empty
+// target or a version that is not an HTTP-version, 505 for another
+// major version, and the target's own refusals.
+function __request_line(buf: u8[], from: i32, end: i32): (i32, i32, i32, string) {
+    var sp1: i32 = __find_byte(buf, from, end, 32 as u8);
+    if (sp1 < 0 || !__is_token(buf, from, sp1)) { return (400, -1, -1, ""); }
+    var sp2: i32 = __find_byte(buf, sp1 + 1, end, 32 as u8);
+    if (sp2 < 0 || sp2 == sp1 + 1) { return (400, -1, -1, ""); }
+    var version_status: i32 = __version_status(buf, sp2 + 1, end);
+    if (version_status != 0) { return (version_status, -1, -1, ""); }
+    match (http_request_target(__bytes_string(buf, from, sp1), __bytes_string(buf, sp1 + 1, sp2))) {
+        Ok(p) => { return (0, sp1, sp2, p); },
+        Err(status) => { return (status, -1, -1, ""); }
+    }
+    return (400, -1, -1, "");
+}
 
 // `http_parse_request_framed(buf)` — `http_parse_request_bytes` with the
 // framing a persistent connection needs, and the three-way answer.
@@ -771,10 +907,12 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
 // from `from`.
 pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     var n: i32 = buf.len();
+    var start: i32 = from;
+    from = __past_empty_line(buf, from);
     var first_crlf: i32 = __request_line_end(buf, from);
-    if (first_crlf == -2) { return Malformed; }
+    if (first_crlf == -2) { return Malformed(414); }
     var headers_end: i32 = __header_block_end(buf, from);
-    if (headers_end == -2) { return Malformed; }
+    if (headers_end == -2) { return Malformed(431); }
     // What is buffered of the header block, whether or not its end has
     // arrived: the bytes before `from` are answered requests, and the
     // bytes after the block are a body, which may hold anything.
@@ -783,18 +921,18 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         scanned = from + http_header_bytes_cap() + 4;
         if (n < scanned) { scanned = n; }
     }
-    if (!__crlf_terminated(buf, from, scanned)) { return Malformed; }
+    if (!__crlf_terminated(buf, from, scanned)) { return Malformed(400); }
     // The request line (RFC 9112 §3): a method token, a space, a
-    // non-empty target, a space, a non-empty version. It is refused as
-    // soon as its CRLF has arrived, before the rest of the block.
-    var sp1: i32 = -1;
-    var sp2: i32 = -1;
+    // request-target, a space, an HTTP-version. It is refused as soon as
+    // its CRLF has arrived, before the rest of the block.
+    var line: (i32, i32, i32, string) = (0, -1, -1, "");
     if (first_crlf >= 0) {
-        sp1 = __find_byte(buf, from, first_crlf, 32 as u8);
-        if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed; }
-        sp2 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
-        if (sp2 < 0 || sp2 == sp1 + 1 || sp2 + 1 == first_crlf) { return Malformed; }
+        line = __request_line(buf, from, first_crlf);
+        if (line.0 != 0) { return Malformed(line.0); }
     }
+    var sp1: i32 = line.1;
+    var sp2: i32 = line.2;
+    var path: string = line.3;
     if (first_crlf < 0 || headers_end < 0) { return Incomplete; }
     var headers_len: i32 = headers_end + 4 - from;
     // Parse the header block into a HeaderMap *first*, then derive
@@ -803,7 +941,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     // `\r\n\r\n` separator, so the block excludes the empty line.
     //
     // The two coincide exactly when the request carried no headers at
-    // all (`GET / HTTP/1.1\r\n\r\n`): the request line's own CRLF is
+    // all (`GET / HTTP/1.0\r\n\r\n`): the request line's own CRLF is
     // the first two bytes of the separator. Clamping is what keeps the
     // block from running backwards there.
     var hdr_start: i32 = first_crlf + 2;
@@ -812,36 +950,286 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     }
     var req_headers: HeaderMap = headers.header_map_new();
     match (__parse_header_bytes(buf, hdr_start, headers_end)) {
-        Some(h) => { req_headers = h; },
-        None => { return Malformed; }
+        Ok(h) => { req_headers = h; },
+        Err(status) => { return Malformed(status); }
     }
+    var version: string = __version_of(buf, sp2 + 1);
+    var refused: i32 = __header_rules(req_headers, version);
+    if (refused > 0) { return Malformed(refused); }
     var framing: __BodyFraming = Length(0);
     match (__http_body_framing(req_headers)) {
-        Some(f) => { framing = f; },
-        None => { return Malformed; }
+        Ok(f) => { framing = f; },
+        Err(status) => { return Malformed(status); }
     }
-    var version: string = __bytes_string(buf, sp2 + 1, first_crlf);
-    var body: (i32, u8[], i32) = __framed_body(buf, from + headers_len, framing, version);
-    if (body.0 == 0) { return Malformed; }
-    if (body.0 == 1) { return Incomplete; }
+    var body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + headers_len, framing, version);
+    if (body.0 != 2) { return __unframed(body.0, req_headers); }
     var request: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
-        path: __bytes_string(buf, sp1 + 1, sp2),
+        path: path,
         body: stream.stream_from_bytes(body.1),
         headers: req_headers,
+        trailers: body.3,
     };
-    return Framed(HttpFramed { request: request, len: body.2 - from, keep_alive: __persists(version, req_headers) });
+    return Framed(HttpFramed { request: request, len: body.2 - start, keep_alive: __persists(version, req_headers) });
+}
+
+// `http_request_target(method, target)` — the request-target (RFC 9112
+// §3.2) as the path a handler sees, or the status refusing it. An
+// origin-form target (`/a/b?q`) and an absolute-form one
+// (`http://host/a/b?q`, which a server accepts from any client, §3.2.2)
+// give the path decoded once and with its dot segments removed
+// (RFC 3986 §5.2.4), then the query as it came; the asterisk-form `*` is
+// only for OPTIONS (§3.2.4). Refused with 400: a target that is none of
+// the three, an authority-form target (nothing here tunnels), an empty
+// authority, a byte outside `pchar` and `/` in the path or `pchar`, `/`
+// and `?` in the query, a `%` not followed by two hex digits, a decoded
+// NUL, a decoded slash (`%2F` would make a segment the sender hid from
+// the path's grammar), and a path that climbs above the root (`/../x`:
+// a client resolves that before sending, so a server only sees it from
+// something else). The query is not decoded: its encoding depends on
+// what reads it (`form_decode` folds `+`, `url_decode` does not).
+pub function http_request_target(method: string, target: string): Result[string, i32] {
+    if (target == "*") {
+        if (method == "OPTIONS") { return Ok("*"); }
+        return Err(400);
+    }
+    var path_from: i32 = 0;
+    if (target.len() == 0 || target[0] != (47 as u8)) {
+        path_from = __absolute_form_path(target);
+        if (path_from < 0) { return Err(400); }
+    }
+    var q: i32 = __find_char(target, path_from, target.len(), 63 as u8);
+    if (q >= 0 && !__query_ok(target, q + 1, target.len())) { return Err(400); }
+    var path_end: i32 = target.len();
+    if (q >= 0) { path_end = q; }
+    match (__decoded_path(target, path_from, path_end)) {
+        Ok(p) => {
+            if (q < 0) { return Ok(p); }
+            return Ok(p + slice_unchecked(target, q, target.len()) + "");
+        },
+        Err(status) => { return Err(status); }
+    }
+    return Err(400);
+}
+
+// `__absolute_form_path(target)` — where the path of an absolute-form
+// target starts: past `http://` or `https://` in any case and a
+// non-empty authority, at the `/` or `?` that ends it, or the target's
+// end when it has no path. -1 for any other shape.
+function __absolute_form_path(target: string): i32 {
+    var n: i32 = target.len();
+    var at: i32 = -1;
+    if (__prefix_ci(target, "http://")) { at = 7; }
+    if (__prefix_ci(target, "https://")) { at = 8; }
+    if (at < 0) { return -1; }
+    var authority_end: i32 = at;
+    while (authority_end < n && target[authority_end] != (47 as u8) && target[authority_end] != (63 as u8)) {
+        if (!__is_pchar(target[authority_end])) { return -1; }
+        authority_end = authority_end + 1;
+    }
+    if (authority_end == at) { return -1; }
+    return authority_end;
+}
+
+// `__prefix_ci(s, want)` — whether `s` starts with `want` under an ASCII
+// fold; `want` is written in lower case.
+function __prefix_ci(s: string, want: string): boolean {
+    if (s.len() < want.len()) { return false; }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (__ascii_lower(s[i]) != (want[i] as i32)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `__find_char(s, from, end, c)` — the first index of byte `c` in
+// s[from, end), or -1.
+function __find_char(s: string, from: i32, end: i32, c: u8): i32 {
+    var i: i32 = from;
+    while (i < end) {
+        if (s[i] == c) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// `__is_pchar(b)` — a byte a path segment may carry as itself (RFC 3986
+// §3.3): unreserved, a sub-delim, `:` or `@`; `%` is admitted here and
+// judged with its two digits where it is read.
+function __is_pchar(b: u8): boolean {
+    var v: i32 = b as i32;
+    return __is_unreserved(v) || __is_sub_delim(v) || v == 58 || v == 64 || v == 37;
+}
+
+function __is_unreserved(b: i32): boolean {
+    return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
+        || b == 45 || b == 46 || b == 95 || b == 126;
+}
+
+function __is_sub_delim(b: i32): boolean {
+    var delims: string = "!$&'()*+,;=";
+    var i: i32 = 0;
+    while (i < delims.len()) {
+        if ((delims[i] as i32) == b) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `__query_ok(s, from, end)` — whether s[from, end) is a query (RFC 3986
+// §3.4): `pchar`, `/` and `?`, every `%` followed by two hex digits.
+function __query_ok(s: string, from: i32, end: i32): boolean {
+    var i: i32 = from;
+    while (i < end) {
+        var b: u8 = s[i];
+        if (b == (37 as u8)) {
+            if (__pct_byte(s, i, end) < 0) { return false; }
+            i = i + 3;
+        } else {
+            if (!__is_pchar(b) && b != (47 as u8) && b != (63 as u8)) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// `__pct_byte(s, at, end)` — the byte a `%XX` at `at` encodes, or -1 when
+// the two hex digits are not there.
+function __pct_byte(s: string, at: i32, end: i32): i32 {
+    if (at + 2 >= end) { return -1; }
+    var hi: i32 = __hex_digit(s[at + 1]);
+    var lo: i32 = __hex_digit(s[at + 2]);
+    if (hi < 0 || lo < 0) { return -1; }
+    return hi * 16 + lo;
+}
+
+// `__decoded_path(s, from, end)` — s[from, end), which starts with `/`,
+// decoded once and with its dot segments removed, or the status refusing
+// it.
+function __decoded_path(s: string, from: i32, end: i32): Result[string, i32] {
+    if (end <= from) { return Ok("/"); }
+    var out: u8[] = [];
+    var i: i32 = from;
+    while (i < end) {
+        var b: i32 = s[i] as i32;
+        if (b == 37) {
+            b = __pct_byte(s, i, end);
+            if (b <= 0 || b == 47) { return Err(400); }
+            i = i + 3;
+        } else {
+            if (!__is_pchar(b as u8) && b != 47) { return Err(400); }
+            i = i + 1;
+        }
+        out = out.append(b as u8);
+    }
+    return __without_dot_segments(out);
+}
+
+// `__without_dot_segments(path)` — RFC 3986 §5.2.4 over a path that
+// starts with `/`: a `.` segment is dropped, a `..` segment takes the
+// one before it with it, and either at the end keeps the trailing
+// slash. A `..` with nothing before it climbs above the root and is
+// refused. Empty segments (`a//b`) are kept: they are the sender's to
+// mean something by.
+function __without_dot_segments(path: u8[]): Result[string, i32] {
+    var segments: string[] = [];
+    var depth: i32 = 0;
+    var n: i32 = path.len();
+    var at: i32 = 1;
+    var trailing: boolean = false;
+    while (at <= n) {
+        var seg_end: i32 = at;
+        while (seg_end < n && path[seg_end] != (47 as u8)) { seg_end = seg_end + 1; }
+        var seg: string = __bytes_string(path, at, seg_end);
+        trailing = seg_end == n;
+        if (seg == "..") {
+            if (depth == 0) { return Err(400); }
+            depth = depth - 1;
+        } else if (seg != ".") {
+            segments = __set_segment(segments, depth, seg);
+            depth = depth + 1;
+            trailing = false;
+        }
+        at = seg_end + 1;
+    }
+    return Ok(__joined_segments(segments, depth, trailing));
+}
+
+// `__set_segment(segments, at, seg)` — `segments` with `seg` at index
+// `at`, which is at most its length: a `..` lowers `depth` without
+// shrinking the array, so a later segment overwrites what it dropped.
+function __set_segment(segments: string[], at: i32, seg: string): string[] {
+    if (at < segments.len()) { return segments.with(at, seg); }
+    return segments.append(seg);
+}
+
+// `__joined_segments(segments, depth, trailing)` — `/` before each of
+// the first `depth` segments, and a `/` after the last when the path
+// ended in a dot segment; the root when there are none.
+function __joined_segments(segments: string[], depth: i32, trailing: boolean): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < depth) {
+        out = out + "/" + segments[i];
+        i = i + 1;
+    }
+    if (out.len() == 0 || trailing) { out = out + "/"; }
+    return out;
+}
+
+// `__past_empty_line(buf, from)` — `from` past one CRLF at it: a server
+// ignores at least one empty line before a request-line (RFC 9112 §2.2),
+// since a client may send one after a body. A second is the request
+// line's to refuse.
+function __past_empty_line(buf: u8[], from: i32): i32 {
+    if (from + 1 < buf.len() && buf[from] == (13 as u8) && buf[from + 1] == (10 as u8)) { return from + 2; }
+    return from;
+}
+
+// `__version_status(buf, from, end)` — 0 when buf[from, end) is an
+// HTTP-version (RFC 9112 §2.3: `HTTP/`, a digit, `.`, a digit, in that
+// case), 400 when it is not, 505 for a major version other than 1: this
+// parser speaks HTTP/1, and cannot promise to read the framing of another
+// major version (RFC 9110 §15.6.6).
+function __version_status(buf: u8[], from: i32, end: i32): i32 {
+    if (end - from != 8 || !__bytes_are(buf, from, "HTTP/")) { return 400; }
+    if (!__is_digit(buf[from + 5]) || buf[from + 6] != (46 as u8) || !__is_digit(buf[from + 7])) { return 400; }
+    if (buf[from + 5] != (49 as u8)) { return 505; }
+    return 0;
+}
+
+// `__version_of(buf, from)` — the version the rules read, for a version
+// `__version_status` passed: `HTTP/1.0` for itself, and every other minor
+// as `HTTP/1.1`, the highest this parser knows (§2.3).
+function __version_of(buf: u8[], from: i32): string {
+    if (buf[from + 7] == (48 as u8)) { return "HTTP/1.0"; }
+    return "HTTP/1.1";
+}
+
+function __is_digit(b: u8): boolean {
+    return b >= (48 as u8) && b <= (57 as u8);
+}
+
+// `__bytes_are(buf, from, want)` — whether the bytes at `from` start with
+// `want`.
+function __bytes_are(buf: u8[], from: i32, want: string): boolean {
+    if (from + want.len() > buf.len()) { return false; }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (buf[from + i] != want[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
 }
 
 // __persists(version, h) — whether the connection outlives this
 // request: a `Connection` header carrying `close` ends an HTTP/1.1
 // connection where one carrying `keep-alive` extends an HTTP/1.0 one.
 // The header is a comma-separated token list, and only a whole token
-// counts: `x-close` neither closes nor keeps. A version that is neither
-// `HTTP/1.1` nor `HTTP/1.0` is answered and closed; nothing here
-// negotiates one.
+// counts: `x-close` neither closes nor keeps. `version` is one of the two
+// `__version_of` gives.
 function __persists(version: string, h: HeaderMap): boolean {
-    if (version != "HTTP/1.1" && version != "HTTP/1.0") { return false; }
     var close: boolean = false;
     var keep: boolean = false;
     for v in h.get_all("connection") {
@@ -887,11 +1275,22 @@ pub function http_serialize_response(resp: HttpResponse): string {
 }
 
 // `http_serialize_response_conn(resp, keep_alive)` — the response as
-// a serve loop sends it: `Connection: keep-alive` when the connection
-// persists for the next request, `Connection: close` when this
-// response ends it. Every response carries the header, so an HTTP/1.0
-// client that asked to keep the connection learns that it was kept.
+// a serve loop sends it to a GET: `Connection: keep-alive` when the
+// connection persists for the next request, `Connection: close` when
+// this response ends it. Every response carries the header, so an
+// HTTP/1.0 client that asked to keep the connection learns that it was
+// kept.
 pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
+    return http_serialize_response_to("GET", resp, keep_alive);
+}
+
+// `http_serialize_response_to(method, resp, keep_alive)` — the response
+// as a serve loop sends it to a request made with `method` (RFC 9112
+// §6.3): a response to HEAD carries the `Content-Length` its body would
+// have and none of the body, and a 1xx, 204 or 304 response carries
+// neither, whatever the handler put in the body. Every other response
+// carries `Content-Length` and the body.
+pub function http_serialize_response_to(method: string, resp: HttpResponse, keep_alive: boolean): string {
     var connection: string = "Connection: close\r\n";
     if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
@@ -909,9 +1308,12 @@ pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolea
         }
         i = i + 1;
     }
-    hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"
-        + connection
-        + "\r\n";
+    var bodiless: boolean = resp.status < 200 || resp.status == 204 || resp.status == 304;
+    if (!bodiless) {
+        hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
+    }
+    hdr_block = hdr_block + connection + "\r\n";
+    if (bodiless || method == "HEAD") { return status_line + hdr_block; }
     return status_line + hdr_block + resp.body_string();
 }
 

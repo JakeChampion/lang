@@ -281,6 +281,17 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
+`TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
+repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
+522 requests, its README for the columns and the sources) through
+`http_parse_request_framed` on the
+interpreter, checked against the verdict pinned beside each request, and on
+wasm, x86-64 and arm64, checked against the interpreter;
+`TestSelfHostHTTPCorpus` is the same program through the self-host compiler
+(#9854). The pin is std/http's own rule, so the corpus file is where a
+disagreement with the upstream parser is recorded, and a changed pin is a
+parser change that has to be meant (`FERN_HTTP_CORPUS_DUMP=1` re-records).
+
 `TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
 and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
 and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
@@ -307,10 +318,18 @@ whose failed write must close it before the request behind it is answered
 request with a malformed one pipelined behind it (a bare LF ends its
 request line), whose first response must say `close` and which is then
 closed with no response to the second;
-a request of 101 header fields, closed with no response; a chunked request
+a request of 101 header fields, answered 431 by the loop itself and
+closed; an HTTP/1.1 request without a Host, answered 400 and closed; a
+body past the cap, answered 413 before it arrives and closed; a chunked request
 with a request pipelined behind it, whose decoded body the handler echoes
-and whose framing must leave exactly the second request to answer; and an
-HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+and whose framing must leave exactly the second request to answer; a HEAD
+with a GET pipelined behind it, answered with the Content-Length and none
+of the body, then a 204, answered with neither; a request whose header
+block says `Expect: 100-continue`, answered `100 Continue` before its
+body is sent and then with the body's echo, and one whose expectation
+the server cannot meet, answered 417; and an HTTP/1.0 keep-alive
+request followed by an HTTP/1.1 one. Every response's `Connection` and
+`Date` are
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is
@@ -331,6 +350,11 @@ handed to a callee that only borrows it (`HeaderMap.append`, which retains
 the value it keeps) must still be released by the arm (#10669); the lowering
 side is `TestPairFormPayloadHandedToBorrowingCalleeIsReleased` in
 `internal/ir`.
+`TestWasmClockCensus` runs each clock builtin, and the date formatter
+over the wall clock, a hundred times under the same census: the wall-clock
+helpers read the host's datetime record through a scratch block they
+allocate, and one not given back was a block per read (#10666), which
+the serve loop's once-per-wait `Date` turned into a block per wait.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected

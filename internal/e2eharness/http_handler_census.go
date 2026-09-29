@@ -71,6 +71,8 @@ function census_burn(n: i32): i32 {
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/chunked") { return http.http_response_ok(req.body_string()); }
+    if (req.path == "/nocontent") { return http.http_response_no_content(); }
+    if (req.path == "/expect") { return http.http_response_ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
@@ -86,7 +88,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 276
+const KeepAliveCycle = 280
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -104,12 +106,19 @@ const KeepAliveCycle = 276
 // reset the connection, whose failed write must close it before the
 // request behind it is answered; a request with a malformed one pipelined
 // behind it, answered with close and then closed with no response to the
-// second; a request of 101 header fields, refused before any handler sees
-// it; a chunked request with a request pipelined behind it, whose decoded
+// second; a request of 101 header fields, answered 431 and closed before
+// any handler sees it, an HTTP/1.1 request without a Host, answered 400,
+// and a body past the cap, answered 413 before the body arrives; a
+// chunked request with a request pipelined behind it, whose decoded
 // body the handler echoes and whose framing must leave exactly the second
-// request to answer; and an HTTP/1.0 keep-alive request followed by an
-// HTTP/1.1 one on the same connection. Every response is checked, and
-// every close the server owes is read as EOF.
+// request to answer; a HEAD with a GET pipelined behind it, answered
+// with the Content-Length and none of the body, then a 204, answered
+// with neither; a request whose header block says `Expect: 100-continue`,
+// answered `100 Continue` before its body is sent and then with the
+// body's echo, and one whose expectation the server cannot meet,
+// answered 417; and an HTTP/1.0 keep-alive request followed by an
+// HTTP/1.1 one on the same connection. Every response is checked, its
+// `Date` included, and every close the server owes is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -129,6 +138,14 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
 	// keep-alive case from the header it leaves in place.
+	// dated checks the `Date` every response carries (RFC 9110 §6.6.1).
+	dated := func(conn net.Conn, resp *http.Response, label string) {
+		t.Helper()
+		if _, err := http.ParseTime(resp.Header.Get("Date")); err != nil {
+			conn.Close()
+			t.Fatalf("%s: Date=%q: %v; headers=%v", label, resp.Header.Get("Date"), err, resp.Header)
+		}
+	}
 	readBody := func(conn net.Conn, r *bufio.Reader, label string, wantBody string, wantConnection ...string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
@@ -142,6 +159,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			conn.Close()
 			t.Fatalf("%s: status=%d length=%d body=%q error=%v, want %q", label, resp.StatusCode, resp.ContentLength, body, err, wantBody)
 		}
+		dated(conn, resp, label)
 		got := resp.Header.Get("Connection")
 		if resp.Close {
 			got = "close"
@@ -154,6 +172,53 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
 		t.Helper()
 		readBody(conn, r, label, "ok", wantConnection...)
+	}
+	// refused checks the loop's own answer to a malformed request: the
+	// status, an empty body and `Connection: close`.
+	refused := func(conn net.Conn, r *bufio.Reader, label string, wantStatus int) {
+		t.Helper()
+		resp, err := http.ReadResponse(r, nil)
+		if err != nil {
+			conn.Close()
+			t.Fatalf("%s: %v", label, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != wantStatus || resp.ContentLength != 0 || len(body) != 0 || !resp.Close {
+			conn.Close()
+			t.Fatalf("%s: status=%d length=%d body=%q close=%v error=%v, want %d, empty, close", label, resp.StatusCode, resp.ContentLength, body, resp.Close, err, wantStatus)
+		}
+		dated(conn, resp, label)
+	}
+	// interim reads the `100 Continue` the loop sends before a body.
+	interim := func(conn net.Conn, r *bufio.Reader, label string) {
+		t.Helper()
+		line, err := r.ReadString('\n')
+		if err != nil || line != "HTTP/1.1 100 Continue\r\n" {
+			conn.Close()
+			t.Fatalf("%s: %q, %v", label, line, err)
+		}
+		if line, err = r.ReadString('\n'); err != nil || line != "\r\n" {
+			conn.Close()
+			t.Fatalf("%s: after the status line: %q, %v", label, line, err)
+		}
+	}
+	// bodiless checks a response that carries no body: to a HEAD, with
+	// the Content-Length the body would have, or a 204, with none.
+	bodiless := func(conn net.Conn, r *bufio.Reader, label string, method string, wantStatus int, wantLength string) {
+		t.Helper()
+		resp, err := http.ReadResponse(r, &http.Request{Method: method})
+		if err != nil {
+			conn.Close()
+			t.Fatalf("%s: %v", label, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != wantStatus || len(body) != 0 || resp.Header.Get("Content-Length") != wantLength || resp.Close {
+			conn.Close()
+			t.Fatalf("%s: status=%d Content-Length=%q body=%q close=%v error=%v, want %d, %q, empty, keep-alive", label, resp.StatusCode, resp.Header.Get("Content-Length"), body, resp.Close, err, wantStatus, wantLength)
+		}
+		dated(conn, resp, label)
 	}
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
 		t.Helper()
@@ -292,7 +357,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "before a malformed request", "close")
 		eof(conn, r, "after a malformed request")
 		// 101 header fields, one past the cap: refused before any handler
-		// sees the request, so the connection closes with no response.
+		// sees the request, answered 431 by the loop itself and closed.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -302,7 +367,21 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		pipeline.WriteString("\r\n")
 		write(conn, pipeline.String())
-		eof(conn, r, "a request with 101 header fields")
+		refused(conn, r, "a request with 101 header fields", 431)
+		eof(conn, r, "after 101 header fields")
+		// An HTTP/1.1 request without a Host (RFC 9112 §3.2): 400, closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /nohost HTTP/1.1\r\n\r\n")
+		refused(conn, r, "a request without Host", 400)
+		eof(conn, r, "after a request without Host")
+		// A body past the cap: 413 as soon as the header block declares
+		// it, before any of the body arrives, then closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /big HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n")
+		refused(conn, r, "a body past the cap", 413)
+		eof(conn, r, "after a body past the cap")
 		// A chunked request (two chunks, an extension, a trailer) with a
 		// request pipelined behind it in one write: the handler echoes the
 		// decoded body, and the framing must leave exactly the second
@@ -313,6 +392,34 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		readBody(conn, r, "chunked", "hello world", "keep-alive")
 		read(conn, r, "behind the chunked request", "keep-alive")
 		conn.Close()
+		// A HEAD with a GET pipelined behind it: the HEAD is answered with
+		// the Content-Length its body would have and none of the body, so
+		// the GET's response must follow at once; then a 204, answered
+		// with neither. The client ends this one.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "HEAD /h HTTP/1.1\r\nHost: localhost\r\n\r\nGET /after-head HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		bodiless(conn, r, "HEAD", "HEAD", 200, "2")
+		read(conn, r, "behind the HEAD", "keep-alive")
+		write(conn, "GET /nocontent HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		bodiless(conn, r, "204", "GET", 204, "")
+		conn.Close()
+		// `Expect: 100-continue` (RFC 9110 §10.1.1): the header block alone
+		// is answered `100 Continue`, the body is sent only then, and the
+		// handler's echo of it follows. The client ends this one. Then an
+		// expectation the server cannot meet, answered 417 and closed.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /expect HTTP/1.1\r\nHost: localhost\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+		interim(conn, r, "100 Continue")
+		write(conn, "hello")
+		readBody(conn, r, "after 100 Continue", "hello", "keep-alive")
+		conn.Close()
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /expect HTTP/1.1\r\nHost: localhost\r\nExpect: nope\r\nContent-Length: 5\r\n\r\n")
+		refused(conn, r, "an expectation the server cannot meet", 417)
+		eof(conn, r, "after 417")
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()

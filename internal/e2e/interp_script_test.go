@@ -626,7 +626,7 @@ function main(): i32 {
 			source: `import "std/http";
 
 function main(): i32 {
-    var wire: string = "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             var all: string[] = req.headers.get_all("Set-Cookie");
@@ -1758,7 +1758,7 @@ func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
 	src := `import "std/http";
 
 function main(): i32 {
-    var wire: string = "POST /upload HTTP/1.1\r\nContent-Length: 11\r\n\r\nhello world";
+    var wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             if (req.body_string() != "hello world") { return 1; }
@@ -1977,7 +1977,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new() };
+    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
     var resp: HttpResponse = handle(req, m.as_platform());
     print(resp.body);
     var cs: MockCall[] = m.calls();

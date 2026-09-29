@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -20,7 +19,8 @@ import (
 // 80 and 81 are the `existed` flag in each direction — a delete that reports
 // nothing removed, and a miss that claims it removed something.
 const (
-	mapDelStrSrc = `function main(): i32 {
+	mapDelStrSrc = `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = Map {};
     m = m.insert("a", 1);
     m = m.insert("b", 2);
@@ -32,7 +32,8 @@ const (
     return n.get_or("a", 0) * 100 + n.get_or("b", 7) * 10 + n.get_or("c", 0);
 }
 `
-	mapDelI32Src = `function main(): i32 {
+	mapDelI32Src = `import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map {};
     m = m.insert(10, 1);
     m = m.insert(20, 2);
@@ -73,57 +74,29 @@ func mapDelCases() []struct{ name, src string } {
 	}
 }
 
+const mapDelFailFmt = "%s exited %d, want 173 (80=delete reported nothing removed, 81=a miss claimed a removal, other=the shift moved the wrong element)"
+
 // TestSelfHostMapDeleteFernIRX86_64 runs each key kind on x86-64. 173 is the
 // interpreter's answer for all three, taken as the oracle.
 func TestSelfHostMapDeleteFernIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapDelCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := string(runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir"))
-			if len(asm) == 0 {
-				t.Fatal("self-host emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, "md_"+tc.name, asm)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-			}
-			_ = cmd.Run()
-			if got := cmd.ProcessState.ExitCode(); got != 173 {
-				t.Errorf("exited %d, want 173 (80=delete reported nothing removed, "+
-					"81=a miss claimed a removal, other=the shift moved the wrong element)", got)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 173 {
+				t.Errorf(mapDelFailFmt, tc.name, code)
 			}
 		})
 	}
 }
 
-// TestSelfHostMapDeleteFernIRArm64 is the same three programs under qemu. The
-// helper source is shared, but the op site that marshals its four arguments is
-// per-backend, so arm64 has to run them too.
+// TestSelfHostMapDeleteFernIRArm64 is the same three programs under qemu.
 func TestSelfHostMapDeleteFernIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapDelCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux"))
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "md_arm64_"+tc.name, asm)
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if got := cmd.ProcessState.ExitCode(); got != 173 {
-				t.Errorf("arm64 exited %d, want 173", got)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 173 {
+				t.Errorf(mapDelFailFmt, tc.name, code)
 			}
 		})
 	}
@@ -135,21 +108,14 @@ func TestSelfHostMapDeleteFernIRArm64(t *testing.T) {
 // substring, so the obvious spelling of this assertion fires on the Fern helper
 // it is meant to accept. Nothing but the deleted bodies ever emitted `.Lmd_`.
 func TestSelfHostMapDeleteHandAsmGone(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range []struct{ name, target string }{
-		{"x86_64", ""},
+		{"x86_64", "x86-64-linux"},
 		{"arm64", "arm64-linux"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"-ir"}
-			if tc.target != "" {
-				args = []string{"-target", tc.target}
-			}
-			asm := string(runCapture(t, gcc, runner, driverBin, []byte(mapDelStrSrc), args...))
+			// Only the AST lowering calls the map runtime; the typed one uses core/map.
+			asm := cli.emit(t, tc.target, mapDelStrSrc, "FERN_SEM_IR=")
 			if !strings.Contains(asm, "__fn___fern_map_delete") {
 				t.Fatalf("%s: the Fern helper is absent — this check would pass vacuously", tc.name)
 			}

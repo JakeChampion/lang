@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -23,7 +22,8 @@ import (
 // the key is present; 91 means it claimed a hit on a key that was never
 // inserted — the two directions a botched three-way dispatch takes.
 const (
-	mapFindStrSrc = `function main(): i32 {
+	mapFindStrSrc = `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = Map {};
     m = m.insert("a", 1);
     m = m.insert("b", 9);
@@ -35,7 +35,8 @@ const (
     return m.get_or("a", 0) * 100 + m.get_or("zz", 5) * 10 + m.get_or("b", 0);
 }
 `
-	mapFindI32Src = `function main(): i32 {
+	mapFindI32Src = `import "core/map";
+function main(): i32 {
     var m: Map[i32, i32] = Map {};
     m = m.insert(10, 1);
     m = m.insert(20, 9);
@@ -78,58 +79,29 @@ func mapFindCases() []struct{ name, src string } {
 	}
 }
 
+const mapFindFailFmt = "%s exited %d, want 152 (90=the search missed a present key, 91=it hit a key that was never inserted)"
+
 // TestSelfHostMapFindSharedIRX86_64 runs each key kind on x86-64. 152 is the
 // interpreter's answer for all three, taken as the oracle.
 func TestSelfHostMapFindSharedIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapFindCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := string(runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir"))
-			if len(asm) == 0 {
-				t.Fatal("self-host emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, "mf_"+tc.name, asm)
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
-			}
-			_ = cmd.Run()
-			if got := cmd.ProcessState.ExitCode(); got != 152 {
-				t.Errorf("exited %d, want %d (90=the shared search missed a present key, "+
-					"91=it hit a key that was never inserted)", got, 152)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 152 {
+				t.Errorf(mapFindFailFmt, tc.name, code)
 			}
 		})
 	}
 }
 
-// TestSelfHostMapFindSharedIRArm64 is the same three programs under qemu. The
-// helper source is shared, but each of the three hand-asm callers marshals its
-// four arguments per backend — and arm64's stack ABI uses 16-byte slots where
-// x86-64 uses 8 — so a slot-size or argument-order slip is arm64-only.
+// TestSelfHostMapFindSharedIRArm64 is the same three programs under qemu.
 func TestSelfHostMapFindSharedIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapFindCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux"))
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "mf_arm64_"+tc.name, asm)
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if got := cmd.ProcessState.ExitCode(); got != 152 {
-				t.Errorf("arm64 exited %d, want %d", got, 152)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 152 {
+				t.Errorf(mapFindFailFmt, tc.name, code)
 			}
 		})
 	}
@@ -149,21 +121,14 @@ func TestSelfHostMapFindSharedIRArm64(t *testing.T) {
 // — but only for a program that uses more than one map verb, which is exactly
 // the shape a narrower test would miss.
 func TestSelfHostMapFindHandAsmLoopsGone(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range []struct{ name, target string }{
-		{"x86_64", ""},
+		{"x86_64", "x86-64-linux"},
 		{"arm64", "arm64-linux"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := []string{"-ir"}
-			if tc.target != "" {
-				args = []string{"-target", tc.target}
-			}
-			asm := string(runCapture(t, gcc, runner, driverBin, []byte(mapFindStrSrc), args...))
+			// Only the AST lowering calls the map runtime; the typed one uses core/map.
+			asm := cli.emit(t, tc.target, mapFindStrSrc, "FERN_SEM_IR=")
 			if n := strings.Count(asm, "__fn___fern_map_find:"); n != 1 {
 				t.Fatalf("%s: %d definitions of __fn___fern_map_find, want exactly 1", tc.name, n)
 			}
