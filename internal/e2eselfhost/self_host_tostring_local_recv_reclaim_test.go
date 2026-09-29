@@ -1,12 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -100,10 +95,10 @@ var toStringLocalFlatCases = []struct {
 	},
 }
 
-// toStringLocalHazardCases must keep leaking. Each asserts the ANSWER: crediting
-// one of these would hand a caller's binding ownership of a box it does not own,
-// and the `__rc_underflow_count() * 100` term in `main` is what separates that
-// from a leak.
+// toStringLocalHazardCases are shapes where the proof does not hold. Each asserts
+// the ANSWER: crediting one of these would hand a caller's binding ownership of
+// a box it does not own, and the `__rc_underflow_count() * 100` term in `main`
+// is what separates that from a leak.
 var toStringLocalHazardCases = []struct {
 	name string
 	src  string
@@ -157,29 +152,20 @@ function fmt(n: i32): string {
 //
 // Non-vacuity: every case fails this against the parent commit, at 32 B/round.
 func TestSelfHostToStringLocalRecvReclaimX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalFlatCases {
 		t.Run(tc.name, func(t *testing.T) {
 			live := func(rounds, want int) int64 {
 				t.Helper()
 				src := toStringLocalSrc(tc.helper, rounds)
-				asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+				asm := cli.emit(t, "x86-64-linux", src, "FERN_LEAKCHECK=1")
 				name := fmt.Sprintf("tostrlocal_%s_%d", tc.name, rounds)
-				stderr, exit := hevRun(t, runner, buildBin(t, gcc, dir, name, asm))
+				stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), name, asm))
 				if exit != want {
 					t.Fatalf("%s exited %d, want %d (a value >= 100 is an rc over-release, not a leak)",
 						name, exit, want)
 				}
-				summary := ""
-				for _, line := range strings.Split(stderr, "\n") {
-					if strings.HasPrefix(line, "leakcheck: ") {
-						summary = line
-					}
-				}
+				summary := leakSummaryLine(stderr)
 				if summary == "" {
 					t.Fatalf("%s: no leakcheck summary in %q", name, stderr)
 				}
@@ -207,16 +193,10 @@ func TestSelfHostToStringLocalRecvReclaimX86_64(t *testing.T) {
 // or a crash means a caller's binding took ownership of a box it does not own.
 // Each `want` came from the interpreter and the native backend agreeing.
 func TestSelfHostToStringLocalRecvHazardsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalHazardCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
-			bin := buildBin(t, gcc, dir, "tostrlocal_hazard_"+tc.name, asm)
-			if _, exit := hevRun(t, runner, bin); exit != tc.want {
+			if exit, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); exit != tc.want {
 				t.Errorf("exited %d, want %d — %d+100 would be an rc over-release", exit, tc.want, tc.want)
 			}
 		})
@@ -251,24 +231,13 @@ func toStringLocalAllCases() []struct {
 }
 
 // TestSelfHostToStringLocalRecvArm64 checks the answer on the self-host arm64
-// backend, which emits, assembles and links the binary itself.
+// backend.
 func TestSelfHostToStringLocalRecvArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "tostrlocal_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf("exited %d, want %d (>= 100 is an rc over-release)", code, tc.want)
 			}
 		})
@@ -278,37 +247,10 @@ func TestSelfHostToStringLocalRecvArm64(t *testing.T) {
 // TestSelfHostToStringLocalRecvWasm is the wasm leg. Every `want` is under
 // WASI's 126 ceiling, so an over-release (+100) is still expressible.
 func TestSelfHostToStringLocalRecvWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host to_string-local wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "tostrlocal_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.want {
 				t.Errorf("exited %d, want %d (>= 100 is an rc over-release)", code, tc.want)
 			}
 		})
