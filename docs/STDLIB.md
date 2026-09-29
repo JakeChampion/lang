@@ -1070,17 +1070,27 @@ serializer.
   `from`. There is no lenient mode: a request line whose method is not a
   token or whose target or version is empty (§3), a header line without
   a colon or whose name is not a token (so whitespace before the colon,
-  §5.1, and obs-fold, §5.2, both refuse), a bare CR or LF (§2.2),
-  `Transfer-Encoding`, a duplicate, non-numeric or overflowing
+  §5.1, and obs-fold, §5.2, both refuse), a value holding a control byte
+  other than HTAB (RFC 9110 §5.5), a bare CR or LF (§2.2),
+  `Transfer-Encoding` beside `Content-Length` or naming any coding but a
+  single `chunked` (§6.1, §6.3), a duplicate, non-numeric or overflowing
   `Content-Length` (§6.3), a request line over 8 KiB, a header block over
   32 KiB or 100 fields, or a body over 1 MiB is malformed, and a
   violation is refused as soon as it is known: a request past a cap once
   the cap is passed, a bad request line once its CRLF has arrived, before
-  the rest of the request; `http_header_bytes_cap()`, `http_body_cap()` and
-  `http_request_bytes_cap()` (the two plus the blank line between them)
-  name the caps for the serve loop's buffer. `http_header_value(block,
-  key)` reads a raw header block by the same rules, so a block the parser
-  would refuse names no header.
+  the rest of the request. A chunked body (§7.1, HTTP/1.1 only) is
+  decoded into `request.body`: chunk extensions are skipped, trailers are
+  read under the header rules and then discarded (nothing knows their
+  semantics, so none may merge into the headers, RFC 9110 §6.5.1;
+  `HttpRequest` has no trailers field yet), the decoded bytes are held to
+  the body cap, and the framing (chunk-size lines, extensions, CRLFs and
+  the trailer section) to another `http_header_bytes_cap()`, so a
+  chunk-flood cannot hold more buffer than any other request.
+  `http_header_bytes_cap()`, `http_body_cap()` and
+  `http_request_bytes_cap()` (header block, blank line, body and chunk
+  framing, each at its cap) name the caps for the serve loop's buffer.
+  `http_header_value(block, key)` reads a raw header block by the same
+  rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
   `close` as the serve loop decided.

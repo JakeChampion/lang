@@ -46,12 +46,21 @@ request gets `400 bad request`. Every response says `Connection: close`, as
 | `http_baseline.fern` | the wire bytes become a `string`; `http_parse_request` gives an `HttpRequest` holding owned copies of the method, the path, a `HeaderMap` of every header, and the body as a `Stream` | an `HttpResponse` the route builds; `http_serialize_response` concatenates the reply | none |
 | `http_fip.fern` | read in place out of the wire buffer; the parse's findings (the body's bounds, the request id's bounds, the length) are scalars in the function that uses them | framed into a second owned buffer, preallocated once | `fip` |
 
-The `fip` parser follows `std/http`'s acceptance rules to the byte, because
-the two must agree on every request for the digest to mean anything: a
-request line needs two spaces, a header line without a colon is skipped
-rather than refused, names compare case-insensitively, a `Content-Length`
-value is trimmed and must be digits that fit an `i32`, and the header block
-is judged before the request line is. The generator is `fip` too, and takes
+The `fip` parser follows `std/http`'s acceptance rules on every shape the
+corpus sends, because the two must agree on every request for the digest
+to mean anything: a request line needs two spaces, names compare
+case-insensitively, a `Content-Length` value is trimmed and must be digits
+that fit an `i32`, and the header block is judged before the request line
+is. It stops where the corpus stops. `std/http` has since grown rules the
+corpus never exercises, and the `fip` parser keeps its old answers there: a
+header line without a colon is refused by `std/http` and skipped here;
+`Transfer-Encoding: chunked` frames a body in `std/http` and refuses the
+request here (the corpus sends it beside a `Content-Length` on a `POST`,
+which both refuse, and with no chunk behind it on a `GET`, which `std/http`
+reads as incomplete, so the baseline answers 400 either way); an HTTP/1.1
+request needs a `Host` in `std/http`, and every request here carries one.
+A corpus that reaches into those rules has to grow the `fip` parser
+first. The generator is `fip` too, and takes
 the wire buffer `own`: producing the input is the harness, not the codec,
 and a borrowed buffer would copy all 1,024 bytes on each store.
 

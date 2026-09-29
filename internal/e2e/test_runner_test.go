@@ -3845,9 +3845,9 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 
 // `examples/tests/http_request_bytes_test.fern` pins the byte-based request
 // parser (#5714): `http_parse_request_bytes` and the text entry agree on
-// well-formed and refused requests, a bare request and a colon-less header
-// line parse as before, and what the parse keeps is copied out of the wire
-// buffer rather than aliasing it.
+// well-formed and refused requests, the framed parse tells incomplete from
+// malformed, a chunked body is decoded under its caps (#9854), and what the
+// parse keeps is copied out of the wire buffer rather than aliasing it.
 func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_request_bytes_test.fern")
@@ -3855,7 +3855,7 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 11", "# fail 0", "1..11"} {
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 14", "# fail 0", "1..14"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3890,7 +3890,7 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 		"ok 4 - missing header returns None",
 		"ok 6 - X-*-Content-Length is not the body length",
 		"ok 7 - duplicate Content-Length rejected",
-		"ok 8 - Transfer-Encoding rejected",
+		"ok 8 - Transfer-Encoding beside Content-Length rejected",
 		"ok 9 - http_header_value via HeaderMap",
 		"ok 10 - http_header_value missing returns None",
 		"ok 11 - http_header_value refuses a malformed block",
