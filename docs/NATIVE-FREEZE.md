@@ -57,11 +57,11 @@ above is the first run of it.
   suites; native gets it only if the self-host sources come to use it.
 - A native-only feature that still lands is an exception argued on #4451, so
   the debt stays visible in one place, rather than the default.
-- The bootstrap pin on both Linux hosts is the self-built fixed point
+- The bootstrap pin on every host is the self-built fixed point
   (`bootstrap.yml`'s publish job uploads `build/bootstrap/stage2`). Using it
   needs no native binary; producing the next one still seeds a native-built
-  candidate on every publish, so each Linux pin has one native-built
-  generation in its ancestry (`BOOTSTRAP.md`).
+  candidate on every publish, so each pin has one native-built generation in
+  its ancestry (`BOOTSTRAP.md`).
 
 ## What does not change
 

@@ -82,10 +82,14 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: arm64-linux }
           # arm64-darwin ran without the fixed point until 2026-09-29: its
           # stage2 exhausted the 16 GiB arena compiling the compiler (#8479).
-          # The macos lane's first measured round showed it holding (stage3
-          # in 56 s at 3.8 GB RSS, stage2 == stage3), so it joins the other
-          # two here. Peak footprint 5.7 GB on a 7 GB runner: a regression in
-          # the compiler's own memory shows up on this host first.
+          # The measured round that showed it holding (stage3 in 56 s at
+          # 3.8 GB RSS, stage2 == stage3) is in docs/LOCAL-DEV-LOOP.md, "The
+          # stage-1 / stage-2 self-compile on Apple Silicon". Peak footprint
+          # 5.7 GB on a 7 GB runner: a regression in the compiler's own memory
+          # shows up on this host first. Like the other two hosts, this
+          # measures the chain from the PIN; only candidate-arm64 below also
+          # runs it from a freshly native-built compiler, and only on
+          # arm64-linux (docs/TEST-GATES.md, the `make bootstrap` row).
           - { runner: macos-15,         host: arm64-darwin }
     name: verify-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
