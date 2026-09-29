@@ -275,8 +275,9 @@ type environment struct {
 }
 
 // Every environment lists BOTH entry shapes because every target compiles
-// both: a `handle` program gets the synthesised main (tcp_serve on the
-// hosted natives and on WASI CLI, whose descriptor grants `tcp`; the
+// both: a `handle` program gets the synthesised main (the supervised serve
+// loop on the hosted natives, which grant `proc`; the single-process loop
+// on WASI CLI, whose descriptor grants `tcp` and no processes; the
 // incoming-handler wrapper on the proxy world), and a program that writes
 // its own `main` keeps it. The lists said otherwise on all six targets --
 // one kind each, none of them the whole truth -- because nothing read the

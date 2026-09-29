@@ -338,9 +338,17 @@ survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
 pins the rename and the wrapper's shape. `TestServeShutdownHookX86_64`
 and `TestSelfHostServeShutdownHook` pin the `shutdown(reason, state)`
 hook: after two requests and SIGTERM the hook reports "sigterm" and the
-count; `TestSynthesisedHandleMainWiresShutdown` (`internal/checker`) and
-`TestSelfHostHandlerStateX86_64` pin the wiring and the E075 pairing on
-both compilers.
+count; `TestSynthesisedHandleMainWiresShutdown` and
+`TestSynthesisedHandleMainTakesInitOptions` (`internal/checker`) and
+`TestSelfHostHandlerStateX86_64` pin the wiring, the `init(plat)` and
+`(ServeOptions, S)` shapes, and the E075 pairing on both compilers. The
+synthesised main serves under the supervisor, so every handler-program
+server test above runs its workers through `tcp_serve_supervised_*`; the
+stateful ones answer `workers: 1` from `init` so the count each request
+sees is deterministic. On wasm32-wasi, which has no processes, the
+synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
+(`internal/checker`), `TestHandlerKindsMatchWhatTheCompilerAccepts` and
+`TestSelfHostWasiCliHandlerProgramBuilds` pin that on both compilers.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

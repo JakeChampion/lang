@@ -1367,7 +1367,7 @@ func runCheck(srcPath, target string) error {
 	if err := constfold.Fold(prog, embeddedAssets); err != nil {
 		return formatErr(err)
 	}
-	info, err := checker.Check(prog)
+	info, err := checker.CheckTarget(prog, target)
 	if err != nil {
 		return formatErr(err)
 	}
@@ -1477,7 +1477,7 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	if err := constfold.FoldWith(prog, constfold.Inputs{Assets: embeddedAssets, TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		return 1, e.format(err)
 	}
-	info, err := checker.Check(prog)
+	info, err := checker.CheckTarget(prog, target)
 	if err != nil {
 		return 1, e.format(err)
 	}

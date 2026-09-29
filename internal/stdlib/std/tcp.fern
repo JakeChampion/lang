@@ -985,7 +985,14 @@ function __serve_expire[D: async.Driver](drv: D, c: __Conns, opts: ServeOptions,
 function __host_platform(reactor: i32): Platform {
     var handle: i32 = reactor;
     if (handle < 0) { handle = 0; }
-    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: handle };
+    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: handle };
+}
+
+// __init_platform() — the platform a handler program's `init(plat)` is
+// handed: the host bag with no reactor, since it runs once in the
+// supervising parent before any worker's loop exists.
+function __init_platform(): Platform {
+    return __host_platform(0 - 1);
 }
 
 // __serve_loop — the HTTP/1.1 reactor loop factored out of `tcp_serve`
@@ -1181,6 +1188,41 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
 // every worker and the supervisor waits for them, exiting with the
 // worst code they answered (1 when one cut a request off).
 pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    return tcp_serve_supervised_shutdown(port, opts, handler, (reason: string): void => {});
+}
+
+// tcp_serve_supervised_shutdown(port, opts, handler, shutdown) —
+// `tcp_serve_supervised_opts` with a hook each worker's loop calls once
+// it has stopped, as `tcp_serve_shutdown` does: with `opts.workers`
+// workers it runs once per worker.
+pub function tcp_serve_supervised_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
+    return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop(fd, handler, worker_opts, shutdown));
+}
+
+// tcp_serve_supervised_with(port, opts, init, handler) —
+// `tcp_serve_supervised_opts` threading a state through the handler
+// chain as `tcp_serve_with` does. The state is built once, before the
+// first fork, and every worker inherits a copy: what one worker's
+// requests make of it is that worker's alone, and a worker forked again
+// after a death starts from the copy `init` was, not from where the
+// dead one left it.
+pub function tcp_serve_supervised_with[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+    return tcp_serve_supervised_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
+}
+
+// tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)
+// — `tcp_serve_supervised_with` with a hook each worker's loop calls once
+// it has stopped, with the reason and the state as that worker's last
+// request left it.
+pub function tcp_serve_supervised_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
+    return __supervise(port, opts, (fd: i32, worker_opts: ServeOptions): i32 => __serve_loop_with(fd, init, handler, worker_opts, shutdown));
+}
+
+// __supervise(port, opts, run) — the supervisor every `tcp_serve_supervised*`
+// entry is: `run(listener, opts)` is a worker's whole life, a serve loop
+// over the listener it is handed, answering the code the worker exits
+// with.
+function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => i32): i32 {
     // Listener FIRST, in the parent — the whole design hinges on
     // workers inheriting this fd rather than owning it. Per-worker
     // listeners are the opt-in that gives that up: each worker binds
@@ -1203,7 +1245,7 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
     drv.watch_signal(15);
     while (true) {
         while (!sup.stopping && sup.pids.len() < workers) {
-            var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, handler, resolved, sup);
+            var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
             sup = forked.0;
             if (forked.1 != 0 - 1) { return forked.1; }
         }
@@ -1226,17 +1268,17 @@ pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (
     return 0;
 }
 
-// __supervisor_fork(drv, port, listener, handler, opts, sup) — one more
+// __supervisor_fork(drv, port, listener, run, opts, sup) — one more
 // worker forked and recorded: `(sup, -1)`, or `(sup, code)` for the
 // supervisor to return with: a fork the host refuses, or the loop's own
 // result where there is no fork at all (ENOSYS: the interpreter), which
-// serves single-process instead. The child runs the loop over the
+// serves single-process instead. The child runs `run` over the
 // inherited listener, or one of its own where `listener` is none
 // (`__worker_listener`), and exits with its code rather than returning
 // into a second supervision loop; the reactor is the parent's, shared
 // across the fork, so the child only closes its copy, since an unwatch
 // would take the parent's signals out of the set the parent waits on.
-function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
+function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run: (i32, ServeOptions) => i32, opts: ServeOptions, sup: __Supervisor): (__Supervisor, i32) {
     var pid: i32 = proc_fork();
     if (pid == -38) {
         eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
@@ -1245,7 +1287,7 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, hand
         drv.close();
         var single: i32 = __worker_listener(port, listener, opts);
         if (single < 0) { return (sup, single); }
-        return (sup, __serve_loop(single, handler, ServeOptions { ...opts, workers: 1 }, (reason: string): void => {}));
+        return (sup, run(single, ServeOptions { ...opts, workers: 1 }));
     }
     if (pid < 0) { return (sup, pid); }
     if (pid == 0) {
@@ -1257,7 +1299,7 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, hand
         }
         var loop_opts: ServeOptions = opts;
         if (listener < 0) { loop_opts = ServeOptions { ...opts, workers: 1 }; }
-        exit(__serve_loop(own, handler, loop_opts, (reason: string): void => {}));
+        exit(run(own, loop_opts));
         return (sup, 0);
     }
     return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);

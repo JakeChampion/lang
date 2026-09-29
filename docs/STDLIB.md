@@ -1367,22 +1367,38 @@ loop and `std/fetch` the client.
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them, or with `reuse_port` over a listener of
   its own; whichever dies is replaced, and SIGTERM is forwarded to every
-  worker and waited for. No threaded-state variant — a refork resets the
-  loop frame.
+  worker and waited for. `tcp_serve_supervised_with(port, opts, init,
+  handler)` threads a state as `tcp_serve_with` does: built once before
+  the first fork, every worker inherits a copy, and a worker forked
+  again after a death starts from that copy, not from where the dead one
+  left it — a counter is per worker and lost on refork; state that must
+  outlive a crash belongs in a store the handler reaches through `plat`.
+  `tcp_serve_supervised_shutdown(port, opts, handler, shutdown)` and
+  `tcp_serve_supervised_with_shutdown(port, opts, init, handler, shutdown)`
+  take the hook of the `_shutdown` entries, which each worker's loop calls
+  on its way out. Where there is no fork (the interpreter) every one of
+  them serves single-process.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
-  programs can be tuned via `PORT=N ./bin`. That synthesis picks
-  `tcp_serve_with` over `tcp_serve` when the program defines
-  `init(): S` alongside a state-taking `handle`
-  (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075. A top-level `shutdown(reason)`, or `shutdown(reason, state)`
-  beside a state-threading handler, sends the synthesis to
-  `tcp_serve_shutdown` / `tcp_serve_with_shutdown` with `serve_options()`
-  and the hook; a hook whose state parameter disagrees with the
+  programs can be tuned via `PORT=N ./bin`. That synthesis serves
+  `handle` under the supervisor: `tcp_serve_supervised_opts` with
+  `serve_options()`, or `tcp_serve_supervised_with` when the program
+  defines an `init` answering the state a state-taking `handle` threads
+  (docs/PLATFORM-RESEARCH.md Rec §3). `init` takes nothing or the
+  platform (`__init_platform()`, the host bag with no reactor, since it
+  runs once in the supervising parent), and answers nothing, the state
+  `S`, the `ServeOptions` alone, or `(ServeOptions, S)`; options it
+  answers replace the defaults. On a target without processes
+  (wasm32-wasi) the synthesis serves through `tcp_serve_opts` and its
+  `_with` / `_shutdown` twins instead. Mismatching `init` and `handle` about the
+  state, or an `init` taking anything else, is E075. A top-level
+  `shutdown(reason)`, or `shutdown(reason, state)` beside a
+  state-threading handler, sends the synthesis to the `_shutdown` entries
+  with the hook; a hook whose state parameter disagrees with the
   handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
   `(S, Result[HttpResponse, E])` with state), so its body fails with
   `?`, is accepted by both compilers: they rename it

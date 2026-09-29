@@ -111,10 +111,9 @@ consumer, not before.
   against the inherited listener fd. `tcp_serve` itself stays
   exactly as-is behaviourally (single-process, dev-friendly,
   debuggable).
-- The synthesised handler `main` keeps calling plain `tcp_serve`
-  — supervision is opt-in by writing your own `main`. Flipping
-  the synthesised default is a separate decision once D2' has
-  soaked.
+- The synthesised handler `main` serves under the supervisor
+  (`tcp_serve_supervised_opts` and its `_with` / `_shutdown` twins,
+  #9854); `tcp_serve` is for a `main` you write yourself.
 
 ## Test bar (D2' exit criteria)
 

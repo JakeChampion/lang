@@ -17,6 +17,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/defaultargs"
 	"github.com/jakechampion/lang/internal/diag"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/stdlib"
 )
 
@@ -1002,6 +1003,14 @@ func Check(prog *ast.Program) (*Info, error) {
 	return CheckContext(context.Background(), prog)
 }
 
+// CheckTarget is Check for a program built for `target`: the main it
+// synthesises for a handler program serves under the supervisor where the
+// target has processes and single-process where it has none (wasm32-wasi).
+// An unknown or empty target is the hosted shape, as Check is.
+func CheckTarget(prog *ast.Program, target string) (*Info, error) {
+	return checkTarget(context.Background(), prog, target)
+}
+
 // CheckContext is the context-aware sibling of Check —
 // checks the context between each top-level function-body
 // pass so the LSP can cancel a long type-check mid-flight
@@ -1015,6 +1024,10 @@ func Check(prog *ast.Program) (*Info, error) {
 // no recursive descent, so a single up-front ctx check
 // suffices for them.
 func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
+	return checkTarget(ctx, prog, "")
+}
+
+func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -1023,10 +1036,18 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if hasHandleDecl(prog) {
 		adaptResultHandler(prog)
 	}
-	return checkImpl(ctx, prog)
+	return checkImpl(ctx, prog, targetSupervises(target))
 }
 
-func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
+// targetSupervises reports whether a handler program built for `target`
+// serves under the supervisor: the target has processes to fork. An
+// unknown or empty target is the hosted default.
+func targetSupervises(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "proc")
+}
+
+func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, error) {
 	// Prepend the built-in Option / Result / IoError /
 	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
@@ -5030,7 +5051,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		// declaration that is wrong; synthesising main on top of it adds
 		// a second, positionless error about a call nobody wrote.
 		if c.checkHandlerStatePairing(prog) {
-			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
+			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
 
@@ -20896,13 +20917,15 @@ func hasMainDecl(prog *ast.Program) bool {
 	return false
 }
 
-// checkHandlerStatePairing rejects the two ways `init` and `handle`
-// can disagree about process-lifetime state (docs/PLATFORM-RESEARCH.md
-// Rec §3). Either the handler takes a state nothing produces, or `init`
-// produces one nothing takes — the second silently dropped the value
-// before this check existed, which is the worse of the two.
+// checkHandlerStatePairing rejects the ways `init`, `handle` and
+// `shutdown` can disagree about process-lifetime state
+// (docs/PLATFORM-RESEARCH.md Rec §3). Either the handler takes a state
+// nothing produces, or `init` produces one nothing takes — the second
+// silently dropped the value before this check existed, which is the
+// worse of the two — and an `init` taking anything but the platform has
+// no caller to hand it that.
 //
-// Only reached when the synthesised main is what wires the two
+// Only reached when the synthesised main is what wires the three
 // together: a user-written `main` owns its own wiring, and pairing them
 // some other way is that program's business.
 // It reports whether the pair is coherent enough to synthesise a main
@@ -20913,7 +20936,12 @@ func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
 	if handle == nil {
 		return true
 	}
-	initReturnsState := init != nil && !isVoidReturn(init.ReturnType)
+	if init != nil && !initTakesPlatformOnly(init) {
+		c.errfCode(init.P, "E075",
+			"`init` takes %d parameters; it takes none, or the platform alone", len(init.Params))
+		return false
+	}
+	_, initReturnsState := initReturnShape(init)
 	handleTakesState := len(handle.Params) == 3
 	switch {
 	case handleTakesState && !initReturnsState:
@@ -20953,24 +20981,38 @@ func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
 	return nil
 }
 
-// hasInitDecl reports whether the program defines a top-level
-// `init` function — recognised by the auto-`main`-from-`handle`
-// synthesis as a one-shot startup entry that runs before the
-// per-request loop (docs/PLATFORM-RESEARCH.md Rec §3).
-func hasInitDecl(prog *ast.Program) bool {
-	return findDecl(prog, "init") != nil
+// initTakesPlatformOnly reports whether `init` takes nothing, or the
+// platform alone: the two shapes the synthesised main can call.
+func initTakesPlatformOnly(init *ast.FuncDecl) bool {
+	if len(init.Params) == 0 {
+		return true
+	}
+	if len(init.Params) != 1 {
+		return false
+	}
+	st, ok := init.Params[0].Type.(ast.StructType)
+	return ok && st.Name == "Platform"
 }
 
-// initProvidesState reports whether `init` returns a value for the
-// handler to carry, and `handle` is the shape that takes one:
+// isServeOptionsType reports whether `t` is std/tcp's `ServeOptions`,
+// under its bare name (flat loads) or a module prefix (`tcp__ServeOptions`).
+func isServeOptionsType(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && (st.Name == "ServeOptions" || strings.HasSuffix(st.Name, "__ServeOptions"))
+}
+
+// initReturnShape reports what a handler program's `init` answers: the
+// serve options, a state for the handler to carry, both as
+// `(ServeOptions, S)`, or neither.
 //
 //	function init(): S
+//	function init(plat: Platform): (ServeOptions, S)
 //	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
 //
-// That pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
+// The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
 // Rec §3 — build once at startup, thread through every request — and
 // the sanctioned answer to process-lifetime mutable state (#2679): the
-// value lives in the accept loop's frame, not in a module-level `var`
+// value lives in the serve loop's frame, not in a module-level `var`
 // the language does not have.
 //
 // A void `init` stays the Phase-1 shape: run for its side effects, then
@@ -20979,13 +21021,17 @@ func hasInitDecl(prog *ast.Program) bool {
 // value-returning init with nothing consuming it) are rejected at the
 // synthesis site rather than lowered into a call that would not
 // type-check against a synthesised main nobody wrote.
-func initProvidesState(prog *ast.Program) bool {
-	init := findDecl(prog, "init")
-	handle := findDecl(prog, "handle")
-	if init == nil || handle == nil {
-		return false
+func initReturnShape(init *ast.FuncDecl) (opts, state bool) {
+	if init == nil || isVoidReturn(init.ReturnType) {
+		return false, false
 	}
-	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
+	if isServeOptionsType(init.ReturnType) {
+		return true, false
+	}
+	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeOptionsType(tt.Elems[0]) {
+		return true, true
+	}
+	return false, true
 }
 
 // resultHandlerName is what a handler written as a `Result[HttpResponse, E]`
@@ -21094,7 +21140,7 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 		P:        pos,
 		TypeName: "Platform",
 		Fields: []ast.FieldInit{
-			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 2}},
+			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 3}},
 			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
 			{Name: "sink", Value: &ast.Call{
 				P:      pos,
@@ -21113,40 +21159,39 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 	}
 }
 
-// synthesiseHandleMain builds:
+// synthesiseHandleMain builds the main of a handler-shaped program: the
+// handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
+// `PORT`, with `init`'s options and state where it answers them —
 //
 //	function main(): i32 {
-//	    return tcp_serve(__port_from_env("PORT", 8080), handle);
+//	    return tcp_serve_supervised_opts(__port_from_env("PORT", 8080), serve_options(), handle);
 //	}
 //
-// or, when `init` returns a value the handler takes
-// (initProvidesState):
+// or, for `init(plat: Platform): (ServeOptions, S)` beside a handler
+// threading `S` and a `shutdown(reason, state)` hook:
 //
 //	function main(): i32 {
-//	    return tcp_serve_with(__port_from_env("PORT", 8080), init(), handle);
+//	    let (__fern_opts, __fern_state) = init(__init_platform());
+//	    return tcp_serve_supervised_with_shutdown(__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
 //	}
 //
-// and with a `shutdown` hook declared, the `_shutdown` entry of either,
-// handed `serve_options()` and the hook:
+// An `init` answering only the state goes as the state argument, one
+// answering only the options as the options argument, and a void one
+// runs as a statement before the serve call. Where the target has no
+// processes (`supervised` false: wasm32-wasi) the single-process entries
+// of the same arity serve instead — `tcp_serve_opts`, `tcp_serve_with_opts`
+// and their `_shutdown` twins.
 //
-//	function main(): i32 {
-//	    return tcp_serve_with_shutdown(__port_from_env("PORT", 8080), serve_options(), init(), handle, shutdown);
-//	}
+// The wasi-http target has its own `wasi:http/incoming-handler.handle`
+// export wrapper that invokes the user's `handle` directly and drops
+// this main before the tree-shake.
 //
-// — the canonical entry point for handler-shaped programs on
-// CLI / arm64 targets. The wasi-http target has its own
-// `wasi:http/incoming-handler.handle` export wrapper that
-// invokes the user's `handle` directly; main existing
-// alongside it costs nothing (wasi-http's _start is an empty
-// stub anyway).
-//
-// Loaded flat via `LoadStdlibFlat` (e.g. in tests), both
-// `tcp_serve` and `__port_from_env` live at their bare names
-// (no mangling). Loaded via modload with `import "std/tcp";`
-// they get the `tcp__` prefix instead. We probe `prog.Funcs` for
-// whichever name exists and stamp the Ident accordingly so the
-// synthesised main resolves cleanly through both load paths.
-func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
+// Loaded flat via `LoadStdlibFlat` (e.g. in tests), the std/tcp entries
+// live at their bare names (no mangling). Loaded via modload with
+// `import "std/tcp";` they get the `tcp__` prefix instead. We probe
+// `prog.Funcs` for whichever name exists and stamp the Ident accordingly
+// so the synthesised main resolves cleanly through both load paths.
+func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	pos := ast.Position{}
 	resolve := func(bare, mangled string) string {
 		for _, fn := range prog.Funcs {
@@ -21164,79 +21209,66 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 		// the program forgot to import std/tcp.
 		return bare
 	}
-	portCall := &ast.Call{
-		P:      pos,
-		Callee: &ast.Ident{P: pos, Name: resolve("__port_from_env", "tcp____port_from_env")},
-		Args: []ast.Expr{
-			&ast.StringLit{P: pos, Value: "PORT"},
-			&ast.NumberLit{P: pos, Value: 8080},
-		},
+	tcpCall := func(bare string, args ...ast.Expr) *ast.Call {
+		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(bare, "tcp__"+bare)}, Args: args}
 	}
+	ident := func(name string) *ast.Ident { return &ast.Ident{P: pos, Name: name} }
+	portCall := tcpCall("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
 	// `init` is the BARE name; if a module import qualifies it, modload
-	// rewrites the call separately.
-	initCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "init"}, Args: nil}
+	// rewrites the call separately. It is handed the platform when it
+	// takes one.
+	init := findDecl(prog, "init")
+	initCall := &ast.Call{P: pos, Callee: ident("init")}
+	if init != nil && len(init.Params) == 1 {
+		initCall.Args = []ast.Expr{tcpCall("__init_platform")}
+	}
+	initOpts, initState := initReturnShape(init)
 
 	var stmts []ast.Stmt
-	var serveCall *ast.Call
-	// A `shutdown` hook goes to the `_shutdown` entry, which takes the
-	// options too (`serve_options()`, the defaults) and calls the hook once
-	// the loop has stopped.
-	hasShutdown := findDecl(prog, "shutdown") != nil
-	optsCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve("serve_options", "tcp__serve_options")}, Args: nil}
-	shutdownRef := &ast.Ident{P: pos, Name: "shutdown"}
-	if initProvidesState(prog) {
-		// `init(): S` + `handle(state: S, req, plat): (S, HttpResponse)`
-		// — the two-phase lifecycle: build the state once, thread it
-		// through the request chain (docs/PLATFORM-RESEARCH.md Rec §3).
-		// tcp_serve_with owns the state in the accept loop's frame, so
-		// it lives as long as the process.
-		serveCall = &ast.Call{
-			P:      pos,
-			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with", "tcp__tcp_serve_with")},
-			Args: []ast.Expr{
-				portCall,
-				initCall,
-				&ast.Ident{P: pos, Name: "handle"},
-			},
-		}
-		if hasShutdown {
-			serveCall = &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with_shutdown", "tcp__tcp_serve_with_shutdown")},
-				Args:   []ast.Expr{portCall, optsCall, initCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
-			}
-		}
-	} else {
-		serveCall = &ast.Call{
-			P:      pos,
-			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve", "tcp__tcp_serve")},
-			Args: []ast.Expr{
-				portCall,
-				&ast.Ident{P: pos, Name: "handle"},
-			},
-		}
-		if hasShutdown {
-			serveCall = &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_shutdown", "tcp__tcp_serve_shutdown")},
-				Args:   []ast.Expr{portCall, optsCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
-			}
-		}
+	// The options are `init`'s when it answers them, else the defaults;
+	// the state is `init`'s value, destructured from beside the options
+	// when it answers both.
+	var opts ast.Expr = tcpCall("serve_options")
+	var state ast.Expr = initCall
+	switch {
+	case initOpts && initState:
+		stmts = append(stmts, &ast.Destructure{P: pos, Names: []string{"__fern_opts", "__fern_state"}, Init: initCall})
+		opts, state = ident("__fern_opts"), ident("__fern_state")
+	case initOpts:
+		opts = initCall
+	case init != nil && !initState:
 		// A void `init` runs for its side effects before the loop —
 		// logging "starting", reading env vars, warming a cache the
 		// handler reaches some other way.
-		if hasInitDecl(prog) {
-			stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+		stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+	}
+	// A `shutdown` hook goes to the `_shutdown` entry, which calls the
+	// hook once a worker's loop has stopped.
+	hasShutdown := findDecl(prog, "shutdown") != nil
+	entry := func(supervisedName, singleName string) string {
+		if supervised {
+			return supervisedName
 		}
+		return singleName
+	}
+	var serveCall *ast.Call
+	switch {
+	case initState && hasShutdown:
+		serveCall = tcpCall(entry("tcp_serve_supervised_with_shutdown", "tcp_serve_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
+	case initState:
+		serveCall = tcpCall(entry("tcp_serve_supervised_with", "tcp_serve_with_opts"), portCall, opts, state, ident("handle"))
+	case hasShutdown:
+		serveCall = tcpCall(entry("tcp_serve_supervised_shutdown", "tcp_serve_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
+	default:
+		serveCall = tcpCall(entry("tcp_serve_supervised_opts", "tcp_serve_opts"), portCall, opts, ident("handle"))
 	}
 	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
-	body := &ast.Block{Stmts: stmts}
 	return &ast.FuncDecl{
 		P:                        pos,
 		Name:                     "main",
 		Params:                   nil,
 		ReturnType:               ast.NumberType{Width: 32, Signed: true},
-		Body:                     body,
+		Body:                     &ast.Block{Stmts: stmts},
 		IsSynthesisedHandlerMain: true,
 	}
 }
