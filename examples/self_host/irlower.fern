@@ -42104,30 +42104,22 @@ function strarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
 // that doesn't otherwise leak `name`. `for x in name` binds an element per
 // iteration (a lasting alias the walker can't see through) — conservatively
 // unsafe.
-// strarr_producer_names_of: the whole-program `"STRARR:"` producers this frame
-// can actually see — registered as returning a freshly-built string[] on every
-// path, and not shadowed by a local or a parameter of the same name here. The
-// declaration collector asks the registry and `body_declares_name` separately;
-// the rebind gate below is inside a walker that carries neither, so the list is
-// filtered once at the entry point instead, as the string[]-field admission
-// filters its own producers.
-function strarr_producer_names_of(fresh_ret: string[], body: ast.Stmt[]): string[] {
+// strarr_producer_names_of: the whole-program string[] producers — the
+// `"STRARR:"` and `"SARRC:"` names, registered as returning a freshly-built
+// string[] on every path — plus the threader and handback rows whole. A local or
+// parameter cannot shadow one: lexical.resolve_func has renamed every binding.
+function strarr_producer_names_of(fresh_ret: string[]): string[] {
     var out: string[] = [];
     var i: i32 = 0;
     while (i < fresh_ret.len()) {
         if (fresh_ret[i].len() > 7 && slice_unchecked(fresh_ret[i], 0, 7) == "STRARR:") {
-            var nm: string = slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "";
-            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+            out = push_str_unique(out, slice_unchecked(fresh_ret[i], 7, fresh_ret[i].len()) + "");
         }
         if (fresh_ret[i].len() > 6 && slice_unchecked(fresh_ret[i], 0, 6) == "SARRC:") {
-            var nm: string = slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "";
-            if (!body_declares_name(body, nm)) { out = push_str_unique(out, nm); }
+            out = push_str_unique(out, slice_unchecked(fresh_ret[i], 6, fresh_ret[i].len()) + "");
         }
         // A threader or handback row rides along whole; no bare name can match it.
-        var thr: string = thread_row_name(fresh_ret[i]);
-        if (thr.len() > 0 && !body_declares_name(body, thr)) { out = push_str_unique(out, fresh_ret[i]); }
-        var hbk: string = handback_row_name(fresh_ret[i]);
-        if (hbk.len() > 0 && !body_declares_name(body, hbk)) { out = push_str_unique(out, fresh_ret[i]); }
+        if (thread_row_name(fresh_ret[i]).len() > 0 || handback_row_name(fresh_ret[i]).len() > 0) { out = push_str_unique(out, fresh_ret[i]); }
         i = i + 1;
     }
     return out;
@@ -44270,10 +44262,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     // `keep = ps[i].xs` array-field extraction; a scalar read `ps[i].n`, indexed read
     // `ps[i].xs[j]`, `ps[i].xs.len()` and their nested forms `ps[i].f.g`,
     // `ps[i].f.g.h[j]` and `ps[i].f.g.h.len()` are borrows).
-    // The "ARRSTRUCTF:" pass vetoes shadowed prefixed rows; the "" pass vetoes shadowed
-    // bare producer names, which producer_elem_is_fresh looks up.
-    var producers: string[] = unshadowed_producer_rows(unshadowed_producer_rows(fresh_ret, body, "ARRSTRUCTF:"), body, "");
-    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, producers, [], msites, sfok);
+    var asts: string[] = collect_fresh_arrstruct_names(body, body, structs, fresh_ret, [], msites, sfok);
     var asti: i32 = 0;
     while (asti < asts.len()) {
         // "A|" rows are append-BUILT markers, not candidates.
@@ -44285,9 +44274,9 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
         var marker: boolean = asts[asti].len() > 2 && asts[asti][0] == b'A' && asts[asti][1] == b'|';
         if (!marker) { asty = arrstruct_elem_type_of_decl(body, asnm, structs); }
         if (!marker
-            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, producers)
+            && !arrstruct_unsafe_for(body, asnm, borrowable, structs, msites, sfok, fresh_ret)
             && !arrstruct_row_escapes(body, asnm, asty, structs, borrowable)
-            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, producers)) {
+            && !arrstruct_elem_payload_escapes(body, asnm, asty, structs, msites, borrowable, sfok, fresh_ret)) {
             // arrstruct_unsafe_for subsumes the former body_unsafe_for + the
             // blunt not-reassigned exclusion, validating each rebind
             // individually (#6535) — the self-append is sanctioned, any other
@@ -44719,7 +44708,7 @@ function reclaimable_names_of(body: ast.Stmt[], reassigned: string[], structs: S
     // __fern_str_arr_free walk frees each element box exactly once. NOT excluded
     // on `reassigned` — the self-append rebind IS a reassignment; the gate
     // validates each one individually.
-    var sarr_producers: string[] = strarr_producer_names_of(fresh_ret, body);
+    var sarr_producers: string[] = strarr_producer_names_of(fresh_ret);
     var sarrs: string[] = collect_fresh_strarr_names(body, body, fresh_ret, str_fresh_ret, []);
     out = reclaimable_strarr(body, borrowable, emit_msites, sarrs, sfok, str_fresh_ret, sarr_producers, structs, out);
     // The builtin string[] producers (`s.split(sep)` / `s.lines()`), under their
@@ -46032,9 +46021,6 @@ function counted_strarr_value(e: ast.Expr, fn: parser.FuncDecl, sources: StringA
     }
     if let ast.ExprCall(c) = e {
         var nm: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, nm) || body_declares_name(fn.body, nm)) {
-            return false;
-        }
         if (util.has_str(owned, nm)) {
             return true;
         }
@@ -46094,9 +46080,6 @@ function counted_strarr_handback(e: ast.Expr, name: string, fn: parser.FuncDecl,
     }
     if let ast.ExprCall(c) = e {
         var callee: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, callee) || body_declares_name(fn.body, callee)) {
-            return false;
-        }
         var i: i32 = 0;
         while (i < c.args.len()) {
             if (i != k) {
@@ -52324,9 +52307,8 @@ function stmt_structarr_unsafe_for(st: ast.Stmt, name: string, borrowable: strin
 }
 
 // struct_arr_producer_rebind: `name = g(..)` rebuilds the struct-array candidate
-// from a producer registered under `tag` that the frame does not shadow
-// (`producers` is unshadowed_producer_rows' list), and the call reads `name` at
-// most as a borrow. The producer's elements are its own, so the new array shares
+// from a producer registered under `tag`, and the call reads `name` at most as a
+// borrow. The producer's elements are its own, so the new array shares
 // nothing with the old and the rebind store frees the old one whole (#10360).
 function struct_arr_producer_rebind(e: ast.Expr, name: string, borrowable: string[], producers: string[], tag: string): boolean {
     return producer_call_row(e, producers, tag) && !expr_unsafe_for(e, name, borrowable, []);
@@ -52338,21 +52320,6 @@ function producer_call_row(e: ast.Expr, rows: string[], tag: string): boolean {
         if let ast.ExprIdent(cid) = c.callee { return util.index_of_str(rows, tag + cid.name) >= 0; }
     }
     return false;
-}
-
-// unshadowed_producer_rows: `rows` less the `tag` rows and the threader rows
-// naming a function that a local of `body` shadows — a call through that name
-// reaches the local's value.
-function unshadowed_producer_rows(rows: string[], body: ast.Stmt[], tag: string): string[] {
-    var out: string[] = [];
-    for row in rows {
-        var shadowed: boolean = row.len() > tag.len() && slice_unchecked(row, 0, tag.len()) == tag
-            && body_declares_name(body, slice_unchecked(row, tag.len(), row.len()) + "");
-        var thr: string = thread_row_name(row);
-        if (thr.len() > 0 && body_declares_name(body, thr)) { shadowed = true; }
-        if (!shadowed) { out = out.append(row); }
-    }
-    return out;
 }
 
 // ProducerRebindScan / producer_rebind_visit: the astwalk.fold_stmt_spine state
@@ -52731,7 +52698,7 @@ function collect_fresh_structarr_names(stmts: ast.Stmt[], body: ast.Stmt[], stru
                 // An EMPTY seed the body rebinds from a producer (#10360): each
                 // rebind earns what the producer init above does.
                 else if (structarr_elem_struct_type(v.type_name, structs) != "" && arrarr_lit_is_empty(v.init)
-                    && name_rebound_by_producer(stmts, v.name, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"), "STRUCTARRF:")) {
+                    && name_rebound_by_producer(stmts, v.name, fresh_ret, "STRUCTARRF:")) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
                 // An EMPTY seed grown only through a threader (#10420): append-built
@@ -65835,7 +65802,7 @@ function aac_value_kind(e: ast.Expr, stmts: ast.Stmt[], k: i32, fn: parser.FuncD
 // "AAC:" producer or a handback whose every handback argument is fresh.
 function aac_call_kind(c: ast.ExprCall, fn: parser.FuncDecl, rows: string[], arc: SigReg): i32 {
     var cn: string = ident_name_or_empty(c.callee);
-    if (cn.len() == 0 || fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
+    if (cn.len() == 0) { return 0 - 1; }
     if (util.has_str(rows, "AAC:" + cn + "|s")) { return 1; }
     if (util.has_str(rows, "AAC:" + cn + "|p")) { return 0; }
     if (!util.has_str(rows, "AACH:" + cn)) { return 0 - 1; }
@@ -65909,7 +65876,6 @@ function aac_handback_kind(e: ast.Expr, name: string, fn: parser.FuncDecl, rows:
     var worst: i32 = 0;
     if let ast.ExprCall(c) = e {
         var cn: string = ident_name_or_empty(c.callee);
-        if (fn_has_param_named(fn, cn) || body_declares_name(fn.body, cn)) { return 0 - 1; }
         if (util.has_str(rows, "AACHS:" + cn)) { worst = 1; }
         var i: i32 = 0;
         while (i < c.args.len()) {
@@ -83698,7 +83664,7 @@ while (sa2i < sarrs2.len()) {
     // As above: site keys, with the "A|" marker carried in the same key.
     var sanm: string = reclaim_site_name(sarrs2[sa2i]);
     if (!(sarrs2[sa2i].len() > 2 && sarrs2[sa2i][0] == b'A' && sarrs2[sa2i][1] == b'|')
-        && !structarr_unsafe_for(body, sanm, borrowable, unshadowed_producer_rows(fresh_ret, body, "STRUCTARRF:"))
+        && !structarr_unsafe_for(body, sanm, borrowable, fresh_ret)
         && !structarr_elem_escapes(body, sanm, borrowable, shares)
         && !structarr_arg_hands_out(body, sanm, borrowable, cntret, ret_types, fresh_ret)) {
         // Append-built candidates take the SEPARATE STRUCTARRA: credit,
