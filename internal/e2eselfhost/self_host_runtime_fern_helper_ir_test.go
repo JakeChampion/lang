@@ -287,15 +287,6 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			[]string{"\n__fern_eprint_str:"},
 		},
 		{
-			// read_all_stdin — fd 0 drained to EOF into one box. The old hand-asm
-			// body (__fern_read_all_stdin: / .Lras_loop) is gone; op_read_all_stdin
-			// calls __fn___fern_read_all_stdin, which boxes with __raw_string.
-			"read_all_stdin",
-			`function main(): i32 { return read_all_stdin().len(); }`,
-			"__fn___fern_read_all_stdin",
-			[]string{"\n__fern_read_all_stdin:", ".Lras_loop"},
-		},
-		{
 			// read_line — Option[string] over read(2), one byte per syscall so no
 			// byte past the newline is consumed. The old hand-asm body
 			// (__fern_read_line: / .Lrl_*) is gone; op_read_line calls the

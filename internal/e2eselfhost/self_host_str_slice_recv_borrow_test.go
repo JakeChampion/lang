@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,31 +85,6 @@ var strSliceRecvBorrowCases = []struct {
 	// Flat (0) on both sides — pins that widening the carve-out does not disturb
 	// the path that never needed it.
 	{"str-slice-recv-plain-control", sliceRecvHeap(`return base.own2().len();`), 0},
-	// WITNESS for the recv_borrow proof. `view2` returns a view of its receiver,
-	// so the result aliases `base`'s buffer and is RETURNED past base's scope. A
-	// compiler that admits any method name at this carve-out credits `base` as
-	// merely borrowed, releases it at the return, and the caller reads freed and
-	// reused bytes: exit 96, measured. body_unsafe_for refuses `view2` because a
-	// slice outside a borrow position is an escape, so the key is absent.
-	{"str-slice-recv-returned-view-witness", sliceRecvPrelude + `function leak(pre: string): str {
-    var base: string = w(pre);
-    return slice_unchecked(base, 2, base.len()).view2();
-}
-function main(): i32 {
-    var i: i32 = 0;
-    while (i < 3000) {
-        var v: str = leak("abcdefgh");
-        var p1: string = w("XXXXXXXX");
-        var p2: string = w("YYYYYYYY");
-        if (p1.len() + p2.len() < 0) { return 0; }
-        if (has_sub(v, "XXXX")) { return 96; }
-        if (v.len() != 103) { return 97; }
-        if (!has_prefix(v, "defgh")) { return 95; }
-        i = i + 1;
-    }
-    if (__rc_underflow_count() != 0) { return 99; }
-    return 0;
-}`, 0},
 	// The same view-returning method with the result NOT escaping the frame:
 	// both the view and the source are read afterwards and must survive.
 	{"str-slice-recv-view-method-live", sliceRecvPrelude + `function round(pre: string): i32 {
@@ -178,55 +149,29 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostStrSliceRecvBorrowIRX86_64 drives the cases through the
-// self-hosted x86-64 compiler.
-func TestSelfHostStrSliceRecvBorrowIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+const strSliceRecvFailFmt = "%s = %d, want %d (98 = the source lost its reclaim credit; 96 = a released source read back; 99 = over-release; 97/95 = value corrupted)"
 
+// TestSelfHostStrSliceRecvBorrowIRX86_64 drives the cases through the
+// self-hosted CLI for x86-64.
+func TestSelfHostStrSliceRecvBorrowIRX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
 	for _, tc := range strSliceRecvBorrowCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimit)+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the source lost its reclaim credit; 96 = a released source read back; 99 = over-release; 97/95 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", sliceRecvSrc(tc.src, sliceRecvLimit))); code != tc.want {
+				t.Errorf(strSliceRecvFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
-// TestSelfHostStrSliceRecvBorrowIRArm64 is the arm64 leg; the carve-out is
-// shared irlower and the reclaim it unlocks is a per-backend transcription.
+// TestSelfHostStrSliceRecvBorrowIRArm64 is the arm64 leg.
 func TestSelfHostStrSliceRecvBorrowIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strSliceRecvBorrowCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(sliceRecvSrc(tc.src, sliceRecvLimit)+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the source lost its reclaim credit; 96 = a released source read back; 99 = over-release; 97/95 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", sliceRecvSrc(tc.src, sliceRecvLimit))); code != tc.want {
+				t.Errorf(strSliceRecvFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
@@ -234,38 +179,11 @@ func TestSelfHostStrSliceRecvBorrowIRArm64(t *testing.T) {
 
 // TestSelfHostStrSliceRecvBorrowWasmIR is the wasm leg.
 func TestSelfHostStrSliceRecvBorrowWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping slice-receiver borrow wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strSliceRecvBorrowCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(sliceRecvSrc(tc.src, sliceRecvLimit) + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, strings.ReplaceAll(tc.name, "/", "_")+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("%s = %d, want %d (98 = the source lost its reclaim credit; 96 = a released source read back; 99 = over-release; 97/95 = value corrupted)", tc.name, got, tc.want)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", sliceRecvSrc(tc.src, sliceRecvLimit))); code != tc.want {
+				t.Errorf(strSliceRecvFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}

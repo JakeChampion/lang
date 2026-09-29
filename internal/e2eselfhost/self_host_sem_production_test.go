@@ -545,6 +545,25 @@ function run(k: i32): i32 {
 }
 function main(): i32 { return run(3) - run(1); }
 `},
+	// A consuming match that builds a variant of the enum it matched builds it
+	// in the matched box when that box is unique, releasing only the payload
+	// it does not carry over; a box still shared elsewhere is left alone.
+	{name: "a-match-arm-rebuilds-its-variant-in-place", atLeast: 3, noLeak: true, src: `
+enum E { V(i32, string), W(i32, string) }
+function flip(own x: E): E {
+    return match (x) { V(a, s) => W(a + 1, s + "-w"), W(a, s) => V(a * 2, s) };
+}
+function weight(e: E): i32 {
+    return match (e) { V(a, s) => a + s.len(), W(a, s) => a * 100 + s.len() };
+}
+function main(): i32 {
+    var y = flip(flip(V(3, "abc")));
+    var z = W(5, "k" + "-past-the-sso-inline-threshold");
+    var keep = z;
+    z = flip(z);
+    return weight(y) + weight(z) + weight(keep) % 7;
+}
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
@@ -5371,6 +5390,29 @@ function main(): i32 {
     var u = unbox(W((x: i32) => x - 1));
     return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
 }
+`},
+	// A `str` result returning a call's OWNED `string`: std/string's trim
+	// builds a fresh string, and so does mk. The result anchors no parameter,
+	// so the function returns a copy; the anchor chase used to leave the
+	// callee pending forever and refused both with "view result escapes its
+	// source" (#10688).
+	{name: "a-str-result-returns-an-owned-call-result", atLeast: 48, noLeak: true, src: `
+import "std/string";
+function mk(p: string): string { return p + "xy"; }
+function owned(p: string): str { return mk(p); }
+function view(pre: string): str { var base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
+function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); return v.len() * 10 + w.len(); }
+`},
+	// A generic enum's variant carrying a function field that mentions `T`.
+	// The clone substituted the field's result type but not its parameter
+	// types, so `Fn__i32`'s field read `(T) => i32` and the literal was
+	// refused with "variant field type" (#10689).
+	{name: "a-generic-variant-carries-a-function-of-its-parameter", atLeast: 4, noLeak: true, src: `
+enum Box[T] { Fn(T, (T) => T), Two((T, T) => T), Empty }
+function inc(x: i32): i32 { return x + 1; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function run(b: Box[i32]): i32 { match (b) { Fn(n, f) => { return f(n); }, Two(g) => { return g(40, 2); }, Empty => { return 0; } } }
+function main(): i32 { return run(Fn(41, inc)) + run(Two(add)) + run(Empty); }
 `},
 }
 

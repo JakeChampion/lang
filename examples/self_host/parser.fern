@@ -8458,7 +8458,7 @@ pub function builtin_function_names(): string[] {
         // is the NICE value: -20 is the most favourable and 19 the least.
         "priority", "set_priority",
         // stdin / readers
-        "stdin", "stdout", "stderr", "isatty", "read_line", "read_all_stdin",
+        "stdin", "stdout", "stderr", "isatty", "read_line",
         // the two halves of the compile target's name, literals once compiled
         "target_os", "target_arch",
         "open_reader", "open_writer", "open_appender", "open_exclusive",
@@ -14115,7 +14115,15 @@ pub function monomorphize_enums(mod: Module): Module {
                         // so the IR path recognises it as a fn payload (a raw
                         // spelling in type_name trips the per-function IR
                         // eligibility, bailing the whole function).
-                        var f_ptys: string = vs.fields[fj2].fn_param_types;
+                        var f_ptys: string = "";
+                        var pts: string[] = [];
+                        if (vs.fields[fj2].fn_param_types.len() > 0) { pts = split_top_commas(vs.fields[fj2].fn_param_types); }
+                        for pt0 in pts {
+                            var pt: string = subst_ty(pt0, ed.type_params, cts);
+                            ins = me_collect_anno(pt, menums, ins);
+                            if (f_ptys.len() > 0) { f_ptys = f_ptys + ","; }
+                            f_ptys = f_ptys + me_rewrite_ty(pt, menums);
+                        }
                         if (pk_is_fn_spelling(f_ty)) {
                             f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), menums);
                             ins = me_collect_anno(f_ret, menums, ins);

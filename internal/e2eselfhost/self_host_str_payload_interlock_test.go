@@ -1,12 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // strPayloadInterlockCases pin a fresh STRING local handed to a union element of
 // an rc-tuple — `var sv = …; var t = (i, Some(sv))`.
@@ -36,7 +30,8 @@ var strPayloadInterlockCases = []struct {
 }{
 	// The gate. 32 on the parent across all three backends; native flat. Reads
 	// `sv` after the tuple, so it doubles as the aliasing control.
-	{"str-payload-reclaimed", `function churn(n: i32): i32 {
+	{"str-payload-reclaimed", `import "std/i32";
+function churn(n: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -62,7 +57,8 @@ function main(): i32 {
 	// must NOT fire — tuple_union_payload_sole_use is not the thing that refuses
 	// here, the plain escape walk is, because `keep = sv` is a second use outside
 	// the tuple. It must stay refused AND must not over-release. 73 on native.
-	{"str-escapes-must-refuse", `function churn(n: i32): i32 {
+	{"str-escapes-must-refuse", `import "std/i32";
+function churn(n: i32): i32 {
     var keep: string = "";
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -85,7 +81,8 @@ function main(): i32 {
 	// CARRIED-OUT control: the arm binds the payload and carries it past every
 	// reclaim point. The binding must stay readable now that the payload is
 	// actually released.
-	{"str-payload-carried-out", `function churn(n: i32): i32 {
+	{"str-payload-carried-out", `import "std/i32";
+function churn(n: i32): i32 {
     var keep: string = "zz";
     var acc: i32 = 0;
     var i: i32 = 0;
@@ -132,89 +129,38 @@ function main(): i32 {
 
 const strPayloadInterlockFailFmt = "%s = %d, want %d (a small non-zero on a byte case is the leaked bytes per round; 99 = over-release; 97 = value corrupted)"
 
+// TestSelfHostStrPayloadInterlockIRX86_64 runs the cases through the self-hosted CLI for x86-64.
 func TestSelfHostStrPayloadInterlockIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strPayloadInterlockCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
 				t.Errorf(strPayloadInterlockFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
+// TestSelfHostStrPayloadInterlockIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostStrPayloadInterlockIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strPayloadInterlockCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCaptureStrictIR(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf(strPayloadInterlockFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
+// TestSelfHostStrPayloadInterlockWasmIR is the wasm32-wasi leg.
 func TestSelfHostStrPayloadInterlockWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping string payload interlock wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strPayloadInterlockCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src + "\n"))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf(strPayloadInterlockFailFmt, tc.name, got, tc.want)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.want {
+				t.Errorf(strPayloadInterlockFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}

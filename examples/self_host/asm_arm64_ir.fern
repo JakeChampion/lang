@@ -2578,12 +2578,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         if (o.kind_tag == 305) { open_write = 1; }
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(open_write) + "\n");
         s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_with\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 209) {  // read_all_stdin
-        // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
-        // fd 0 to EOF in ONE fresh rc-headered string box, pushed in x0. The
-        // _rc name is gone with the AST body it was distinguished from.
-        s = s.need("heap"); s = s.need("read_all_stdin");
-        s = s.write("    bl __fn___fern_read_all_stdin\n    str x0, [sp, #-16]!\n");
     } else if (o.kind_tag == 260) {  // create_dir
         // [pathbox][mode] -> Result[void, IoError]. The same
         // two-operand shuffle `access` does: the stack ABI wants
@@ -4564,9 +4558,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     if (!darwin && s.any_need(["reader_splice", "raw_splice_pipe"])) {
         s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
     }
-    if (s.has_need("read_all_stdin")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin(ctgt), s.struct_decls, s);
-    }
     if (s.has_need("str_read_line")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
     }
@@ -4857,10 +4848,6 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
 // str_print, putchar, concat / eq / cmp / search, the int-to-string family,
 // chr, case folding, repeat, eprint.
 function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
-    // __fern_read_all_stdin is a Fern runtime function (#2649):
-    // asmcore.rt_src_read_all_stdin, emitted with the clocks in
-    // emit_rt_clock_and_print, which is where the per-target syscall number is
-    // available.
     // __fern_print_str and __fern_putchar are Fern runtime functions (#2649):
     // asmcore.rt_src_print_str / rt_src_putchar, emitted with the clocks in
     // emit_rt_clock_and_print, which is where the per-target syscall number is
@@ -7056,8 +7043,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    b .Lstrfree_ret\n");
     // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
     // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
-    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
-    // the freelist a block bigger than the class it lands in, which wastes the
+    // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
     // slack but never overruns — the same trade the separate-buffer path above has
     // always made when it freed at ceil(len/8). Unlike that path a large block is
     // RECYCLED rather than leaked: the whole string is one allocation now, so

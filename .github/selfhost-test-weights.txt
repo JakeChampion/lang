@@ -93,8 +93,8 @@ TestSelfHostArrmResidualRetIR 5
 TestSelfHostArrowLambdaIR 2
 TestSelfHostArrtupCallBindWasm 2
 TestSelfHostArrtupCallBindX86_64 2
-TestSelfHostAsmArm64Bootstrap 22
-TestSelfHostAsmIRArm64Path 17
+TestSelfHostAsmArm64Bootstrap 89
+TestSelfHostAsmIRArm64Path 65
 TestSelfHostAsmIRPath 122
 TestSelfHostAsmRunX86_64 4
 TestSelfHostAssertIR 2
