@@ -37,8 +37,9 @@
 //     operand that is not an option (`-` is not), or by `--` and at
 //     most one more. `_POSIX2_VERSION` in the environment says which
 //     shapes: below 200112 everything, `-c` and `-` alone included;
-//     from 200809 (the default) the leading plus and the multi-digit
-//     minus; between the two the minus form only. A digit reaching
+//     from 200809 (glibc's default) the leading plus and the
+//     multi-digit minus; between the two (macOS's default) the minus
+//     form only. A digit reaching
 //     the option scan any other way is `option used in invalid
 //     context -- 5`, which is why the ten digits are declared as
 //     options.
