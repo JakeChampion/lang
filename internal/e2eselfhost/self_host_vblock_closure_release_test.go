@@ -110,6 +110,30 @@ const vblockDeferUnliftedSrc = `function main(): i32 {
 // Interpreter-confirmed: the replays run after the return value is read.
 const vblockDeferUnliftedWant = 101
 
+// An unannotated binding of an array of arrays that a value block yields, or
+// that a call returns, takes the array-of-arrays class and its rows' credit
+// (#10497): a block that captures nothing is lifted to a `__lam_N` call, and
+// `c` is inlined because it captures `j`.
+const vblockArrArrSrc = `function mk(j: i32): i32[][] { return [[j, 1], [2]]; }
+function main(): i32 {
+    var t = 0;
+    var j = 0;
+    while (j < 5) {
+        var a = { var q = [[3, 2], [3, 4]]; q };
+        var b = { var q = [["ab", "c"], ["def"]]; q };
+        var c = { var q = [[j * 2, 5], [6]]; q };
+        var m = mk(j);
+        var f = { var q = [[1.5, 2.5]]; q };
+        t = t + a[0][0] + a[1].len() + b[1][0].len() + c[0][0] + c[1].len() + m[0][0] + m[1].len() + (f[0][1] * 2.0) as i32;
+        j = j + 1;
+    }
+    return t % 101;
+}
+`
+
+// Interpreter-confirmed.
+const vblockArrArrWant = 4
+
 type vblockClosureLowering struct{ name, env string }
 
 var (
@@ -127,6 +151,7 @@ var vblockClosureReleaseCases = []struct {
 	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureBoth},
 	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant, vblockClosureBoth},
 	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant, vblockClosureBoth},
+	{"vblock_arrarr", vblockArrArrSrc, vblockArrArrWant, vblockClosureBoth},
 }
 
 func TestSelfHostVblockClosureReleaseX86_64(t *testing.T) {
