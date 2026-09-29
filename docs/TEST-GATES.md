@@ -997,9 +997,10 @@ Worth knowing so you do not assume coverage you do not have:
   gate rather than against it. Since 2026-09-29 the gate has one compiler to
   measure and holds it to its own recorded figures (each case carries the
   per-churn KB and whether the shape crosses the cliff, measured by the gate
-  when the row was written); a row that leaks records the leak, and stops
-  leaking by failing. Treat unmeasured allocation figures in these docs as
-  expired.
+  when the row was written); a row that leaks records the leak, and fails
+  once the leak grows past the row's ratio or shrinks below half of its
+  figure (`leakShrinkFactor`). Treat unmeasured allocation figures in these
+  docs as expired.
 
   Quote figures the gate produced, not ones from a hand-run `fern` CLI — but
   not for the reason this note used to give. It claimed the two "compile
