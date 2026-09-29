@@ -5717,7 +5717,7 @@ pub function enum_arr_field_read_type(e: ast.Expr, s: LowerState): string {
 
 // nested_arr_field_read_type is the ARRAY-OF-ARRAY twin of the three classifiers
 // above: it returns the field type of a `T[][]` struct field read (`a.rows`
-// where rows: i32[][]), else "". Without it such a receiver was the ONE array
+// where rows: i32[][] or string[][]), else "". Without it such a receiver was the ONE array
 // field shape no classifier claimed, so `a.rows.append(r)` fell through the
 // array-method intercepts to the primitive-receiver cascade, which answers "i32"
 // for anything it cannot type — dispatching `i32.append` and refusing the whole
@@ -5733,7 +5733,7 @@ pub function nested_arr_field_read_type(e: ast.Expr, s: LowerState): string {
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
             var ft: string = decl_field_type(s.frame.structs, oty, fa.field);
-            if (is_nested_array_field_type(s.frame.structs, ft)) { return ft; }
+            if (is_row_array_field_type(s.frame.structs, ft)) { return ft; }
             return "";
         },
         _ => { return ""; }
@@ -53624,21 +53624,18 @@ function slot_is_reclaimable_arrarr(s: LowerState, i: i32): boolean {
     if (i < s.frame.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (!s.locals[i].is_arrarr) { return false; }
-    // String-kind inners (type-aware arrarr_elem) need the STRICT credit —
-    // every inner element proved a fresh string, so freeing their pointers
-    // can't dangle a live local. Scalar-kind inners value-copy their
-    // elements, so the lax rows-are-literals credit suffices.
-    if (s.arrarr_elem_of_slot(i) == "string") {
-        return reclaim_has(s.frame.reclaimable_names, "ARRARRS:", s.reclaim_site_key(i));
-    }
+    // The lax rows-are-counted credit frees the rows; only the STRICT one,
+    // every inner element proved a fresh string, frees a string-kind slot's
+    // strings too (arrarr_free_helper_of).
     return reclaim_has(s.frame.reclaimable_names, "ARRARR:", s.reclaim_site_key(i));
 }
 
-// arrarr_free_helper_of picks the release helper from the slot's INNER element
-// kind: string inners need the per-element __fern_str_arr_free walk; scalar
-// inners are fully freed by one arr_dec each.
+// arrarr_free_helper_of picks the release helper: a string-kind slot holding
+// the strict credit walks each row's strings through __fern_str_arr_free;
+// every other slot frees its rows with one arr_dec each, leaving any strings
+// in them to their other owners.
 function arrarr_free_helper_of(s: LowerState, i: i32): string {
-    if (s.arrarr_elem_of_slot(i) == "string") { return "__fern_strarrarr_free"; }
+    if (s.arrarr_elem_of_slot(i) == "string" && reclaim_has(s.frame.reclaimable_names, "ARRARRS:", s.reclaim_site_key(i))) { return "__fern_strarrarr_free"; }
     return "__fern_arrarr_free";
 }
 
@@ -83480,8 +83477,8 @@ function arrarr_owner_unsafe(body: ast.Stmt[], name: string, borrowable: string[
     return arrarr_unsafe_for(body, name, borrowable, ofr, alias_ok) || arrarr_row_escapes_iter(body, name, borrowable);
 }
 
-// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested scalar-array
-// struct field, `r` a parameter or a single-declaration local. The bind retains
+// collect_arrarr_field_bind_sites: `var p = r.f` binds of a nested-array struct
+// field (`i32[][]`, `string[][]`), `r` a parameter or a single-declaration local. The bind retains
 // the field's buffer and the rows in it are counted — __struct_drop_<T> walks
 // them — so `p` is one more counted owner and may take the arr-of-arr release
 // on the same terms as an alias.
@@ -83490,7 +83487,7 @@ function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], pa
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (is_scalar_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
+                if (is_counted_rows_type(arrarr_field_bind_type(v, body, params, structs))) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -83514,7 +83511,7 @@ function collect_arrarr_field_bind_sites(stmts: ast.Stmt[], body: ast.Stmt[], pa
 // type the body states once. An annotation is that type, and is read first
 // because resolving the holder walks the body.
 function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.ParamDecl[], structs: StructTab): string {
-    if (v.type_name.len() > 0 && !is_scalar_rows_type(v.type_name)) { return ""; }
+    if (v.type_name.len() > 0 && !is_counted_rows_type(v.type_name)) { return ""; }
     match (v.init) {
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) { return ""; }
@@ -83538,6 +83535,12 @@ function arrarr_field_bind_type(v: ast.StmtVar, body: ast.Stmt[], params: ast.Pa
 function is_scalar_rows_type(t: string): boolean {
     if (t.len() < 5 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") { return false; }
     return is_leaksafe_array_field(slice_unchecked(t, 0, t.len() - 2));
+}
+
+// is_counted_rows_type: a nested-array field type whose rows __struct_drop_<T>
+// releases with one dec each: scalar rows, or `string[][]`'s string[] rows.
+function is_counted_rows_type(t: string): boolean {
+    return t == "string[][]" || is_scalar_rows_type(t);
 }
 
 function reclaimable_optaarr(body: ast.Stmt[], borrowable: string[], oaas: string[], plan_fe: string[], plan_on: boolean, reassigned: string[], recv_borrow: string[], out: string[]): string[] {
