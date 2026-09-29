@@ -3553,8 +3553,9 @@ func buildMonotonicNsBodyP2(idxs map[string]uint32) []byte {
 //
 // Allocates a 16-byte datetime out-buffer, calls
 // wasi:clocks/wall-clock@0.2.0::now(buf), reads seconds (u64 at
-// +0) and nanoseconds (u32 at +8), and returns
-// seconds*1_000_000_000 + nanoseconds.
+// +0) and nanoseconds (u32 at +8), frees the buffer and returns
+// seconds*1_000_000_000 + nanoseconds. The buffer is freed with the
+// result already on the stack, so no i64 local is needed to hold it.
 //
 // Locals (no params):
 //
@@ -3577,8 +3578,17 @@ func buildNowNsBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 8)
 	body = convert.InstI64ExtendI32U(body)
 	body = numeric.InstI64Add(body)
+	body = emitFreeScratch(body, idxs, 0, 16)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitFreeScratch gives the `size`-byte scratch block in local `slot`
+// back to the allocator, leaving whatever the stack holds untouched.
+func emitFreeScratch(body []byte, idxs map[string]uint32, slot uint32, size int32) []byte {
+	body = inst.InstLocalGet(body, slot)
+	body = inst.InstI32Const(body, size)
+	return inst.InstCall(body, idxs["__free"])
 }
 
 // buildNowUnixMsBodyP2 is the preview-2 variant of
@@ -3586,8 +3596,8 @@ func buildNowNsBodyP2(idxs map[string]uint32) []byte {
 //
 // Signature: () → i64
 //
-// Same datetime read as buildNowNsBodyP2 but returns
-// milliseconds: seconds*1000 + nanoseconds/1_000_000.
+// Same datetime read as buildNowNsBodyP2, buffer freed the same way,
+// but returns milliseconds: seconds*1000 + nanoseconds/1_000_000.
 //
 // Locals (no params):
 //
@@ -3612,6 +3622,7 @@ func buildNowUnixMsBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI64Const(body, 1_000_000)
 	body = numeric.InstI64DivU(body)
 	body = numeric.InstI64Add(body)
+	body = emitFreeScratch(body, idxs, 0, 16)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
@@ -3666,7 +3677,7 @@ func buildNowUnixMsBody(idxs map[string]uint32) []byte {
 
 // buildClockBody is the shared core: alloc 8 bytes, call
 // wasi_clock_time_get(clockID, 0, buf), load i64, optionally
-// divide by 1_000_000 for the ms variant.
+// divide by 1_000_000 for the ms variant, and free the buffer.
 func buildClockBody(idxs map[string]uint32, clockID int32, divideMs bool) []byte {
 	alloc := idxs["__fern_alloc"]
 	clockTime := idxs["wasi_clock_time_get"]
@@ -3685,6 +3696,7 @@ func buildClockBody(idxs map[string]uint32, clockID int32, divideMs bool) []byte
 		body = inst.InstI64Const(body, 1_000_000)
 		body = numeric.InstI64DivS(body)
 	}
+	body = emitFreeScratch(body, idxs, 0, 8)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }

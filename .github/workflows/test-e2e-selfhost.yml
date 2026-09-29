@@ -18,11 +18,14 @@ name: Test e2e self-host
 # created. The lane used to warm the self-host drivers in three `warm` jobs the
 # shards depended on; measured on runs 35708985176 and 35708878302, those jobs
 # sat 8-14 minutes in the queue to do 45 seconds of work, so the shards were not
-# even created until minute 17 of a 35-minute run. A driver now builds in ~9 s
-# (fern.fern, the whole compiler, in ~19 s), so every job builds what it needs
-# on its own runner: the closure-keyed disk cache (hashSelfHostSources) still
+# even created until minute 17 of a 35-minute run. So every job builds what it
+# needs on its own runner: the closure-keyed disk cache (hashSelfHostSources)
 # builds each driver at most once per job, and the two worker processes of a
-# shard share it through the atomic publish.
+# shard share it through the atomic publish. The drivers are built by the
+# pinned stage0 self-host compiler (bootstrap/stage0.lock, fetched once per
+# job by bootstrap/bootstrap.sh), ~90-105 s per driver and 300 s for fern.fern
+# (docs/LOCAL-DEV-LOOP.md), so a shard's wall is its distinct drivers first
+# and its tests second.
 #
 # TWO WORKERS PER SHARD. Each x86 shard runs its selection as two isolated
 # processes through cmd/ci-test-workers (docs/CI-X86-WORKERS.md), each with
@@ -175,25 +178,29 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
-  # THE DRIVER SIZE GATE (#6826, #7519). Links every driver named in
+  # THE DRIVER SIZE GATE (#6826, #7519). Builds every driver named in
   # .github/selfhost-driver-sizes.txt — the list is read from the baseline, so
-  # a baselined driver cannot go unmeasured — records each linked size, and
-  # compares the whole set against the baseline ONCE:
+  # a baselined driver cannot go unmeasured — plus fern.fern/stage2, the
+  # compiler's own output for itself, records each one's size, and compares
+  # the whole set against the baseline ONCE:
   #   * FERN_SIZE_REPORT_COMPLETE=1 makes a baselined driver that reached no
   #     report a MISSING finding instead of a row nobody notices is absent;
   #   * FERN_CI_SIZE_GATE_STRICT=1 makes findings FAIL the job.
-  # Strict is affordable because nothing depends on this job. The emit and the
-  # link are in-process pure Go, so a given commit yields the same byte count on
-  # any runner: a difference here is a real change in the compiler's output.
+  # Strict is affordable because nothing depends on this job. The drivers are
+  # built by the pinned self-host compiler and fern.fern/stage2 by the current
+  # one; both are deterministic per input (the fixpoint rests on it), so a
+  # given commit yields the same byte count on any runner: a difference here
+  # is a real change in the sources, the stdlib, the pin or the current
+  # compiler's codegen.
   driver-sizes:
     name: driver-sizes-x86_64
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - uses: ./.github/actions/build-e2e-binaries
-      - name: link every baselined driver and record its size
+      - name: build every baselined driver and record its size
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
           FERN_DRIVER_SIZE_REPORT: "${{ runner.temp }}/driver-sizes.txt"
@@ -207,7 +214,7 @@ jobs:
           BIN="$PWD/e2eselfhost.test"
           cd internal/e2eselfhost
           gotestsum --format standard-verbose --raw-command -- \
-            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 13m
+            go tool test2json -t -p e2eselfhost "$BIN" -test.run '^TestSelfHostWarmStockDriver$' -test.v -test.timeout 32m
           cat "$FERN_DRIVER_SIZE_REPORT"
       - name: check every baselined driver against the baseline
         env:

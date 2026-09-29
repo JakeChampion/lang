@@ -184,7 +184,7 @@ audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
-audit_std_json                                       13
+audit_std_json                                       9
 audit_std_numeric                                    0
 audit_std_path_numeric                               0
 audit_std_string                                     0
@@ -262,8 +262,8 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     23
-derive_from_json_i64                                 10
+derive_from_json                                     6
+derive_from_json_i64                                 2
 derive_json                                          0
 derive_multi_payload                                 0
 div_modulo                                           0
@@ -379,7 +379,7 @@ int_min_arithmetic                                   0
 int_saturating_ops                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
-io_error_other_closed_stdout                         4
+io_error_other_closed_stdout                         3
 io_error_other_is_a_directory                        2
 io_error_other_not_a_directory                       1
 iter_build_consume                                   0
@@ -478,7 +478,7 @@ override_scalar                                      0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_fresh_result_from_a_borrowing_callee             0
-own_func_name_shadowed_by_param                      1
+own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
 own_param_array_move                                 0
 own_param_assign_target                              0
@@ -530,7 +530,7 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
-result_err_path                                      1
+result_err_path                                      0
 result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
 result_register_pair                                 0

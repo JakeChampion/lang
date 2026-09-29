@@ -1,35 +1,16 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // iifeFnArmCases exercise a value-position `if` / `match` whose ARMS yield a
 // fn value — `var w: (i32) => i32 = (if (c) { <lambda> } else { <lambda> })`,
-// `return (match (e) { A => <lambda>, B => <lambda> })`.
-//
-// A value-position if/match parses as an IIFE (`ExprCall{callee: ExprLambda{
-// params: [], body: [StmtIf|StmtMatch]}}`) whose arms are STATEMENTS inside an
-// expression, so no lift pass reached them: an arm lambda arrived at lower_expr
-// bare and asked for a `<cur_fn>$clo` nothing had built, and the module bailed
-// with "function value <fn>$clo not defined" (#6256).
-//
-// The fix hoists the IIFE to a real top-level function taking its captures as
-// ORDINARY PARAMETERS — an IIFE is applied immediately, so its captures need no
-// env box. The call that replaces it is a plain fn-value-returning call, which
-// is what makes the RESULT usable: boxing only the arms left the destination
-// unmarked, so `w(3)` bare-dispatched a box and SIGSEGV'd.
-//
-// The hoist runs whether or not the IIFE captures. A no-capture one used to be
-// left to lift_call_arg's `__lam_N` hoist instead, which is NOT equivalent — the
-// worklist drain withholds the `return <lambda>` desugar from lifted bodies
-// (#5281), so the arm never became a boxed closure local and stayed a raw fn
-// pointer (#7438, the nocapture-* cases below).
+// `return (match (e) { A => <lambda>, B => <lambda> })` — compiled by the
+// self-hosted CLI. The arms may be lambdas (capturing or not), closure locals,
+// bare fn names, or arrays of any of these, and the result is bound, returned,
+// stored or passed on before it is called.
 var iifeFnArmCases = []struct {
 	name string
 	src  string
@@ -248,16 +229,11 @@ var iifeFnArmCases = []struct {
 }
 
 // iifeArmArrayUnreachableName are the value-position if/match bindings whose
-// arms hold fn-value arrays the uniform-box rule CANNOT bring onto one dispatch
-// ABI: an arm naming a PARAMETER, and an arm yielding a call's result. Neither
-// array is a literal this function can rewrite, so the two arms would carry
-// different element representations and whichever one the binding's
-// classification picked would be wrong for the other.
-//
-// The refusal is the whole point of the gate. These shapes used to be accepted
-// — the capturing arm lambda boxed, the sibling arm's raw fn pointers left
-// alone — and the emitted code linked and segfaulted (#8163). Lowering them
-// needs a fn-array ABI that does not depend on the caller, which is #8795.
+// arms hold fn-value arrays that cannot share one dispatch ABI: an arm naming a
+// PARAMETER, and an arm yielding a call's result. Neither array is a literal
+// this function can rewrite, so the two arms would carry different element
+// representations. Accepting them once linked and segfaulted (#8163); lowering
+// them needs a fn-array ABI that does not depend on the caller (#8795).
 var iifeArmArrayUnreachableName = []struct {
 	name   string
 	src    string
@@ -265,123 +241,58 @@ var iifeArmArrayUnreachableName = []struct {
 	reason string
 }{
 	{"arm-array-param-name", "function pick(ys: ((i32) => i32)[], c: boolean): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + v1))] } else { ys }); return xs[0i32](1i32) & 63i32; } function main(): i32 { var zs: ((i32) => i32)[] = [((z: i32) => z)]; return pick(zs, true); }",
-		"pick", "did not lower: lambda: no lift claims this lambda in `pick`"},
+		"pick", "unsupported expression"},
 	{"arm-array-call-result", "function mk(): ((i32) => i32)[] { return [((z: i32) => z)]; } function main(): i32 { var v1: i32 = 3i32; var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { mk() }); return xs[0i32](1i32) & 63i32; }",
-		"main", "did not lower: lambda: no lift claims this lambda in `main`"},
+		"main", "unsupported expression"},
 }
 
 // TestSelfHostIIFEArmArrayUnreachableNameRefuses asserts those shapes REFUSE
-// under FERN_STRICT_IR rather than emitting code. A bail here is a diagnostic
-// naming the construct at its own site; the alternative this replaces was a
-// clean compile, a successful link, and a SIGSEGV at run time.
+// under FERN_SEM_IR_STRICT, naming the refused function, rather than emitting
+// code that links and crashes.
 func TestSelfHostIIFEArmArrayUnreachableNameRefuses(t *testing.T) {
-	_, runner, driverBin := strictIRDriver(t)
+	cli := newStrictCLI(t)
 	for _, tc := range iifeArmArrayUnreachableName {
 		t.Run(tc.name, func(t *testing.T) {
-			out, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
-			if code != 3 {
-				t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+			asm, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src)
+			if err == nil {
+				t.Fatalf("compiled to %d bytes, want a strict typed-lowering refusal", len(asm))
 			}
-			if !strings.Contains(stderr, "FERN_STRICT_IR: "+tc.fn+" ") {
-				t.Errorf("refusal did not name %q as the bailing function:\n%s", tc.fn, stderr)
-			}
-			if !strings.Contains(stderr, tc.reason) {
-				t.Errorf("refusal did not carry the reason %q:\n%s", tc.reason, stderr)
+			if want := "FERN_SEM_IR: " + tc.fn + ": " + tc.reason; !strings.Contains(diags, want) {
+				t.Errorf("refusal did not carry %q:\n%s", want, diags)
 			}
 		})
 	}
 }
 
-// TestSelfHostIIFEFnArmIRX86_64 — fn-valued value-position if/match arms
-// through the production x86-64 IR path (asm_ir_run `-ir`).
 func TestSelfHostIIFEFnArmIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range iifeFnArmCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src), "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 }
 
-// TestSelfHostIIFEFnArmIRArm64 — CI-gated arm64 counterpart via the arm64 IR
-// path (asm_ir_run `-target arm64-linux -ir`). Shares the fix in irlower.fern.
 func TestSelfHostIIFEFnArmIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range iifeFnArmCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux", "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 }
 
-// TestSelfHostIIFEFnArmWasmIR — the wasm leg of the same corpus. The lift and
-// the box lowering live in irlower.fern, which every backend shares, so a case
-// that regresses only here is a wasm-side dispatch bug rather than a lift one.
 func TestSelfHostIIFEFnArmWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host IIFE fn-arm wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range iifeFnArmCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.exit {
-				t.Errorf("%s exited %d, want %d", tc.name, got, tc.exit)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.exit {
+				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}

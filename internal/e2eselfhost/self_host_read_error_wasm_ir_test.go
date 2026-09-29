@@ -13,7 +13,7 @@ import (
 // helpers take the byte count fd_read writes to scratch address 8; on an error
 // nothing is written there, and a count left by an earlier call (the `write`
 // each program starts with) was taken for bytes read: read_line returned
-// Some, read_all_stdin a one-byte string.
+// Some.
 func TestSelfHostReadErrorWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm read-error e2e")
@@ -31,10 +31,6 @@ func TestSelfHostReadErrorWasmIR(t *testing.T) {
     write("x");
     match (read_line()) { Some(_) => { return 1; }, None => { return 0; } }
     return 9;
-}`, 0},
-		{"read_all_stdin_is_empty", `function main(): i32 {
-    write("x");
-    return read_all_stdin().len();
 }`, 0},
 	}
 

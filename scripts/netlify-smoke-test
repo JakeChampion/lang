@@ -139,11 +139,12 @@ export FERN_SELFHOST_BUILD_CACHE="$cache/selfhost-drivers"
 mkdir -p "$FERN_SELFHOST_BUILD_CACHE"
 
 # ---------------------------------------------------------------------------
-# Memory. A cold self-host driver build peaks around 3.7 GB in the Go emit and
-# 2.6 GB in the in-process assemble; the harness reserves 4.3 GB for one
-# (FERN_BUILD_HEAVY_MB) against ~85% of MemTotal. On a container smaller than
-# that the build is not slow, it is OOM-killed — exit 137, which reads like a
-# test failure. Measure the host and let the selfhost stage decide.
+# Memory. A cold self-host driver build runs the pinned self-host compiler,
+# which peaks at 4.0 GB on asm_ir_run and 5.7 GB on fern.fern; the harness
+# reserves 4.3 GB (6 GB for fern.fern) per build against ~85% of MemTotal
+# (FERN_BUILD_MEM_BUDGET_MB). On a container smaller than that the build is
+# not slow, it is OOM-killed — exit 137, which reads like a test failure.
+# Measure the host and let the selfhost stage decide.
 mem_total_mb=0
 if [ -r /proc/meminfo ]; then
   mem_total_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)

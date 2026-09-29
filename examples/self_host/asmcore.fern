@@ -198,7 +198,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
             }
             var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
             if (lifted.ok) {
-                var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted.func)));
+                var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
                 for leaf in ssa.leaf_of(name, f) { out = out.append(leaf); }
             }
         }
@@ -2120,25 +2120,6 @@ pub function rt_src_putchar(t: string): string {
     return "function __fern_putchar(c: i32): i32 { var p: usize = __raw_scratch(1); __raw_store8(p, 0, c & 255); return __syscall3(" + sysno(t, "write") + ", 1, p as i64, 1) as i32; }";
 }
 
-// rt_src_read_all_stdin backs `read_all_stdin()` → fd 0 drained to EOF into one
-// string. `__raw_string` is exactly what the hand-asm did by hand (it called
-// __fern_str_box, which is what the op lowers to), so the returned box is
-// byte-identical and no consumer sees a change.
-//
-// The capacity clamp is the fix. The hand-asm's only loop exit was `read <= 0`;
-// nothing compared the write cursor against the end of the 32 MiB block, so a
-// larger input ran straight past it. That does not fault — the block sits inside
-// the 16 GiB MAP_NORESERVE arena, so the writes land in mapped memory and corrupt
-// whatever follows, including the str box allocated immediately after the buffer.
-// Witnessed: 33 MiB of input reported len=34603008 and exited 0.
-//
-// Input past the cap is now truncated rather than corrupting the heap. Growing
-// the buffer instead would need a copy on every doubling; the bound is what makes
-// this safe, and raising it is a separate decision.
-pub function rt_src_read_all_stdin(t: string): string {
-    return "function __fern_read_all_stdin(): string { var cap: i32 = 33554432; var p: usize = __raw_alloc(cap); var total: i32 = 0; var go: i32 = 1; while (go == 1) { var want: i32 = 1048576; if (total + want > cap) { want = cap - total; } if (want <= 0) { go = 0; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", 0, __raw_addr(p, total) as i64, want as i64) as i32; if (n <= 0) { go = 0; } else { total = total + n; } } } return __raw_string(p, total); }";
-}
-
 // The three Option-returning Reader leaves (#2649). Here the migration is the RC
 // FIX, not a risk to be managed.
 //
@@ -3717,7 +3698,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
                     if ((id.name == "Some" || id.name == "Ok") && c.args.len() == 1) {
                         return infer_expr_type(c.args[0], s);
                     }
-                    if (id.name == "read_file" || id.name == "read_all_stdin") { return ty_string(); }
+                    if (id.name == "read_file") { return ty_string(); }
                     if (id.name == "tcp_recv") { return ty_array_i32(); }
                     if (id.name == "temp_dir") { return ty_string(); }
                     if (id.name == "read_dir" || id.name == "read_dir_all") { return ty_array_string(); }
@@ -5109,7 +5090,6 @@ function builtin_i32_names(): string[] {
 // builtin_string_names lists the free builtins that return a string.
 function builtin_string_names(): string[] {
     return [
-        "read_all_stdin",
         "hostname",
         // target_os() / target_arch() are literals by emit time on the
         // compile path (constfold.fold_target_name); the types are for
@@ -5199,7 +5179,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "stdin") { return ty_named("Reader"); }
     if (id.name == "stdout" || id.name == "stderr") { return ty_named("Writer"); }
     // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
-    // — matches native (#4369). read_all_stdin stays a plain string.
+    // — matches native (#4369).
     if (id.name == "read_line") { return ty_option(ty_string()); }
     if (util.index_of_str(builtin_string_names(), id.name) >= 0) { return ty_string(); }
     if (id.name == "__raw_array") { return ty_array_i32(); }
@@ -7365,9 +7345,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_window_size",
         "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
         "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
-        // #5623: the IR path's whole-stdin reader, emitted in the entry module's
-        // runtime — .globl so a per-module sibling's `call` resolves against it.
-        "__fn___fern_read_all_stdin",
         "__fn___fern_hostname",
         "__fn___fern_signal_ignore", "__fn___fern_signal_default",
         "__fn___fern_signal_mask", "__fn___fern_signal_disposition",

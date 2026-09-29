@@ -25,11 +25,11 @@ function empty(why: string): irlower.LowerResult {
 // same i32-shaped slot as an i32, narrowed by the wrap below; the 64-bit
 // integer and the f64 each get a slot of their own, which is a VALUE here, a
 // declared field and an array element, but never a tuple element
-// (narrow_slot). A string view is a value here, and an element only of a
-// `str[]`, whose drop releases each element through the view's own release
+// (narrow_slot). A string view is a value here, and an element or field of a
+// container, whose drop releases it through the view's own release
 // (release_name).
 function supported_tuple(tup: typeinfo.TypeTuple, f: ssasem.Func): boolean {
-    for elem in tup.elements { if (!element_supported(elem, f)) { return false; } }
+    for elem in tup.elements { if (!supported(elem, f)) { return false; } }
     return true;
 }
 function supported_integer(i: typeinfo.TypeI32): boolean {
@@ -42,10 +42,6 @@ function supported_integer(i: typeinfo.TypeI32): boolean {
 // construction names its element kinds (`op_tuple_make_k`), so none of the
 // three has to narrow — a closure box still does.
 function narrow_slot(t: typeinfo.Type): boolean { return !ssasem.is_wide(t) && !ssasem.is_float(t); }
-
-function element_supported(t: typeinfo.Type, f: ssasem.Func): boolean {
-    return !ssasem.is_view(t) && supported(t, f);
-}
 
 // The slot width an array's element ops carry: eight bytes for a 64-bit
 // scalar, one byte for a u8, one i32-shaped word for everything else. The
@@ -132,7 +128,7 @@ function supported(t: typeinfo.Type, f: ssasem.Func): boolean {
     if (supported_leaf(t)) { return true; }
     if let typeinfo.TypeI32(i) = t { return supported_integer(i); }
     if let typeinfo.TypeFloat(_) = t { return ssasem.is_float(t); }
-    if let typeinfo.TypeArray(a) = t { return ssasem.is_view(a.elem) || element_supported(a.elem, f); }
+    if let typeinfo.TypeArray(a) = t { return supported(a.elem, f); }
     if let typeinfo.TypeTuple(tup) = t { return supported_tuple(tup, f); }
     if (ssasem.is_map(t)) { return ssasem.is_supported_map(t); }
     return supported_nominal(t, f);
@@ -1041,6 +1037,7 @@ function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
     if (p.constants[ins.result] != "") { return 0 - 1; }
     if (ins.kind_tag == ssasem.tuple_new()) { return tuple_elements(f.values[ins.result]).len(); }
     if (ins.kind_tag == ssasem.record_new()) { return reuse_slots(f.values[ins.result], f); }
+    if (ins.kind_tag == ssasem.variant_new()) { return union_slots(f.values[ins.result], f); }
     return 0 - 1;
 }
 
@@ -1217,8 +1214,10 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
     var pos: i32 = 0;
     while (pos <= taken) {
         var get: ssa.SInst = b.insts[pos];
+        // Exactly one unit: a read that is taken AND retained at the
+        // construction holds two, and keeping in place stands in for one.
         if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
-                && (payload_taken(f, p, get) || util.index_of_i32(retained, get.result) >= 0)) {
+                && payload_taken(f, p, get) != (util.index_of_i32(retained, get.result) >= 0)) {
             var i: i32 = util.index_of_i32(ins.args, get.result);
             // Once: the donor's slot holds one unit, which a second operand
             // naming the same value would need a retain of its own for.
@@ -1330,7 +1329,17 @@ function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semre
 
 function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.tuple_new()) { return reuse_tuple(r, f, ins); }
-    var fields: semrecords.Field[] = record_fields(f.values[ins.result], f);
+    // A declared variant's box is laid out as a record's: the shape word
+    // `struct_make` writes, naming the variant, then the variant's fields.
+    var fields: semrecords.Field[] = [];
+    var shape: string = ins.str;
+    if (ins.kind_tag == ssasem.variant_new()) {
+        var owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
+        fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
+    } else {
+        fields = record_fields(f.values[ins.result], f);
+        shape = record_name(f.values[ins.result]);
+    }
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_const_i32(fields.len() + 1));
     r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
@@ -1342,7 +1351,7 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     // wrote. So the recipient writes its own, which is also what lets a donor of
     // another type serve it.
     r = emit(r, ir.op_load_local(ins.result));
-    r = emit(r, ir.op_struct_set_shape(record_name(f.values[ins.result])));
+    r = emit(r, ir.op_struct_set_shape(shape));
     r = emit(r, ir.op_drop());
     var i: i32 = 0;
     while (i < ins.args.len() && i < fields.len()) {

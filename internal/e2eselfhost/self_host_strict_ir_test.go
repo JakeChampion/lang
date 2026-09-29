@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,37 +10,18 @@ import (
 	"testing"
 )
 
-// FERN_STRICT_IR (#5646) moves the self-host compiler's refusal from the module
-// gate to the BAIL SITE, naming the function and the reason.
+// FERN_SEM_IR_STRICT makes the self-hosted CLI refuse a module the typed
+// lowering does not produce whole: exit 3, after a `FERN_SEM_IR: <function>:
+// <reason>` line for each refused declaration. Without it the CLI keeps the AST
+// lowering for that module.
 //
-// The flag was introduced when a bail still fell through to an AST emitter, and
-// that fall-through was only SAFE when the emitter could express what the IR
-// path declined. When it couldn't, the fallback emitted wrong code and nothing
-// noticed until a differential test disagreed at a runtime exit code, far from
-// the cause. #5642 is the worked example: `match (a +? b)` had no `ExprBinary`
-// case in `lower_match`'s scrutinee-type recovery, so the enclosing function
-// bailed to an emitter with no checked-operator lowering at all. That surfaced
-// as 46 failing subtests whose symptoms read like several unrelated bugs —
-// wrong match arm taken, payload read as zero, SIGABRT — none of which were
-// checked-arithmetic bugs. The emitters are gone, so a bail is now a refusal
-// either way; what the flag buys is the diagnostic pointing at the construct.
+// Two halves, and both are essential:
 //
-// These tests are the tripwire that would have caught it at the bail. Two
-// halves, and both are essential:
-//
-//   - strictIRCorpus asserts NO refusal across constructs the IR path is
+//   - strictIRCorpus asserts NO refusal across constructs the typed lowering is
 //     supposed to cover. A newly-unlowerable construct fails here, naming the
-//     function, instead of miscompiling.
-//   - TestSelfHostStrictIRRefusesBail asserts a real bail DOES refuse, so a
+//     function, instead of silently taking the AST lowering.
+//   - TestSelfHostStrictIRRefusesBail asserts a real refusal DOES exit 3, so a
 //     green corpus means the tripwire is armed rather than inert.
-//
-// The corpus also self-certifies its own routing: a program that bailed would
-// exit 3 under the flag, so "strict run succeeded" IS "lowered on the IR path"
-// — no separate path-probe assertion needed.
-//
-// The flag is checked in asm_ir.fern, which both backends' eligibility runs
-// through (wasm_ir's `wasm_eligible` calls `asm_ir.eligible_core`), so the
-// x86-64 and wasm legs cover the same per-function gate.
 //
 // Every `want` must be in [0, 126): the wasm leg exits through WASI, which
 // rejects anything above that with `exit with invalid exit status`, whereas an
@@ -53,10 +35,8 @@ var strictIRCorpus = []struct {
 	// A builtin's Result bound from a match-expression whose Err arm returns
 	// early (#9326), beside its user-wrapper twin so a fix that widened only
 	// one of them is visible. The early return leaves the enclosing function;
-	// the arm hands the block no value. The binding is copied rather than read
-	// because the wasm driver has no checker stamps to resolve a builtin
-	// struct's field with, and the paths do not exist because the wasm run has
-	// no preopened directory; TestSelfHostValueBlockEarlyReturn runs both arms.
+	// the arm hands the block no value. The paths do not exist, so only the Err
+	// arm runs; TestSelfHostValueBlockEarlyReturn runs both arms.
 	{"builtin-result-value-block-early-return", `function probe(p: string): i32 {
     var si: FileStat = match (stat(p)) { Ok(v) => v, Err(_) => { return 1; } };
     var held: FileStat = si;
@@ -243,28 +223,25 @@ function outer(n: i32): Result[i32, i32] {
 }
 function main(): i32 { match (outer(9)) { Ok(v) => { return v; }, Err(_) => { return 88; } } }
 `, 18},
-	// Branchless i32 min/max/clamp lowered directly on the IR path
-	// (emit_i32_minmax_slots) — no runtime helper, no need/globls plumbing.
-	// Until this existed a scalar `n.min(m)` / `n.max(m)` / `n.clamp(lo, hi)`
-	// bailed the module (#3457 slice 5). Asymmetric operands
-	// catch an operand-order swap; the two clamp calls exercise the hi and lo
-	// saturating edges.
-	{"i32-min-max-clamp", `
+	// std/i32's min/max/clamp on a scalar receiver. Asymmetric operands catch an
+	// operand-order swap; the two clamp calls exercise the hi and lo saturating
+	// edges.
+	{"i32-min-max-clamp", `import "std/i32";
 function main(): i32 {
     var a: i32 = 8;
     var b: i32 = 3;
     return a.min(b) + a.max(b) + (99).clamp(0, 10) + (0 - 5).clamp(0, 10);
 }
 `, 21},
-	// xs.first() / xs.last() lowered as the equivalent index read. Until this
-	// existed either one bailed the whole module (#3457 slice 5). The receivers cover every element kind the intercept admits, and
-	// each result is CONSUMED so the call's result type has to be recovered too:
-	// a string element through `.len()`, a struct element through `.n`, an
+	// std/array's xs.first() / xs.last() over every element kind, each result
+	// CONSUMED so the call's result type has to be recovered too: a string
+	// element through `.len()`, a struct element through `.n`, an
 	// array-of-arrays element through a second `[i]`, and a string[][] element
 	// through a chained `.first()`. A missing recovery mis-dispatches (arr_len on
-	// a string box reads a different field) rather than bailing, so the exit code
-	// is what catches it.
-	{"arr-first-last", `
+	// a string box reads a different field) rather than refusing, so the exit
+	// code is what catches it.
+	{"arr-first-last", `import "std/array";
+import "std/option";
 struct P { name: string, n: i32 }
 function build(): i32[] {
     var out: i32[] = [];
@@ -278,27 +255,19 @@ function main(): i32 {
     var ps: P[] = [P { name: "x", n: 3 }, P { name: "yy", n: 4 }];
     var m: i32[][] = [[1, 2], [3, 4]];
     var mm: string[][] = [["a", "bb"], ["ccc"]];
-    var t: i32 = xs.first() + xs.last();            // 40
-    t = t + ss.first().len() + ss.last().len();     // +5
-    t = t + ps.first().n + ps.last().name.len();    // +5
-    t = t + m.first()[1] + m.last()[0];             // +5
-    t = t + mm.first()[1].len() + mm.last().first().len(); // +5
-    return t + build().last() + build().first();    // +10
+    var none: P = P { name: "", n: 0 };
+    var t: i32 = xs.first().unwrap_or(0) + xs.last().unwrap_or(0);            // 40
+    t = t + ss.first().unwrap_or("").len() + ss.last().unwrap_or("").len();   // +5
+    t = t + ps.first().unwrap_or(none).n + ps.last().unwrap_or(none).name.len(); // +5
+    t = t + m.first().unwrap_or([])[1] + m.last().unwrap_or([])[0];           // +5
+    t = t + mm.first().unwrap_or([])[1].len() + mm.last().unwrap_or([]).first().unwrap_or("").len(); // +5
+    return t + build().last().unwrap_or(0) + build().first().unwrap_or(0);    // +10
 }
 `, 70},
-	// The ASCII classifier / case family on a byte receiver, lowered from the one
-	// unsigned-range primitive `(b - lo) <=u span` plus the mask idiom for the two
-	// case conversions. Until this existed every one of them bailed the module:
-	// they had only the AST emitter's hand-written `setbe` / `cmovbe` sequences
-	// (#3457 slice 5).
-	//
-	// The receivers are the point: a u8-tracked LOCAL (the commonest shape, and
-	// the one an expr_recv_prim_type gate silently misses — a `var c: u8` slot
-	// records "u8" as its declared struct type, so the receiver reads as a
-	// struct), an `as u8` cast, and a string INDEX, which is a byte since #5629.
-	// The total is kept under 126: a WASI exit status above that is rejected
-	// outright, which reads exactly like a miscompile.
-	{"ascii-byte-methods", `
+	// std/i32's ASCII classifier / case family on a byte receiver. The receivers
+	// are the point: a u8 LOCAL, an `as u8` cast, and a string INDEX, which is a
+	// byte since #5629.
+	{"ascii-byte-methods", `import "std/i32";
 function main(): i32 {
     var t: i32 = 0;
     var A: u8 = 65;
@@ -322,13 +291,9 @@ function main(): i32 {
     return t;
 }
 `, 94},
-	// b.to_ascii_string() — a fresh 1-char string from a byte. It desugars to
-	// chr(b), which already lowers to the __fern_chr runtime helper, rather than
-	// hand-emitting the two allocations the AST emitter open-coded. The CHAINED
-	// receiver is the case that needed more than the desugar: to_ascii_lower /
-	// _upper return a byte, and expr_subword_kind cannot see a call RESULT, so
-	// `b.to_ascii_lower().to_ascii_string()` declined while each half lowered.
-	{"ascii-to-string", `
+	// b.to_ascii_string() — a fresh 1-char string from a byte, including on the
+	// byte a chained to_ascii_lower() returns.
+	{"ascii-to-string", `import "std/i32";
 function main(): i32 {
     var c: u8 = 65;
     var s: string = c.to_ascii_string();
@@ -439,18 +404,10 @@ function main(): i32 {
     return t;
 }
 `, 22},
-	// A DIRECT, hand-written IIFE — `((): i32 => { return 7; })()`.
-	// lower_iife handled only the if/match-EXPRESSION desugars (a StmtIf or
-	// StmtMatch body); a single-`return` body fell through its catch-all and
-	// bailed the module (#3457 slice 5). Only the shapes the
-	// lift leaves inline ever reached it, which is why the gap was narrow: a
-	// bound `var a = (…)()` hoists to __lam_N and lowers, while `return (…)();`
-	// does not — hence `ret()` here, the originally-reported form.
-	//
-	// The result types are the point of the rest: string, struct and a nested
-	// IIFE all flow through the inlined value, and the loop body's capture (`i`)
-	// must read the enclosing local rather than a copy — inlining is only correct
-	// because the lambda is invoked immediately in this scope.
+	// A DIRECT, hand-written IIFE — `((): i32 => { return 7; })()` — in
+	// `return` position, and with string, struct and nested-IIFE results flowing
+	// through the value. The capturing forms lower as direct calls that take
+	// their captures as arguments.
 	{"direct-iife", `
 struct P { n: i32 }
 function g(n: i32): i32 { return n * 2; }
@@ -550,16 +507,12 @@ function main(): i32 {
     return acc;                                  // 10 + 4 + 10
 }
 `, 24},
-	// `.to_string()` on an INLINE wide cast — `(n as i64).to_string()`. The wide
-	// to_string intercept lowered its receiver with lower_expr, which has no
-	// `as_i64` / `as_u64` arm (the same hole the i64[]-literal path documents),
-	// so the whole module bailed; the bound form `var v: i64 = n as i64;
-	// v.to_string()` lowered, which is the tell. Both forms are pinned, and both
-	// widths: u64 renders 2^64-1 as the full decimal only if it keeps the
-	// UNSIGNED formatter, so a receiver-lowering change that lost the width would
-	// show up as 20 vs 2 rather than as a bail. Real consumers:
-	// examples/tests/{i64,u64}_test.fern's test_to_string_wide.
-	{"wide-cast-to-string", `
+	// `.to_string()` on an INLINE wide cast — `(n as i64).to_string()` — beside
+	// the bound form. Both widths: u64 renders 2^64-1 as the full decimal only if
+	// it keeps the UNSIGNED formatter, so losing the width shows up as 20 vs 2.
+	// Real consumers: examples/tests/{i64,u64}_test.fern's test_to_string_wide.
+	{"wide-cast-to-string", `import "std/i64";
+import "std/u64";
 function main(): i32 {
     var a: i32 = (1234567890123 as i64).to_string().len();      // 13
     var b: i32 = (42 as i64).to_string().len();                 //  2
@@ -591,6 +544,22 @@ function main(): i32 {
     return unwrap_or_i(sa.0, 0) + unwrap_or_s(sa.1, "").len();   // 7 + 2
 }
 `, 9},
+	// A loop over the innermost level of a 4-deep nested array.
+	{"nested-for", `function main(): i32 {
+    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
+    var sum = 0;
+    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
+    return sum;
+}
+`, 6},
+	// A match in VALUE position whose payload is an 8-byte-element array.
+	{"iife-value-block", `enum W { Wide(i64[]), Empty }
+function main(): i32 {
+    var w: W = Wide([5i64, 6i64]);
+    var u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
+    return (u as i32) & 255i32;
+}
+`, 5},
 }
 
 // runDriver runs a self-host driver over `src`, optionally with FERN_STRICT_IR
@@ -626,20 +595,8 @@ func runDriver(t *testing.T, runner []string, bin string, src []byte, strict boo
 	return stdout.Bytes(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// bailingProgram is a valid program the IR path deterministically declines, so
-// the strict-mode tripwire has something real to fire on.
-//
-// The 512-function merged-bundle budget is gone (#3457), so the shape is
-// is better, because the budget was a whole-MODULE gate while this is a genuine
-// per-function `lower_func` bail, which is what the flag exists to name.
-//
-// Iterating a FOUR-deep array is the construct: `arrarr_elem` models one level of
-// array-of-array element ("arr", #5979) and no more, so the fourth `for` binds a
-// loop var with no element type and the function bails. That limit is deliberate,
-// not an oversight, which is what makes it a stable fixture — the three-deep form
-// lowers, and is covered by TestSelfHostMode0GapsIR.
-func bailingProgram() []byte { return []byte(strictIRBailReasons[0].src) }
-
+// strictIRDriver builds the asm_run driver, which compiles one self-contained
+// module from stdin.
 func strictIRDriver(t *testing.T) (string, []string, string) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
@@ -654,96 +611,70 @@ func strictIRDriver(t *testing.T) (string, []string, string) {
 	return gcc, runner, buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
 }
 
-// TestSelfHostStrictIRX86_64 asserts the corpus lowers with no bail under
-// FERN_STRICT_IR, that the flag is otherwise inert (byte-identical asm), and
-// that each program still runs to its expected exit code.
-func TestSelfHostStrictIRX86_64(t *testing.T) {
-	gcc, runner, driverBin := strictIRDriver(t)
-	dir := filepath.Dir(driverBin)
+// strictExit is the CLI's exit code from a tryEmit error, or 0 without one.
+func strictExit(t *testing.T, err error) int {
+	t.Helper()
+	if err == nil {
+		return 0
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Fatalf("CLI did not run: %v", err)
+	}
+	return exit.ExitCode()
+}
 
+// TestSelfHostStrictIRX86_64 asserts the corpus is produced whole under
+// FERN_SEM_IR_STRICT, that the flag is otherwise inert (byte-identical asm),
+// and that each program still runs to its expected exit code.
+func TestSelfHostStrictIRX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
 	for _, tc := range strictIRCorpus {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			off, _, offCode := runDriver(t, runner, driverBin, src, false)
-			if offCode != 0 || len(off) == 0 {
-				t.Fatalf("driver (unset) exited %d with %d bytes", offCode, len(off))
+			on := cli.emit(t, "x86-64-linux", tc.src)
+			off, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src, "FERN_SEM_IR_STRICT=")
+			if err != nil {
+				t.Fatalf("compile without FERN_SEM_IR_STRICT: %v\n%s", err, diags)
 			}
-			on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
-			if strings.Contains(stderr, "FERN_STRICT_IR:") {
-				t.Fatalf("%s bailed under FERN_STRICT_IR:\n%s", tc.name, stderr)
+			if off != on {
+				t.Fatalf("%s: FERN_SEM_IR_STRICT changed the emitted asm (%d vs %d bytes); the flag must only affect a refusal", tc.name, len(off), len(on))
 			}
-			if onCode != 0 {
-				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d\n%s", onCode, stderr)
-			}
-			if !bytes.Equal(off, on) {
-				t.Fatalf("%s: FERN_STRICT_IR changed the emitted asm (%d vs %d bytes); the flag must only affect the bail path", tc.name, len(off), len(on))
-			}
-			progBin := buildBin(t, gcc, dir, "strict_"+tc.name, string(on))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, on); code != tc.want {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
-// TestSelfHostStrictIRRefusesBail is the gate: a program that genuinely bails
-// must be REFUSED, and the flag must name the bail site. Without this, a green
-// corpus is consistent with the flag doing nothing at all.
-//
-// The unset-flag leg no longer asserts a silent fallback, because there is
-// none: asm_run.fern routes through asm_ir.emit_module_or_error (#3457 slice 5),
-// so an ineligible module is an error with or without the flag. What the flag
-// still changes — and what this pins — is WHICH error: without it the driver says
-// only that the module is ineligible, with it the gate exits 3 naming the bail
-// site. That difference is the whole diagnostic value of the flag now.
+// TestSelfHostStrictIRRefusesBail is the gate: a program the typed lowering
+// refuses must fail the compile under FERN_SEM_IR_STRICT with exit 3, naming
+// the function. Without this, a green corpus is consistent with the flag doing
+// nothing at all. Without the flag the same program compiles on the AST
+// lowering.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
-	_, runner, driverBin := strictIRDriver(t)
-	src := bailingProgram()
+	cli := newStrictCLI(t)
+	tc := strictIRBailReasons[0]
+	src := tc.src
 
-	off, offErr, offCode := runDriver(t, runner, driverBin, src, false)
-	if offCode == 0 || len(off) != 0 {
-		t.Fatalf("unset: driver exited %d with %d bytes, want a refusal (the AST emitter is unreachable)", offCode, len(off))
+	if _, diags, err := cli.tryEmit(t, "x86-64-linux", src, "FERN_SEM_IR_STRICT="); err != nil {
+		t.Fatalf("unset: compile failed, want the AST lowering's compile: %v\n%s", err, diags)
 	}
-	if !strings.Contains(offErr, "not IR-eligible") {
-		t.Errorf("unset: refusal did not say the module is ineligible:\n%s", offErr)
+	_, diags, err := cli.tryEmit(t, "x86-64-linux", src)
+	if code := strictExit(t, err); code != 3 {
+		t.Fatalf("FERN_SEM_IR_STRICT=1: exited %d, want a refusal (3)\n%s", code, diags)
 	}
-	on, stderr, onCode := runDriver(t, runner, driverBin, src, true)
-	if onCode != 3 {
-		t.Fatalf("FERN_STRICT_IR=1: driver exited %d with %d bytes, want a refusal (3)\n%s", onCode, len(on), stderr)
-	}
-	// The bail is now a per-FUNCTION one, so the flag names the function — and
-	// says what in it refused (see TestSelfHostStrictIRNamesBailReason).
-	if !strings.Contains(stderr, "FERN_STRICT_IR:") || !strings.Contains(stderr, "main") {
-		t.Errorf("refusal did not name the bailing function:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "did not lower: `for v`") {
-		t.Errorf("refusal did not name the construct that refused:\n%s", stderr)
+	if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") || !strings.Contains(diags, "FERN_SEM_IR_STRICT:") {
+		t.Errorf("refusal did not name the refused function:\n%s", diags)
 	}
 }
 
-// strictIRBailReasons pins that a body-lowering bail names the CONSTRUCT that
-// refused, not merely the function it was in.
-//
-// Before this, every such bail printed the function name and nothing else. On
-// the fernsmith corpus that made 135 of 512 seeds — a quarter of the corpus,
-// and every seed the $clo and unknown-symbol scans did not already explain —
-// indistinguishable from each other: the only way to learn anything from one
-// was to bisect its body by hand, and there was no way to tell whether two
-// bails were the same bug. With reasons, those 135 resolve into named clusters
-// and the largest single one (the immediately-invoked value block below) covers
-// 67 of them.
+// strictIRBailReasons pins that a refusal names the REASON, not merely the
+// function it was in, so two refusals can be told apart without bisecting a
+// body by hand.
 //
 // Each program here is VALID — checked against the native compiler, not merely
-// observed to bail — because an invalid program bails for reasons that say
-// nothing about the IR subset, which is how three earlier gap reports came to
-// be filed against programs the checker rejects.
+// observed to refuse — because an invalid program is refused for reasons that
+// say nothing about the typed lowering.
 //
 // A row breaking because its gap CLOSED is the intended failure: the fixture no
 // longer demonstrates a reason. Move it into strictIRCorpus, which requires
@@ -755,70 +686,39 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A loop over the innermost level of a 4-deep nested array — the repo's
-	// long-standing bail fixture, here pinned to report the STATEMENT that
-	// refused rather than just `main`.
-	{"nested-for", `function main(): i32 {
-    var hyper: i32[][][][] = [[[[1]], [[2, 3]]]];
-    var sum = 0;
-    for cube in hyper { for plane in cube { for row in plane { for v in row { sum = sum + v; } } } }
-    return sum;
-}
-`, "main", "did not lower: `for v`"},
-	// A match in VALUE position parses into an immediately-invoked zero-param
-	// lambda, so the bail lands on a call whose callee is a lambda the source
-	// never wrote. Naming it "a lambda" sent a reader looking for one; the
-	// reason names the desugar instead.
-	//
-	// What keeps it here is the payload KIND. This was a u64 checked-shift
-	// scrutinee until #6647 admitted that width, which is the retirement this
-	// table's header describes: the fixture stopped demonstrating a reason and
-	// was replaced rather than weakened. An 8-byte-ELEMENT array payload is the
-	// gap that is still open — iife_payload_field_bindable admits
-	// is_scalar_array_type, whose binding mark does not carry the i64/f64
-	// element width, so an element read would default to i32 and read garbage.
-	// The i32[] spelling of this program lowers.
-	{"iife-value-block", `enum W { Wide(i64[]), Empty }
-function main(): i32 {
-    var w: W = Wide([5i64, 6i64]);
-    var u: i64 = (match (w) { Wide(xs) => xs[0], Empty => 9i64 });
-    return (u as i32) & 255i32;
-}
-`, "main", "did not lower: `var u` bound from immediately-invoked value block"},
+	// An array holding views of two parameters has no one argument to anchor to.
+	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
+function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
+`, "g", "a value holds views of two sources"},
 }
 
-// TestSelfHostStrictIRNamesBailReason asserts each fixture's bail names its own
-// construct, and — the part that makes the reasons worth having — that no two
-// of them collapse to the same message.
+// TestSelfHostStrictIRNamesBailReason asserts each fixture's refusal names its
+// own function and reason, and that no two of them collapse to the same
+// message.
 func TestSelfHostStrictIRNamesBailReason(t *testing.T) {
-	_, runner, driverBin := strictIRDriver(t)
+	cli := newStrictCLI(t)
 	langBin := buildLangBinForInterp(t)
 
 	seen := map[string]string{}
 	for _, tc := range strictIRBailReasons {
 		t.Run(tc.name, func(t *testing.T) {
-			// The "VALID" half of the table's contract, gated rather than
-			// asserted in a comment: a program the native compiler rejects
-			// bails for reasons that say nothing about the IR subset, which is
-			// how three earlier gap reports came to be filed against programs
-			// the checker refuses.
 			if out, err := nativeCheck(t, langBin, tc.src); err != nil {
-				t.Fatalf("the native compiler rejects this fixture, so its bail says nothing about the IR subset: %v\n%s", err, out)
+				t.Fatalf("the native compiler rejects this fixture, so its refusal says nothing about the typed lowering: %v\n%s", err, out)
 			}
-			out, stderr, code := runDriver(t, runner, driverBin, []byte(tc.src), true)
-			if code != 3 {
-				t.Fatalf("driver exited %d with %d bytes, want a strict-IR refusal (3)\n%s", code, len(out), stderr)
+			_, diags, err := cli.tryEmit(t, "x86-64-linux", tc.src)
+			if code := strictExit(t, err); code != 3 {
+				t.Fatalf("exited %d, want a strict refusal (3)\n%s", code, diags)
 			}
-			if !strings.Contains(stderr, "FERN_STRICT_IR: "+tc.fn+" ") {
-				t.Errorf("refusal did not name %q as the bailing function:\n%s", tc.fn, stderr)
+			if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") {
+				t.Errorf("refusal did not name %q as the refused function:\n%s", tc.fn, diags)
 			}
-			if !strings.Contains(stderr, tc.reason) {
-				t.Errorf("refusal did not carry the reason %q:\n%s", tc.reason, stderr)
+			if !strings.Contains(diags, tc.reason) {
+				t.Errorf("refusal did not carry the reason %q:\n%s", tc.reason, diags)
 			}
 		})
 		if prev, dup := seen[tc.reason]; dup {
 			t.Errorf("%s and %s expect the same reason %q — a reason that does not "+
-				"distinguish two different bails is no better than the bare function name",
+				"distinguish two different refusals is no better than the bare function name",
 				prev, tc.name, tc.reason)
 		}
 		seen[tc.reason] = tc.name
@@ -836,39 +736,14 @@ func nativeCheck(t *testing.T, langBin, src string) ([]byte, error) {
 	return exec.Command(langBin, "-check", f).CombinedOutput()
 }
 
-// TestSelfHostStrictIRWasm runs the corpus through the wasm IR driver. The
-// eligibility gate is shared (wasm_eligible calls asm_ir.eligible_core), so the
-// same per-function bail is covered on both backends.
+// TestSelfHostStrictIRWasm runs the corpus through the CLI's wasm32-wasi target
+// under FERN_SEM_IR_STRICT.
 func TestSelfHostStrictIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host strict-IR wasm e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range strictIRCorpus {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			wat, stderr, code := runDriver(t, runner, driverBin, src, true, "-ir")
-			if strings.Contains(stderr, "FERN_STRICT_IR:") {
-				t.Fatalf("%s bailed under FERN_STRICT_IR:\n%s", tc.name, stderr)
-			}
-			if code != 0 || len(wat) == 0 {
-				t.Fatalf("driver (FERN_STRICT_IR=1) exited %d with %d bytes\n%s", code, len(wat), stderr)
-			}
-			watFile := filepath.Join(dir, "strict_ir_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if got := run.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("strict-IR wasm %q = %d, want %d", tc.name, got, tc.want)
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
+				t.Errorf("strict wasm %q = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}
@@ -880,9 +755,9 @@ func TestSelfHostStrictIRWasm(t *testing.T) {
 // — you look at the symbol, not the code — and the bare function name never
 // distinguished them.
 //
-// It needs its own driver. The reason table above runs on `asm_run`, which
-// compiles ONE self-contained module, and there every function value names a
-// function the module itself declares or lifts. `asm_ir_run` takes a
+// It needs its own driver. The CLI's checker rejects an undefined name before
+// anything lowers, so there every function value names a function the program
+// declares or lifts. `asm_ir_run` takes a
 // program-wide known-symbol set
 // (`-ir-extern`), which is what makes a fn value naming a SIBLING unit's
 // function — the missing import, the monomorphised clone absent from this view,

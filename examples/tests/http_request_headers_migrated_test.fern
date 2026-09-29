@@ -48,7 +48,7 @@ function test_parsed_header_count_is_3(): test.TestOutcome {
 }
 
 function test_duplicate_header_insertion_order(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
+    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
         Some(req) => {
             // Original verified via print-each + grep on
@@ -94,7 +94,7 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 // old raw substring scan matched `X-Custom-Content-Length:` first
 // and read a 5-byte body — the classic desync.)
 function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
-    var wire: string = "GET / HTTP/1.1\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
+    var wire: string = "GET / HTTP/1.1\r\nHost: h\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
     match (http.http_parse_request(wire)) {
         Some(req) => { return test.assert_eq(req.body_string(), ""); },
         None => { return test.fail("well-formed request wrongly rejected"); }
@@ -104,7 +104,7 @@ function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
 
 // Duplicate Content-Length is an unrecoverable framing error → reject.
 function test_duplicate_content_length_rejected(): test.TestOutcome {
-    var wire: string = "POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
+    var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello!";
     match (http.http_parse_request(wire)) {
         Some(req) => { return test.fail("duplicate Content-Length must be rejected"); },
         None => { return test.pass(); }
@@ -112,11 +112,11 @@ function test_duplicate_content_length_rejected(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
-// Transfer-Encoding (chunked unsupported; TE+CL is the desync vector) → reject.
+// Transfer-Encoding beside Content-Length (the desync vector) → reject.
 function test_transfer_encoding_rejected(): test.TestOutcome {
-    var wire: string = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
+    var wire: string = "POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
     match (http.http_parse_request(wire)) {
-        Some(req) => { return test.fail("Transfer-Encoding must be rejected"); },
+        Some(req) => { return test.fail("Transfer-Encoding beside Content-Length must be rejected"); },
         None => { return test.pass(); }
     }
     return test.fail("unreachable");
@@ -137,6 +137,13 @@ function test_http_header_value_missing_is_none(): test.TestOutcome {
         http.http_header_value("Host: e\r\n", "X-Absent"));
 }
 
+// A block the request parser would refuse names no header, even one on
+// a well-formed line.
+function test_http_header_value_refuses_a_malformed_block(): test.TestOutcome {
+    return test.assert_is_none_string(
+        http.http_header_value("Host: e\r\nno colon\r\n", "host"));
+}
+
 // A request with NO header block at all: the request line's own
 // CRLF is the first two bytes of the `\r\n\r\n` separator, so the
 // header slice [first_crlf + 2, headers_end) runs backwards unless
@@ -144,7 +151,7 @@ function test_http_header_value_missing_is_none(): test.TestOutcome {
 // process with "string index out of range" rather than returning a
 // header-free request.
 function test_no_headers_at_all_parses(): test.TestOutcome {
-    match (http.http_parse_request("GET /bare HTTP/1.1\r\n\r\n")) {
+    match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
         Some(req) => { return test.assert_eq(req.path, "/bare"); },
         None => { return test.fail("a header-free request is well-formed"); }
     }
@@ -152,7 +159,7 @@ function test_no_headers_at_all_parses(): test.TestOutcome {
 }
 
 function test_no_headers_at_all_has_no_headers(): test.TestOutcome {
-    match (http.http_parse_request("GET /bare HTTP/1.1\r\n\r\n")) {
+    match (http.http_parse_request("GET /bare HTTP/1.0\r\n\r\n")) {
         Some(req) => { return test.assert_eq(req.headers.len(), 0); },
         None => { return test.fail("a header-free request is well-formed"); }
     }
@@ -175,12 +182,14 @@ function main(): i32 {
              test_x_prefixed_cl_not_content_length);
     r = r.it("duplicate Content-Length rejected",
              test_duplicate_content_length_rejected);
-    r = r.it("Transfer-Encoding rejected",
+    r = r.it("Transfer-Encoding beside Content-Length rejected",
              test_transfer_encoding_rejected);
     r = r.it("http_header_value via HeaderMap",
              test_http_header_value_via_headermap);
     r = r.it("http_header_value missing returns None",
              test_http_header_value_missing_is_none);
+    r = r.it("http_header_value refuses a malformed block",
+             test_http_header_value_refuses_a_malformed_block);
     r = r.it("a request with no headers parses",
              test_no_headers_at_all_parses);
     r = r.it("a request with no headers has none",

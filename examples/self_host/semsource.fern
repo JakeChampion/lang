@@ -356,10 +356,21 @@ function settled(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: settled(m.key), value: settled(m.value) }; }
     if let typeinfo.TypeUnion(u) = t {
         var args: typeinfo.Type[] = [];
-        for a in u.args { args = args.append(settled(a)); }
+        for a in u.args { args = args.append(settled_payload(a)); }
         return typeinfo.TypeUnion { ...u, args: args };
     }
     return t;
+}
+
+// A bare `None` names no payload, so as a payload itself (`Some(None)` with no
+// annotation) the checker leaves it `Option` alone. Nothing can build its
+// `Some` without settling the payload, so the value is only ever None and it
+// settles at a void payload, which carries nothing.
+function settled_payload(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeUnion(u) = t {
+        if (u.name == "Option" && u.args.len() == 0) { return typeinfo.TypeUnion { ...u, args: [t_void()] }; }
+    }
+    return settled(t);
 }
 
 // ---- expressions ------------------------------------------------------------
@@ -641,6 +652,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
     }
     return define(s, ssasem.array_new(), ids, 0, "", ty);
@@ -654,8 +667,9 @@ function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type)
     var at: i32 = 0;
     while (at < t.elements.len()) {
         var v: Value = expr(t.elements[at], s, tuple_element_type(ty, at));
+        if (!v.s.ok) { return Value { s: v.s, id: 0 - 1 }; }
+        v = unaliased_view(v);
         s = v.s;
-        if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         ids = ids.append(v.id);
         types = types.append(s.values[v.id]);
         at = at + 1;
@@ -885,6 +899,8 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
         s = v.s;
         if (!s.ok) { return Written { s: s, ids: [], at: [] }; }
         if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return Written { s: fail(s, "record field type"), ids: [], at: [] }; }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
         at = at.append(slot);
         i = i + 1;
@@ -995,6 +1011,8 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
             s = v.s;
         }
         if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
         i = i + 1;
     }
@@ -1286,6 +1304,9 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     var test: Value = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], t_bool());
     s = terminate(test.s, t_brif(test.id, good, leave));
 
+    // The cleanup replays deferred assignments on the failure edge only, so
+    // the success edge resumes with the bindings the test saw.
+    var entry: State = s;
     var gone: State = stmts(s.try_cleanup, open(s, leave, [pred]));
     if (!gone.ok) { return Value { s: gone, id: 0 }; }
     var args: i32[] = [];
@@ -1300,6 +1321,7 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     }
     var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
     s = terminate(out.s, t_ret(out.id));
+    s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope };
 
     return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
 }
@@ -1479,7 +1501,8 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
-    return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
+    v = unaliased_view(v);
+    return define(v.s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
 
 // `.with` hands the receiver's own unit over the way `.append` does and takes
@@ -1497,7 +1520,8 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
-    return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
+    v = unaliased_view(v);
+    return define(v.s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
 // The join is declared on `string[]` alone, as the AST lowering gates it, so a
@@ -1604,15 +1628,21 @@ function map_delete(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): V
 // release what the map still holds, so it is refused here rather than
 // described as owned.
 function map_column(s: State, recv: Value, kind: i32, elem: typeinfo.Type): Value {
+    if (ssasem.is_view(elem)) { return refused(s, view_column_read()); }
     if (!ssasem.retained_column(elem)) {
         return refused(s, "aliased column element: " + typeinfo.spelling(elem));
     }
     return define(s, kind, [recv.id], 0, "", typeinfo.TypeArray { elem: elem, view: false });
 }
 
-// An INSERT's key joins the map's key column, which releases it when the map
-// is released — so a view, whose bytes belong to a source the map may outlive,
-// is refused there as it is at an array element. A READ's key is hashed and
+// A read that hands out a unit of a value column retains the box the column
+// holds, and a view's retain is a no-op, so the reader's release would free
+// the map's own view. Such a read needs a fresh view of the entry.
+function view_column_read(): string { return "a read of a view map value would share the column's view box"; }
+
+// An INSERT's key joins the map's key column, and `keys` would hand out the
+// column's own view box as a value column's read would, so a view key is
+// refused there. A READ's key is hashed and
 // compared, and `operation_supplies` counts no unit for it, so a view is an
 // ordinary lend and takes the same retag a borrowed parameter offers.
 function map_key_value(e: ast.Expr, s: State, t: typeinfo.Type, stored: boolean): Value {
@@ -1632,12 +1662,14 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], ssasem.map_value(t))) { return refused(s, "map value type"); }
-    return define(s, ssasem.map_insert(), [recv.id, k.id, v.id], 0, "", t);
+    v = unaliased_view(v);
+    return define(v.s, ssasem.map_insert(), [recv.id, k.id, v.id], 0, "", t);
 }
 
 // A lookup borrows the map and the key and answers a scalar the map goes on
 // owning: `has` takes the key alone, `get_or` a default of the value type.
 function map_read(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type, kind: i32, result: typeinfo.Type): Value {
+    if (kind != ssasem.map_has() && ssasem.is_view(ssasem.map_value(t))) { return refused(s, view_column_read()); }
     var k: Value = map_key_value(c.args[0], s, t, false);
     s = k.s;
     if (!s.ok) { return k; }
@@ -1703,7 +1735,8 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s:
 // key was never built and the whole of std/i32's surface read as a builtin
 // this boundary does not own.
 function primitive_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: Value, s: State, statement: boolean): Value {
-    var owner: string = typeinfo.spelling(s.values[recv.id]);
+    // Keyed as decl_key keys the declaration: `(m: Map[string, i32]) f` is `Map.f`.
+    var owner: string = util.base_type_name(typeinfo.spelling(s.values[recv.id]));
     if (owner.len() == 0) { return refused(s, "unsupported call target"); }
     var at: i32 = ssasem.find_contract(s.contracts, owner + "." + fa.field);
     if (at < 0) { return refused(s, "unsupported call target"); }
@@ -2631,11 +2664,14 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return State { ...bind(init.s, v.name, init.id), scope: after };
 }
 
-// A view bound under a second name, or yielded by a value block's arm, is a
-// fresh view of the same bytes, so the two names share no box. Otherwise a
-// loop that rebinds one name merges the view the other still holds into its
-// phi, and supplying that phi would retain a view (#9802). A literal and a
-// retagged string are counted, and retaining them is sound.
+// A view bound under a second name, stored into a container, or yielded by a
+// value block's arm, is a fresh view of the same bytes, so the two holders
+// share no box. Otherwise a loop that rebinds one name merges the view the
+// other still holds into its phi, and a container would take a unit of a view
+// that stays live; either supply would retain a view (#9802). A literal and a
+// retagged string are counted, and retaining them is sound. A cell store is
+// the one container write that takes no fresh view: the checker refuses a
+// `Cell[str]` (E057), so no checked program stores a view in a cell.
 function unaliased_view(v: Value): Value {
     var s: State = v.s;
     if (!ssasem.is_view(s.values[v.id]) || util.index_of_i32(s.vals, v.id) < 0) { return v; }
@@ -3027,6 +3063,16 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
     return s;
 }
 
+// A match whose arms are all `_` tests nothing about its scrutinee, so it
+// needs no union: the parser leaves one on a scalar undesugared, since only a
+// literal arm routes a match through its if-chain.
+function only_wildcards(m: ast.StmtMatch): boolean {
+    for a in m.arms {
+        if let ast.PatWildcard(_) = a.pattern {} else { return false; }
+    }
+    return m.arms.len() > 0;
+}
+
 // The arms of a match, tested in order, each ending on the join; `ty` is the
 // value a value block's arms carry to it, unchecked for a statement.
 function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
@@ -3035,7 +3081,7 @@ function match_chain(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Chain {
     s = scrut.s;
     if (!s.ok) { return Chain { ...none, arms: Arms { ...none.arms, s: s } }; }
     var owner: string = union_name(s.values[scrut.id]);
-    if (owner == "" || union_layout(s, owner) == 0) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
+    if ((owner == "" || union_layout(s, owner) == 0) && !only_wildcards(m)) { return Chain { ...none, arms: Arms { ...none.arms, s: fail(s, "unsupported match scrutinee") } }; }
     var closes: i32 = 0 - 1;
     if (total_match(s, m, s.values[scrut.id], union_layout(s, owner))) { closes = m.arms.len() - 1; }
     s = learn_escaping(m, s, s.values[scrut.id], owner);
@@ -3468,6 +3514,8 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
     var (returned, at) = checker.first_returned(fd.body, scope);
     if (checker.bare_return(returned)) { return t_void(); }
     if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts); }
+    var constructed: typeinfo.Type = closure_slot_type(returned, contracts);
+    if (semtypes.concrete(constructed, false)) { return constructed; }
     if let ast.ExprIdent(id) = returned {
         var slot: typeinfo.Type = closure_slot_type(slot_init(fd.body, id.name), contracts);
         if (semtypes.concrete(slot, false)) { return slot; }
@@ -3521,9 +3569,11 @@ function is_unknown_expr(e: ast.Expr): boolean {
     return false;
 }
 
+// A closure constructor is not a call of the body it names, though a body
+// hoisted out of a `$iife` one carries that spelling.
 function calls_synthesised(e: ast.Expr): boolean {
     if let ast.ExprCall(c) = e {
-        if let ast.ExprIdent(id) = c.callee { return synthesised_name(id.name); }
+        if let ast.ExprIdent(id) = c.callee { return synthesised_name(id.name) && parser.mkclo_body(id.name).len() == 0; }
     }
     return false;
 }
@@ -4350,10 +4400,39 @@ function known_callee(c: ast.ExprCall, known: string[]): boolean {
     return false;
 }
 
+// A name a statement binds and the expression it binds it to: a `var`, or an
+// assignment to a bare name.
+struct Bound { name: string, value: ast.Expr }
+
+function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
+    if let ast.StmtVar(v) = st { return acc.append(Bound { name: v.name, value: v.init }); }
+    if let ast.StmtAssign(a) = st { return acc.append(Bound { name: a.target, value: a.value }); }
+    return acc;
+}
+
+// A parameter hands out through a local as well as directly: `var st = s;
+// st = st.emit(ir.op_call_direct(freefn, 1)); return st;` returns `freefn`
+// inside `st`. So the names that carry a parameter close over the body's
+// bindings first — a local bound from an expression that hands one of them
+// out carries it too — and the returns are read against that set.
 function hands_back(fd: parser.FuncDecl, known: string[]): boolean {
     var names: string[] = decl_param_names(fd);
+    var binds: Bound[] = [];
     var outs: ast.Expr[] = [];
-    for st in fd.body { outs = astwalk.fold_stmt_spine(st, outs, return_exprs); }
+    for st in fd.body {
+        binds = astwalk.fold_stmt_spine(st, binds, bound_exprs);
+        outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
+    }
+    var grew: boolean = true;
+    while (grew) {
+        grew = false;
+        for b in binds {
+            if (util.index_of_str(names, b.name) < 0 && escapes_in(b.value, names, known)) {
+                names = names.append(b.name);
+                grew = true;
+            }
+        }
+    }
     for e in outs { if (escapes_in(e, names, known)) { return true; } }
     return false;
 }

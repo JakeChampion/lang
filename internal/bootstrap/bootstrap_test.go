@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -363,16 +365,44 @@ func TestUnknownModeFails(t *testing.T) {
 // that no download happened.
 func fakeCurl(t *testing.T, payload []byte) (dir, urlLog string) {
 	t.Helper()
+	return curlServing(t, payload, "gzip -c", "")
+}
+
+// gatedCurl is fakeCurl whose every call waits until n calls have arrived
+// before any of them serves, so n concurrent callers are all inside the
+// download branch at once. A call that waits ten seconds serves anyway, so a
+// caller that never arrives fails the test instead of hanging it.
+func gatedCurl(t *testing.T, payload []byte, n int) (dir, urlLog string) {
+	t.Helper()
+	gate := filepath.Join(t.TempDir(), "arrived")
+	if err := os.Mkdir(gate, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wait := fmt.Sprintf("touch %s/$$\ni=0\nwhile [ \"$(ls %s | wc -l)\" -lt %d ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done\n", gate, gate, n)
+	return curlServing(t, payload, "gzip -c", wait)
+}
+
+// rawCurl is fakeCurl serving the payload as it is, not gzip-compressed: a
+// proxy's error page or a truncated transfer where the release asset should be.
+func rawCurl(t *testing.T, payload []byte) (dir, urlLog string) {
+	t.Helper()
+	return curlServing(t, payload, "cat", "")
+}
+
+// curlServing writes the fake curl: it logs the URL, runs prelude, then
+// serves the payload through filter into the -o file.
+func curlServing(t *testing.T, payload []byte, filter, prelude string) (dir, urlLog string) {
+	t.Helper()
 	dir = t.TempDir()
 	urlLog = filepath.Join(dir, "urls")
 	src := filepath.Join(dir, "payload")
 	body := "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) url=\"$1\"; shift ;; esac; done\n" +
-		"echo \"$url\" >> " + urlLog + "\n"
+		"echo \"$url\" >> " + urlLog + "\n" + prelude
 	if payload == nil {
 		body += "echo 'fake curl: no download expected' >&2; exit 22\n"
 	} else {
 		write(t, src, payload, 0o644)
-		body += "gzip -c " + src + " > \"$out\"\n"
+		body += filter + " " + src + " > \"$out\"\n"
 	}
 	write(t, filepath.Join(dir, "curl"), []byte(body), 0o755)
 	return dir, urlLog
@@ -437,6 +467,82 @@ func TestPinnedStage0WithWrongHashIsRejected(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "bin", "fern-selfhost")); err == nil {
 		t.Errorf("bin/fern-selfhost installed despite a rejected stage0")
+	}
+}
+
+func TestPinnedStage0ThatIsNotGzipIsRejectedAndCleanedUp(t *testing.T) {
+	root := checkout(t)
+	host := hostName(t)
+	write(t, filepath.Join(root, "bootstrap", "stage0.lock"), lock(host, sum([]byte(fixpointCompiler))), 0o644)
+
+	bin, _ := rawCurl(t, []byte("<html>proxy error</html>"))
+	out, err := run(t, root, "build", nil, bin)
+	if err == nil {
+		t.Fatal("a payload that is not gzip data must fail")
+	}
+	if !strings.Contains(out, "is not gzip data") {
+		t.Errorf("failure does not say the asset is not gzip data")
+	}
+	cached := filepath.Join(root, "build", "bootstrap", "stage0", "stage0-20260901-0123456")
+	entries, _ := os.ReadDir(cached)
+	if len(entries) != 0 {
+		t.Errorf("rejected download left behind: %v", entries)
+	}
+}
+
+// The two worker processes of a CI shard resolve the pin at the same moment,
+// so the download has to survive a concurrent copy of itself: every caller
+// prints the same path and finds the same verified binary there. The gated
+// curl holds every caller inside the download branch until all have arrived,
+// so the overlap is certain rather than a matter of scheduling.
+func TestPinnedStage0ResolvesConcurrently(t *testing.T) {
+	const callers = 6
+	root := checkout(t)
+	host := hostName(t)
+	write(t, filepath.Join(root, "bootstrap", "stage0.lock"), lock(host, sum([]byte(fixpointCompiler))), 0o644)
+	bin, urls := gatedCurl(t, []byte(fixpointCompiler), callers)
+	cached := filepath.Join(root, "build", "bootstrap", "stage0", "stage0-20260901-0123456")
+	want := filepath.Join(cached, "fern-selfhost-"+host) + "\n"
+
+	var wg sync.WaitGroup
+	results := make([]string, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			cmd := exec.Command("bash", filepath.Join(root, "bootstrap", "bootstrap.sh"), "stage0")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			got, err := cmd.Output()
+			if err != nil {
+				errs[i] = fmt.Errorf("caller %d: %v\n%s", i, err, stderr.String())
+				return
+			}
+			results[i] = string(got)
+		}(i)
+	}
+	wg.Wait()
+	for i := 0; i < callers; i++ {
+		if errs[i] != nil {
+			t.Error(errs[i])
+			continue
+		}
+		if results[i] != want {
+			t.Errorf("caller %d printed %q, want %q", i, results[i], want)
+		}
+	}
+	if got, err := os.ReadFile(strings.TrimSpace(want)); err != nil || !bytes.Equal(got, []byte(fixpointCompiler)) {
+		t.Fatalf("the resolved stage0 is not the released bytes at %s: %v", strings.TrimSpace(want), err)
+	}
+	entries, _ := os.ReadDir(cached)
+	if len(entries) != 1 {
+		t.Errorf("scratch files left beside the stage0: %v", entries)
+	}
+	if asked, _ := os.ReadFile(urls); strings.Count(string(asked), "\n") != callers {
+		t.Errorf("not every caller was inside the download branch; curl saw:\n%s", asked)
 	}
 }
 

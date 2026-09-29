@@ -672,7 +672,7 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Ty
 }
 
 // bindingReleasableInAll is bindingConfinedInAll over the weaker per-node
-// question bindingReleasableInArm asks. A guard counts the same as a body: an
+// question bindingReleasableFromBox asks. A guard counts the same as a body: an
 // alias it takes is balanced by the join's drop whichever arm ends up running,
 // since that drop is emitted once for the whole match.
 func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.Type) bool {
@@ -683,7 +683,7 @@ func (b *builder) bindingReleasableInAll(region []ast.Node, name string, bt ast.
 		if n == nil {
 			continue
 		}
-		if !b.bindingReleasableInArm(n, name, bt) {
+		if !b.bindingReleasableFromBox(n, name, bt) {
 			return false
 		}
 	}
@@ -842,7 +842,7 @@ func pairFormPayloadIsMap(et ast.EnumType) bool {
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
 func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) bool {
-	return b.bindingUsesExcused(body, name, bt, false)
+	return b.bindingUsesExcused(body, name, bt, false, false)
 }
 
 // bindingReleasableInArm is the weaker question the two match-scrutinee
@@ -868,12 +868,24 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) 
 // ones. The for-in leg keeps the strict reading; its source's release is not
 // the arm's to see, and it has not been measured against a counted escape.
 func (b *builder) bindingReleasableInArm(body ast.Node, name string, bt ast.Type) bool {
-	return b.bindingUsesExcused(body, name, bt, true)
+	return b.bindingUsesExcused(body, name, bt, true, false)
+}
+
+// bindingReleasableFromBox is bindingReleasableInArm for a binding that reads
+// a heap box's payload (#10673): `return c` retains it (the Return lowering's
+// return-transfer inc), so the caller holds a reference of its own and the
+// box's deep drop, replayed on the way out, takes the payload back to that
+// one. A pair-form binding IS the count the callee handed over, and its
+// return hands that count on, so the pair-form caller keeps the stricter
+// question.
+func (b *builder) bindingReleasableFromBox(body ast.Node, name string, bt ast.Type) bool {
+	return b.bindingUsesExcused(body, name, bt, true, true)
 }
 
 // bindingUsesExcused is the shared walk. `countedAliasOK` admits the alias
-// sites of bindingReleasableInArm on top of the read shapes both callers take.
-func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK bool) bool {
+// sites of bindingReleasableInArm on top of the read shapes every caller
+// takes, and `returnCounted` the return of bindingReleasableFromBox.
+func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, countedAliasOK, returnCounted bool) bool {
 	if body == nil {
 		return false
 	}
@@ -937,6 +949,47 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 				countedAliasOK && toLocal && tgt.Name != name && b.assignTakesAliasInc(x, bt) {
 				excused[id] = true
 			}
+		case *ast.Return:
+			// A local the move-on-return leg hands over uninc'd is not a
+			// match binding, and stays unexcused.
+			if id, ok := x.Value.(*ast.Ident); ok && id.Name == name &&
+				returnCounted && b.retainsOnAlias(bt) && !b.isOwnedRcLocal(name) {
+				excused[id] = true
+			}
+		case *ast.Binary:
+			// A binary operator reads its operands: a string concatenation
+			// answers a fresh string and a comparison a boolean, and neither
+			// keeps the binding.
+			for _, e := range []ast.Expr{x.Left, x.Right} {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name {
+					excused[id] = true
+				}
+			}
+		case *ast.TupleLit:
+			// A literal's slot dups the binding under needsRcIncOnAlias
+			// (the inc-ing sinks of rc_analysis), so the container holds a
+			// reference of its own; a move site hands the binding's
+			// reference over instead, and stays unexcused.
+			for _, e := range x.Elems {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[e] {
+					excused[id] = true
+				}
+			}
+		case *ast.StructLit:
+			for _, f := range x.Fields {
+				if id, ok := f.Value.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[f.Value] {
+					excused[id] = true
+				}
+			}
+		case *ast.ArrayLit:
+			for _, e := range x.Elems {
+				if id, ok := e.(*ast.Ident); ok && id.Name == name &&
+					countedAliasOK && b.retainsOnAlias(bt) && !b.rc.moveSites[e] {
+					excused[id] = true
+				}
+			}
 		case *ast.MakeClosure:
 			// A capture MakeEnv retains is the closure's own reference.
 			for _, c := range x.Captures {
@@ -952,6 +1005,7 @@ func (b *builder) bindingUsesExcused(body ast.Node, name string, bt ast.Type, co
 					continue
 				}
 				if b.readOnlyCallArg(x, i) || (countedAliasOK && b.indirectCallArg(x)) ||
+					(countedAliasOK && b.borrowedCallArg(x, i)) ||
 					(countedAliasOK && b.variantRetainsPayload(x, id, bt)) {
 					excused[id] = true
 				}
@@ -1091,6 +1145,39 @@ func (b *builder) readOnlyCallArg(call *ast.Call, i int) bool {
 	}
 	esc, known := b.paramEscapes[id.Name]
 	return known && i < len(esc) && !esc[i]
+}
+
+// borrowedCallArg reports whether argument `i` of direct call `call` reaches
+// a parameter the callee BORROWS: a Fern function whose parameter is neither
+// `own` nor owned-by-default. Such a callee retains anything it keeps (the
+// store-side inc is the borrow convention's invariant; `HeaderMap.append`
+// pushing its value into the map is the shape), so a reference it lets out
+// is a counted one and the argument's own count stays the caller's to
+// release. readOnlyCallArg is the stronger fact (the callee keeps nothing);
+// this one is enough for a release that only has to leave no UNCOUNTED
+// reference behind. A pair-form payload bound by a match arm and handed to
+// such a callee was released by nobody: not moved (the callee does not take
+// ownership) and not excused (the callee keeps it), so the arm's release was
+// withheld and one payload per match leaked.
+func (b *builder) borrowedCallArg(call *ast.Call, i int) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	sig := b.info.FuncSigs[id.Name]
+	if sig == nil || i >= len(sig.Params) || calleeRetainsAnyArg(id.Name) {
+		return false
+	}
+	if _, known := b.paramEscapes[id.Name]; !known {
+		return false
+	}
+	if own := b.info.OwnFuncs[id.Name]; i < len(own) && own[i] {
+		return false
+	}
+	return !b.calleeParamOwnedByDefault(id.Name, sig.Params[i], i)
 }
 
 // indirectCallArg reports whether call goes through a function value. Its

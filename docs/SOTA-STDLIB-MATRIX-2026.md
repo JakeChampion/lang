@@ -199,7 +199,7 @@ obvious:
    other because it passed through f64 first.
 3. **f64 transcendentals agree across backends and are gated on it.** Every
    backend emits the same fdlibm kernels over the same reduction, from one
-   coefficient table (`internal/codegen/fdlibm`), and
+   coefficient table (`internal/fdlibm`), and
    `TestF64TranscendentalBackendsAgree` pins interp / x86-64 / arm64 / wasm
    bit for bit. What is still open is the *contract*: Fern has not said
    whether it promises correct rounding, a stated ULP bound, or agreement

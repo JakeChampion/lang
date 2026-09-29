@@ -54,7 +54,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -10641,7 +10641,7 @@ func (g *generator) emitStrAppendRangeRuntime() {
 // x86-64 has no usable hardware transcendental (the x87 fsin / fyl2x / f2xm1
 // these replace are microcoded legacy from before SSE), so each is an
 // argument reduction followed by a polynomial. The numbers, and why they are
-// shaped as they are, are in internal/codegen/fdlibm.
+// shaped as they are, are in internal/fdlibm.
 //
 // exp keeps fdlibm's division: the division-free alternative needs a
 // degree-13 Taylor to reach 1 ulp (degree 11 lands at 55 ulp), whose

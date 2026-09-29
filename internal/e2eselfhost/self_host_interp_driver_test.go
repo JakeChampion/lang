@@ -9,14 +9,15 @@ import (
 )
 
 // interpDriver bundles lexer + parser + interp + a stdin driver (reads
-// source via read_all_stdin, evaluates it with interp.eval_module, and
+// source via io.read_all_stdin, evaluates it with interp.eval_module, and
 // exits with the program's VInt / VBool result). It's the input the
 // self-hosted compiler compiles into a self-hosted INTERPRETER.
-const interpDriverMod = "import \"./lexer\";\n" +
+const interpDriverMod = "import \"std/io\";\n" +
+	"import \"./lexer\";\n" +
 	"import \"./parser\";\n" +
 	"import \"./interp\";\n" +
 	"function main(): i32 {\n" +
-	"    var src: string = read_all_stdin();\n" +
+	"    var src: string = io.read_all_stdin();\n" +
 	"    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));\n" +
 	"    var result: interp.Value = interp.eval_module(mod);\n" +
 	"    match (result) {\n" +
@@ -440,7 +441,9 @@ var interpProgs = []struct {
 }
 
 // interpDriverFiles is the in-memory module set for interpDriverMod: its own
-// source plus the TRANSITIVE import closure of the three modules it imports.
+// source, std/io's stdlib closure written flat (the loader resolves a std/
+// import by basename), and the TRANSITIVE import closure of the three
+// self-host modules it imports.
 //
 // Derived rather than listed. The list used to be spelled out as
 // {util, lexer, parser, interp}, which went stale the moment `interp.fern`
@@ -449,6 +452,22 @@ var interpProgs = []struct {
 func interpDriverFiles(t *testing.T) map[string]string {
 	t.Helper()
 	files := map[string]string{"main.fern": interpDriverMod}
+	stdDir := writeSourceModloadProject(t, "import \"std/io\";\nfunction main(): i32 { return 0; }\n")
+	stdMods, err := filepath.Glob(filepath.Join(stdDir, "*.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range stdMods {
+		base := filepath.Base(p)
+		if base == "main.fern" || base == "builtins.fern" {
+			continue
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read %s: %v", p, err)
+		}
+		files[base] = string(src)
+	}
 	for _, root := range []string{"lexer.fern", "parser.fern", "interp.fern"} {
 		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
 			base := filepath.Base(p)

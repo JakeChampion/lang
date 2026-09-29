@@ -189,15 +189,15 @@ component.
 
 Auto-injected struct shape:
 
-- `HttpRequest { method: string, path: string, body: string }` —
-  `method` is the canonical HTTP verb ("GET", "POST", ...);
-  for `other(s)` cases the wire string is passed through.
-- `HttpResponse { status: number, body: string }` — `status`
-  is the i32 HTTP status code; `body` is written verbatim.
-
-Headers, query parameters, and trailers are deferred — they
-need a `fields`-shaped multi-map at the Fern level, which is
-its own design decision (Fern doesn't have a `map` type yet).
+- `HttpRequest { method: string, path: string, body: Stream, headers:
+  HeaderMap, trailers: HeaderMap }` — `method` is the canonical HTTP
+  verb ("GET", "POST", ...); for `other(s)` cases the wire string is
+  passed through. The wrapper fills `headers` from the request's
+  fields and leaves `trailers` empty: the body's trailers are a future
+  the host settles after the body is finished, and nothing reads it
+  yet.
+- `HttpResponse { status: number, body: string, headers: HeaderMap }` —
+  `status` is the i32 HTTP status code; `body` is written verbatim.
 For the targeted use cases (Fastly-Compute-style edge handlers
 that mostly consume the body, route by path, and emit JSON or
 HTML), this surface is enough to ship real programs.

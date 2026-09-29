@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // mapBoxColumnCases pin #4353 item 3: a map whose VALUE column holds heap BOXES
 // — a scalar-element array (`Map[K, i32[]]`) or an all-scalar struct
@@ -40,13 +33,16 @@ import (
 // declared directly in a loop is not freed per iteration (a separate gap).
 //
 // Exit 0 is correct throughout; each nonzero code names the check that failed.
+const mapBoxColumnExitHint = "a page count = the box column still leaks; 90/91 = wrong value read back; 99 = over-release"
+
 var mapBoxColumnCases = []struct {
 	name string
 	src  string
 }{
 	// RECLAIM, array column. Returns the page delta of the steady window, so a
 	// leaking column exits nonzero and a flat one exits 0.
-	{"arr-column-flat", `function build(n: i32): i32 {
+	{"arr-column-flat", `import "core/map";
+function build(n: i32): i32 {
     var m: Map[i32, i32[]] = Map { 1: [n, n + 1], 2: [n + 2, n + 3, n + 4] };
     var r: i32 = 0;
     if (m.has(1)) { r = r + 1; }
@@ -76,7 +72,8 @@ function main(): i32 {
 `},
 	// RECLAIM, struct column. Q is all-scalar, so one dec per element box frees
 	// it completely — which is exactly what the credit's gate demands.
-	{"struct-column-flat", `struct Q { a: i32, b: i32 }
+	{"struct-column-flat", `import "core/map";
+struct Q { a: i32, b: i32 }
 
 function build(n: i32): i32 {
     var m: Map[i32, Q] = Map { 1: Q { a: n, b: n + 1 }, 2: Q { a: n + 2, b: n + 3 } };
@@ -102,7 +99,8 @@ function main(): i32 {
 	// sweep releases it; `junk` then recycles the freed block, and the second
 	// read sees it. Without the read-side retain the self-host register
 	// backends returned 90 here while the interpreter and native returned 0.
-	{"read-then-recycle", `function inner(m: Map[i32, i32[]]): i32 {
+	{"read-then-recycle", `import "core/map";
+function inner(m: Map[i32, i32[]]): i32 {
     var v: i32[] = m.get_or(2, []);
     return v.len();
 }
@@ -133,7 +131,8 @@ function main(): i32 {
 	// counter consulted: the per-element free must not double-release. This is
 	// the case that caught the missing read-side retain — the column free turned
 	// the silent early free above into a reported over-release.
-	{"read-back-no-over-release", `struct Q { a: i32, b: i32 }
+	{"read-back-no-over-release", `import "core/map";
+struct Q { a: i32, b: i32 }
 
 function build_arr(n: i32): i32 {
     var m: Map[i32, i32[]] = Map { 1: [n, n + 1], 2: [n + 2, n + 3, n + 4] };
@@ -157,7 +156,7 @@ function main(): i32 {
         if (build_struct(i) != 2 * i + 5) { return 91; }
         i = i + 1;
     }
-    if (__fern_rc_underflow_get() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `},
@@ -165,7 +164,8 @@ function main(): i32 {
 	// pointers that one dec does not release — so it keeps the shallow free.
 	// It must still read back correctly and report no over-release, which is
 	// what says the gate refused rather than half-freeing.
-	{"strarr-column-uncredited-control", `function build(n: i32): i32 {
+	{"strarr-column-uncredited-control", `import "core/map";
+function build(n: i32): i32 {
     var m: Map[i32, string[]] = Map { 1: ["a" + "b", "c" + "d"] };
     var v: string[] = m.get_or(1, []);
     if (v.len() != 2) { return 0 - 1; }
@@ -179,42 +179,19 @@ function main(): i32 {
         if (build(i) != 1) { return 90; }
         i = i + 1;
     }
-    if (__fern_rc_underflow_get() != 0) { return 99; }
+    if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
 `},
 }
 
-// TestSelfHostMapBoxColumnReclaimIRX86_64 runs each case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path.
+// TestSelfHostMapBoxColumnReclaimIRX86_64 is the x86-64 leg.
 func TestSelfHostMapBoxColumnReclaimIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapBoxColumnCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "mbox_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 (a page count = the box column still leaks; 90/91 = wrong value read back; 99 = over-release)", tc.name, code)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want 0 (%s)", tc.name, code, mapBoxColumnExitHint)
 			}
 		})
 	}
@@ -223,23 +200,12 @@ func TestSelfHostMapBoxColumnReclaimIRX86_64(t *testing.T) {
 // TestSelfHostMapBoxColumnReclaimIRArm64 is the arm64 leg: same programs through
 // the arm64 map-free family, run under qemu.
 func TestSelfHostMapBoxColumnReclaimIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapBoxColumnCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "mbox_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 (a page count = the box column still leaks; 90/91 = wrong value read back; 99 = over-release)", tc.name, code)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want 0 (%s)", tc.name, code, mapBoxColumnExitHint)
 			}
 		})
 	}
@@ -250,38 +216,11 @@ func TestSelfHostMapBoxColumnReclaimIRArm64(t *testing.T) {
 // value, so $__fern_map_release never released that column, and vconsume was
 // string-only, so a fresh box value was retained with nothing to balance it.
 func TestSelfHostMapBoxColumnReclaimIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-box-column wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapBoxColumnCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "mapboxcol_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			out, runErr := run.CombinedOutput()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q: %v\n%s", tc.name, runErr, out)
-			}
-			if code := run.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("map-box-column wasm IR %q = %d, want 0\n%s", tc.name, code, out)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want 0 (%s)", tc.name, code, mapBoxColumnExitHint)
 			}
 		})
 	}

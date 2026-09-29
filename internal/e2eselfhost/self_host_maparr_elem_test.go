@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // mapArrElemCases pin the map ELEMENT of a `Map[K, V][]` reaching every
 // receiver position, and the array itself reaching none of them.
@@ -31,7 +24,8 @@ var mapArrElemCases = []struct {
 }{
 	// Loop variable. Bailed before: the foreach binds the element directly and
 	// marked struct / opt / tuple / arrarr element kinds but never a map.
-	{"maparr-foreach", `function main(): i32 {
+	{"maparr-foreach", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     var ms: Map[string, i32][] = [m, m];
@@ -40,7 +34,8 @@ var mapArrElemCases = []struct {
     return acc + ms.len();
 }`, 16},
 	// Tuple-element base. Bailed before.
-	{"maparr-tuple-elem-index", `function main(): i32 {
+	{"maparr-tuple-elem-index", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     var ms: Map[string, i32][] = [m];
@@ -49,7 +44,8 @@ var mapArrElemCases = []struct {
 }`, 10},
 	// Struct-field base, reading the element AND the array's own length. Bailed
 	// before on the element read; once that worked the `.len()` segfaulted.
-	{"maparr-struct-field-index-and-len", `struct Reg { rows: Map[string, i32][] }
+	{"maparr-struct-field-index-and-len", `import "core/map";
+struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
@@ -57,7 +53,8 @@ function main(): i32 {
     return r.rows[0].get_or("k", 0) + r.rows.len();
 }`, 8},
 	// The `.len()` alone, which is the segfault with nothing else in the way.
-	{"maparr-struct-field-len-only", `struct Reg { rows: Map[string, i32][] }
+	{"maparr-struct-field-len-only", `import "core/map";
+struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
@@ -66,7 +63,8 @@ function main(): i32 {
 }`, 3},
 	// NON-VACUITY on the two new `!is_array_type_name` guards: a genuine Map
 	// STRUCT FIELD must still dispatch every map op off the field.
-	{"plain-map-struct-field-unchanged", `struct Cfg { caps: Map[string, i32] }
+	{"plain-map-struct-field-unchanged", `import "core/map";
+struct Cfg { caps: Map[string, i32] }
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("a", 3);
@@ -75,7 +73,8 @@ function main(): i32 {
     return c.caps.len() + c.caps.get_or("a", 0) + c.caps.get_or("b", 0);
 }`, 9},
 	// The same for a genuine Map TUPLE ELEMENT.
-	{"plain-map-tuple-elem-unchanged", `function main(): i32 {
+	{"plain-map-tuple-elem-unchanged", `import "core/map";
+function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("a", 5);
     var t: (Map[string, i32], i32) = (m, 2);
@@ -83,7 +82,8 @@ function main(): i32 {
 }`, 8},
 	// Churn over the loop-var path, so a mis-typed dispatch cannot hide behind
 	// a single-shot value check.
-	{"maparr-foreach-churn", `function churn(n: i32): i32 {
+	{"maparr-foreach-churn", `import "core/map";
+function churn(n: i32): i32 {
     var acc: i32 = 0;
     var i: i32 = 0;
     while (i < n) {
@@ -107,7 +107,8 @@ function main(): i32 {
 	// un-bound `mk().len()` receiver typed as a map — SEGFAULT before. Binding
 	// it to a local first (below) was already safe, because the local's slot is
 	// array-marked and slot_map_type declines it.
-	{"maparr-call-receiver-len", `function mk(): Map[string, i32][] {
+	{"maparr-call-receiver-len", `import "core/map";
+function mk(): Map[string, i32][] {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return [m, m];
@@ -115,7 +116,8 @@ function main(): i32 {
 function main(): i32 {
     return mk().len();
 }`, 2},
-	{"maparr-call-bound-then-used", `function mk(): Map[string, i32][] {
+	{"maparr-call-bound-then-used", `import "core/map";
+function mk(): Map[string, i32][] {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
     return [m, m];
@@ -127,7 +129,8 @@ function main(): i32 {
 	// A map-ARRAY PARAM. Already correct, and now pinned: the param column
 	// records the ELEMENT map type like every other map-array site rather than
 	// the array spelling it previously stored and happened to survive.
-	{"maparr-param-len", `function count(ms: Map[string, i32][]): i32 {
+	{"maparr-param-len", `import "core/map";
+function count(ms: Map[string, i32][]): i32 {
     return ms.len();
 }
 function main(): i32 {
@@ -135,7 +138,8 @@ function main(): i32 {
     m = m.insert("k", 7);
     return count([m, m, m]);
 }`, 3},
-	{"maparr-param-index-and-len", `function pick(ms: Map[string, i32][]): i32 {
+	{"maparr-param-index-and-len", `import "core/map";
+function pick(ms: Map[string, i32][]): i32 {
     return ms[0].get_or("k", 0) + ms.len();
 }
 function main(): i32 {
@@ -144,7 +148,8 @@ function main(): i32 {
     return pick([m, m]);
 }`, 9},
 	// A map-array reaching a tuple through a struct field, then read as an array.
-	{"maparr-struct-field-into-tuple", `struct Reg { rows: Map[string, i32][] }
+	{"maparr-struct-field-into-tuple", `import "core/map";
+struct Reg { rows: Map[string, i32][] }
 function main(): i32 {
     var m: Map[string, i32] = map_new(4);
     m = m.insert("k", 7);
@@ -156,50 +161,11 @@ function main(): i32 {
 
 const mapArrElemFailFmt = "%s = %d, want %d (-1 = died on a signal: a map op dispatched on an array box; 99 = over-release; 97 = value corrupted)"
 
-func runMapArrElemStrictIR(t *testing.T, driverBin string, runner []string, src string, extra ...string) []byte {
-	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(driverBin, extra...)
-	} else {
-		cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), extra...)...)
-	}
-	cmd.Stdin = bytes.NewReader([]byte(src + "\n"))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_STRICT_IR=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
-	cmd.Env = append(cmd.Env, "FERN_STRICT_IR=1")
-	_ = cmd.Run()
-	if stdout.Len() == 0 {
-		t.Fatalf("did not lower under FERN_STRICT_IR=1 (exit %d):\n%s", cmd.ProcessState.ExitCode(), stderr.String())
-	}
-	return stdout.Bytes()
-}
-
 func TestSelfHostMapArrElemIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runMapArrElemStrictIR(t, driverBin, runner, tc.src)
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
 				t.Errorf(mapArrElemFailFmt, tc.name, code, tc.want)
 			}
 		})
@@ -207,19 +173,11 @@ func TestSelfHostMapArrElemIRX86_64(t *testing.T) {
 }
 
 func TestSelfHostMapArrElemIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runMapArrElemStrictIR(t, driverBin, x86runner, tc.src, "-target", "arm64-linux")
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf(mapArrElemFailFmt, tc.name, code, tc.want)
 			}
 		})
@@ -227,24 +185,10 @@ func TestSelfHostMapArrElemIRArm64(t *testing.T) {
 }
 
 func TestSelfHostMapArrElemWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping map-array element wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapArrElemCases {
 		t.Run(tc.name, func(t *testing.T) {
-			wat := runMapArrElemStrictIR(t, driverBin, runner, tc.src, "-ir")
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", watFile)
-			_ = run.Run()
-			if code := run.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.want {
 				t.Errorf(mapArrElemFailFmt, tc.name, code, tc.want)
 			}
 		})

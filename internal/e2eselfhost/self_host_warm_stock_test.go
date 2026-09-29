@@ -2,13 +2,14 @@ package e2eselfhost
 
 import (
 	"fmt"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-// recordDriverSize logs a warmed driver's linked size and, when
+// recordDriverSize logs a warmed driver's size and, when
 // FERN_DRIVER_SIZE_REPORT names a file, appends `driver<TAB>bytes` to it for
 // scripts/ci-check-driver-sizes to compare against
 // .github/selfhost-driver-sizes.txt (#6826). Every driver here is linked on its
@@ -19,7 +20,7 @@ func recordDriverSize(t *testing.T, driver, bin string) {
 	if err != nil {
 		t.Fatalf("stat warmed driver %s: %v", driver, err)
 	}
-	t.Logf("warmed driver %s: %d bytes linked", driver, fi.Size())
+	t.Logf("warmed driver %s: %d bytes", driver, fi.Size())
 	out := os.Getenv("FERN_DRIVER_SIZE_REPORT")
 	if out == "" {
 		return
@@ -96,10 +97,17 @@ func TestSelfHostDriverSizeReport(t *testing.T) {
 	}
 }
 
+// stage2Row is the FERN_WARM_DRIVER entry for fern.fern compiled by the
+// fern.fern driver — the current compiler's output for itself, the bootstrap
+// chain's stage2 — recorded for the size gate and never cached: it is not a
+// driver any test runs.
+const stage2Row = "fern.fern/stage2"
+
 // TestSelfHostWarmStockDriver compiles each self-host driver named in the
 // comma-separated FERN_WARM_DRIVER env var (e.g. "asm_run.fern,asm_ir_run.fern")
-// into the disk cache (FERN_SELFHOST_BUILD_CACHE), records each linked size
-// and smoke-runs it. Two CI jobs run it (.github/workflows/test-e2e-selfhost.yml):
+// into the disk cache (FERN_SELFHOST_BUILD_CACHE), records each one's size
+// and smoke-runs it; the entry fern.fern/stage2 (stage2Row) instead records
+// the size of fern.fern as compiled by the warmed fern.fern. Two CI jobs run it (.github/workflows/test-e2e-selfhost.yml):
 // `cli` builds fern.fern once for the isolated driver tests that follow in the
 // same job, and `driver-sizes` builds every baselined driver for the size gate.
 // Locally, with FERN_WARM_DRIVER unset, the test is a no-op skip.
@@ -113,6 +121,18 @@ func TestSelfHostWarmStockDriver(t *testing.T) {
 	for _, driver := range strings.Split(list, ",") {
 		driver = strings.TrimSpace(driver)
 		if driver == "" {
+			continue
+		}
+		if driver == stage2Row {
+			if len(runner) != 0 {
+				t.Fatalf("%s runs the fern.fern driver as a compiler, which needs a native x86-64 host", driver)
+			}
+			stage1 := cachedDriverBin(t, gcc, dir, "fern.fern")
+			stage2 := filepath.Join(t.TempDir(), "fern_stage2")
+			if err := e2eharness.CompileWithSelfHost(t, stage1, filepath.Join(dir, "fern.fern"), stage2, e2eharness.DriverBuildWeightMB("fern.fern")); err != nil {
+				t.Fatal(err)
+			}
+			recordDriverSize(t, driver, stage2)
 			continue
 		}
 		bin := cachedDriverBin(t, gcc, dir, driver)

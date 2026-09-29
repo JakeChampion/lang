@@ -1,27 +1,35 @@
-# Linked sizes, in BYTES, of the self-host driver binaries CI already builds —
-# checked against every run by scripts/ci-check-driver-sizes (#6826).
+# Sizes, in BYTES, of the self-host driver binaries CI already builds, plus
+# the compiler's own output for itself — checked against every run by
+# scripts/ci-check-driver-sizes (#6826).
 #
-# WHICH BINARY IS "THE SELF-HOST BINARY": fern.fern, named below as the tracked
-# artifact. It is examples/self_host/fern.fern, the whole self-hosted compiler
-# CLI, and it is the number to quote when talking about self-host binary size
-# (#4109's "well under half" target is against it). The others in this file are
-# smaller programs that link a SUBSET of the compiler: `asm_ir_run` is the
-# front-end plus the x86-64 IR backend, `wasm_ir_run` the front-end plus the
-# wasm one, and so on. They are recorded because they are free to record and
-# they localise a regression to a backend — NOT because they are
-# interchangeable. Quoting one against another is how #4109 acquired a bogus
-# "the epic is 4x off": a 245 MB CLI figure compared with a 59 MB wasm_ir_run
-# figure.
+# WHICH BINARY IS "THE SELF-HOST BINARY": fern.fern/stage2, named below as the
+# tracked artifact. It is examples/self_host/fern.fern, the whole self-hosted
+# compiler CLI, COMPILED BY ITSELF (the fern.fern driver, built by the pin,
+# compiling its own source — the bootstrap chain's stage2), so it is the one
+# row that moves with the current compiler's code generation, and it is the
+# number to quote when talking about self-host binary size (#4109's "well
+# under half" target is against it). Every other row is a driver built by the
+# PINNED stage0 compiler (bootstrap/stage0.lock): those rows move with the
+# drivers' sources and the stdlib, never with a codegen change in the current
+# compiler, and a pin refresh moves them all. `fern.fern` is the pin's build
+# of the CLI (stage1); `asm_ir_run` is the front-end plus the x86-64 IR
+# backend, `wasm_ir_run` the front-end plus the wasm one, and so on. They are
+# recorded because they are free to record and they localise a regression to
+# a backend — NOT because they are interchangeable. Quoting one against
+# another is how #4109 acquired a bogus "the epic is 4x off": a 245 MB CLI
+# figure compared with a 59 MB wasm_ir_run figure.
 #
-# tracked-artifact: fern.fern
+# tracked-artifact: fern.fern/stage2
 #
 # HOW THIS IS MEASURED. The `driver-sizes` job of test-e2e-selfhost.yml reads
-# the driver names out of this file, links every one of them
-# (TestSelfHostWarmStockDriver, ~2 minutes for the set), stats each into
-# FERN_DRIVER_SIZE_REPORT, and compares that report against this file. The
-# emit and the link are in-process pure Go, so a given commit yields the same
-# byte count on any runner — a difference here is a real change in the
-# compiler's output, not runner noise.
+# the driver names out of this file, builds every one of them
+# (TestSelfHostWarmStockDriver; fern.fern/stage2 is the warmed fern.fern run
+# over its own source), stats each into FERN_DRIVER_SIZE_REPORT, and compares
+# that report against this file. Both compilers' output is deterministic per
+# input, so a given commit yields the same byte count on any runner — a
+# difference here is a real change in the sources, the stdlib, the pin or
+# (for fern.fern/stage2) the current compiler's codegen, not runner noise. A
+# pin refresh re-baselines every pin-built row, in the same PR.
 #
 # ENFORCED, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
 # default) is a job-summary line, a warning annotation and a FAILED
@@ -348,20 +356,34 @@
 # wit_proxy_world: ~1,450 lines that no driver linked before), and the wasm
 # extern bridge gained its heap-payload result wrappers. Measured with
 # FERN_WARM_DRIVER=fern.fern FERN_DRIVER_SIZE_REPORT on the branch.
-# 2026-09-28 — asm_ir_run alone, 9111545 -> 11148585 (+22.4%). The driver
-# takes the typed lowering's substitution (semlower.driven), so it links
-# semsource, ssasem, ssaunits, ssarc and the planners beside the AST lowering
-# it still carries; the lowering's deletion takes irlower's AST-only half back
-# out. Measured with FERN_WARM_DRIVER=asm_ir_run.fern FERN_DRIVER_SIZE_REPORT.
-fern.fern 14118057
-asm_load_run.fern 9924729
-asm_modload_run.fern 9400865
-asm_ir_run.fern 11148585
-asm_run.fern 8624344
-wasm_ir_run.fern 8387056
-wasm_run.fern 8378800
-wasm_runio_run.fern 8345408
-asm_pathprobe_run.fern 7524864
-asm_ir_elig_run.fern 6183304
-irlower_run.fern 7267824
-checker_modload_run.fern 3052684
+# 2026-09-29 — every row re-baselined: the drivers are built by the pinned
+# stage0 self-host compiler instead of the Go x86-64 backend (#10680), and
+# its output is 12-27% smaller per driver (fern.fern 14118057 -> 12342352).
+# fern.fern/stage2 joins as the tracked artifact — the compiler's own output
+# for itself, the one row a codegen change in the current compiler moves.
+# Measured with FERN_WARM_DRIVER over every row, FERN_DRIVER_SIZE_REPORT on
+# the branch. Re-measured the same day against the refreshed pin
+# stage0-20260929-32d575e, whose hand-back set copies a lent view for a
+# callee that keeps it through a local (every row +0.005-0.04%, fern.fern
+# 12342352 -> 12346904, the copies that fix carries), and once more on the
+# merge of main at c2160d3ce, which changed the driver sources and the
+# stdlib they compile in (+0.004% to +0.025% per row over the previous
+# merge, fern.fern 12346904 -> 12346536 across both). Equal to fern.fern in
+# size on that tree: six commits to examples/self_host landed after the
+# pin's source commit 32d575e60 (740b49209 ssarc.fern, 319a4a50e
+# ssasem.fern, d5792c908 read_all_stdin, aee0e4136 parser.fern, 067f7462a
+# checker.fern, 02196de0a irlower.fern) and none moved the stage2 byte
+# count off stage1's. One that does will part the two (docs/BOOTSTRAP.md).
+fern.fern/stage2 12346536
+fern.fern 12346536
+asm_load_run.fern 8099152
+asm_modload_run.fern 7556384
+asm_ir_run.fern 7302608
+asm_run.fern 6765464
+wasm_ir_run.fern 6704912
+wasm_run.fern 6702024
+wasm_runio_run.fern 6671832
+asm_pathprobe_run.fern 5454560
+asm_ir_elig_run.fern 4627344
+irlower_run.fern 5314192
+checker_modload_run.fern 2220984

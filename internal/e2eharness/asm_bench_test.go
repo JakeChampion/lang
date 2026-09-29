@@ -122,7 +122,7 @@ func asmBenchCorpus(b *testing.B, tgt asmBenchTarget, size string) string {
 			})
 		}
 		if size == "full" {
-			err = withBuildMemory(heavyBuildWeightMB(), emit)
+			err = withBuildMemory(DriverBuildWeightMB("fern.fern"), emit)
 		} else {
 			err = emit()
 		}
@@ -154,7 +154,7 @@ func asmBenchSourcePath(b *testing.B, size string) (string, error) {
 }
 
 // asmBenchEmit runs the front of the pipeline (modload → constfold → check →
-// monomorph) and the given backend, mirroring emitDriverAsm for either target.
+// monomorph) and the given backend, the way the Go driver emit ran them.
 func asmBenchEmit(mainPath string, emit func(*ast.Program, *checker.Info) (string, error)) (string, error) {
 	prog, _, err := modload.Load(mainPath)
 	if err != nil {

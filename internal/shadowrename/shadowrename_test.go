@@ -255,3 +255,49 @@ func equal(a, b []string) bool {
 	}
 	return true
 }
+
+// A param or local that shares a top-level function's name is renamed even
+// as the first declaration, so an Ident left spelled like the function is a
+// reference to the function: here `find` read as a value in the else branch,
+// beside a local `find` in the then branch.
+func TestRenameLocalSharingAFunctionName(t *testing.T) {
+	prog := runRename(t, `function find(n: i32): i32 { return n; }
+	function g(find: i32): i32 { return find + 1; }
+	function h(c: boolean): i32 {
+		if (c) {
+			var find: i32 = 2;
+			return find;
+		} else {
+			var f: (i32) => i32 = find;
+			return f(3);
+		}
+	}`)
+	g := prog.Funcs[1]
+	if got := g.Params[0].Name; !strings.HasPrefix(got, "find$") {
+		t.Errorf("g's param kept the function's name: %q", got)
+	}
+	if got := identNames(g.Body); !equal(got, []string{g.Params[0].Name}) {
+		t.Errorf("g's body reads %v, want the renamed param", got)
+	}
+	h := prog.Funcs[2]
+	names := collectVarNames(h.Body)
+	if len(names) != 2 || !strings.HasPrefix(names[0], "find$") || names[1] != "f" {
+		t.Errorf("h declares %v, want the local find renamed and f kept", names)
+	}
+	refs := identNames(h.Body)
+	if !equal(refs, []string{"c", names[0], "find", "f"}) {
+		t.Errorf("h's body reads %v, want the then-branch through the renamed local and the else-branch naming the function", refs)
+	}
+}
+
+// identNames lists every Ident read in b, in walk order.
+func identNames(b *ast.Block) []string {
+	var out []string
+	ast.Walk(b, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok {
+			out = append(out, id.Name)
+		}
+		return true
+	})
+	return out
+}

@@ -1665,7 +1665,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // `roundsd $0` as internal/codegen/x86_64's emitFloatTranscendentalsRuntime
 // (ties-to-EVEN, matching arm64's `frintn`; the reductions pick a different k
 // otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry, so editing one side alone fails a test rather than
 // diverging quietly. They replace the x87 sequences this backend inlined
 // (`fsin` / `fcos`, `fyl2x` for log, `f2xm1` + `fscale` for exp), which were
@@ -2096,7 +2096,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
 function needs_heap_runtime(s: asmcore.EmitState): boolean {
     return s.any_need([
         "heap", "i32_to_string", "u32_to_string", "chr",
-        "read_all_stdin", "str_read_line", "strbuf", "buf", "reader",
+        "str_read_line", "strbuf", "buf", "reader",
         "write_file", "write_file_exec", "remove_dir_all", "temp_dir",
         "read_dir", "read_dir_all", "remove_file", "create_dir_all", "create_dir",
         "remove_dir", "create_link", "create_symlink", "rename", "chmod", "chmod_at",
@@ -3034,8 +3034,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    jmp .Lstrfree_box\n");
     // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
     // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
-    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
-    // the freelist a block bigger than the class it lands in, which wastes the
+    // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
     // slack but never overruns — the same trade the separate-buffer path above has
     // always made when it freed at ceil(len/8).
     s = s.write(".Lstrfree_fused:\n");
@@ -3408,11 +3407,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_large_push\n");
     s = s.write("    popq %rax\n");
     s = s.write("    ret\n");                      // %rax = new
-    // __fern_print_str and __fern_read_all_stdin are Fern runtime functions (#2649):
-    // asmcore.rt_src_print_str / rt_src_read_all_stdin, lowered through the IR
-    // pipeline via emit_ir_runtime_fern_fn in the entry block, not hand-written
-    // bodies here. read_all_stdin allocates its own 32 MiB buffer and so stays
-    // with the heap runtime.
+    // __fern_print_str is a Fern runtime function (#2649):
+    // asmcore.rt_src_print_str, lowered through the IR pipeline via
+    // emit_ir_runtime_fern_fn in the entry block, not a hand-written body here.
     // __fern_read_line, __fern_reader_read_chunk and __fern_reader_close are Fern
     // runtime functions (#2649): asmcore.rt_src_read_line / rt_src_reader_read_chunk
     // / rt_src_reader_close, lowered through the IR pipeline via
@@ -5895,7 +5892,7 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+    return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -5960,6 +5957,11 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
     if (f != "") { return f; }
     if (what == "load_i32") { return "    movslq (" + d + "), " + d + "\n"; }
     if (what == "!") { return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n"; }
+    if (util.str_has_prefix(what, "rotr:")) {
+        var n: string = util.i32_to_string(ssa.rotr_count(what));
+        if (ssa.rotr_width(what) == 64) { return "    rorq $" + n + ", " + d + "\n"; }
+        return "    rorl $" + n + ", " + ssa_r32(d) + "\n";
+    }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n"; }
     if (what == "int_cast:u8") { return "    andq $255, " + d + "\n"; }
     if (what == "int_cast:i32") { return "    movslq " + ssa_r32(d) + ", " + d + "\n"; }
@@ -7200,7 +7202,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // block behind its label. prune_dead first takes out the zeros the lift gives
 // every declared local and the loop phis nothing reads.
 function emit_ssa_function_x86(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
+    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
@@ -7684,12 +7686,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         s = emit_ir_op_heap_mark(o, s);
     } else if (o.kind_tag == 230) {  // heap_release_to
         s = emit_ir_op_heap_release_to(o, s);
-    } else if (o.kind_tag == 209) {  // read_all_stdin
-        // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
-        // fd 0 to EOF in ONE fresh string box, pushed as a value op. Allocates,
-        // so it pulls in the heap runtime.
-        s = s.write("    call __fn___fern_read_all_stdin\n    pushq %rax\n");
-        s = s.need("heap"); s = s.need("read_all_stdin");
     } else if (o.kind_tag == 260) {  // create_dir
         // [pathbox][mode] (mode on top) -> Result[void, IoError]. The
         // same two-operand shuffle `access` does: the stack ABI wants
@@ -9891,10 +9887,6 @@ function emit_entry_runtime(s: asmcore.EmitState, all_structs: irlower.StructTab
     // The stdout/stderr leaves (#2649) — plain write(2) calls, allocation-free, so
     // they sit with the clocks rather than in the heap runtime: a program that only
     // prints must still link.
-    if (s.has_need("read_all_stdin")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin("x86_64"), all_structs, s);
-    }
     if (s.has_need("str_read_line")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line("x86_64"), all_structs, s);

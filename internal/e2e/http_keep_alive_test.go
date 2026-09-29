@@ -12,7 +12,9 @@ import (
 // bounded loop as the census, driven by e2eharness.HTTPKeepAliveRequests,
 // whose doc comment lists the cases (pipelines beyond the burst and the
 // cap, a half-closed one, a partial request, handlers outlasting the read
-// deadline, a reset peer, the HTTP/1.0 and `Connection: close` forms).
+// deadline, a reset peer, a malformed request and one past the field cap,
+// both refused, a chunked request echoed, the HTTP/1.0 and
+// `Connection: close` forms).
 // Every response's `Connection` is checked, every close the server owes is
 // read as EOF, and the census must balance.
 func TestHTTPKeepAlive(t *testing.T) {

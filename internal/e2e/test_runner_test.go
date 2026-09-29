@@ -1386,8 +1386,8 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	}
 	// 53 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 53") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 53 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 61") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 61 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 
@@ -3845,9 +3845,10 @@ func TestRunnerHeaderMapMigratedExample(t *testing.T) {
 
 // `examples/tests/http_request_bytes_test.fern` pins the byte-based request
 // parser (#5714): `http_parse_request_bytes` and the text entry agree on
-// well-formed and refused requests, a bare request and a colon-less header
-// line parse as before, and what the parse keeps is copied out of the wire
-// buffer rather than aliasing it.
+// well-formed and refused requests, the framed parse tells incomplete from
+// malformed, a chunked body is decoded under its caps (#9854), the target is
+// decoded once with its dot segments removed or refused, and what the parse
+// keeps is copied out of the wire buffer rather than aliasing it.
 func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/http_request_bytes_test.fern")
@@ -3855,7 +3856,25 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 10", "# fail 0", "1..10"} {
+	for _, w := range []string{"# Suite: HTTP request bytes", "# pass 21", "# fail 0", "1..21"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/http_request_builder_test.fern` pins the handler test
+// seam (#9854): a request from `http.request` with its body methods, a
+// `MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the
+// response back.
+func TestRunnerHttpRequestBuilderExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_request_builder_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP request builder", "# pass 4", "# fail 0", "1..4"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -3890,11 +3909,12 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 		"ok 4 - missing header returns None",
 		"ok 6 - X-*-Content-Length is not the body length",
 		"ok 7 - duplicate Content-Length rejected",
-		"ok 8 - Transfer-Encoding rejected",
+		"ok 8 - Transfer-Encoding beside Content-Length rejected",
 		"ok 9 - http_header_value via HeaderMap",
 		"ok 10 - http_header_value missing returns None",
-		"ok 11 - a request with no headers parses",
-		"# pass 12",
+		"ok 11 - http_header_value refuses a malformed block",
+		"ok 12 - a request with no headers parses",
+		"# pass 13",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
@@ -3993,7 +4013,9 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 6 - duplicate Set-Cookie preserves order",
 		"ok 7 - status reason for extended codes",
 		"ok 8 - unknown status falls back to Status",
-		"# pass 8",
+		"ok 9 - HEAD response has no body",
+		"ok 10 - 204 has no Content-Length or body",
+		"# pass 11",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {

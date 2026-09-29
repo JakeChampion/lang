@@ -440,7 +440,7 @@ function main(): i32 {
 `},
 	// The same shape in a MATCH expression. Its IIFE body is a StmtMatch, which
 	// the contract walk has to enter for the same reason the if-expression's
-	// StmtIf does — the hoist gate (iife_arms_have_lambda) already reaches both.
+	// StmtIf does — the hoist gate (iife_arms_have_unboxed_fn) already reaches both.
 	// Produces 0 of 4 without the match arm.
 	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
 enum Pick { A, B }
@@ -463,6 +463,115 @@ function main(): i32 {
     return f(42);
 }
 `},
+	// A bare function name as an if-expression arm (#10686). The lift boxed a
+	// lambda arm but refused a name arm as unboxable, so the name reached
+	// semsource as a function address. Pinned in a `var`, an assignment, a
+	// fn-typed argument beside a lambda arm, and through a nested if-expression.
+	{name: "if-expr-function-name-arms", atLeast: 6, want: "41|", astAnswers: "41|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { inc } else { dbl }); return f(40); }
+`},
+	{name: "if-expr-function-name-arms-nested", atLeast: 9, want: "80|", astAnswers: "80|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function neg(x: i32): i32 { return 0 - x; }
+function main(): i32 {
+    var a: i32 = 2;
+    var f: (i32) => i32 = (if (a == 1) { inc } else { (if (a == 2) { dbl } else { neg }) });
+    return f(40);
+}
+`},
+	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 10, want: "41|", astAnswers: "41|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+function main(): i32 {
+    var c: boolean = false;
+    var f: (i32) => i32 = inc;
+    f = (if (c) { inc } else { dbl });
+    return f(20) + apply((if (c) { dbl } else { (x: i32): i32 => x - 1 }), 2);
+}
+`},
+	// An immediately called capturing lambda (#10685). The lift hoisted a
+	// capture-free one to a direct call and left a capturing one inline, which
+	// semsource has no expression for; it now hoists with its captures as
+	// trailing arguments. The issue's program, the return-value form, and a
+	// loop whose lambda builds a string from a capture and returns early:
+	// the AST lowering used to inline that `return` as the enclosing
+	// function's.
+	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", astAnswers: "13|", noLeak: true, src: `
+function g(n: i32): i32 { return n * 2; }
+function main(): i32 {
+    var n: i32 = 5;
+    var t: i32 = ((): i32 => { return n + 2; })();
+    var i: i32 = 0;
+    while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }
+    return t;
+}
+`},
+	{name: "immediately-called-capturing-lambda-returned", atLeast: 2, want: "3|", astAnswers: "3|", noLeak: true, src: `
+function main(): i32 { var k: i32 = 3; return ((): i32 => { return k; })(); }
+`},
+	{name: "immediately-called-capturing-lambda-in-a-loop", atLeast: 2, want: "18|", astAnswers: "18|", noLeak: true, src: `
+function main(): i32 {
+    var base: string = "ab";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        total = total + ((): i32 => {
+            var s: string = base + "c";
+            if (i > 1) { return s.len() * 2; }
+            return s.len();
+        })();
+        i = i + 1;
+    }
+    return total;
+}
+`},
+	// Parameters and captures together: the hoisted body takes the written
+	// parameters and then the captures, and the call passes the written
+	// arguments and then the captured names. Transposing either order changes
+	// the answer (87 for the arguments, 123 for the captures).
+	{name: "immediately-called-capturing-lambda-with-parameters", atLeast: 2, want: "64|", astAnswers: "64|", noLeak: true, src: `
+function main(): i32 {
+    var k: i32 = 4;
+    var m: i32 = 7;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        t = t + ((x: i32, y: i32): i32 => { if (x > k) { return x - y + m; } return x * k + y; })(i, 3);
+        i = i + 1;
+    }
+    return t;
+}
+`},
+	// i64 and f64 captures of hand-written IIFEs, one with a parameter and a
+	// defer. An immediately called lambda builds no env box, so the
+	// wide-capture pass leaves its captures alone whatever its parameters;
+	// snapshotting them into cells here left the AST lowering 64 bytes short.
+	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", astAnswers: "15|", noLeak: true, src: `
+function main(): i32 {
+    var big: i64 = 5000000000i64;
+    var ratio: f64 = 1.5;
+    var hits: i32 = 0;
+    var acc: i64 = 0i64;
+    var i: i32 = 0;
+    while (i < 3) {
+        acc = acc + ((): i64 => { return big + (i as i64); })();
+        var scaled: f64 = ((d: f64): f64 => { defer { hits = hits + 1; } return ratio * d + (big as f64) * 0.0; })(2.0);
+        acc = acc + (scaled as i64);
+        i = i + 1;
+    }
+    return ((acc - 15000000000i64) as i32) + hits;
+}
+`},
+	// A capture-free hand-written lambda called inside an if-expression arm:
+	// the lift kept every zero-parameter call inside a value block inline, not
+	// only a nested value block.
+	{name: "immediately-called-lambda-in-an-if-expr-arm", atLeast: 2, want: "5|", astAnswers: "5|", noLeak: true, src: `
+function main(): i32 { var c: boolean = true; var x: i32 = (if (c) { ((): i32 => { return 5; })() } else { 2 }); return x; }
+`},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }
 function total(xs: i32[]): i32 {
@@ -471,6 +580,98 @@ function total(xs: i32[]): i32 {
     return t;
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }
+`},
+	// An unannotated binding takes its type from the checker, so a builtin
+	// whose result the checker left unknown refused the body that named it.
+	{name: "a-chr-result-types-its-binding", atLeast: 1, src: `
+function main(): i32 {
+    var a = chr(72);
+    var s = a + chr(105);
+    return s.len() * 100 + (s[0] as i32);
+}
+`},
+	// A match whose only arm is `_` stays a match on a scalar (only a literal
+	// arm desugars it), and it tests nothing, so it needs no union. The heap
+	// string scrutinee is still released.
+	{name: "a-wildcard-only-match-on-a-scalar", atLeast: 3, noLeak: true, src: `
+function label(n: i32): string {
+    if (n > 3) { return "big" + "-past-the-sso-inline-threshold"; }
+    return "small" + "-past-the-sso-inline-threshold";
+}
+function pick(n: i32): i32 {
+    var t: i32 = 0;
+    match (n > 3) { _ => { t = n; } }
+    match (label(n)) { _ => { t = t + 1; } }
+    return t;
+}
+function main(): i32 { return pick(5) * 10 + pick(2); }
+`},
+	// An array literal takes its element type from its most settled element:
+	// `None` after `Some(1)` keeps `Option[i32]`, as native types it, rather
+	// than leaving the binding with a bare `Option`.
+	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, src: `
+function total(c: i32): i32 {
+    var a = [Some(1), Some(2), None];
+    var n: i32 = 0;
+    for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } }
+    var b = if (c > 3) { [Some(7), None] } else { [Some(1)] };
+    return match (b[0]) { Some(v) => n + v, None => n };
+}
+function main(): i32 { return total(5) * 10 + total(1); }
+`},
+	// A method declared on a concrete map receiver is keyed `Map.<name>`, as
+	// every receiver's method is keyed by its base type; the call looked for
+	// the receiver's full spelling and found no contract.
+	{name: "a-method-on-a-concrete-map-receiver", atLeast: 3, noLeak: true, src: `
+import "core/map";
+function (m: Map[string, i32]) goi(k: string, fallback: i32): i32 {
+    if (m.has(k)) { return m.get_or(k, 0); }
+    return fallback;
+}
+function main(): i32 {
+    var m: Map[string, i32] = map_new(8);
+    m = m.insert("a", 10);
+    return m.goi("a", 1) + m.goi("b", 2) * 100;
+}
+`},
+	// A map column of function values is a column of environment boxes: the
+	// map owns a unit of each, a read retains the box it answers, and the
+	// column's release walks each box's captures. Overwriting and deleting
+	// an entry release the box it held.
+	{name: "a-map-column-of-closures", atLeast: 2, noLeak: true, src: `
+import "core/map";
+function run(k: i32): i32 {
+    var tag: string = "t" + "-past-the-sso-inline-threshold";
+    var m: Map[i32, () => i32] = map_new(4);
+    m = m.insert(1, (): i32 => { return tag.len() + k; });
+    m = m.insert(2, (): i32 => { return 7; });
+    m = m.insert(1, (): i32 => { return tag.len() * 2 + k; });
+    var got: i32 = 0;
+    match (m.get(1)) { Some(f) => { got = f(); }, None => { got = 0 - 1; } }
+    let (rest, had) = m.without(2);
+    if (!had || rest.len() != 1) { return 0 - 2; }
+    return got;
+}
+function main(): i32 { return run(3) - run(1); }
+`},
+	// A consuming match that builds a variant of the enum it matched builds it
+	// in the matched box when that box is unique, releasing only the payload
+	// it does not carry over; a box still shared elsewhere is left alone.
+	{name: "a-match-arm-rebuilds-its-variant-in-place", atLeast: 3, noLeak: true, src: `
+enum E { V(i32, string), W(i32, string) }
+function flip(own x: E): E {
+    return match (x) { V(a, s) => W(a + 1, s + "-w"), W(a, s) => V(a * 2, s) };
+}
+function weight(e: E): i32 {
+    return match (e) { V(a, s) => a + s.len(), W(a, s) => a * 100 + s.len() };
+}
+function main(): i32 {
+    var y = flip(flip(V(3, "abc")));
+    var z = W(5, "k" + "-past-the-sso-inline-threshold");
+    var keep = z;
+    z = flip(z);
+    return weight(y) + weight(z) + weight(keep) % 7;
+}
 `},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
@@ -2044,6 +2245,42 @@ function main(): i32 {
     for w in words_of("abcdef") { n = n + w.len(); }
     for t in toks_of("abcdef") { n = n + t.text.len() + t.line; }
     return n;
+}
+`},
+	// A callee that keeps its argument through a LOCAL: `st` is bound from
+	// `acc`, rebound from a call that stores `name`, and returned. Reading
+	// only the returns left `add` out of `handers`, so its caller lent the view
+	// as a frame-resident retag and `add` stored a pointer into a frame that
+	// was gone by the time main read the item (#10680: the self-host-built
+	// asm_ir_run stored a callee name this way and faulted in the IR verifier).
+	{name: "lent-view-kept-through-a-local", atLeast: 6, src: `
+struct Item { name: string }
+struct Acc { items: Item[] }
+function mk(name: string): Item { return Item { name: name }; }
+function (a: Acc) with_item(it: Item): Acc { return Acc { items: a.items.append(it) }; }
+function add(acc: Acc, name: string): Acc {
+    var st: Acc = acc;
+    st = st.with_item(mk(name));
+    return st;
+}
+function build(): Acc {
+    var src: string = "hello:" + "world";
+    var acc: Acc = Acc { items: [] };
+    acc = add(acc, slice_unchecked(src, 6, 11));
+    return acc;
+}
+function churn(n: i32): i32 {
+    var a: i32[] = [n, n + 1, n + 2];
+    var s: string = "abcdefghijklmnop" + "qrstuvwxyz";
+    var t: string = s + s;
+    return a.len() + t.len();
+}
+function main(): i32 {
+    var acc: Acc = build();
+    var z: i32 = churn(3) + churn(4) + churn(5);
+    var s: string = acc.items[0].name;
+    if (s == "world" && z > 0) { return 0; }
+    return 1;
 }
 `},
 	// Appending through a BORROWED parameter, which is what the self-host x86
@@ -5261,6 +5498,125 @@ function main(): i32 {
     var e = either(0);
     var u = unbox(W((x: i32) => x - 1));
     return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
+}
+`},
+	// A `str` result returning a call's OWNED `string`: std/string's trim
+	// builds a fresh string, and so does mk. The result anchors no parameter,
+	// so the function returns a copy; the anchor chase used to leave the
+	// callee pending forever and refused both with "view result escapes its
+	// source" (#10688).
+	{name: "a-str-result-returns-an-owned-call-result", atLeast: 48, noLeak: true, src: `
+import "std/string";
+function mk(p: string): string { return p + "xy"; }
+function owned(p: string): str { return mk(p); }
+function view(pre: string): str { var base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
+function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); return v.len() * 10 + w.len(); }
+`},
+	// A generic enum's variant carrying a function field that mentions `T`.
+	// The clone substituted the field's result type but not its parameter
+	// types, so `Fn__i32`'s field read `(T) => i32` and the literal was
+	// refused with "variant field type" (#10689).
+	{name: "a-generic-variant-carries-a-function-of-its-parameter", atLeast: 4, noLeak: true, src: `
+enum Box[T] { Fn(T, (T) => T), Two((T, T) => T), Empty }
+function inc(x: i32): i32 { return x + 1; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function run(b: Box[i32]): i32 { match (b) { Fn(n, f) => { return f(n); }, Two(g) => { return g(40, 2); }, Empty => { return 0; } } }
+function main(): i32 { return run(Fn(41, inc)) + run(Two(add)) + run(Empty); }
+`},
+	// A view stored into a tuple, an array, a record or a variant while its
+	// binding stays live: the container takes a fresh view of the same bytes,
+	// anchored to the source, rather than retaining the binding's box (#10692).
+	// The junk string after the stores reuses the source's bytes if the anchor
+	// is lost.
+	{name: "a-view-stored-in-a-container-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+struct P { a: i32, s: str }
+function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
+function round(i: i32): i32 {
+    var b: string = mk(i);
+    var u: str = slice_unchecked(b, 2, 30);
+    var t: (i32, str) = (1, u);
+    var xs: str[] = [u];
+    xs = xs.append(u);
+    xs = xs.with(0, u);
+    var p: P = P { a: 2, s: u };
+    var o: Option[str] = Some(u);
+    var k: i32 = 0;
+    match (o) { Some(w) => { k = w.len(); }, None => { k = 0; } }
+    var junk: string = mk(i + 1);
+    return t.0 + t.1.len() + xs.len() + xs[1].len() + p.s.len() + k + u.len() + junk.len() - 150;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+`},
+	// A map value column takes a fresh view too, anchored to the source, and
+	// overwriting an entry releases the view it held.
+	{name: "a-view-stored-in-a-map-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "std/i32";
+function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
+function round(i: i32): i32 {
+    var b: string = mk(i);
+    var u: str = slice_unchecked(b, 2, 30);
+    var w: str = slice_unchecked(b, 0, 5);
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, u);
+    m = m.insert(2, w);
+    m = m.insert(1, w);
+    var junk: string = mk(i + 1);
+    var k: i32 = 0;
+    return m.len() * 10 + k + u.len() + w.len() + junk.len() - 60;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+`},
+	// An unannotated Some(None): the checker leaves the inner Option's payload
+	// open, and it settles at a void payload, since only None can build it
+	// (#10693).
+	{name: "an-unannotated-none-payload-settles-at-void", atLeast: 2, noLeak: true, src: `
+function round(i: i32): i32 {
+    var o = Some(None);
+    var k: i32 = 0;
+    match (o) { Some(inner) => { match (inner) { Some(_) => { k = 1; }, None => { k = 9; } } }, None => { k = 2; } }
+    return k + i % 3;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t; }
+`},
+	// A `?` exit replays the deferred assignment on the failure edge alone; the
+	// success edge keeps the binding's own value (#10694).
+	{name: "a-try-exit-replays-a-deferred-assignment-on-its-edge-alone", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function get(k: i32): Option[string] { if (k % 3 == 0) { return None; } return Some("v" + k.to_string()); }
+function step(k: i32): Option[i32] {
+    var acc: i32 = 0;
+    var names: string[] = [];
+    defer acc = acc + 1;
+    names = names.append("a" + k.to_string());
+    var x: string = get(k)?;
+    names = names.append(x);
+    acc = acc + x.len() + names.len();
+    return Some(acc);
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0;
+    while (i < 30) { match (step(i)) { Some(v) => { t = t + v; }, None => { t = t + 100; } } i = i + 1; }
+    return t % 256;
+}
+`},
+	// The failure edge runs the deferred cleanup too: a cell bumped by the
+	// defer counts every call, so 81 needs all six (three `?` exits).
+	{name: "a-try-exit-runs-the-deferred-cleanup-on-the-failure-edge", atLeast: 3, noLeak: true, src: `
+function fails(k: i32): Option[i32] { if (k % 2 == 0) { return None; } return Some(k); }
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
+function step(k: i32, out: Cell[i32]): Option[i32] {
+    var n: i32 = 0;
+    defer bump(out);
+    var x: i32 = fails(k)?;
+    return Some(n + x);
+}
+function main(): i32 {
+    var out: Cell[i32] = cell_new(0);
+    var t: i32 = 0; var k: i32 = 1;
+    while (k <= 6) { match (step(k, out)) { Some(v) => { t = t + v; }, None => { t = t + 10; } } k = k + 1; }
+    return t + out.get() * 7;
 }
 `},
 }

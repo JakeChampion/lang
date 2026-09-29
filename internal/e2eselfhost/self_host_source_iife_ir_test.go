@@ -28,12 +28,9 @@ import (
 // consumers, not one: parser.is_value_block, irlower's is_iife_callee and
 // call_bail_tag, and the two lower_iife dispatch sites.
 //
-// The unmarked IIFE then needs something to call, and the lift walk only ever
-// looked at a `var` initialiser. Rather than teach it a second shape,
-// name_source_iifes normalises the one it does not know into the one it does:
-// `(() => {B})()` becomes `var $iife$f$0 = () => {B}; $iife$f$0()`, and
-// try_lift_binding takes it from there. Only the binding is hoisted — building a
-// lambda literal has no side effects, so evaluation order is untouched.
+// The unmarked IIFE then needs something to call: the lift hoists it to a
+// direct `__lam_N` call, with any captures as trailing arguments
+// (irlower.lift_capturing_iife).
 //
 // Every case is oracle-checked against the interpreter and compiled under
 // FERN_STRICT_IR, so a per-function bail is a hard failure rather than a route

@@ -670,11 +670,9 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // value-block origin: irlower must CALL it, because inlining would splice the
 // defer machinery into the enclosing function and hoist the cleanup with it.
 //
-// A defer-free IIFE is deliberately left unmarked and keeps being inlined.
-// Inlining and calling differ only where the scope boundary is observable, and
-// `defer` / `errdefer` is the only construct that observes it — a `return`
-// inside one is already lowered as the block's value, not a function return. So
-// the narrow marker fixes #7192 without moving any program that worked before.
+// A defer-free IIFE is left unmarked: the lambda lift hoists it to a direct
+// `__lam_N` call either way (irlower.lift_capturing_iife for a capturing one),
+// and only one the lift declines is inlined.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
@@ -8458,7 +8456,7 @@ pub function builtin_function_names(): string[] {
         // is the NICE value: -20 is the most favourable and 19 the least.
         "priority", "set_priority",
         // stdin / readers
-        "stdin", "stdout", "stderr", "isatty", "read_line", "read_all_stdin",
+        "stdin", "stdout", "stderr", "isatty", "read_line",
         // the two halves of the compile target's name, literals once compiled
         "target_os", "target_arch",
         "open_reader", "open_writer", "open_appender", "open_exclusive",
@@ -8664,6 +8662,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "body", type_name: "Stream", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
+        hrf = hrf.append(StructFieldDecl { name: "trailers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
     if (!name_declared(structs, "HttpResponse")) {
@@ -14115,7 +14114,15 @@ pub function monomorphize_enums(mod: Module): Module {
                         // so the IR path recognises it as a fn payload (a raw
                         // spelling in type_name trips the per-function IR
                         // eligibility, bailing the whole function).
-                        var f_ptys: string = vs.fields[fj2].fn_param_types;
+                        var f_ptys: string = "";
+                        var pts: string[] = [];
+                        if (vs.fields[fj2].fn_param_types.len() > 0) { pts = split_top_commas(vs.fields[fj2].fn_param_types); }
+                        for pt0 in pts {
+                            var pt: string = subst_ty(pt0, ed.type_params, cts);
+                            ins = me_collect_anno(pt, menums, ins);
+                            if (f_ptys.len() > 0) { f_ptys = f_ptys + ","; }
+                            f_ptys = f_ptys + me_rewrite_ty(pt, menums);
+                        }
                         if (pk_is_fn_spelling(f_ty)) {
                             f_ret = me_rewrite_ty(fn_spelling_ret(f_ty), menums);
                             ins = me_collect_anno(f_ret, menums, ins);

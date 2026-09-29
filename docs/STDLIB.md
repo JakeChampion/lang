@@ -1035,6 +1035,14 @@ serializer.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
+- **Request builder:** `request(method, path)` is a request to hand a
+  handler in a test (no headers, no body), and `(req).with_header(name,
+  value)`, `(req).with_body(body)` (with the `Content-Length` a client
+  sends) and `(req).with_json(body)` (`Content-Type: application/json`
+  too) build it up; it reads the way a served request does. With a
+  `MockPlatform`'s bag and `std/test`'s `assert_status` /
+  `assert_header` / `assert_no_header` / `assert_body`, a handler is
+  tested without a socket (`examples/tests/http_request_builder_test.fern`).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
@@ -1054,23 +1062,80 @@ serializer.
   handler reads (the method, the path, each header, the body), so the wire
   buffer is the connection's to reuse; `http_parse_request(buf: string)` is
   the same parse over text, one copy dearer.
-  `http_parse_request_framed(buf: u8[]): Option[HttpFramed]` is the parse a
-  persistent connection needs: `HttpFramed { request, len, keep_alive }`
+  `http_parse_request_framed(buf: u8[]): HttpFraming` is the parse a
+  persistent connection needs, answering `Framed(HttpFramed)`,
+  `Incomplete` (keep reading), `Continue` (the header block has arrived
+  and says `Expect: 100-continue`, the body has not: the loop sends
+  `100 Continue` once and keeps reading, RFC 9110 §10.1.1) or
+  `Malformed(status)` (the loop answers `status` with an empty body and
+  `Connection: close`, then closes; a malformed request behind an
+  answered one gets no answer, since that answer already said close,
+  RFC 9112 §9.6):
+  `HttpFramed { request, len, keep_alive }`
   says how many bytes the request occupied at the head of the buffer (so
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
   close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
   read as a comma-separated token list and only a whole token counts;
-  any other version is answered and closed).
+  a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
   offset instead of copying the buffer forward, with `len` counted from
-  `from`. Whitespace between a header name and its colon refuses the
-  request (RFC 9112 §5.1), since dropping the line would strand a body
-  for the next parse.
+  `from`. The path a handler sees is the request-target (§3.2) as
+  `http_request_target(method, target)` gives it: an origin-form target
+  (`/a/b?q`) or an absolute-form one (`http://host/a/b?q`, accepted from
+  any client, §3.2.2) becomes the path decoded once and with its dot
+  segments removed (RFC 3986 §5.2.4), then the query as it came (its
+  decoding depends on what reads it); `*` is kept for an OPTIONS. The
+  target is refused with 400 when it is none of those, its authority is
+  empty, a byte in the path or the query is outside the URI grammar, a
+  `%` is not followed by two hex digits, a decoded byte is NUL or a slash
+  (`%2F` hides a segment from the path's grammar), or the path climbs above
+  the root (`/../x`: a client resolves that before sending). There is no
+  lenient mode: a request line whose method is not a
+  token or whose version is not `HTTP/` a digit `.` a digit (§2.3; a
+  major version other than 1 is refused with 505 rather than read under
+  HTTP/1's framing), a header line without
+  a colon or whose name is not a token (so whitespace before the colon,
+  §5.1, and obs-fold, §5.2, both refuse), a value holding a control byte
+  other than HTAB (RFC 9110 §5.5), a bare CR or LF (§2.2),
+  `Transfer-Encoding` beside `Content-Length` or naming any coding but a
+  single `chunked` (§6.1, §6.3), a duplicate, non-numeric or overflowing
+  `Content-Length` (§6.3), an HTTP/1.1 request without a `Host`, any
+  request with two or with one holding anything but visible ASCII (§3.2),
+  a request line over 8 KiB, a header block over 32 KiB or 100 fields, or
+  a body over 1 MiB is malformed, and a violation is refused as soon as it
+  is known: a request past a cap once the cap is passed, a bad request
+  line once its CRLF has arrived, before the rest of the request. The
+  status names the violation: 400 for the grammar and the `Host` rule,
+  413 for a body past its cap, 414 for a request line past its cap, 417
+  for an `Expect` other than `100-continue`, 431
+  for a header block past its byte or field cap or chunk framing past its
+  budget, 501 for a transfer coding the parser cannot decode, 505 for
+  another major version. One empty line before the request line is
+  ignored, as §2.2 asks, and counted in `len`; a second is refused. A
+  chunked body (§7.1, HTTP/1.1 only) is decoded into `request.body`:
+  chunk extensions are skipped when well-formed (§7.1.1: a `;`, a name
+  token, at most one `=` with a token or quoted-string value, whitespace
+  only before the `;` and around the `=`) and refused otherwise, trailers are
+  read under the header rules into `request.trailers`, kept apart from
+  the headers (nothing knows their semantics, so none may merge,
+  RFC 9110 §6.5.1; a Content-Length body's are empty), the decoded bytes are held to
+  the body cap, and the framing (chunk-size lines, extensions, CRLFs and
+  the trailer section) to another `http_header_bytes_cap()`, so a
+  chunk-flood cannot hold more buffer than any other request.
+  `http_header_bytes_cap()`, `http_body_cap()` and
+  `http_request_bytes_cap()` (header block, blank line, body and chunk
+  framing, each at its cap) name the caps for the serve loop's buffer.
+  `http_header_value(block, key)` reads a raw header block by the same
+  rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
-  `close` as the serve loop decided.
+  `close` as the serve loop decided; `http_serialize_response_to(method,
+  resp, keep_alive)` is what the loop sends, with no body on a response
+  to HEAD (its `Content-Length` kept) or a 1xx, 204 or 304 (neither),
+  whatever the handler put in the body (RFC 9112 §6.3). The loop adds a
+  `Date`, formatted once per second, unless the handler set one.
 
 ### `std/net`
 
@@ -1172,16 +1237,26 @@ loop and `std/fetch` the client.
   to it; only an empty buffer waits under the idle span; and a
   connection with a complete request still to answer is not waiting at
   all, so no deadline closes it. A write the kernel refuses closes the
-  connection.
+  connection, and so does a malformed request: without a response when
+  it arrived first, and behind an answered one whose response then says
+  `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
-  `ServeOptions { backlog, reuse_port, recv_deadline, keep_alive_idle,
-  keep_alive_requests }` (`serve_options()` is 128, one listener per
-  port, the 10 s deadline, 130 s and 1000): the accept queue depth,
-  port sharing between listeners (`SO_REUSEPORT`, ignored on wasm),
-  the read deadline, how long an idle persistent connection waits
-  for its next request, and how many requests one connection may
-  carry before its last response says `Connection: close` (a value
-  below 1 behaves as 1).
+  `ServeOptions { backlog, reuse_port, recv_deadline, body_min_rate,
+  body_rate_grace, keep_alive_idle, keep_alive_requests,
+  max_connections }` (`serve_options()` is 128, one listener per port,
+  the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
+  1024): the accept queue
+  depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
+  wasm), the read deadline, the least rate a request body must keep
+  arriving at once its header block is in (after the grace, the body may
+  take as long as its bytes buy at that rate beyond the read deadline, so
+  a large upload that keeps flowing is read and a trickle is closed; 0
+  turns the rate off), how long an idle persistent connection waits for
+  its next request, how many requests one connection may carry before
+  its last response says `Connection: close` (a value below 1 behaves as
+  1), and how many connections the loop holds open at once: at the cap
+  the listener is not read, so further connections wait in its accept
+  queue (`backlog` deep, the kernel refusing past it) until one closes.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1247,8 +1322,8 @@ use case). Hosts are literal IPv4 (no DNS / TLS yet).
 ### `std/headers`
 
 HTTP `HeaderMap` with case-insensitive lookup, multi-valued
-entries, and insertion-ordered iteration. Backs the `headers`
-field slated for `HttpRequest` / `HttpResponse`.
+entries, and insertion-ordered iteration. Backs `HttpRequest`'s
+`headers` and `trailers` and `HttpResponse`'s `headers`.
 
 - `header_map_new()` — empty map.
 - `(h).set(name, value)` / `(h).append(name, value)` — replace vs.
@@ -1258,8 +1333,8 @@ field slated for `HttpRequest` / `HttpResponse`.
 
 ### `std/stream`
 
-Byte-stream value backing the eventual `HttpRequest.body: Stream`
-migration. Phase 1 is an in-memory buffer-backed `Stream`.
+Byte-stream value backing `HttpRequest.body: Stream`. Phase 1 is an
+in-memory buffer-backed `Stream`.
 
 - Constructors: `stream_from_bytes(bs)`, `stream_from_string(s)`,
   `stream_empty()`.
@@ -1630,6 +1705,11 @@ stay bare.
   cover `boolean` and `string` directly (both are `cmp.Eq +
   cmp.Display`). String-specific sugar: `assert_empty_string`,
   `assert_non_empty_string`
+- **HTTP:** `assert_status(resp, status)`, `assert_header(resp, name,
+  value)` (the name in any case; a missing header fails too),
+  `assert_no_header(resp, name)`, `assert_body(resp, text)` — a
+  handler's response, built from `http.request(method, path)` and a
+  `MockPlatform`'s bag
 - **Substring:** `assert_contains`, `assert_not_contains`,
   `assert_starts_with`, `assert_ends_with`
 - **Substring (case-insensitive):** `assert_eq_string_ci`,

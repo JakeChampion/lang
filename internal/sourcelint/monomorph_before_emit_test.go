@@ -21,10 +21,11 @@ import (
 // binary the test then measures, attributed to whatever the test was about.
 //
 // It has now cost two separate investigations. CompileAndRunX86_64 was fixed
-// when a heap-layout shift perturbed it into view; emitDriverAsm and 37 other
-// sites were fixed when the self-host adopted its second generic function and
-// every driver binary the suite builds started segfaulting on the module-loading
-// path. Both times the compiler was correct and only the harness was not.
+// when a heap-layout shift perturbed it into view; the harness's driver emit
+// (since replaced by the self-host compiler) and 37 other sites were fixed
+// when the self-host adopted its second generic function and every driver
+// binary the suite builds started segfaulting on the module-loading path.
+// Both times the compiler was correct and only the harness was not.
 //
 // So this is a rule rather than a habit: every `Emit(prog, info)` must be
 // preceded by a `monomorph.Run(prog, …)` on the SAME program variable, within

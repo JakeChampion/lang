@@ -15,7 +15,7 @@ import (
 	"math"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
@@ -430,16 +430,19 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_random_bytes")
 				case "__fern_now_ns":
 					// wasi_clock_time_get + alloc-per-call for
-					// the 8-byte output buffer.
+					// the output buffer, freed after the read.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_now_ns")
 				case "__fern_now_unix_ms":
 					// Same as __fern_now_ns / 1_000_000.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_now_unix_ms")
 				case "__fern_monotonic_ns":
 					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_monotonic_ns")
 				case "__fern_sleep_ms":
 					// Its subscription buffer is scratch, so no allocator.
@@ -10159,7 +10162,7 @@ func buildRoundF64Body(_ map[string]uint32) []byte {
 // --- f64 transcendentals (#6404) --------------------------------------------
 //
 // fdlibm kernels over the same reduction order the native backends use, with
-// the coefficients themselves from internal/codegen/fdlibm. exp / log / sin /
+// the coefficients themselves from internal/fdlibm. exp / log / sin /
 // cos / pow are the only primitives; exp2, exp10, log2, log10, tan, sinh,
 // cosh, tanh and cbrt compose from them in float.fern.
 //

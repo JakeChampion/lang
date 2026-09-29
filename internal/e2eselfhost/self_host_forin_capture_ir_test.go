@@ -2,7 +2,6 @@ package e2eselfhost
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,19 +22,8 @@ func TestSelfHostForinCaptureIRWasm(t *testing.T) {
 
 func testForinCaptureIR(t *testing.T, target string) {
 	t.Helper()
-	gcc, runner := x86_64Tooling(t)
+	cli := newStrictCLI(t)
 	dir := t.TempDir()
-	driverName := "asm_ir_run.fern"
-	args := []string{"-target", target}
-	if target == "wasm32-wasi" {
-		if _, err := exec.LookPath("wasmtime"); err != nil {
-			t.Fatal("wasmtime is required for loop capture coverage")
-		}
-		driverName = "wasm_ir_run.fern"
-		args = nil
-	}
-	copySelfHostDriver(t, dir, driverName)
-	driverBin := buildSelfHostBin(t, gcc, dir, driverName, "driver")
 
 	cases := []struct {
 		name string
@@ -112,32 +100,22 @@ function main(): i32 { var m: Map[string, i64] = map_new(4); m = m.insert("abc",
 			if _, want := runFixtureInterp(t, entry, ""); want != tc.want {
 				t.Fatalf("interpreter returned %d, want %d", want, tc.want)
 			}
-			asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(tc.src), args...)
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host compiler emitted 0 bytes", tc.name)
-			}
-			if target == "x86-64-linux" && tc.irWitness != "" && !strings.Contains(string(asm), tc.irWitness) {
+			asm := cli.emit(t, target, tc.src)
+			if target == "x86-64-linux" && tc.irWitness != "" && !strings.Contains(asm, tc.irWitness) {
 				t.Fatalf("%s: emitted asm missing %q — the for-in capture shape did not lower through the IR", tc.name, tc.irWitness)
 			}
-			var cmd *exec.Cmd
+			var code int
 			switch target {
 			case "wasm32-wasi":
-				wat := filepath.Join(dir, tc.name+".wat")
-				if err := os.WriteFile(wat, asm, 0o644); err != nil {
-					t.Fatal(err)
-				}
-				cmd = exec.Command("wasmtime", "run", wat)
+				code, _ = runWasm(t, asm)
 			case "arm64-linux":
-				linker, armrunner := arm64Tooling(t)
-				bin := buildBin(t, linker, dir, tc.name, string(asm))
-				cmd = runArm64Bin(armrunner, bin)
+				gcc, qemu := arm64Tooling(t)
+				code, _ = runArm64(t, gcc, qemu, asm)
 			default:
-				bin := buildBin(t, gcc, dir, tc.name, string(asm))
-				cmd = runX86_64Bin(runner, bin)
+				code, _ = cli.runX86(t, asm)
 			}
-			out, err := cmd.CombinedOutput()
-			if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != tc.want {
-				t.Errorf("%s: %v, want exit %d\n%s", tc.name, err, tc.want, out)
+			if code != tc.want {
+				t.Errorf("%s: exit %d, want %d", tc.name, code, tc.want)
 			}
 		})
 	}

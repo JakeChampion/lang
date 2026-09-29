@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/ir"
 )
 

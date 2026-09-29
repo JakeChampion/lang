@@ -1,11 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -312,28 +308,22 @@ function main(): i32 { return churn(60) + __rc_underflow_count() * 100; }
 	},
 }
 
-// TestSelfHostMapTupleElemReclaimX86_64 is the leak gate: live_bytes must be the
-// SAME at 100 and 200 rounds. An absolute ceiling would be a budget for the rest
-// of the Perceus port rather than a gate on this shape — every case retains a
-// small constant residue that the no-tuple control has too — so the assertion is
-// that the residue does not scale with the loop.
+// TestSelfHostMapTupleElemReclaimX86_64 is the leak gate: every case balances
+// (allocs == frees, live_bytes 0) at both 100 and 200 rounds.
 //
 // Non-vacuity: all eight cases fail this against the parent commit, at 64 B per
 // round per map (128 for two_maps).
 func TestSelfHostMapTupleElemReclaimX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := newStrictCLI(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
 	for _, tc := range mapTupleElemFlatCases {
 		t.Run(tc.name, func(t *testing.T) {
-			live := func(rounds, want int) int64 {
+			check := func(rounds, want int) {
 				t.Helper()
 				src := mapTupleElemChurn(tc.prelude, tc.body, rounds)
-				asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+				asm := cli.emit(t, "x86-64-linux", src, "FERN_LEAKCHECK=1")
 				name := fmt.Sprintf("maptupelem_%s_%d", tc.name, rounds)
-				stderr, exit := hevRun(t, runner, buildBin(t, gcc, dir, name, asm))
+				stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, dir, name, asm))
 				if exit != want {
 					t.Fatalf("%s exited %d, want %d (a value >= 100 is an rc over-release, not a leak)",
 						name, exit, want)
@@ -354,16 +344,14 @@ func TestSelfHostMapTupleElemReclaimX86_64(t *testing.T) {
 				if allocs == 0 {
 					t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
 				}
-				t.Logf("%s rounds=%d: %s", tc.name, rounds, summary)
-				return l
+				if allocs != frees || l != 0 {
+					t.Errorf("%s leaks: %s. Nothing releases the mapbox — construction takes no "+
+						"rc_inc and the tuple child-drops skip a bare ident, so the local owes the "+
+						"one release (#7212)", name, summary)
+				}
 			}
-			l100, l200 := live(100, tc.want100), live(200, tc.want200)
-			if l100 != l200 {
-				t.Errorf("a map local at a tuple element leaks per round: live_bytes=%d at 100 "+
-					"rounds and %d at 200. Nothing releases the mapbox — construction takes no "+
-					"rc_inc and the tuple child-drops skip a bare ident, so the local owes the "+
-					"one release (#7212)", l100, l200)
-			}
+			check(100, tc.want100)
+			check(200, tc.want200)
 		})
 	}
 }
@@ -373,16 +361,10 @@ func TestSelfHostMapTupleElemReclaimX86_64(t *testing.T) {
 // caller still owned it — an over-release, not a leak. Each `want` came from the
 // interpreter and the native backend agreeing.
 func TestSelfHostMapTupleElemHazardsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapTupleElemHazardCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
-			bin := buildBin(t, gcc, dir, "maptupelem_hazard_"+tc.name, asm)
-			if _, exit := hevRun(t, runner, bin); exit != tc.want {
+			if exit, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); exit != tc.want {
 				t.Errorf("exited %d, want %d — %d+100 would be an rc over-release, and a "+
 					"crash means the mapbox was freed under a second owner", exit, tc.want, tc.want)
 			}
@@ -424,25 +406,13 @@ func mapTupleElemAllCases() []struct {
 }
 
 // TestSelfHostMapTupleElemReclaimArm64 runs them through the self-host arm64
-// backend, which produces the finished binary itself (emit + assemble + link
-// in-process).
+// backend.
 func TestSelfHostMapTupleElemReclaimArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapTupleElemAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "maptupelem_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf("exited %d, want %d (>= 100 is an rc over-release)", code, tc.want)
 			}
 		})
@@ -452,37 +422,10 @@ func TestSelfHostMapTupleElemReclaimArm64(t *testing.T) {
 // TestSelfHostMapTupleElemReclaimWasm is the wasm leg. Every `want` is well
 // under WASI's 126 ceiling, so an over-release (+100) is still expressible.
 func TestSelfHostMapTupleElemReclaimWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-tuple-element wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapTupleElemAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "maptupelem_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q", tc.name)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.want {
 				t.Errorf("exited %d, want %d (>= 100 is an rc over-release)", code, tc.want)
 			}
 		})

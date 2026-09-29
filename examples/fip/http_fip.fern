@@ -11,11 +11,14 @@
 // allocates nothing; the driver around it owns the buffers, tallies and
 // prints.
 //
-// The parser follows `std/http`'s rules to the byte, so the two variants
-// agree on every request: a request line needs two spaces; a header line
-// without a colon is skipped, not refused; `Transfer-Encoding`, a duplicate
-// `Content-Length`, a non-numeric one and a body shorter than it declares
-// are refused; header names compare case-insensitively.
+// The parser follows `std/http`'s rules on every shape the corpus sends,
+// so the two variants agree on every request: a request line needs two
+// spaces; `Transfer-Encoding`, a duplicate `Content-Length`, a non-numeric
+// one and a body shorter than it declares are refused; header names
+// compare case-insensitively. It stops where the corpus stops: a header
+// line without a colon is skipped here and refused by `std/http`, and
+// `Transfer-Encoding: chunked` is refused here where `std/http` frames a
+// body (docs/FIP-HTTP-CODEC.md says why the corpus cannot tell).
 import "core/cmp";
 import "std/bench";
 import "std/i32";

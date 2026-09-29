@@ -281,6 +281,17 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
+`TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
+repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
+522 requests, its README for the columns and the sources) through
+`http_parse_request_framed` on the
+interpreter, checked against the verdict pinned beside each request, and on
+wasm, x86-64 and arm64, checked against the interpreter;
+`TestSelfHostHTTPCorpus` is the same program through the self-host compiler
+(#9854). The pin is std/http's own rule, so the corpus file is where a
+disagreement with the upstream parser is recorded, and a changed pin is a
+parser change that has to be meant (`FERN_HTTP_CORPUS_DUMP=1` re-records).
+
 `TestHTTPKeepAlive`, `TestArm64DarwinHTTPKeepAlive`, `TestWasmHTTPKeepAlive`
 and the self-host `TestSelfHostHTTPKeepAlive`, `TestSelfHostArm64DarwinHTTPKeepAlive`
 and `TestSelfHostWasmHTTPKeepAlive` drive the same bounded loop with
@@ -291,16 +302,39 @@ loop's burst is 32 per event, so the rest come from the backlog) and closed
 by the cap; an HTTP/1.0 request and a `Connection: close` request each
 ending their own connection; a pipeline of 33 requests whose peer
 half-closes behind them, one more than the burst so the last is answered
-from the backlog after the end of stream was read, and must say `close`;
-a complete request with the start of another behind it, which the read
-deadline must close rather than the idle span; a pipeline of 33 requests
-whose handlers (pure work, since a handler may not sleep around its
-Platform bag) together outlast that deadline, all of which must be
-answered (the deadline bounds the wait for the peer, not the handlers);
+from the backlog on the next wait, all answered and the connection then
+closed (whether that last answer says `close` is a race with the end of
+stream on the wire, so either is accepted there); a complete request with
+the start of another behind it, which the read deadline must close rather
+than the idle span; a pipeline of 33 requests whose handlers (pure work,
+since a handler may not sleep around its Platform bag) together outlast
+that deadline, all of which must be answered (the deadline bounds the wait
+for the peer, not the handlers), and whose peer half-closes behind them,
+so the last, read from the backlog after the end of stream, must say
+`close` and be followed by the close;
 a pipelined request answered to a peer that has reset the connection,
 whose failed write must close it before the request behind it is answered
-(the handler reports that request on stderr, which fails the run); and an
-HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+(the handler reports that request on stderr, which fails the run); a
+request with a malformed one pipelined behind it (a bare LF ends its
+request line), whose first response must say `close` and which is then
+closed with no response to the second;
+a request of 101 header fields, answered 431 by the loop itself and
+closed; an HTTP/1.1 request without a Host, answered 400 and closed; a
+body past the cap, answered 413 before it arrives and closed; a chunked request
+with a request pipelined behind it, whose decoded body the handler echoes
+and whose framing must leave exactly the second request to answer; a HEAD
+with a GET pipelined behind it, answered with the Content-Length and none
+of the body, then a 204, answered with neither; a request whose header
+block says `Expect: 100-continue`, answered `100 Continue` before its
+body is sent and then with the body's echo, and one whose expectation
+the server cannot meet, answered 417; an HTTP/1.0 keep-alive request
+followed by an HTTP/1.1 one; a body delivered in pieces over twice the
+read deadline but well above the minimum body rate, answered with its
+echo, and one trickled below the rate, closed at the read deadline
+without a response; and, with the loop capped at two open connections,
+a third connection's request unanswered until one of the two closes.
+Every response's `Connection` and
+`Date` are
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is
@@ -315,6 +349,17 @@ host lowers through `cabi_realloc`, and a zero-size request answered with
 a block from the allocator was a count nothing gave back, on both
 compilers' wasm runtimes (#10608). The natives take no such list and
 their legs stay count-free.
+`TestLeakCheckPairPayloadBorrowedArgX86_64` and its arm64 twin run std/http's
+header-loop shape under the natives' leak census: a pair-form match payload
+handed to a callee that only borrows it (`HeaderMap.append`, which retains
+the value it keeps) must still be released by the arm (#10669); the lowering
+side is `TestPairFormPayloadHandedToBorrowingCalleeIsReleased` in
+`internal/ir`.
+`TestWasmClockCensus` runs each clock builtin, and the date formatter
+over the wall clock, a hundred times under the same census: the wall-clock
+helpers read the host's datetime record through a scratch block they
+allocate, and one not given back was a block per read (#10666), which
+the serve loop's once-per-wait `Date` turned into a block per wait.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected
@@ -527,6 +572,17 @@ Several comments in the tree read the other way around. They are wrong, and
 *and* the native suite while segfaulting the driver. `internal/e2eselfhost` is
 what caught it.
 
+Since 2026-09-29 the drivers those suites run are built by the pinned
+stage0 self-host compiler (`bootstrap/stage0.lock`, resolved through
+`bootstrap/bootstrap.sh stage0`; `internal/e2eharness/self_host_compiler.go`),
+not by the Go x86-64 backend, so the suites need no native backend to build
+what they run. A driver is the current source compiled by the pin, the way
+stage1 is under `make bootstrap`, so every driver is held to what the pin can
+compile — a driver using a newer construct fails to build here, and the answer
+is the pin refresh `docs/BOOTSTRAP.md` describes. What these runs prove is the
+current SOURCE's behaviour; the current compiler's own output is what the
+fixture, differential and `cli` lanes run.
+
 ### An answer is not proof the IR path produced it
 
 A case that asserts only an exit code cannot show a shape **stayed on the IR
@@ -559,12 +615,13 @@ rather than the IR path.
 | conformance leak census (`TestConformanceLeakCensusX86_64`) | That no conformance fixture leaks MORE than its pinned count of unpaired allocations (`internal/e2e/testdata/conformance-leak-census.txt`): all 471 runnable fixtures are emitted with the heap tracer on, run, and their `rctrace` records paired by pointer, so an alloc with no matching free is memory the program never gave back on the path it took. **Run it on any change to the rc DEATH verdicts or the #4873 containment bracket.** Those decide whether a callee grows a CALLER's buffer in place, and an in-place grow whose superseded generation reaches a bare `__fern_rc_dec` — which decrements without freeing — is visible here and on no other gate (#7397 moved this by +115 while every suite it ran was green). It also holds a crash floor: a fixture killed by a signal fails | WHERE the leak is: it pins counts, not sites, because a site is a return address that moves with any codegen change (the top sites print on failure, and `-g` plus addr2line names the line). An over-RELEASE, which reads as a clean 0 — that is the underflow counter's half. Anything a fixture's own path does not execute, and anything outside `conformance/cases` (`examples/` whole programs are not in it). x86-64 only, like the tracer |
 | `TestSelfHostFipCensusOnNativesShapes` | The self-host reuse layer's PAIRING state, measured against the exact shapes native's `internal/ir/fip_verify_test.go` pins: per function, how many constructor sites lowered fresh and how many paired into a donor box. Today R3 general pairing matches native and R1 self-overwrite / R4 consuming-match do not, so this is the gate that notices when either is ported | Whether the pairing is CORRECT — it counts sites, it does not check the donor is dead or uniquely owned. It also does not compare against native automatically: the expected counts are written down, so closing a gap fails the test and the numbers are updated by hand |
 | Per-module / emit-all fixpoint | The compiler reproduces itself, deterministically | Any *stable* miscompile, including one affecting every program it sees |
-| `make bootstrap` (bootstrap.yml `verify`, both Linux hosts) / `make distcheck` | That a checkout with NO Go and NO native backend reaches a working compiler: the pinned stage0 compiles the whole compiler, and the result compiles and runs a program. `distcheck` is the whole-program fixpoint — the compiler stage1 built recompiling the compiler, and the result doing it once more, byte-identically (stage2 == stage3) — the configuration no per-module fixpoint runs. Green since 2026-09-28 at 5.7 GB peak, in the same CI job (`docs/BOOTSTRAP.md`). stage1 is left out of the comparison: its code was generated by the pin, which predates any codegen change since | `bootstrap` says nothing about what stage1 emits beyond the smoke program; a stage1 that miscompiles everything but `return 42` passes. `distcheck` is blind to a stable miscompile the same way every fixpoint is. arm64-darwin, where stage2 still exhausts the arena (#8479): its pin stays native-built where the Linux pins are self-built stage2s. And the publish job, which seeds every pin from a native-built candidate |
+| `make bootstrap` (bootstrap.yml `verify`, all three hosts) / `make distcheck` | That a checkout with NO Go and NO native backend reaches a working compiler: the pinned stage0 compiles the whole compiler, and the result compiles and runs a program. `distcheck` is the whole-program fixpoint — the compiler stage1 built recompiling the compiler, and the result doing it once more, byte-identically (stage2 == stage3) — the configuration no per-module fixpoint runs. Green since 2026-09-28 at 5.7 GB peak, in the same CI job (`docs/BOOTSTRAP.md`). stage1 is left out of the comparison: its code was generated by the pin, which predates any codegen change since | `bootstrap` says nothing about what stage1 emits beyond the smoke program; a stage1 that miscompiles everything but `return 42` passes. `distcheck` is blind to a stable miscompile the same way every fixpoint is. On every host the fixed point is measured from the PIN, not from the current native compiler; on arm64-linux `candidate-arm64` also runs the chain from a freshly native-built candidate, and on arm64-darwin nothing at PR time does — the native compiler's darwin build of the compiler runs only in the publish dispatch, an accepted gap while native is frozen for retirement. And the publish job, which seeds every pin from a native-built candidate |
 | `TestSelfHostArm64DarwinMachO*` (macos.yml) | That a Mach-O the SELF-HOST toolchain assembled and ad-hoc-signed actually LOADS and runs: `arm64_native.fern`'s encoders + `macho.fern`'s container, executed by the XNU kernel. The exec half needs Apple Silicon, and it needs a driver the host can run — on darwin the `wasm_run` driver is built for `arm64-darwin` rather than as an x86-64 ELF, which is what the Linux shards use. Until #6849 the exec half ran on NO lane and an `add Xd, Xn, Xm, lsl #N` whose shift the self-host assembler silently dropped read every array element as `a[0]` | The Linux shards reach only the structural half (parse the Mach-O); they cannot launch it. And a kernel rejection is a hard failure here, not a skip — that distinction is #6042 |
 | `TestSelfHostStage2FixpointArm64` (own CI job) | The arm64 emit is a fixed point of itself AND independent of the host arch: generation 2 is a real aarch64 compiler linked from generation 1's own asm, run under qemu, and the two must emit byte-identical output. Its distinguishing value is that generation 2 runs THROUGH the assembler's own output, which is what separates "the emitter is wrong" from "the assembler is wrong" — three arm64 assembler bugs were each mis-attributed to codegen first. **Run it before pushing any change to an exit-sweep CREDIT** (105 s locally): it is the only gate that has caught a whole-compiler miscompile the entire x86-64 set missed — #7548 shipped a reclaim credit that segfaulted gen2 while both construction matrices, `TestSelfHostRcPlanDiff`, the per-module fixpoint and all three x86-64 fixpoints were green | Everything the two generations get wrong *identically*, which is the same blindness every fixpoint has. The `self` case (gen2 recompiling the whole compiler) is behind `FERN_STAGE2_SELF=1` and does not run in CI, so the span it actually gates is four inputs, not the compiler |
 | `TestSelfHostWholeCompilerArm64SingleProcessEmit` (cli job) | That the self-host CLI emits the WHOLE compiler for `-target arm64-linux` in ONE process: ~63 MB of text through its output accumulator, the shape that overran the accumulator's fixed 64 MiB buffer and segfaulted with no diagnostic (#8212) while the per-module whole-compiler build (one unit per process) and the fixture corpus stayed green | What the bytes say: it asserts exit 0 and a compiler-sized output, and leaves the text to the fixpoint and fixture legs |
 | rc corpus (`rcCorpus`, all three backends) | No rc over-release on the shapes it enumerates | Shapes it does not enumerate — add one when you fix an rc bug |
 | arm64 high-heap gate (`TestArm64HighHeap*`, `internal/e2e/arm64_high_heap_test.go`) | That heap pointers survive a round trip through memory when they are ABOVE 4 GiB — the address regime arm64-darwin runs in. Every other Linux/qemu lane sits at the 256 MiB arena hint, so a 32-bit load / store / compare of a heap pointer is green everywhere and wrong only on Apple hardware; that is exactly how the 4-byte Map-handle deref in the IR's wide `keys()` / `values()` builders reached main and SIGSEGV'd `map_keys_values_header_churn_free` on the macos-15 rc-corpus lane. `arm64codegen.Options.HighHeapProbe` (driver: `FERN_HIGH_HEAP=1`) raises the hint to 8 GiB and qemu-aarch64 honours it, so the regime is reachable without a Mac. Three legs: the map half of `rcCorpus` re-run high (name-selected, with a floor so a rename cannot empty it), a set of non-Map pointer-round-trip shapes, and the same shapes at the DEFAULT hint so a failure is attributable to the address regime | Everything the two selections do not contain — this is a corpus, not a static analysis, and a truncation on a path no case walks is invisible. It also does not reproduce macOS: the hint is honoured here and IGNORED there, so it moves only the ARENA — .rodata, the binary image and the stack stay where Linux puts them, and a truncation of a non-heap address still needs the real `macos-15` lane |
+| self-host arm64 high-heap gate (`TestSelfHostArm64HighHeap*`, `internal/e2eselfhost/self_host_arm64_high_heap_test.go`) | The same property for the SELF-HOST arm64 emitter: `FERN_HIGH_HEAP=1` makes `asm_arm64_ir.fern` emit the 8 GiB arena hint, and the native gate's pointer-round-trip shapes (minus the two `Map[i64, _]` cases the self-host refuses, #10005) run under qemu on that heap, with the same shapes at the default hint as the control and a probe test pinning that the knob moves the hint. Until this gate, the self-host arm64 emit had never run with a heap pointer above 4 GiB except on the `macos-15` lane, where the stage-3 arena exhaustion (#8479) lived until it stopped reproducing on 2026-09-29; `bootstrap.yml`'s `verify-arm64-darwin` gates the darwin fixed point since | The same blind spots as the native gate: only the arena moves, and only the enumerated shapes are walked. It compiles the shapes with the self-host CLI built for x86-64, so it is not a run of the self-host compiler ITSELF on a high heap — that is the stage-2 self-compile, which needs the aarch64 compiler emitted with the knob (`docs/LOCAL-DEV-LOOP.md`) |
 | Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
@@ -1021,8 +1078,11 @@ Worth knowing so you do not assume coverage you do not have:
    reads the entry's local import closure (`e2eharness.TrackFernSources`) so
    those files reach the testlog, and `make fern-test-cache` perturbs a source
    and fails if the cached result survives. `std/…` and `core/…` are already
-   covered, reaching the compiler through `internal/stdlib`'s `go:embed`. Use
-   `-count=1` for anything this does not cover, above all a mutation run: a
+   covered, reaching the Go compiler through `internal/stdlib`'s `go:embed`;
+   the self-host compiler that builds the driver binaries reads them from disk
+   instead, so the harness hashes the whole stdlib tree into its build key
+   (`e2eharness.stdlibHash`), which is also the read that reaches the testlog.
+   Use `-count=1` for anything this does not cover, above all a mutation run: a
    cached PASS on a mutant is indistinguishable from a test that cannot catch
    it. TWO surfaces are compiled through a child process and both needed it:
    the utility's own source in `fernBin`, and **the compiler itself** in

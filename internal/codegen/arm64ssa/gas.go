@@ -26,8 +26,8 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
@@ -1606,7 +1606,7 @@ func usesTranscendentals(helpers []string) bool {
 }
 
 // emitTranscendentalRodata writes the coefficient table for the f64
-// transcendental helpers, from internal/codegen/fdlibm — the same numbers
+// transcendental helpers, from internal/fdlibm — the same numbers
 // internal/codegen/arm64 emits, since the two are the same kernels.
 func emitTranscendentalRodata(w func(string, ...any)) {
 	w("")

@@ -31,7 +31,6 @@
 // (#10352).
 import "./ssa";
 import "./ssasem";
-import "./semtypes";
 import "./util";
 
 // One row per produced symbol: whether each parameter leaves the frame.
@@ -232,18 +231,17 @@ function lent_out(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index
 }
 
 // The values this frame lets out, under the current round's answers. A
-// returned view reads the parameter it is anchored to without taking its unit,
-// so its caller keeps the argument alive and the parameter stays lent.
+// return lets out the returned value and not what it is anchored to: the
+// planner retains a projection of a borrowed parameter to hand it back, so a
+// reader such as `p.toks[p.pos]` keeps `p` lent, and a returned view reads its
+// root without taking a unit at all.
 function carried_values(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
     while (i < f.graph.nvals) { out = out.append(false); i = i + 1; }
     for b in f.graph.blocks {
         for ins in b.insts { out = instruction_carried(out, f, a, ins, rows, ix); }
-        if (b.term.kind_tag == 1 && b.term.value >= 0) {
-            if (semtypes.holds_view(f.values[b.term.value])) { out = out.with(b.term.value, true); }
-            else { out = carry(out, a, b.term.value); }
-        }
+        if (b.term.kind_tag == 1 && b.term.value >= 0) { out = out.with(b.term.value, true); }
     }
     return out;
 }

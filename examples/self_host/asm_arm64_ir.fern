@@ -1071,7 +1071,7 @@ function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.E
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+    return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -1138,6 +1138,11 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
     if (f != "") { return f; }
     if (what == "load_i32") { return "    ldrsw " + d + ", [" + d + "]\n"; }
     if (what == "!") { return "    cmp " + d + ", #0\n    cset " + d + ", eq\n"; }
+    if (util.str_has_prefix(what, "rotr:")) {
+        var n: string = util.i32_to_string(ssa.rotr_count(what));
+        if (ssa.rotr_width(what) == 64) { return "    ror " + d + ", " + d + ", #" + n + "\n"; }
+        return "    ror " + w + ", " + w + ", #" + n + "\n";
+    }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov " + w + ", " + w + "\n"; }
     if (what == "int_cast:u8") { return "    and " + d + ", " + d + ", #255\n"; }
     if (what == "int_cast:i32") { return "    sxtw " + d + ", " + w + "\n"; }
@@ -2128,7 +2133,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
+    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
@@ -2573,12 +2578,6 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: 
         if (o.kind_tag == 305) { open_write = 1; }
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    mov x2, #" + util.i32_to_string(open_write) + "\n");
         s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_with\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-    } else if (o.kind_tag == 209) {  // read_all_stdin
-        // no args -> call the Fern-compiled __fn___fern_read_all_stdin (#2649):
-        // fd 0 to EOF in ONE fresh rc-headered string box, pushed in x0. The
-        // _rc name is gone with the AST body it was distinguished from.
-        s = s.need("heap"); s = s.need("read_all_stdin");
-        s = s.write("    bl __fn___fern_read_all_stdin\n    str x0, [sp, #-16]!\n");
     } else if (o.kind_tag == 260) {  // create_dir
         // [pathbox][mode] -> Result[void, IoError]. The same
         // two-operand shuffle `access` does: the stack ABI wants
@@ -4559,9 +4558,6 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     if (!darwin && s.any_need(["reader_splice", "raw_splice_pipe"])) {
         s = s.write("    .section .bss\n    .p2align 3\n__fern_splice_pipe: .quad 0, 0\n    .text\n");
     }
-    if (s.has_need("read_all_stdin")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_all_stdin(ctgt), s.struct_decls, s);
-    }
     if (s.has_need("str_read_line")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_read_line(ctgt), s.struct_decls, s);
     }
@@ -4852,10 +4848,6 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
 // str_print, putchar, concat / eq / cmp / search, the int-to-string family,
 // chr, case folding, repeat, eprint.
 function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
-    // __fern_read_all_stdin is a Fern runtime function (#2649):
-    // asmcore.rt_src_read_all_stdin, emitted with the clocks in
-    // emit_rt_clock_and_print, which is where the per-target syscall number is
-    // available.
     // __fern_print_str and __fern_putchar are Fern runtime functions (#2649):
     // asmcore.rt_src_print_str / rt_src_putchar, emitted with the clocks in
     // emit_rt_clock_and_print, which is where the per-target syscall number is
@@ -5352,6 +5344,15 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    mov x8, #93\n");
     s = s.write("    svc #0\n");
     return s;
+}
+
+// high_heap_probe_on: FERN_HIGH_HEAP=1 raises the arena's mmap hint above
+// 4 GiB (see emit_rt_arena_and_alloc). Read at emit time like FERN_LEAKCHECK.
+function high_heap_probe_on(): boolean {
+    match (env("FERN_HIGH_HEAP")) {
+        Some(v) => { return v == "1"; },
+        None => { return false; }
+    }
 }
 
 // leak_check_on — FERN_LEAKCHECK read at emit time (the compiler process),
@@ -5920,8 +5921,20 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    stp x4, x5, [sp, #-16]!\n");
     s = s.write("    stp x8, x9, [sp, #-16]!\n");
     s = s.write("    mov x9, x0\n");                  // save rounded size
-    s = s.write("    mov x0, #1\n");
-    s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000 — keep in lockstep with the NATIVE arm64 backend, whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower base no-ops every native rc inc/dec)
+    // Address-hint base, shifted left 28 below. 1 -> 0x10000000 (256 MiB) is
+    // the shipped value — keep it in lockstep with the NATIVE arm64 backend,
+    // whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower
+    // base no-ops every native rc inc/dec). FERN_HIGH_HEAP=1 uses 32 ->
+    // 0x200000000 (8 GiB) so every heap pointer carries a non-zero high half:
+    // the address regime arm64-darwin runs in (XNU ignores the hint and maps
+    // above the 4 GiB __PAGEZERO), reproducible under qemu-aarch64, which
+    // honours the raised hint. Same knob as arm64codegen.Options.HighHeapProbe.
+    if (high_heap_probe_on()) {
+        s = s.write("    mov x0, #32\n");
+    } else {
+        s = s.write("    mov x0, #1\n");
+    }
+    s = s.write("    lsl x0, x0, #28\n");             // hint = base << 28
     // length = 16 GiB = 0x400000000 = 1 << 34. Built with mov+lsl, not a
     // `ldr =N` literal: the in-process assembler's literal parser is
     // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
@@ -7030,8 +7043,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    b .Lstrfree_ret\n");
     // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
     // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
-    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
-    // the freelist a block bigger than the class it lands in, which wastes the
+    // producer that over-allocated hands the freelist a block bigger than the class it lands in, which wastes the
     // slack but never overruns — the same trade the separate-buffer path above has
     // always made when it freed at ceil(len/8). Unlike that path a large block is
     // RECYCLED rather than leaked: the whole string is one allocation now, so
@@ -9313,7 +9325,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // emitFloatTranscendentalsRuntime (ties-to-EVEN, matching x86's
 // `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
 // disagree). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry. internal/e2e/f64_ulp_test.go is the gate for the native
 // pair.
 //

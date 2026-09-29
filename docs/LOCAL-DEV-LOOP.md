@@ -209,10 +209,24 @@ the same duration-weighted LPT partition CI uses.
 2026-09-02, 4-core container) and at the default panics before it finishes. The
 `--- FAIL` rule below applies with a twist that makes this one read even more
 like a breakage — the panic can land while the suite is still BUILDING a driver
-binary, so the goroutine dump bottoms out in `e2eharness.emitDriverAsm` →
-`codegen/x86_64.Emit`, in compiler code the change under test often touches,
-with no test body having run at all. The `running tests:` header naming a single
-test seconds in is the tell.
+binary, so the goroutine dump bottoms out in `e2eharness.CompileWithSelfHost`
+waiting on the compiler subprocess, with no test body having run at all. The
+`running tests:` header naming a single test seconds in is the tell.
+
+**The drivers are built by the pinned stage0 compiler** (since 2026-09-29;
+`internal/e2eharness/self_host_compiler.go`): the first test in a process that
+needs one resolves it through `bootstrap/bootstrap.sh stage0` (downloaded once
+into `build/bootstrap/`, sha256-checked), and it compiles each driver for
+x86-64-linux. Measured on the 4-core container: `asm_ir_run.fern` 104 s at
+4.0 GB, `wasm_ir_run.fern` 87 s at 3.6 GB, `fern.fern` 300 s at 5.7 GB — where
+the Go backend emitted a driver in ~9 s — each once per source change and
+shared across processes through `FERN_SELFHOST_BUILD_CACHE`. A cold driver
+build is therefore the dominant cost of a single test; `FERN_SELFHOST_INTERP=1`
+runs the driver under the interpreter instead when the test is not about the
+driver's machine code. `STAGE0=<path>` substitutes a local compiler for the pin,
+as it does for `make bootstrap`, and it is how a compiler change is tested as
+the drivers' builder before the pin carries it. Every driver is held to what
+the pin can compile, like `fern.fern`.
 
 **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you run
 ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it
@@ -237,41 +251,29 @@ well under its job timeout.
 ## Build memory
 
 Every `buildSelfHostBin` / `buildBin` of a self-host driver (`asm_run.fern` /
-`asm_load_run.fern` / `asm_ir_run.fern` / `wasm_ir_run.fern` / …) emits a
-multi-thousand-function asm text. The harness self-limits, so **swap is
-generally not needed** and the peak sits comfortably under a 16 GB host:
+`asm_load_run.fern` / `asm_ir_run.fern` / `wasm_ir_run.fern` / …) runs the
+pinned self-host compiler over the driver's source closure in a subprocess that
+peaks at 4.0 GB (`asm_ir_run.fern`) to 5.7 GB (`fern.fern`). The harness
+self-limits, so **swap is generally not needed** and the peak sits comfortably
+under a 16 GB host:
 
-- The x86-64 backend flips the self-host compiler's one lowering monster
-  (`irlower__lower_expr`, ~9.75M IR ops) from the inline rc fast-path to the
-  `call __fern_rc_dec/inc` form (the arm64 backend's long-standing `rcInlineOK`
-  mechanism, backported — behaviour-identical). That cut the `asm_ir_run` driver
-  asm from ~1028 MB → ~470 MB.
-- The cold driver emit runs under a **refcounted soft heap cap**
-  (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0` disables),
-  `ir.Op` keeps its rare payload fields (Str2 / Sig / ArgTypes / CaptureSlots)
-  in an `OpExt` side-table (96 B/op, was 160), and both native backends
-  **release each function's IR as it is emitted** (`ip.Funcs[i] = nil` in the
-  emit loop) so the IR is reclaimed incrementally instead of peaking alongside
-  the output buffer. At default GOGC the emit ballooned to ~9 GB RSS of
-  mostly-garbage in 134 s; capped + shrunk + released it runs ~3.7 GB in ~40 s.
-  Output is byte-identical.
-- Driver binaries are **assembled + linked in-process** by the pure-Go native
-  assembler (`internal/native/x86_64` + `internal/native/elf` — the same
-  pipeline `cmd/fern -target x86-64-linux` uses by default): ~25 s / ~2.6 GB where GNU
-  `as` took ~36 s at ~4.7 GB plus a link, and the ~470 MB `.s` never touches
-  disk. Any assembler error falls back to the old gcc(+lld) path automatically.
-  `CachedLink` does the same for HUGE self-host-emitted asm (the stage-2
-  self-compile, >= 8 MB), which previously ran GNU `as`+bfd with no memory
-  reservation at all; small program links stay on gcc/bfd unchanged.
 - `internal/e2eharness`'s `buildMemLimiter` is a RAM-budget weighted semaphore
-  around the cold emit+link: it reserves each heavy build's estimated peak
-  (`FERN_BUILD_HEAVY_MB`, default 4300) against a budget
+  around each cold driver build: it reserves the build's estimated peak
+  (`DriverBuildWeightMB`: 4300 MB, 6000 MB for `fern.fern`) against a budget
   (`FERN_BUILD_MEM_BUDGET_MB`, default ~85% of `MemTotal`), so heavy builds
   can't stack past the host's RAM and OOM the run. Two cold driver builds fit a
   16 GB host concurrently; bigger hosts parallelise further up to the budget.
+- Self-host-emitted asm that a test links itself (`CachedLink`; the stage-2
+  self-compile is the big one, >= 8 MB) is **assembled + linked in-process** by
+  the pure-Go assembler (`internal/native/x86_64` + `internal/native/elf`)
+  under the same reservation and a refcounted soft heap cap
+  (`withEmitMemLimit`, `FERN_EMIT_MEMLIMIT_MB`, default 3600; `<= 0` disables),
+  so the Go runtime keeps its heap near the live set instead of letting it
+  double between collections. Any assembler error falls back to the gcc(+lld)
+  path automatically; small program links stay on gcc/bfd unchanged.
 
-If a build is still OOM-killed, lower `FERN_BUILD_HEAVY_MB` /
-`FERN_BUILD_MEM_BUDGET_MB` / `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral
+If a build is still OOM-killed, lower `FERN_BUILD_MEM_BUDGET_MB` (fewer builds
+overlap) or `FERN_EMIT_MEMLIMIT_MB`, or re-create the ephemeral
 swap file (a container restart wipes it):
 
 ```
@@ -367,8 +369,8 @@ treating genuine compiler regressions as infra.
   and under WASI's 126 ceiling so it survives wasmtime. Pinned across all five
   emitters by `internal/e2e/arena_exit_code_test.go`.
 - **137** (128+9, SIGKILL) — the host ran out of RAM. Also reads as `signal:
-  killed` during the Go emit, or `as`/gcc dying on the fallback path. Retry with
-  a smaller budget per the knobs above. This is *total-RAM* pressure, not a
+  killed` from the self-host compiler building a driver, or `as`/gcc dying on
+  a link. Retry with a smaller budget per the knobs above. This is *total-RAM* pressure, not a
   cgroup cap (`memory.limit_in_bytes` is effectively unlimited).
 
 **The arena is 16 GiB** (0x400000000) on every emitter — native x86-64 + arm64
@@ -567,10 +569,52 @@ completes. `asm_load_run.fern` is no longer needed as a stand-in for
 The darwin stage 2 is a fixpoint at the emit level: `fern-s2` and `fern-s1`
 produce byte-identical `-target arm64-darwin -emit asm` listings for all 471
 runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
-inside the compiler's own string literals). What does not yet hold is stage 3:
-`fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
-3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
-1.4-1.7 GB (#8479). The same chain for `-target arm64-linux` in the linux/arm64
+inside the compiler's own string literals). Stage 3 did not hold on
+2026-09-05: `fern-s2` building `fern.fern` exited 125 (arena exhausted) after
+20 s at 3.9-5.1 GB RSS (two runs), where `fern-s1` finished the same build in
+36 s at 1.4-1.7 GB (#8479); it holds since 2026-09-29, below. The same chain
+for `-target arm64-linux` in the linux/arm64
 container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
 byte-identical asm to stage 1, and compiles and runs a strbuf program
 correctly.
+
+The heap's address regime is not what breaks the darwin stage 3. XNU ignores
+the arena's mmap hint and maps it above the 4 GiB `__PAGEZERO`, so on darwin
+every heap pointer has a non-zero high half from the first allocation, where
+Linux honours the 256 MiB hint. `FERN_HIGH_HEAP=1` makes the self-host arm64
+emitter raise the hint to 8 GiB (`asm_arm64_ir.fern`, the twin of the native
+`arm64codegen.Options.HighHeapProbe`), and qemu-aarch64 honours it. Measured
+2026-09-29 on the 4-core x86-64 container: an aarch64 self-host compiler
+emitted with that hint compiles `fern.fern` for `arm64-linux` under qemu in
+537 s at 5.4 GB peak RSS, exit 0, and its output is byte-identical to the
+default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
+`TestSelfHostArm64HighHeap*` (`internal/e2eselfhost`). The recipe, from a
+`bin/fern-selfhost` built by `make selfhost-cli`:
+
+```
+FERN_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/examples/self_host/fern.fern $W/internal/stdlib
+aarch64-linux-gnu-gcc -static -nostdlib -o $B/fern_hh $B/fern_hh.s
+qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 $W/examples/self_host/fern.fern $W/internal/stdlib
+```
+
+What the probe does not move is the image, `.rodata` and the stack, which on
+darwin also sit above 4 GiB; a truncation of one of those still needs the Mac.
+
+Nor is it the darwin OUTPUT path: on the same container a self-host-built
+x86-64 compiler compiles `fern.fern` for `arm64-darwin` in 111 s at 5.4 GB,
+exit 0, byte-identical to the native-built compiler's Mach-O, and the
+aarch64 self-host-built compiler does the same under qemu in 525 s at 5.5 GB.
+What was left was the self-host-built compiler running ON XNU, and on
+2026-09-29 the `macos-15` lane ran that stage 3 (source at ea943e9) with
+`FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes` at each `sem:*` phase and
+at `darwin:emitted` / `darwinized` / `assembled` / `unwind` / `linked` /
+`image` (`fern.fern`), under `/usr/bin/time -l`. It passed: 56 s, 3.8 GB
+maximum RSS, 5.66 GB peak footprint, 5.85 GB bumped, stage2 == stage3, with no
+phase running away (5.12 GB after the semantic lowering, 5.82 GB after the
+assembler). The darwin fixed point is gated by `bootstrap.yml`'s
+`verify-arm64-darwin` since (`make bootstrap` + `make distcheck` from the pin,
+no Go); the readout above is how to measure it by hand if it regresses:
+
+```
+FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/examples/self_host/fern.fern $W/internal/stdlib
+```

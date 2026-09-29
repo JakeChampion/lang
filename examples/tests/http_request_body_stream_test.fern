@@ -21,15 +21,15 @@ import "std/stream";
 
 // `wire(body)` — a POST whose Content-Length frames `body`.
 function wire(body: string): string {
-    return "POST /upload HTTP/1.1\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;
+    return "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;
 }
 
 function parsed(body: string): HttpRequest {
     match (http.http_parse_request(wire(body))) {
         Some(req) => { return req; },
-        None => { return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() }; }
+        None => { return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() }; }
     }
-    return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() };
+    return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
 }
 
 function req_headers_placeholder(): HeaderMap {
@@ -99,7 +99,7 @@ function test_body_bytes_matches_body_len(): test.TestOutcome {
 
 // A request with no body at all still answers every reader.
 function test_bodyless_request_reads_empty(): test.TestOutcome {
-    match (http.http_parse_request("GET / HTTP/1.1\r\n\r\n")) {
+    match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
         Some(req) => { return test.assert_eq(req.body_string() + "/" + req.body_len().to_string(), "/0"); },
         None => { return test.fail("well-formed request wrongly rejected"); }
     }

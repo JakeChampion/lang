@@ -550,18 +550,15 @@ func builtinStructDecls() []*ast.StructDecl {
 				// whole-body shims `req.body_string()` /
 				// `body_bytes()` / `body_len()` in std/http.
 				{Name: "body", Type: ast.StructType{Name: "Stream"}},
-				// `headers` lands at the END of the layout so the
-				// pre-headers byte offsets the wasi-http wrapper
-				// hardcodes (method@+0/+4, path@+8/+12, body@+16)
-				// stay stable. Stream and HeaderMap are each a
-				// 4-byte pointer slot on wasm32, total HttpRequest
-				// size 24 bytes. Inbound population:
-				// http_parse_request on the tcp_serve path parses
-				// the header block into the map; the wasi-http
-				// wrapper inlines an empty HeaderMap (canonical-ABI
-				// fields-resource integration is the next follow-up
-				// PR).
+				// The wasi-http wrapper hardcodes these byte offsets
+				// (method@+0/+4, path@+8/+12, body@+16, headers@+20,
+				// trailers@+24; Stream and HeaderMap are each a 4-byte
+				// pointer slot on wasm32, 28 bytes in all), so a new
+				// field goes at the END. `trailers` holds a chunked
+				// body's trailer section (std/http's parser); the
+				// wasi-http wrapper leaves it empty.
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
+				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
 		{
