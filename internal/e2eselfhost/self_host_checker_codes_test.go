@@ -1936,6 +1936,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = (): i32 => { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = (): i32 => { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
+		// An injected enum's variant payload is checked like a declared one:
+		// JsonValue and IoError have no union declaration to find it by.
+		{"injected-variant-payload-json", "function main(): i32 { var j: JsonValue = JNumber(1.0); return 0; }\n", []string{"E036"}},
+		{"injected-variant-payload-ioerror", "function main(): i32 { var e: IoError = NotFound(3); return 0; }\n", []string{"E036"}},
+		{"injected-variant-payload-ok", "function main(): i32 { var j: JsonValue = JNumber(\"1.0\"); var e: IoError = NotFound(\"p\"); return 0; }\n", nil},
 		// The enclosing scope's store is judged on the VALUE's type, as native
 		// judges it: a struct that reaches no function may be stored into a
 		// captured `dyn`, a `dyn`-typed value may not (#8440).
