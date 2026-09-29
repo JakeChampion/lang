@@ -5367,6 +5367,17 @@ function owned(p: string): str { return mk(p); }
 function view(pre: string): str { var base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
 function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); return v.len() * 10 + w.len(); }
 `},
+	// A generic enum's variant carrying a function field that mentions `T`.
+	// The clone substituted the field's result type but not its parameter
+	// types, so `Fn__i32`'s field read `(T) => i32` and the literal was
+	// refused with "variant field type" (#10689).
+	{name: "a-generic-variant-carries-a-function-of-its-parameter", atLeast: 4, noLeak: true, src: `
+enum Box[T] { Fn(T, (T) => T), Two((T, T) => T), Empty }
+function inc(x: i32): i32 { return x + 1; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function run(b: Box[i32]): i32 { match (b) { Fn(n, f) => { return f(n); }, Two(g) => { return g(40, 2); }, Empty => { return 0; } } }
+function main(): i32 { return run(Fn(41, inc)) + run(Two(add)) + run(Empty); }
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
