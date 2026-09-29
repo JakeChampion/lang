@@ -5528,7 +5528,7 @@ func TestDeriveErrors(t *testing.T) {
 		{`trait Foo { function bar(self: Self): i32; }
 @derive(Foo)
 struct S { x: i32 }
-function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable"},
 		// Unknown trait in derive.
 		{`@derive(Nope)
 struct S { x: i32 }
@@ -5829,6 +5829,29 @@ function main(): i32 { return 0; }`
 	}
 }
 
+// @derive(FromJson) is a struct's derive whose decoder is std/json's: the
+// checker refuses it on an enum, and without std/json in the program.
+func TestDeriveFromJson(t *testing.T) {
+	const fromJsonTrait = `trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
+`
+	cases := []struct{ src, want string }{
+		{fromJsonTrait + `@derive(FromJson) enum E { A, B }
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums"},
+		{fromJsonTrait + `@derive(FromJson) struct P { x: i32 }
+function main(): i32 { return 0; }`, "the decoder is std/json's"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, c.src)
+		if err == nil {
+			t.Errorf("expected an E021 for %s, got nil", c.src)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("error %q does not contain %q", err.Error(), c.want)
+		}
+	}
+}
+
 // Associated functions: a trait method with no `self` receiver
 // (`function f(): Self`) is called as `Type.f(args)` rather than
 // `value.f(args)` — the constructor / static-method shape. The impl
@@ -5868,6 +5891,15 @@ struct Box { v: i32 }
 impl From for Box { function of(n: i32): Self { return Box { v: n }; } }
 function build[T: From](n: i32): T { return T.of(n); }
 function main(): i32 { var b: Box = build(7); return b.v; }`,
+		// The trait's parameter names an enum: the signature is resolved
+		// like every other type position, so the argument (an EnumType)
+		// matches it rather than the parser's bare StructType spelling.
+		`enum V { A(i32), B }
+trait Mk { function mk(v: V): Result[Self, string]; }
+struct Box { v: i32 }
+impl Mk for Box { function mk(v: V): Result[Self, string] { match (v) { A(n) => { return Ok(Box { v: n }); }, B => { return Err("b"); } } return Err(""); } }
+function build[T: Mk](v: V): Result[T, string] { return T.mk(v); }
+function main(): i32 { var b: Result[Box, string] = build[Box](A(7)); return 0; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, src); err != nil {

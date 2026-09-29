@@ -868,37 +868,40 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
     match (json_get(obj, key)) {
         Some(v) => {
             match (v) {
-                JNumber(s) => {
-                    // JNumber carries the raw decimal text; parse to i32.
-                    var acc: i64 = 0;
-                    var i: i32 = 0;
-                    var neg: boolean = false;
-                    var nlen: i32 = s.len();
-                    if (nlen == 0) { return None; }
-                    if (s[0] == 45) { neg = true; i = 1; }
-                    if (i >= nlen) { return None; }
-                    while (i < nlen) {
-                        var b: i32 = s[i] as i32;
-                        if (b < 48 || b > 57) { return None; }
-                        acc = acc * 10 + ((b - 48) as i64);
-                        // 2147483648 == |i32 min|; anything past it can't fit
-                        // either sign. Bounding here also keeps `acc` small
-                        // enough that it never overflows the i64 itself.
-                        if (acc > 2147483648) { return None; }
-                        i = i + 1;
-                    }
-                    // Negatives reach down to -2147483648; positives top out
-                    // one lower at 2147483647.
-                    if (neg) { return Some((0 - acc) as i32); }
-                    if (acc > 2147483647) { return None; }
-                    return Some(acc as i32);
-                },
+                JNumber(s) => { return __json_number_i32(s); },
                 _ => { return None; }
             }
         },
         None => { return None; }
     }
     return None;
+}
+
+// __json_number_i32 reads a JNumber's decimal text as an i32: an optional
+// '-' then digits, None for anything else or a value outside the range.
+function __json_number_i32(s: string): Option[i32] {
+    var acc: i64 = 0;
+    var i: i32 = 0;
+    var neg: boolean = false;
+    var nlen: i32 = s.len();
+    if (nlen == 0) { return None; }
+    if (s[0] == 45) { neg = true; i = 1; }
+    if (i >= nlen) { return None; }
+    while (i < nlen) {
+        var b: i32 = s[i] as i32;
+        if (b < 48 || b > 57) { return None; }
+        acc = acc * 10 + ((b - 48) as i64);
+        // 2147483648 == |i32 min|; anything past it can't fit
+        // either sign. Bounding here also keeps `acc` small
+        // enough that it never overflows the i64 itself.
+        if (acc > 2147483648) { return None; }
+        i = i + 1;
+    }
+    // Negatives reach down to -2147483648; positives top out
+    // one lower at 2147483647.
+    if (neg) { return Some((0 - acc) as i32); }
+    if (acc > 2147483647) { return None; }
+    return Some(acc as i32);
 }
 
 // `json_get_i64(obj, key)` — typed-extract a JNumber as i64. Like
@@ -915,31 +918,56 @@ pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
     match (json_get(obj, key)) {
         Some(v) => {
             match (v) {
-                JNumber(s) => {
-                    var n: i64 = 0;
-                    var i: i32 = 0;
-                    var sign: i64 = 1;
-                    var nlen: i32 = s.len();
-                    var digits: i32 = 0;
-                    if (nlen == 0) { return None; }
-                    if (s[0] == 45) { sign = 0 - 1; i = 1; }
-                    if (i >= nlen) { return None; }
-                    while (i < nlen) {
-                        var b: i32 = s[i] as i32;
-                        if (b < 48 || b > 57) { return None; }
-                        n = n * 10 + ((b - 48) as i64);
-                        digits = digits + 1;
-                        if (n < 0 || digits > 19) { return None; }
-                        i = i + 1;
-                    }
-                    return Some(n * sign);
-                },
+                JNumber(s) => { return __json_number_i64(s); },
                 _ => { return None; }
             }
         },
         None => { return None; }
     }
     return None;
+}
+
+// __json_number_i64 reads a JNumber's decimal text as an i64, None for a
+// non-digit body or a value past i64 max (the wrap shows as a negative
+// accumulator; more than 19 digits cannot fit at all).
+function __json_number_i64(s: string): Option[i64] {
+    var n: i64 = 0;
+    var i: i32 = 0;
+    var sign: i64 = 1;
+    var nlen: i32 = s.len();
+    var digits: i32 = 0;
+    if (nlen == 0) { return None; }
+    if (s[0] == 45) { sign = 0 - 1; i = 1; }
+    if (i >= nlen) { return None; }
+    while (i < nlen) {
+        var b: i32 = s[i] as i32;
+        if (b < 48 || b > 57) { return None; }
+        n = n * 10 + ((b - 48) as i64);
+        digits = digits + 1;
+        if (n < 0 || digits > 19) { return None; }
+        i = i + 1;
+    }
+    return Some(n * sign);
+}
+
+// __json_number_u64 reads a JNumber's decimal text as a u64: digits only,
+// None for a sign, a non-digit body or a value past u64 max.
+function __json_number_u64(s: string): Option[u64] {
+    var n: u64 = 0;
+    var i: i32 = 0;
+    var nlen: i32 = s.len();
+    if (nlen == 0) { return None; }
+    while (i < nlen) {
+        var b: i32 = s[i] as i32;
+        if (b < 48 || b > 57) { return None; }
+        var d: u64 = (b - 48) as u64;
+        // 1844674407370955161 is u64 max with its last digit (5) dropped.
+        if (n > 1844674407370955161) { return None; }
+        if (n == 1844674407370955161 && d > 5) { return None; }
+        n = n * 10 + d;
+        i = i + 1;
+    }
+    return Some(n);
 }
 
 // `json_get_f64(obj, key)` — typed-extract a JNumber as f64. The
@@ -1215,4 +1243,240 @@ pub function (xs: T[]) to_json[T: Json](): string {
     }
     out = out.append(93 as u8);   // ']'
     return string_from_bytes_unchecked(out);
+}
+
+// === FromJson trait + @derive(FromJson) ===
+//
+// `FromJson` is the decode half of `Json`: `T.from_json_value(v)` builds a
+// `T` from a parsed `JsonValue`, `Err(why)` when the value has the wrong
+// shape. `@derive(json.FromJson)` synthesises it field-wise for a struct
+// (the checker's synthFromJsonValue), with the companion `T.from_json(text)`
+// that parses the text first. The primitive impls below are the leaves; a
+// nested struct decodes through its own impl, an array field through
+// `from_json_array`, an `Option` field through `from_json_option`, so a
+// struct decodes as soon as its fields do. A shape error names where it
+// happened: `missing field "id"`, `field "id": expected an integer, got a
+// string`, `field "tags": [1]: expected a string, got null`.
+//
+//   @derive(json.Json, json.FromJson)
+//   struct User { id: i32, name: string, tags: string[], nick: Option[string] }
+//   var u: User = json.decode[User](text)?;      // or User.from_json(text)
+//
+// `decode[T](text)` parses and decodes in one call; a parse failure reads
+// `invalid JSON: <line>:<col>: <why>`. An HTTP handler reaches the same
+// decoder through `http.body_json[T](req)`, which also checks the media
+// type and answers each failure with its own status.
+pub trait FromJson {
+    function from_json_value(v: JsonValue): Result[Self, string];
+}
+
+// `json_kind(v)` — what a value is, for a shape error's "got ...".
+pub function json_kind(v: JsonValue): string {
+    match (v) {
+        JNull => { return "null"; },
+        JBool(b) => { return "a boolean"; },
+        JNumber(s) => { return "a number"; },
+        JString(s) => { return "a string"; },
+        JArray(xs) => { return "an array"; },
+        JObject(m) => { return "an object"; }
+    }
+    return "";
+}
+
+impl FromJson for i32 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (__json_number_i32(s)) {
+                    Some(n) => { return Ok(n); },
+                    None => { return Err("expected an integer in the i32 range, got " + s); }
+                }
+            },
+            _ => { return Err("expected an integer, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for i64 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (__json_number_i64(s)) {
+                    Some(n) => { return Ok(n); },
+                    None => { return Err("expected an integer in the i64 range, got " + s); }
+                }
+            },
+            _ => { return Err("expected an integer, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for u32 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (__json_number_i64(s)) {
+                    Some(n) => {
+                        if (n < 0 || n > 4294967295) { return Err("expected an integer in the u32 range, got " + s); }
+                        return Ok(n as u32);
+                    },
+                    None => { return Err("expected an integer in the u32 range, got " + s); }
+                }
+            },
+            _ => { return Err("expected an integer, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for u64 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (__json_number_u64(s)) {
+                    Some(n) => { return Ok(n); },
+                    None => { return Err("expected an integer in the u64 range, got " + s); }
+                }
+            },
+            _ => { return Err("expected an integer, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for f64 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (s.parse_float()) {
+                    Some(f) => { return Ok(f); },
+                    None => { return Err("expected a number, got " + s); }
+                }
+            },
+            _ => { return Err("expected a number, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for f32 {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JNumber(s) => {
+                match (s.parse_float()) {
+                    Some(f) => { return Ok(f as f32); },
+                    None => { return Err("expected a number, got " + s); }
+                }
+            },
+            _ => { return Err("expected a number, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for boolean {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JBool(b) => { return Ok(b); },
+            _ => { return Err("expected a boolean, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+impl FromJson for string {
+    function from_json_value(v: JsonValue): Result[Self, string] {
+        match (v) {
+            JString(s) => { return Ok(s); },
+            _ => { return Err("expected a string, got " + json_kind(v)); }
+        }
+        return Err("");
+    }
+}
+
+// `decode[T](text)` — parse `text` and decode it as a `T`.
+pub function decode[T: FromJson](text: string): Result[T, string] {
+    match (json_parse_result(text)) {
+        Ok(v) => { return T.from_json_value(v); },
+        Err(e) => { return Err("invalid JSON: " + e.to_string()); }
+    }
+    return Err("");
+}
+
+// `from_json_array[T](v)` — every element of a JSON array as a `T`; an
+// element's shape error is prefixed with its index.
+pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
+    match (v) {
+        JArray(xs) => {
+            var out: T[] = [];
+            var i: i32 = 0;
+            while (i < xs.len()) {
+                match (T.from_json_value(xs[i])) {
+                    Ok(x) => { out = out.append(x); },
+                    Err(why) => { return Err("[" + i.to_string() + "]: " + why); }
+                }
+                i = i + 1;
+            }
+            return Ok(out);
+        },
+        _ => { return Err("expected an array, got " + json_kind(v)); }
+    }
+    return Err("");
+}
+
+// `from_json_option[T](v)` — `None` for an absent value, else the value
+// decoded as a `T`. The derive pairs it with `from_json_optional_field`.
+pub function from_json_option[T: FromJson](v: Option[JsonValue]): Result[Option[T], string] {
+    match (v) {
+        Some(jv) => {
+            match (T.from_json_value(jv)) {
+                Ok(x) => { return Ok(Some(x)); },
+                Err(why) => { return Err(why); }
+            }
+        },
+        None => { return Ok(None); }
+    }
+    return Err("");
+}
+
+// The derive's field readers. `from_json_field(v, name)` is the field's
+// value, `Err` for a value that is not an object or a field that is not
+// there; `from_json_optional_field` answers `Ok(None)` for a field that is
+// missing or null instead; `from_json_at(name, why)` prefixes a field's
+// shape error with its name.
+pub function from_json_field(v: JsonValue, name: string): Result[JsonValue, string] {
+    match (v) {
+        JObject(m) => {
+            match (m.get(name)) {
+                Some(fv) => { return Ok(fv); },
+                None => { return Err("missing field \"" + name + "\""); }
+            }
+        },
+        _ => { return Err("expected an object, got " + json_kind(v)); }
+    }
+    return Err("");
+}
+
+pub function from_json_optional_field(v: JsonValue, name: string): Result[Option[JsonValue], string] {
+    match (v) {
+        JObject(m) => {
+            match (m.get(name)) {
+                Some(fv) => {
+                    match (fv) {
+                        JNull => { return Ok(None); },
+                        _ => { return Ok(Some(fv)); }
+                    }
+                },
+                None => { return Ok(None); }
+            }
+        },
+        _ => { return Err("expected an object, got " + json_kind(v)); }
+    }
+    return Err("");
+}
+
+pub function from_json_at(name: string, why: string): string {
+    return "field \"" + name + "\": " + why;
 }

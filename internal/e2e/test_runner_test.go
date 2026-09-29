@@ -3863,6 +3863,23 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_body_json_test.fern` pins the typed JSON body
+// (#9854): `http.body_json[T](req)` decoding a derived `FromJson` struct,
+// and the 415 / 400 / 422 answers its three failures carry.
+func TestRunnerHttpBodyJsonExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_body_json_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: Typed JSON bodies", "# pass 5", "# fail 0", "1..5"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_body_test.fern` pins the four bodies an HttpResponse
 // carries (#9854): text, bytes, a Stream's remainder, and a file the loop
 // reads through `http_materialize`, a missing one answered 404.

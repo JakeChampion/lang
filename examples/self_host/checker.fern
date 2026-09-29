@@ -10591,7 +10591,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
 // with no receiver NAME but a receiver TYPE — as impl-table entries, which is
 // the record `Type.f()` resolution reads. An inherent `impl` already lands
 // there; a `@derive` does not, and its synthesised functions are not trait
-// requirements either (`@derive(json.Json)` supplies `from_json`, which the
+// requirements either (`@derive(json.FromJson)` supplies `from_json`, which the
 // `Json` trait never declares), so the declaration is the only trace of them.
 // Without this `Wrap.default()` and `User.from_json(s)` reported an undefined
 // name for their own type (#8461). The blank trait name matches no declared
@@ -17374,15 +17374,35 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     }
     return [dg_at("E021", "@derive(" + tr + "): unknown trait", ln, cl)];
   }
-  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "Default") {
-    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", ln, cl)];
+  if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default") {
+    return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", ln, cl)];
   }
   if (kind == "Default") {
     return [];
   }
+  // A FromJson derive decodes an array or Option field through its
+  // element, so the element is what must conform; a container nested in
+  // another has no decoder. Its body calls std/json's readers, so the
+  // import is required.
+  var ctys: string[] = ftys;
+  if (kind == "FromJson") {
+    if (!module_imports_std_json(mod)) {
+      return [dg_at("E021", "cannot @derive(" + tr + "): the decoder is std/json's; import \"std/json\"", ln, cl)];
+    }
+    ctys = [];
+    var ei: i32 = 0;
+    while (ei < ftys.len()) {
+      var elem: string = parser.fromjson_elem(ftys[ei]);
+      if (parser.fromjson_container(elem).len() > 0 || elem.len() == 0 || elem[0] == b'(' || (elem.len() > 3 && slice_unchecked(elem, 0, 3) == "fn(")) {
+        return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[ei] + " has type " + ftys[ei] + "; FromJson decodes a field of a FromJson type, an array of one or an Option of one", ln, cl)];
+      }
+      ctys = ctys.append(elem);
+      ei = ei + 1;
+    }
+  }
   var fi: i32 = 0;
-  while (fi < ftys.len()) {
-    var fty: string = receiver_namespace(ftys[fi]);
+  while (fi < ctys.len()) {
+    var fty: string = receiver_namespace(ctys[fi]);
     if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
       if (!e021_derive_conforms(mod, tr, tidx, fty)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
@@ -17391,6 +17411,17 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
     fi = fi + 1;
   }
   return [];
+}
+
+// module_imports_std_json reports whether the module imports std/json, whose
+// readers a derived decoder calls.
+function module_imports_std_json(mod: parser.Module): boolean {
+  for im in mod.imports {
+    if (im.path == "std/json") {
+      return true;
+    }
+  }
+  return false;
 }
 
 // derive_method_name maps a derivable trait kind to the method name its
@@ -17407,6 +17438,9 @@ function derive_method_name(kind: string): string {
   }
   if (kind == "Json") {
     return "to_json";
+  }
+  if (kind == "FromJson") {
+    return "from_json_value";
   }
   if (kind == "Eq") {
     return "eq";
@@ -17494,6 +17528,10 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
       }
     }
     for ederive in ederives {
+      if (parser.derive_simple_name(ederive) == "FromJson") {
+        out = out.append(dg_at("E021", "cannot @derive(" + ederive + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", ed.line, ed.col));
+        continue;
+      }
       var edd: util.Diag[] = e021_derive_one_diag(mod, ederive, ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
       if (edd.len() > 0) {
         var emn: string = derive_method_name(parser.derive_simple_name(ederive));

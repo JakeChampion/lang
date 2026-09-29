@@ -246,6 +246,74 @@ impl ToResponse for string {
     }
 }
 
+// ============================================================
+// A typed JSON body (#9854).
+//
+// `body_json[T](req)` decodes a request's body as a `T` that implements
+// `json.FromJson` (`@derive(json.FromJson)` on a struct), and tells the
+// three failures apart so each answers with its own status: a media type
+// that is not JSON (`UnsupportedMediaType`, 415), a body that is not JSON
+// (`MalformedJson`, 400, with where the text broke), and JSON of the wrong
+// shape (`WrongShape`, 422, naming the field). `BodyError` is `ToResponse`,
+// so a handler declared as `Result[HttpResponse, BodyError]` fails with `?`:
+//
+//     function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.BodyError] {
+//         var item: Item = http.body_json[Item](req)?;
+//         return Ok(http.http_response_json(item.to_json()));
+//     }
+//
+// The media type is the `Content-Type` header's type without its
+// parameters, `application/json` or any `+json` suffix, compared without
+// regard to case; a request without the header is refused too.
+
+pub enum BodyError {
+    UnsupportedMediaType(string),
+    MalformedJson(json.JsonError),
+    WrongShape(string),
+}
+
+impl ToResponse for BodyError {
+    function to_response(self: Self): HttpResponse {
+        match (self) {
+            UnsupportedMediaType(ct) => {
+                if (ct.len() == 0) { return problem(415, "", "expected a Content-Type of application/json"); }
+                return problem(415, "", "expected application/json, got " + ct);
+            },
+            MalformedJson(e) => { return problem(400, "Malformed JSON", e.to_string()); },
+            WrongShape(why) => { return problem(422, "", why); }
+        }
+        return problem(500, "", "");
+    }
+}
+
+pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError] {
+    match (req.headers.get("content-type")) {
+        Some(ct) => { if (!__media_type_is_json(ct)) { return Err(UnsupportedMediaType(ct)); } },
+        None => { return Err(UnsupportedMediaType("")); }
+    }
+    match (json.json_parse_result(req.body_string())) {
+        Ok(v) => {
+            match (T.from_json_value(v)) {
+                Ok(t) => { return Ok(t); },
+                Err(why) => { return Err(WrongShape(why)); }
+            }
+        },
+        Err(e) => { return Err(MalformedJson(e)); }
+    }
+    return Err(UnsupportedMediaType(""));
+}
+
+// __media_type_is_json: the type before any `;` parameter, trimmed, is
+// `application/json` or ends in `+json`, in any case.
+function __media_type_is_json(ct: string): boolean {
+    var mt: string = ct;
+    var semi: i32 = ct.index_of(";");
+    if (semi >= 0) { mt = slice_unchecked(ct, 0, semi) + ""; }
+    mt = mt.trim();
+    if (mt.len() == 16 && mt.starts_with_ci("application/json")) { return true; }
+    return mt.ends_with_ci("+json");
+}
+
 // `http_path_segments(path)` — split an HTTP path into
 // non-empty components. Drops the leading "/" and any
 // double slashes; query string (`?...`) is also stripped.

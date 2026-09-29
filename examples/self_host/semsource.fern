@@ -2351,6 +2351,9 @@ function type_head(obj: ast.Expr, s: State): string {
             return id.name;
         }
         if (union_variants(s, id.name).len() > 0 || builtin_union_layout(id.name) != 0) { return id.name; }
+        // A primitive's impl may declare an associated function
+        // (`i32.from_json_value(v)`); the name is never a value.
+        if (typeinfo.is_primitive_type_name(id.name)) { return id.name; }
     }
     return "";
 }

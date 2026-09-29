@@ -6189,14 +6189,74 @@ func demangleAll(s string) string {
 }
 
 // deriveKind classifies a (possibly module-mangled) derived-trait name
-// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "Default",
-// or "Debug". Returns "" for any other trait — only these are derivable.
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "FromJson",
+// "Default", or "Debug". Returns "" for any other trait — only these are
+// derivable.
 func deriveKind(name string) string {
 	switch simple := simpleTraitName(name); simple {
-	case "Eq", "Display", "Ord", "Hash", "Json", "Default", "Debug":
+	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
 		return simple
 	}
 	return ""
+}
+
+// hasStdJson reports whether std/json is in the program: its parser is
+// what a derived decoder calls, so a `@derive(json.FromJson)` needs it.
+func hasStdJson(prog *ast.Program) bool {
+	for _, pf := range prog.Funcs {
+		if pf.Name == "json__json_parse" {
+			return true
+		}
+	}
+	return false
+}
+
+// fromJsonFieldTypes maps each field type of a FromJson derive to the type
+// whose decoder the synthesised body calls: an array's or an Option's
+// element, else the field type itself. A container nested in another has
+// no decoder; its index is returned with ok=false.
+func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
+	out := make([]ast.Type, len(types))
+	for i, t := range types {
+		e := fromJsonElem(t)
+		if _, nested := fromJsonContainer(e); nested {
+			return nil, i, false
+		}
+		switch e.(type) {
+		case ast.SliceType, ast.TupleType, *ast.FuncType:
+			return nil, i, false
+		}
+		out[i] = e
+	}
+	return out, -1, true
+}
+
+// fromJsonContainer names the container a field type is — "array" for
+// `E[]`, "option" for `Option[E]` — with ok=false for any other type.
+func fromJsonContainer(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return "array", true
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return "option", true
+		}
+	}
+	return "", false
+}
+
+// fromJsonElem is the element type of a FromJson field's container, or the
+// field type itself.
+func fromJsonElem(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return x.Elem
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return x.Args[0]
+		}
+	}
+	return t
 }
 
 // typeImplsEqAndHash reports whether the named struct/enum implements
@@ -6420,7 +6480,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			}
 			kind := deriveKind(dn)
 			if kind == "" {
-				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable", demangle(dn))
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
 				continue
 			}
 			labels := make([]string, len(sd.Fields))
@@ -6428,6 +6488,18 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 			for i, f := range sd.Fields {
 				labels[i] = "field " + f.Name
 				types[i] = f.Type
+			}
+			if kind == "FromJson" {
+				if !hasStdJson(prog) {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s): the decoder is std/json's; import \"std/json\"", demangle(dn))
+					continue
+				}
+				elems, bad, ok := fromJsonFieldTypes(types)
+				if !ok {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: %s has type %s; FromJson decodes a field of a FromJson type, an array of one or an Option of one", demangle(dn), demangle(sd.Name), labels[bad], types[bad])
+					continue
+				}
+				types = elems
 			}
 			if c.preCheckDeriveFields(dc, td, dn, kind, sd.Name, sd.P, labels, types, sd.TypeParams) {
 				continue
@@ -6446,31 +6518,15 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthHash(sd, recvType)
 			case "Json":
 				method = synthJson(sd, recvType)
-				// Also synthesise the deserialise companion `from_json(s):
-				// Result[Self, string]` — but ONLY when the real std/json is
-				// imported (its `json__json_parse` is in scope) and every field
-				// is supported (i32 / string / boolean). A user's own inline
-				// `trait Json` (no std/json) gets serialise-only, as does a
-				// struct with array / nested / wider fields — to_json still
-				// derives in both cases. See synthFromJson / #2695.
-				// Only synthesise from_json when the real std/json is imported
-				// (its `json__json_parse` was merged into prog.Funcs by modload).
-				// FuncSigs isn't populated yet at derive-synth time, so scan the
-				// merged function list.
-				haveStdJson := false
-				for _, pf := range prog.Funcs {
-					if pf.Name == "json__json_parse" {
-						haveStdJson = true
-						break
-					}
-				}
-				fj, fjOK := synthFromJson(sd, recvType)
-				if haveStdJson && fjOK {
-					fj.SourceModule = sd.SourceModule
-					fj.ImplTrait = dn
-					bindDeriveTypeParams(fj, implTypeParams, dn)
-					prog.Funcs = append(prog.Funcs, fj)
-				}
+			case "FromJson":
+				method = synthFromJsonValue(sd, recvType)
+				// The text-taking companion `from_json(s)` is an associated
+				// function beside the impl, not a requirement of the trait.
+				text := synthFromJsonText(sd, recvType)
+				text.SourceModule = sd.SourceModule
+				text.ImplTrait = dn
+				bindDeriveTypeParams(text, implTypeParams, dn)
+				prog.Funcs = append(prog.Funcs, text)
 			case "Default":
 				m, badField, badType := synthDefault(sd, recvType)
 				if m == nil {
@@ -7280,90 +7336,101 @@ func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
-// synthFromJson builds the deserialise companion to synthJson: a receiver-less
-// associated `from_json(s: string): Result[Self, string]` that parses the JSON
-// text and extracts each field by name, returning `Err(...)` on invalid JSON or
-// a missing/wrong-typed field. v1 supports flat structs whose fields are i32 /
-// string / boolean (the types with a `json.json_get_*` accessor); a field of any
-// other type makes this return ok=false so the caller synthesises `to_json`
-// only (serialise still works; from_json over nested / array / Option / wider
-// numeric fields is a documented follow-up — see #2695). The body nests one
-// `match` per field over the field's accessor `Option`, so a missing field
-// short-circuits to `Err("missing field: <name>")` without a `?` operator. The
-// `json.*` calls resolve through the `@derive(json.Json)` site's own
-// `import "std/json"` (basename alias `json`).
-func synthFromJson(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, bool) {
-	type fld struct{ name, accessor, bind string }
-	flds := make([]fld, 0, len(sd.Fields))
-	for _, f := range sd.Fields {
-		acc := ""
-		switch ft := f.Type.(type) {
-		case ast.NumberType:
-			// 64-bit-wide integer fields (i64 / u64) extract through the
-			// i64 accessor; everything narrower through json_get_i32.
-			if ft.Width == 64 {
-				acc = "json_get_i64"
-			} else {
-				acc = "json_get_i32"
-			}
-		case ast.BoolType:
-			acc = "json_get_bool"
-		case ast.StringType:
-			acc = "json_get_string"
-		default:
-			return nil, false
-		}
-		flds = append(flds, fld{name: f.Name, accessor: acc, bind: "__fj_" + f.Name})
-	}
-	// The synthesis runs AFTER modload has rewritten module-qualified calls
-	// (`json.json_parse` → the flat `json__json_parse`), so emit the already-
-	// mangled basename-prefixed name directly — a post-modload `json.func`
-	// FieldAccess would leave `json` an undefined identifier.
+// synthFromJsonValue builds a struct's derived `from_json_value(v:
+// JsonValue): Result[Self, string]`: one nested match per field, reading
+// the field with std/json's `from_json_field` (`from_json_optional_field`
+// for an `Option`, which is `None` when the field is missing or null) and
+// decoding it through the field type's own `from_json_value`, an array
+// through `from_json_array[E]` and an Option through `from_json_option[E]`.
+// A field's shape error comes back prefixed with the field's name
+// (`from_json_at`); the innermost arm returns `Ok(Recv { … })`. The
+// synthesis runs after modload, so the std/json calls are spelled with
+// their flat `json__` names, as the `@derive(json.FromJson)` site's own
+// `import "std/json"` would mangle them.
+func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	jcall := func(fn string, args ...ast.Expr) ast.Expr {
 		return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
 	}
 	variant := func(name string, arg ast.Expr) ast.Expr {
 		return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
 	}
-	// Innermost: return Ok(Recv { f: __fj_f, … }).
-	fis := make([]ast.FieldInit, len(flds))
-	for i, fl := range flds {
-		fis[i] = ast.FieldInit{Name: fl.name, Value: &ast.Ident{Name: fl.bind}}
+	ret := func(e ast.Expr) *ast.Block {
+		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
 	}
-	lit := &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}
-	body := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Ok", lit)}}}
-	// Wrap each field's accessor match, inner-to-outer.
-	for i := len(flds) - 1; i >= 0; i-- {
-		fl := flds[i]
-		missing := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
-			&ast.StringLit{Value: "missing field: " + fl.name})}}}
-		m := &ast.Match{
-			Tag: jcall(fl.accessor, &ast.Ident{Name: "__fj_jv"}, &ast.StringLit{Value: fl.name}),
+	fis := make([]ast.FieldInit, len(sd.Fields))
+	for i, f := range sd.Fields {
+		fis[i] = ast.FieldInit{Name: f.Name, Value: &ast.Ident{Name: "__fj_" + f.Name}}
+	}
+	body := ret(variant("Ok", &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}))
+	for i := len(sd.Fields) - 1; i >= 0; i-- {
+		f := sd.Fields[i]
+		value := "__fj_v_" + f.Name
+		errBind := "__fj_e_" + f.Name
+		getter := "from_json_field"
+		var decode ast.Expr
+		switch container, _ := fromJsonContainer(f.Type); container {
+		case "array":
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_array"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		case "option":
+			getter = "from_json_optional_field"
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_option"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		default:
+			decode = &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: fromJsonTypeName(f.Type)}, Field: "from_json_value"},
+				Args: []ast.Expr{&ast.Ident{Name: value}}}
+		}
+		inner := &ast.Match{
+			Tag: decode,
 			Arms: []*ast.MatchArm{
-				{VariantName: "Some", Bindings: []string{fl.bind}, Body: body},
-				{VariantName: "None", Body: missing},
+				{VariantName: "Ok", Bindings: []string{"__fj_" + f.Name}, Body: body},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err",
+					jcall("from_json_at", &ast.StringLit{Value: f.Name}, &ast.Ident{Name: errBind})))},
 			},
 		}
-		body = &ast.Block{Stmts: []ast.Stmt{m}}
+		outer := &ast.Match{
+			Tag: jcall(getter, &ast.Ident{Name: "v"}, &ast.StringLit{Value: f.Name}),
+			Arms: []*ast.MatchArm{
+				{VariantName: "Ok", Bindings: []string{value}, Body: &ast.Block{Stmts: []ast.Stmt{inner}}},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err", &ast.Ident{Name: errBind}))},
+			},
+		}
+		body = &ast.Block{Stmts: []ast.Stmt{outer}}
 	}
-	// Outermost: parse the string, then run the field chain.
-	parseFail := &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: variant("Err",
-		&ast.StringLit{Value: "invalid JSON"})}}}
-	outer := &ast.Match{
-		Tag: jcall("json_parse", &ast.Ident{Name: "s"}),
-		Arms: []*ast.MatchArm{
-			{VariantName: "Some", Bindings: []string{"__fj_jv"}, Body: body},
-			{VariantName: "None", Body: parseFail},
-		},
+	return &ast.FuncDecl{
+		Name:       "from_json_value",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       body,
 	}
-	resultType := ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}}
+}
+
+// fromJsonTypeName spells the type a derived decoder calls
+// `from_json_value` on: a nominal or primitive by its method-receiver
+// name, a type parameter by its own.
+func fromJsonTypeName(t ast.Type) string {
+	if tn, ok := ast.ReceiverTypeName(t); ok {
+		return tn
+	}
+	if pt, ok := t.(ast.ParamType); ok {
+		return pt.Name
+	}
+	return fmt.Sprint(t)
+}
+
+// synthFromJsonText builds the derived `from_json(s: string): Result[Self,
+// string]`, `json.decode[Self](s)` under the type's own name.
+func synthFromJsonText(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	call := &ast.Call{Callee: &ast.Ident{Name: "json__decode"}, Args: []ast.Expr{&ast.Ident{Name: "s"}},
+		TypeArgs: []ast.Type{recv}, TypeArgsWritten: true}
 	return &ast.FuncDecl{
 		Name:       "from_json",
 		AssocType:  recv.Name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
-		ReturnType: resultType,
-		Body:       &ast.Block{Stmts: []ast.Stmt{outer}},
-	}, true
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
+	}
 }
 
 // tagged convention: a unit variant renders as the JSON string of its
@@ -7846,6 +7913,24 @@ type captureEntry struct {
 // bare identifiers — so we disambiguate here against the enum's
 // declared TypeParams set.
 func (c *checker) resolveTypeNames(prog *ast.Program) {
+	// A trait method's signature is read raw by the bounded-dispatch paths
+	// (`T.f(x)` on a type parameter), so an enum named there has to be an
+	// EnumType like the argument it is compared with.
+	for _, td := range prog.Traits {
+		var params map[string]bool
+		if len(td.TypeParams) > 0 {
+			params = make(map[string]bool, len(td.TypeParams))
+			for _, n := range td.TypeParams {
+				params[n] = true
+			}
+		}
+		for i := range td.Methods {
+			for j := range td.Methods[i].Params {
+				c.resolveType(&td.Methods[i].Params[j].Type, params, td.Methods[i].P)
+			}
+			c.resolveType(&td.Methods[i].Result, params, td.Methods[i].P)
+		}
+	}
 	for _, fn := range prog.Funcs {
 		// Collect the function's type parameters so occurrences
 		// of those names in the signature / body resolve to

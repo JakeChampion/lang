@@ -595,6 +595,11 @@ pub struct FnSigs {
     // is in here resolves to that user function and must NOT be intercepted as
     // a same-named builtin (`len` / `exit` / `chr` / …).
     fn_names: SigReg,
+    // assoc_fns: every associated function (a receiver type, no receiver
+    // name) under its "<Type>.<f>" call name, so `i32.from_json_value(v)` —
+    // a primitive's impl — is recognised as an associated call; a struct's is
+    // known by its declaration and an enum's by its registered return type.
+    assoc_fns: SigReg,
     // fresh_struct_ret_fns: functions returning a fresh struct box. Looser than
     // return_fresh_struct_ret_fns — inner element buffers may alias live locals.
     fresh_struct_ret_fns: string[],
@@ -6008,18 +6013,6 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
     return true;
 }
 
-// is_prim_type_name reports whether `t` is a PRIMITIVE type spelling — one that
-// can never name a struct or an enum. The same set checker.e060_is_primitive_name
-// gates `as?` on, plus `str` (the borrowed-string view: the parser erases a BARE
-// `str` to "string", but the spelling survives verbatim inside a generic
-// argument) and `void`. asmcore.is_enum_recv asks the same question of the Ty
-// decoding (is_int_tag); this is the spelling-level form irlower works in.
-function is_prim_type_name(t: string): boolean {
-    return t == "i32" || t == "i64" || t == "u8" || t == "u32" || t == "u64" || t == "usize"
-        || t == "f32" || t == "f64" || t == "float"
-        || t == "boolean" || t == "bool"
-        || t == "string" || t == "str" || t == "char" || t == "void";
-}
 
 // is_enum_like_name reports whether type name `t` denotes a (nominal) enum:
 // not a primitive, struct, array, or bracketed/tuple generic. Mirrors the AST
@@ -6036,7 +6029,7 @@ function is_prim_type_name(t: string): boolean {
 // care exclude it themselves (enum_ret_recordable).
 pub function is_enum_like_name(t: string, structs: StructTab): boolean {
     if (t.len() == 0) { return false; }
-    if (is_prim_type_name(t)) { return false; }
+    if (typeinfo.is_primitive_type_name(t)) { return false; }
     // "clo" is the compiler's closure-BOX tag spelling (a boxed fn-valued
     // tuple element / Option payload) — never a user enum name. Without this
     // exclusion an Option[clo] payload's match bind was claimed by the enum
@@ -15918,8 +15911,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // Lower the args with NO receiver and dispatch to the
     // "<Type>.<f>" label (the associated FuncDecl is keyed there by
     // module_has_func). The target is recognised as a STRUCT name
-    // (decl_is_struct) or, for an enum / type-returning associated
-    // fn, by a registered "<Type>.<f>" return type — never via
+    // (decl_is_struct), for an enum / type-returning associated
+    // fn by a registered "<Type>.<f>" return type, or for a
+    // primitive's impl by the assoc_fns registry — never via
     // is_enum_like_name, which also matches MODULE names
     // (util/parser) and would hijack every `mod.func()` call. A
     // UNIT VARIANT is excluded (variant_enum_owner != "") — `Nil.m()`
@@ -15928,7 +15922,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // enum-method dispatch below.
     match (fa.obj) {
         ast.ExprIdent(tid) => {
-            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.frame.structs, tid.name) == "" && (decl_is_struct(s.frame.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "")) {
+            if (s.slot_of(tid.name) < 0 && variant_enum_owner(s.frame.structs, tid.name) == "" && (decl_is_struct(s.frame.structs, tid.name) || s.struct_ret_type(tid.name + "." + fa.field) != "" || s.prim_assoc_call(tid.name, fa.field))) {
                 var asf: LowerState = s;
                 var afi: i32 = 0;
                 while (afi < c.args.len()) {
@@ -68677,6 +68671,25 @@ pub function fn_names_of(funcs: parser.FuncDecl[]): string[] {
     return out;
 }
 
+// assoc_fn_names_of records every associated function under the
+// "<Type>.<f>" name a call_direct op spells it with.
+pub function assoc_fn_names_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.receiver_type.len() > 0 && fn.receiver_name.len() == 0) {
+            out = out.append(util.base_type_name(fn.receiver_type) + "." + fn.name);
+        }
+    }
+    return out;
+}
+
+// prim_assoc_call reports whether `Type.f` names an associated function of a
+// primitive type's impl (`i32.from_json_value`, `string.zero`), which no
+// declaration or return-type registry would otherwise recognise as a type.
+pub function (s: LowerState) prim_assoc_call(tname: string, field: string): boolean {
+    return typeinfo.is_primitive_type_name(tname) && sig_reg_has_exact(s.frame.sigs.assoc_fns, tname + "." + field);
+}
+
 // fn_sig_index records every declared function's parameter count under the
 // name a `call_direct` op spells it with — `<BaseType>.<method>` for a
 // receiver method, the bare name otherwise, the same key lower_module stores an
@@ -71245,7 +71258,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { enum_regions: [], arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
+    return FnSigs { enum_regions: [], arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r, assoc_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
@@ -71721,6 +71734,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         borrowable_params: breg,
         borrow_bare: bbare,
         fn_names: sig_reg_of(fn_names_of(funcs)),
+        assoc_fns: sig_reg_of(assoc_fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
         return_fresh_struct_ret_fns: rf,
