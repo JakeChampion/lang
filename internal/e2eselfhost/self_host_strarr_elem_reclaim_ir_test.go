@@ -85,9 +85,6 @@ func TestSelfHostStrArrElemReclaimIRX86_64(t *testing.T) {
 		}
 		if wantCall == "forwarded" {
 			const call = "call __fn___fern_str_arr_free"
-			if strings.Contains(asmFuncBody(t, string(asm), "__fn_fwd"), call) {
-				t.Fatal("forwarder must transfer its result without freeing the elements")
-			}
 			if !strings.Contains(asmFuncBody(t, string(asm), "__fn_churn"), call) {
 				t.Fatal("consumer must release the counted elements received through the forwarder")
 			}
@@ -248,9 +245,10 @@ function main(): i32 {
 		"strarr-local-callee-holder-escapes", 8, "yes")
 
 	// Forwarding transfers the claim: fwd must not free its returned array,
-	// while churn must deep-free that result. A whole-module "no free" assertion
-	// previously hid the consumer leak. Pin both functions and flat high-water
-	// over two identical churns, as well as the returned value and underflows.
+	// while churn must deep-free that result. fwd's `return xs` moves the array
+	// out, so a free there would reach churn's release as an underflow (99).
+	// Pin churn's release and flat high-water over two identical churns, as
+	// well as the returned value and underflows.
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function fwd(pre: string): string[] { var xs: string[] = mk(pre); return xs; }
