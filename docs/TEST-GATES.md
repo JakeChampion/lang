@@ -289,7 +289,13 @@ a request in flight is answered with close, the readiness path answers
 process exits 0; a request that never completes is cut off at the drain
 deadline and the process exits 1; the supervisor forwards the signal to
 two workers and exits 0 once they drained, logging no death; and a
-listener handed in through `LISTEN_FDS` is served.
+listener handed in through `LISTEN_FDS` is served. The scenarios are
+`internal/e2eharness/serve_shutdown.go`'s, and their self-host twins
+(`TestSelfHostServeShutdownDrainsAndExitsClean`,
+`TestSelfHostServeShutdownAbortsAtDrainDeadline`,
+`TestSelfHostSupervisedServeForwardsShutdown`,
+`TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
+the self-host compiler.
 `TestSupervisedServeWorkersServeSideBySide` pins two workers over one
 listener answering side by side and surviving one worker's death.
 

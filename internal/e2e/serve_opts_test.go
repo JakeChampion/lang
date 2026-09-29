@@ -5,6 +5,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // tcp_serve_opts (#9853): the accept loop's listener takes the backlog and
@@ -30,7 +32,7 @@ func TestServeOptionsX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(serveOptsSrc, port))
 	_, _ = startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	if err != nil {

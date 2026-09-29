@@ -23,6 +23,8 @@ import (
 	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 const serveDeadlineSrc = `
@@ -41,7 +43,7 @@ func TestServeRecvDeadlineX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(serveDeadlineSrc, port))
 	_, _ = startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	// Slow-loris: send a partial header, never finish. The server must
 	// close the connection at the ~400ms deadline (no response bytes),

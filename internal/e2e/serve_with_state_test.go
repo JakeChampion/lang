@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 const serveWithStateSrc = `
@@ -42,7 +44,7 @@ func TestServeWithThreadedStateX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(serveWithStateSrc, port))
 	_, _ = startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	// Same path three times: the counter must climb, which it can only
 	// do if the Map returned by one request reached the next one.
@@ -108,7 +110,7 @@ func TestServeInitProvidedStateX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, serveInitStateSrc)
 	_, _ = startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	for want := 1; want <= 3; want++ {
 		resp := httpRoundTrip(t, addr, "/a", 5*time.Second)

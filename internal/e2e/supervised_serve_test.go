@@ -29,13 +29,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
 )
@@ -118,62 +118,18 @@ func freeLoopbackPort(t *testing.T) int {
 	return port
 }
 
-// startSupervisedServer launches bin (via runner) in its own
-// process group — the supervisor forks worker children, and
-// killing only the parent would orphan a worker still holding
-// the listener — with stderr teed to a file the caller can poll.
-// Cleanup kills the whole group.
-// extraEnv entries are `KEY=VALUE` additions to the child's environment —
-// what a server whose port comes from `PORT` needs, rather than from a
-// literal baked into its source.
+// startSupervisedServer launches bin (via runner) through
+// e2eharness.StartServerProcess, in its own process group with stderr
+// in a file the caller can poll. extraEnv entries are `KEY=VALUE`
+// additions to the child's environment, for a server whose port comes
+// from `PORT` rather than from a literal baked into its source.
 func startSupervisedServer(t *testing.T, bin string, runner []string, extraEnv ...string) (cmd *exec.Cmd, stderrPath string) {
 	t.Helper()
-	var c *exec.Cmd
-	if len(runner) == 0 {
-		c = exec.Command(bin)
-	} else {
-		c = exec.Command(runner[0], append(runner[1:], bin)...)
-	}
+	cmd = e2eharness.RunX86_64Bin(runner, bin)
 	if len(extraEnv) > 0 {
-		c.Env = append(os.Environ(), extraEnv...)
+		cmd.Env = append(os.Environ(), extraEnv...)
 	}
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stderrPath = filepath.Join(t.TempDir(), "stderr.log")
-	errFile, err := os.Create(stderrPath)
-	if err != nil {
-		t.Fatalf("create stderr file: %v", err)
-	}
-	c.Stderr = errFile
-	if err := c.Start(); err != nil {
-		errFile.Close()
-		t.Fatalf("start server: %v", err)
-	}
-	t.Cleanup(func() {
-		// Negative pid = the whole process group (parent + any
-		// live worker). The parent may already be gone (giveup
-		// path); ignore errors.
-		_ = syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
-		_, _ = c.Process.Wait()
-		errFile.Close()
-	})
-	return c, stderrPath
-}
-
-// waitServerReady dials until the listener accepts (the probe
-// connection closes without sending a request — the accept loop
-// treats first-read EOF as a malformed request and moves on).
-func waitServerReady(t *testing.T, addr string, deadline time.Duration) {
-	t.Helper()
-	limit := time.Now().Add(deadline)
-	for time.Now().Before(limit) {
-		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			c.Close()
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("server never bound on %s within %v", addr, deadline)
+	return cmd, e2eharness.StartServerProcess(t, cmd)
 }
 
 // httpRoundTrip sends one GET on a fresh connection and returns
@@ -263,7 +219,7 @@ func TestSupervisedServeWorkersServeSideBySide(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(workersServeSrc, port))
 	_, stderrPath := startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	if resp := httpRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
@@ -310,7 +266,7 @@ func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(supervisedServeSrc, port))
 	_, stderrPath := startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	if resp := httpRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
@@ -351,7 +307,7 @@ func TestSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(supervisedServeSrc, port))
 	cmd, stderrPath := startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -431,7 +387,7 @@ func TestSupervisedServeInterpFallback(t *testing.T) {
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 30*time.Second) // interp startup is slower than a native binary
+	e2eharness.WaitServerReady(t, addr, 30*time.Second) // interp startup is slower than a native binary
 
 	if resp := httpRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("interp fallback /ok: want 200, got\n%s", resp)

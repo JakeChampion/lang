@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
 // A response larger than a socket's send buffer on a non-blocking
@@ -69,7 +71,7 @@ func TestServeLargeResponseX86_64(t *testing.T) {
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(serveLargeResponseSrc, port))
 	_, _ = startSupervisedServer(t, bin, runner)
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 10*time.Second)
+	e2eharness.WaitServerReady(t, addr, 10*time.Second)
 	checkLargeResponse(t, addr)
 }
 
@@ -90,6 +92,6 @@ func TestServeLargeResponseInterp(t *testing.T) {
 		_, _ = cmd.Process.Wait()
 	})
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	waitServerReady(t, addr, 30*time.Second)
+	e2eharness.WaitServerReady(t, addr, 30*time.Second)
 	checkLargeResponse(t, addr)
 }
