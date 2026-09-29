@@ -497,6 +497,19 @@ function pick(n: i32): i32 {
 }
 function main(): i32 { return pick(5) * 10 + pick(2); }
 `},
+	// An array literal takes its element type from its most settled element:
+	// `None` after `Some(1)` keeps `Option[i32]`, as native types it, rather
+	// than leaving the binding with a bare `Option`.
+	{name: "an-option-array-literal-settles-from-any-element", atLeast: 2, src: `
+function total(c: i32): i32 {
+    var a = [Some(1), Some(2), None];
+    var n: i32 = 0;
+    for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } }
+    var b = if (c > 3) { [Some(7), None] } else { [Some(1)] };
+    return match (b[0]) { Some(v) => n + v, None => n };
+}
+function main(): i32 { return total(5) * 10 + total(1); }
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }

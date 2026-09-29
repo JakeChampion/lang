@@ -5131,6 +5131,20 @@ function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
   return t_unknown("unknown unary op:" + u.op);
 }
 
+// Whether `a` settles less than `b`: it holds an unknown where `b` does not,
+// or it is `b`'s union with its type arguments still open, as `None` and
+// `Err(e)` type on their own.
+function vaguer_than(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  if (type_contains_unknown(a) && !type_contains_unknown(b)) { return true; }
+  if let typeinfo.TypeUnion(ua) = a {
+    if let typeinfo.TypeUnion(ub) = b { return ua.name == ub.name && ua.args.len() == 0 && ub.args.len() > 0; }
+  }
+  if let typeinfo.TypeArray(xa) = a {
+    if let typeinfo.TypeArray(xb) = b { return vaguer_than(xa.elem, xb.elem); }
+  }
+  return false;
+}
+
 function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   if (a.elements.len() == 0) {
     // Parser settlement (the destination's element type) and embed
@@ -5147,8 +5161,9 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     var et: typeinfo.Type = check_expr(a.elements[i], s);
     var lit: i32 = numeric_literal_kind(a.elements[i]);
     // A mismatch is call_diags_array's E034; the literal keeps its
-    // first element's type, as native types it.
-    if (!literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
+    // first element's type, as native types it. A sibling only ever makes
+    // it more concrete: `None` after `Some(1)` keeps `Option[i32]`.
+    if (!vaguer_than(et, first) && !literal_gives_way(lit, first) && (same_element_type(et, first) || literal_gives_way(first_lit, et))) {
       first = et;
       first_lit = lit;
     }
