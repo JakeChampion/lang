@@ -567,10 +567,11 @@ completes. `asm_load_run.fern` is no longer needed as a stand-in for
 The darwin stage 2 is a fixpoint at the emit level: `fern-s2` and `fern-s1`
 produce byte-identical `-target arm64-darwin -emit asm` listings for all 471
 runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
-inside the compiler's own string literals). What does not yet hold is stage 3:
-`fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
-3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
-1.4-1.7 GB (#8479). The same chain for `-target arm64-linux` in the linux/arm64
+inside the compiler's own string literals). Stage 3 did not hold on
+2026-09-05: `fern-s2` building `fern.fern` exited 125 (arena exhausted) after
+20 s at 3.9-5.1 GB RSS (two runs), where `fern-s1` finished the same build in
+36 s at 1.4-1.7 GB (#8479); it holds since 2026-09-29, below. The same chain
+for `-target arm64-linux` in the linux/arm64
 container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
 byte-identical asm to stage 1, and compiles and runs a strbuf program
 correctly.

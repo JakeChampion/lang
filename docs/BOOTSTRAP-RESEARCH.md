@@ -758,7 +758,7 @@ fern-impl is a `-self-host` opt-in for testers.
 
 **`make bootstrap` runs on PRs** touching the compiler
 source, the stdlib or the bootstrap itself
-(`.github/workflows/bootstrap.yml`, both Linux hosts,
+(`.github/workflows/bootstrap.yml`, all three hosts,
 no Go installed), and `make distcheck` runs in the same
 job — `docs/BOOTSTRAP.md`.
 
