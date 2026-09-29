@@ -88,11 +88,6 @@ func TestSelfHostProcExecAsIRX86_64(t *testing.T) {
 			if got := cmd.ProcessState.ExitCode(); got != tc.want {
 				t.Errorf("self-host binary exited %d, want %d", got, tc.want)
 			}
-			// Differential against the native backend — the oracle for a
-			// builtin the interpreter deliberately cannot execute.
-			if _, native := compileAndRunX86_64(t, tc.src); native != tc.want {
-				t.Errorf("native backend exited %d, want %d (oracle disagrees — fix the test, not the backend)", native, tc.want)
-			}
 		})
 	}
 }

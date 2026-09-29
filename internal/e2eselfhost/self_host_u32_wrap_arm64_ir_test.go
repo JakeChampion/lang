@@ -62,9 +62,9 @@ function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c:
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, want := compileAndRunArm64(t, tc.src) // native arm64 = correct oracle
+			want := runInterpExit(t, tc.src) // the interpreter is the oracle
 			if got := emitAndRunIR(t, tc.src); got != want {
-				t.Errorf("self-host arm64 IR %q: exit = %d, want %d (native)", tc.name, got, want)
+				t.Errorf("self-host arm64 IR %q: exit = %d, want %d (interpreter)", tc.name, got, want)
 			}
 		})
 	}

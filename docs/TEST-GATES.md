@@ -626,12 +626,12 @@ fixture, differential and `cli` lanes run. The pin also builds a driver for
 `-target arm64-linux` (`BuildSelfHostBinFor`), which is how the module
 self-tests (`TestSelfHostParserArm64` and its siblings) and the cross-host
 mmc gate run the self-host sources as aarch64 programs under qemu, and it
-emits the arm64-darwin assembly the Mach-O gate assembles. The suite builds
-nothing it runs with a Go emitter; where it still calls one is as the oracle
-a self-host result is compared against (`compileAndRunX86_64` and its arm64
-and wasm siblings, 31 sites), which is the comparison
-`docs/NATIVE-CONVERGENCE.md` §3a item 3 says goes with the backends or moves
-to the interpreter.
+emits the arm64-darwin assembly the Mach-O gate assembles. The suite calls no
+Go emitter: what used to be compared against a native build is compared
+against the interpreter (`e2eharness.RunInterp`, the oracle
+`docs/NATIVE-CONVERGENCE.md` §3 names), and a row the interpreter cannot
+model (the bump allocator, the rc==1 cliff counter, process exec) carries its
+expected value in the test.
 
 ### An answer is not proof the IR path produced it
 
@@ -985,17 +985,21 @@ Worth knowing so you do not assume coverage you do not have:
   7 bytes or fewer inline in the value word and the self-host has no inline form
   — so the file reads as the volume-divergence list.
 
-- **Allocation volume between the two compilers — gated by
-  `TestSelfHostAllocDifferentialX86_64`.** Nothing used to compare how much the
-  two compilers allocate, which is how they developed *opposite* cliffs
-  undetected: this entry recorded `.with` through a borrowed param at 4688 MB
-  native / 0 MB self-host and `.append` through a call at 4 MB native / 7006 MB
-  self-host. Re-measured 2026-08-04 by the gate itself: `.with` is 31 KB native
-  / 1 KB self-host at n=80 (31x, direction unchanged), and `.append` through a
-  call is 3 KB native / 0 KB self-host at n=400 — the **opposite** of the figure
-  above, i.e. the self-host side of that one was fixed at some point and nobody
-  noticed, which is the argument for the gate rather than against it. Treat
-  unmeasured allocation figures in these docs as expired.
+- **Allocation volume — gated by `TestSelfHostAllocDifferentialX86_64`.**
+  Nothing used to measure how much a compiler allocates, which is how the two
+  compilers developed *opposite* cliffs undetected: this entry recorded
+  `.with` through a borrowed param at 4688 MB native / 0 MB self-host and
+  `.append` through a call at 4 MB native / 7006 MB self-host. Re-measured
+  2026-08-04 by the gate itself: `.with` was 31 KB native / 1 KB self-host at
+  n=80, and `.append` through a call 3 KB native / 0 KB self-host at n=400 —
+  the **opposite** of the figure above, i.e. the self-host side of that one
+  was fixed at some point and nobody noticed, which is the argument for the
+  gate rather than against it. Since 2026-09-29 the gate has one compiler to
+  measure and holds it to its own recorded figures (each case carries the
+  per-churn KB and whether the shape crosses the cliff, measured by the gate
+  when the row was written); a row that leaks records the leak, and stops
+  leaking by failing. Treat unmeasured allocation figures in these docs as
+  expired.
 
   Quote figures the gate produced, not ones from a hand-run `fern` CLI — but
   not for the reason this note used to give. It claimed the two "compile
@@ -1011,13 +1015,12 @@ Worth knowing so you do not assume coverage you do not have:
   startup and everything the first churn allocated fresh. Comparing the two is
   a units error, not evidence of a pipeline difference.
 
-  The gate compares the two probes both compilers now support and asserts what
-  survives a layout difference: `__arr_push_shared_count()` agreeing on ZERO vs
-  NON-ZERO (it counts events, not bytes — but not exact equality, since the two
-  runtimes grow capacity on different schedules), and per-churn
-  `__heap_bump_bytes()` growth within a ratio. Divergences are listed in
-  `internal/e2eselfhost/testdata/alloc-differential-known-divergences.txt`, and
-  a listed shape that comes back within bound fails too.
+  The gate reads two probes and asserts what survives a layout change:
+  `__arr_push_shared_count()` staying ZERO or NON-ZERO as recorded (it counts
+  events, not bytes), and per-churn `__heap_bump_bytes()` growth within a
+  ratio of the recorded figure — in both directions, so a recorded leak that
+  is fixed fails the row until its figure is re-recorded, the way the old
+  divergence allowlist failed when an entry came back within bound.
 
   Use `__heap_bump_bytes()` and never peak RSS, which varies 12x with
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same

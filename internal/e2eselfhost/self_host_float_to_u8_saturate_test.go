@@ -98,7 +98,7 @@ func floatToU8Explain(t *testing.T, leg, got string) {
 	t.Fatalf("%s answered %q — row %d failed: %s", leg, got, row, why)
 }
 
-func TestSelfHostFloatToU8SaturatesLikeNative(t *testing.T) {
+func TestSelfHostFloatToU8Saturates(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("the CLI driver takes host filesystem paths as argv")
@@ -108,24 +108,11 @@ func TestSelfHostFloatToU8SaturatesLikeNative(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Native first: these are its rows, and it is the oracle the self-host is
-	// being held to.
-	t.Run("native", func(t *testing.T) {
-		t.Run("x86-64-linux", func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, floatToU8SaturateSrc); code != 0 {
-				t.Fatalf("native x86-64 answered %d — row %d failed: %s", code, code, floatToU8Rows[code])
-			}
-		})
-		t.Run("arm64-linux", func(t *testing.T) {
-			if _, code := compileAndRunArm64(t, floatToU8SaturateSrc); code != 0 {
-				t.Fatalf("native arm64 answered %d — row %d failed: %s", code, code, floatToU8Rows[code])
-			}
-		})
-		t.Run("wasm32-wasi", func(t *testing.T) {
-			if code := compileAndRunWasmbinMain(t, floatToU8SaturateSrc); code != 0 {
-				t.Fatalf("native wasm answered %d — row %d failed: %s", code, code, floatToU8Rows[code])
-			}
-		})
+	// The interpreter first: it is the oracle the self-host is held to.
+	t.Run("interp", func(t *testing.T) {
+		if code := runInterpExit(t, floatToU8SaturateSrc); code != 0 {
+			t.Fatalf("interpreter answered %d — row %d failed: %s", code, code, floatToU8Rows[code])
+		}
 	})
 
 	dir := writeSelfHostAsmProject(t)

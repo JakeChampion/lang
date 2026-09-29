@@ -6,17 +6,17 @@ Status: policy doc, normative where marked. Indexed by
 Allocation is not ungated: `docs/TEST-GATES.md` records
 `TestX86_64AllocScaling`, which bounds the RATIO of
 `__heap_bump_bytes()` between `n` and `2n` so an asymptotic regression
-fails, and `TestSelfHostAllocDifferentialX86_64`, which compares the two
-compilers' volume against each other. Both are good gates and neither is
-what this document is for.
+fails, and `TestSelfHostAllocDifferentialX86_64`, which holds the
+self-host compiler's volume per shape to the figures the gate recorded.
+Both are good gates and neither is what this document is for.
 
-Two things they are not. They are **Go tests**, so they measure
-`internal/` — and `docs/NATIVE-CONVERGENCE.md` makes the self-host
-compiler the definition once the freeze preconditions (#4451) go green,
-at which point a Go test measures the wrong implementation. And they run
-on **x86-64 only**, so a backend that allocates differently from the
-others is invisible to them; the first thing this document's conformance
-cases did was find exactly that (below).
+Two things they are not. `TestX86_64AllocScaling` is a **Go test**, so it
+measures `internal/` — and `docs/NATIVE-CONVERGENCE.md` makes the
+self-host compiler the definition once the freeze preconditions (#4451) go
+green, at which point a Go test measures the wrong implementation. And
+both run on **x86-64 only**, so a backend that allocates differently from
+the others is invisible to them; the first thing this document's
+conformance cases did was find exactly that (below).
 
 What was missing is a *contract*: a statement of what the number means,
 what is portable about it, and what a conforming implementation

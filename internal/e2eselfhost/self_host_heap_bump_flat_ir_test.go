@@ -261,16 +261,6 @@ func TestSelfHostHeapBumpFlatIRX86_64(t *testing.T) {
 					"iteration count, so the shape strands one allocation per round",
 					tc.name, heapBumpFlatSmallN, small, heapBumpFlatLargeN, large)
 			}
-			// Native is the oracle that the shape is reclaimable at all: if it
-			// stops being flat there, this row is pinning a whole-project leak
-			// rather than a self-host one, and the row (not the compiler) is
-			// what needs revisiting.
-			_, nsmall := compileAndRunX86_64(t, tc.src(heapBumpFlatSmallN)+"\n")
-			_, nlarge := compileAndRunX86_64(t, tc.src(heapBumpFlatLargeN)+"\n")
-			if nsmall != nlarge {
-				t.Errorf("%s is not flat on NATIVE either (%d vs %d) — the row is gating a leak both "+
-					"compilers have, not a self-host divergence", tc.name, nsmall, nlarge)
-			}
 		})
 	}
 }

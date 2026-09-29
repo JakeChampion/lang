@@ -1,7 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"testing"
 )
 
@@ -22,33 +22,36 @@ import (
 // internal/literate/tanglefiles_test.go). Exit code 0 means every
 // assertion passed; a non-zero code identifies which one failed.
 func TestSelfHostLiterateX86_64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/literate.fern")
-	if err != nil {
-		t.Fatalf("read literate.fern: %v", err)
-	}
-	_, code := compileAndRunX86_64(t, string(src))
-	if code != 0 {
+	runner := x86_64Runner(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "literate.fern")
+	binPath := buildSelfHostBinFor(t, dir, "literate.fern", "prog", e2eharness.TargetX86_64Linux)
+	cmd := runX86_64Bin(runner, binPath)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port literate assertion %d failed", code)
 	}
 }
 
 func TestSelfHostLiterateArm64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/literate.fern")
-	if err != nil {
-		t.Fatalf("read literate.fern: %v", err)
-	}
-	_, code := compileAndRunArm64(t, string(src))
-	if code != 0 {
+	qemu := arm64Runner(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "literate.fern")
+	binPath := buildSelfHostBinFor(t, dir, "literate.fern", "prog", e2eharness.TargetArm64Linux)
+	cmd := runArm64Bin(qemu, binPath)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port literate assertion %d failed", code)
 	}
 }
 
 func TestSelfHostLiterateWASM(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/literate.fern")
-	if err != nil {
-		t.Fatalf("read literate.fern: %v", err)
-	}
-	if code := compileAndRunWasmbinMain(t, string(src)); code != 0 {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "literate.fern")
+	core := buildSelfHostBinFor(t, dir, "literate.fern", "prog.wasm", e2eharness.TargetWasm32Wasi)
+	cmd := e2eharness.RunWasmCore(t, core)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port literate assertion %d failed", code)
 	}
 }
