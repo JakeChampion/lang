@@ -4459,6 +4459,57 @@ function main(): i32 {
     return p.a.len() + n + xs[0].len() + xs.len() + w.len() + p.n;
 }
 `},
+	// A copy of a shared array of views owns a fresh box for each view it
+	// shares: a view box's rc is immortal, so the two arrays cannot count one
+	// box between them, and each frees its own (#10726). Here the copy is the
+	// append in `grow` on a lent array; before, `xs`'s release freed the box
+	// `ys[0]` still held, and `junk` reused it, so `ys[0]` printed "zz".
+	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, noLeak: true, want: "3|ab\ncd\n", astAnswers: "3|ab\ncd\n", src: `
+function mk(s: string): str[] {
+    var xs: str[] = [];
+    xs = xs.append(slice_unchecked(s, 0, 2));
+    return xs;
+}
+function grow(xs: str[], s: string): str[] { return xs.append(slice_unchecked(s, 2, 4)); }
+function step(s: string): str[] { var xs: str[] = mk(s); return grow(xs, s); }
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var ys: str[] = step(s);
+    var junk: str[] = mk("zzzzzzzz");
+    print(ys[0]);
+    print(ys[1]);
+    return ys.len() + junk.len();
+}
+`},
+	// The same for every copy of a shared array of views: an append, a with, a
+	// window and an append onto a shared record's field, each with the
+	// original still live.
+	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, noLeak: true, want: "13|abcd\nabcdef\nabgh\nab\nababbc\n", astAnswers: "13|abcd\nabcdef\nabgh\nab\nababbc\n", src: `
+struct H { names: str[], n: i32 }
+function mk(s: string): str[] {
+    var xs: str[] = [];
+    xs = xs.append(slice_unchecked(s, 0, 2));
+    xs = xs.append(slice_unchecked(s, 2, 4));
+    return xs;
+}
+function main(): i32 {
+    var s: string = "abcdefgh";
+    var xs: str[] = mk(s);
+    var ys: str[] = xs.append(slice_unchecked(s, 4, 6));
+    var ws: str[] = xs.with(1, slice_unchecked(s, 6, 8));
+    var zs: [str] = xs[0:1];
+    var h: H = H { names: xs, n: 1 };
+    var g: H = h;
+    g = H { ...g, names: g.names.append(slice_unchecked(s, 1, 3)) };
+    var junk: str[] = mk("zzzzzzzz");
+    print(xs[0] + xs[1]);
+    print(ys[0] + ys[1] + ys[2]);
+    print(ws[0] + ws[1]);
+    print(zs[0]);
+    print(h.names[0] + g.names[0] + g.names[2]);
+    return xs.len() + ys.len() + ws.len() + zs.len() + g.names.len() + junk.len();
+}
+`},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).

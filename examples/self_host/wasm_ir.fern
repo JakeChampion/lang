@@ -10180,6 +10180,13 @@ pub function rc_runtime_helpers(heap_base: i32): string {
     o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $aie_lp)))\n";
     o = o + "    (local.get $a))\n";
+    // __fern_arr_own_elems(d, s) -> d: d takes its own unit on each element it
+    // shares with s. A wasm slice copies its bytes, so a string view is an
+    // ordinary counted block and the register backends' fresh-box case does
+    // not arise: this is the element retain over s.
+    o = o + "  (func $__fern_arr_own_elems (param $d i32) (param $s i32) (result i32)\n";
+    o = o + "    (drop (call $__fern_arr_inc_elems (local.get $s)))\n";
+    o = o + "    (local.get $d))\n";
     // __fern_rc_underflow_count() -> i32: the over-release detector.
     o = o + "  (func $__fern_rc_underflow_count (result i32)\n";
     o = o + "    (global.get $__fern_rc_underflow))\n";

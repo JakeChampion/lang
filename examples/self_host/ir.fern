@@ -4983,7 +4983,7 @@ pub function call_needs_heap(name: string): boolean {
     // the alias. `arr_inc_elems` declares a runtime need of its own and its
     // body calls __fn___fern_rc_inc, so it claims this block too.
     if (name == "__fern_arr_share_inc" || name == "__fern_arr_share_dec") { return true; }
-    if (name == "__fern_arr_inc_elems") { return true; }
+    if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems") { return true; }
     if (name == "__fern_rc_underflow_count" || name == "__fern_rc_underflow_get") { return true; }
     if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy") { return true; }
     if (name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free") { return true; }

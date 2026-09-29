@@ -1856,6 +1856,9 @@ exactly the boxes the fresh one aliases, since the receiver is untouched by the
 push and the element just pushed is not among them. O(n) per grow, amortised
 O(1) against the doubling, and the same shape `sole_owned_base` already uses on
 its copy arm.
+An array of views is the exception: a view box's count is immortal, so the arm
+gives the fresh buffer its own boxes with `__fern_arr_own_elems` instead
+(`docs/rc-log/2026-09-29-c-a-copy-of-a-shared-array-of-views-owns-fresh-boxes.md`).
 
 Reproducer: 2 ms with allocs and frees balanced.
 
