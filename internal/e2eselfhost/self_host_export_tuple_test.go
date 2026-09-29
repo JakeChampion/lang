@@ -26,7 +26,7 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -36,13 +36,13 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/pairs@0.1.0", "make-pair")
 function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/pairs@0.1.0#make-pair")) {
 		t.Fatalf("self-host core missing the surfaced tuple @export:\n%s", watBytes)
 	}
