@@ -5743,10 +5743,13 @@ func splitDirectives(win []string) (lines []string, dirs [][]string) {
 	return lines, dirs
 }
 
-// isAsmDirective reports whether a window line is an indented assembler
-// directive — `.loc`, `.cfi_*` — rather than an instruction or a label.
+// isAsmDirective reports whether a window line is a directive that emits no
+// bytes — `.loc`, `.cfi_*` — rather than an instruction or a label. A data
+// directive (`.quad`, `.asciz`, …) is not one: it takes a place in the window
+// like an instruction, so no rule reaches across it and a data table cannot
+// grow the window without bound (#8921).
 func isAsmDirective(line string) bool {
-	return strings.HasPrefix(line, "\t.")
+	return strings.HasPrefix(line, "\t.loc") || strings.HasPrefix(line, "\t.cfi_")
 }
 
 // peepholeRules is peepholeTail's rule set, run over a window that holds
