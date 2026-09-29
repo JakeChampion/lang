@@ -1,0 +1,26 @@
+// The hello server scripts/net-bench measures: one static body, no
+// allocation of note per request, so the loop's own cost is what the
+// load generator sees. The caps are lifted for the generator, which is
+// one client holding thousands of connections.
+import "std/http";
+import "std/tcp";
+import "core/int";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("hello");
+}
+
+function port(): i32 {
+    match (env("PORT")) {
+        Some(p) => {
+            match (int.parse_int_radix(p, 10)) { Some(n) => { return n; }, None => { return 8080; } }
+        },
+        None => { return 8080; }
+    }
+    return 8080;
+}
+
+function main(): i32 {
+    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), max_connections: 16384, max_connections_per_ip: 0 };
+    return tcp.tcp_serve_supervised_opts(port(), opts, handle);
+}

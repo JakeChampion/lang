@@ -44,24 +44,31 @@ version = "1.27.1"
 backend = "core:go"
 
 [tools.go."platforms.linux-arm64"]
+checksum = "sha256:3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"
 url = "https://dl.google.com/go/go1.27.1.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-arm64-musl"]
+checksum = "sha256:3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec"
 url = "https://dl.google.com/go/go1.27.1.linux-arm64.tar.gz"
 
 [tools.go."platforms.linux-x64"]
+checksum = "sha256:63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
 url = "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz"
 
 [tools.go."platforms.linux-x64-musl"]
+checksum = "sha256:63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
 url = "https://dl.google.com/go/go1.27.1.linux-amd64.tar.gz"
 
 [tools.go."platforms.macos-arm64"]
+checksum = "sha256:ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12"
 url = "https://dl.google.com/go/go1.27.1.darwin-arm64.tar.gz"
 
 [tools.go."platforms.macos-x64"]
+checksum = "sha256:8f8f52c6649542cf027bbc9b9c68d1ec042f9f34808a40413f0b8b3f66f3caa4"
 url = "https://dl.google.com/go/go1.27.1.darwin-amd64.tar.gz"
 
 [tools.go."platforms.windows-x64"]
+checksum = "sha256:a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d"
 url = "https://dl.google.com/go/go1.27.1.windows-amd64.zip"
 
 [[tools.gotestsum]]
@@ -128,6 +135,45 @@ url = "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wa
 
 [tools."http:wasi-adapter"."platforms.windows-x64"]
 url = "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm"
+
+[[tools.oha]]
+version = "1.16.0"
+backend = "aqua:hatoo/oha"
+
+[tools.oha."platforms.linux-arm64"]
+checksum = "sha256:99a790eb8c3e0feaca974bd6b32f0f8d4426a0c5b289f39e833e5b2c7529cd39"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-arm64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038260"
+
+[tools.oha."platforms.linux-arm64-musl"]
+checksum = "sha256:99a790eb8c3e0feaca974bd6b32f0f8d4426a0c5b289f39e833e5b2c7529cd39"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-arm64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038260"
+
+[tools.oha."platforms.linux-x64"]
+checksum = "sha256:620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038303"
+
+[tools.oha."platforms.linux-x64-musl"]
+checksum = "sha256:620bb9e16fb53eabc9a3fc45f88bdb41fefa3fee5c05e75892011ce320391716"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-linux-amd64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038303"
+
+[tools.oha."platforms.macos-arm64"]
+checksum = "sha256:5ecbfc5233e3f1d30384e142a9a8dd7ebf9d3298ab22476fabac44a8f2117e08"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-macos-amd64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038582"
+
+[tools.oha."platforms.macos-x64"]
+checksum = "sha256:5ecbfc5233e3f1d30384e142a9a8dd7ebf9d3298ab22476fabac44a8f2117e08"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-macos-amd64"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038582"
+
+[tools.oha."platforms.windows-x64"]
+checksum = "sha256:d692d392e958e7e8e1b16810287e74a835a62255b079ba2766a4b3b04499f267"
+url = "https://github.com/hatoo/oha/releases/download/v1.16.0/oha-windows-amd64.exe"
+url_api = "https://api.github.com/repos/hatoo/oha/releases/assets/526038079"
 
 [[tools.wasm-tools]]
 version = "1.253.0"
