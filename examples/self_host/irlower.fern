@@ -9495,6 +9495,13 @@ pub function ascription_target(init: ast.Expr): string {
     }
 }
 
+// A 64-bit value cast to usize is a conversion on wasm, where the address is
+// 32 bits, so its binding keeps the cast rather than taking the rebind.
+function wraps_to_address(init: ast.Expr, s: LowerState): boolean {
+    if let ast.ExprUnary(u) = init { return u.op == "as_usize" && infer_expr_width(u.operand, s) == 64; }
+    return false;
+}
+
 // ascription_rebind rewrites `var x = E as T` to the equivalent annotated
 // binding `var x: T = E` (the `as` ascription is identity). Caller guards
 // with `ascription_target(v.init) != ""`, so v.init is always an ascription
@@ -23834,7 +23841,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // run off the real value — leaving the slot untyped dropped the
     // alias-inc and broke `__rc`. Kept out of line so this huge arm
     // doesn't grow (oversized functions miscompile — cf. #2720).
-    if (ascription_target(v.init) != "") { return lower_stmt(ascription_rebind(v), s); }
+    if (ascription_target(v.init) != "" && !wraps_to_address(v.init, s)) { return lower_stmt(ascription_rebind(v), s); }
     // Struct destructure `let Point { x, y } = E;` — parse_struct_destructure
     // encodes it as a StmtVar whose type_name is "@sd:<Struct>:<fields>" and
     // whose name is the comma-joined bindings. Expand it into per-field binds.
