@@ -5359,6 +5359,15 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
     return s;
 }
 
+// high_heap_probe_on: FERN_HIGH_HEAP=1 raises the arena's mmap hint above
+// 4 GiB (see emit_rt_arena_and_alloc). Read at emit time like FERN_LEAKCHECK.
+function high_heap_probe_on(): boolean {
+    match (env("FERN_HIGH_HEAP")) {
+        Some(v) => { return v == "1"; },
+        None => { return false; }
+    }
+}
+
 // leak_check_on — FERN_LEAKCHECK read at emit time (the compiler process),
 // the arm64 half of the census (#5362; the x86 self-host precedent), folded
 // with FERN_SANITIZE as the x86 backend folds it. The fold is only honest
@@ -5369,15 +5378,6 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // same number for the same block — so a block's alloc and eventual free
 // cancel exactly. The capacity a block is rounded up to (__fern_capw, the
 // large tier) is deliberately NOT counted: the free side never sees it.
-// high_heap_probe_on: FERN_HIGH_HEAP=1 raises the arena's mmap hint above
-// 4 GiB (see emit_rt_arena_and_alloc). Read at emit time like FERN_LEAKCHECK.
-function high_heap_probe_on(): boolean {
-    match (env("FERN_HIGH_HEAP")) {
-        Some(v) => { return v == "1"; },
-        None => { return false; }
-    }
-}
-
 function leak_check_on(): boolean {
     if (sanitize_on()) { return true; }
     match (env("FERN_LEAKCHECK")) {

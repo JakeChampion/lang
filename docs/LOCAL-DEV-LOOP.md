@@ -589,9 +589,9 @@ default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
 `bin/fern-selfhost` built by `make selfhost-cli`:
 
 ```
-FERN_HIGH_HEAP=1 bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s examples/self_host/fern.fern internal/stdlib
+FERN_HIGH_HEAP=1 $W/bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s $W/examples/self_host/fern.fern $W/internal/stdlib
 aarch64-linux-gnu-gcc -static -nostdlib -o $B/fern_hh $B/fern_hh.s
-qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 examples/self_host/fern.fern internal/stdlib
+qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 $W/examples/self_host/fern.fern $W/internal/stdlib
 ```
 
 What the probe does not move is the image, `.rodata` and the stack, which on

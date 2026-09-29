@@ -408,11 +408,21 @@ jobs:
             exit 1
           fi
           echo "stage 2 (self-host-built): $(wc -c < "$B/fern-s2" | tr -d ' ') bytes"
-          FERN_CLIFF_REPORT=1 /usr/bin/time -l "$B/fern-s2" -target arm64-darwin -o "$B/fern-s3" "$PWD/examples/self_host/fern.fern" "$PWD/internal/stdlib" 2> "$B/s3.log"
-          code=$?
+          # The step runs under bash -e, and this exit is the one being
+          # measured: capture it instead of letting it end the step.
+          code=0
+          FERN_CLIFF_REPORT=1 /usr/bin/time -l "$B/fern-s2" -target arm64-darwin -o "$B/fern-s3" "$PWD/examples/self_host/fern.fern" "$PWD/internal/stdlib" 2> "$B/s3.log" || code=$?
           echo "::group::stage 3 heap readout and rusage"
           cat "$B/s3.log"
           echo "::endgroup::"
+          # The readout is the deliverable, so it also goes where it outlives
+          # the scrolled log.
+          {
+            echo "### Darwin stage 3 (#8479): exit $code"
+            echo '```'
+            cat "$B/s3.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$code" -ne 0 ]; then
             echo "::warning::stage 3 exited $code on Darwin (#8479): the self-host-built compiler cannot compile fern.fern here yet; the readout above is the measurement"
           else
