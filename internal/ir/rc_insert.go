@@ -1381,15 +1381,12 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// to the buffer-only dec below and leaked every element (cell +
 		// concrete + transitively-owned strings) on each call. `eligible`
 		// (computeFreeEligible) plus __drop_arr_dyn's own rc==1 gate keep an
-		// aliased/escaping array a sound leak, never a double-free. NATIVES
-		// ONLY (ptrW==8): wasm's inline two-word `dyn` elements double-drop
-		// when an element was bound out (`for s in xs` + a call arg) — the
-		// same hazard dropStructField's dyn arm documents — so wasm keeps
-		// the buffer-only dec here (status-quo sound leak; its loop-reinit
-		// element walk is unchanged).
+		// aliased/escaping array a sound leak, never a double-free. An
+		// element bound out takes its own unit (emitDynRetain), on wasm's
+		// inline two-word elements as on the natives' cells.
 		if at, ok := t.(ast.ArrayType); ok {
 			_, elemIsDyn := at.Elem.(ast.DynTraitType)
-			if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim() && ast.RcFreeEnabled && eligible) {
+			if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.dynReclaim() && ast.RcFreeEnabled && eligible) {
 				b.emit(Op{Kind: OpLoadLocal, I32: slot})
 				decValueOnStack(t, eligible)
 				return
