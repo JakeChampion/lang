@@ -81,24 +81,7 @@ func TestSelfHostRoutesEveryNativeBuiltin(t *testing.T) {
 var nativeOnlyBuiltins = map[string]string{
 	"__alloc_reuse": "native's Perceus reuse token, which only native's own reuse lowering emits",
 	"__rc_get":      "an rc inspection intrinsic native's rc tests call; no self-host lowering handles it",
-	"__c_call0":     ffiNotLowered,
-	"__c_call0_f32": ffiNotLowered,
-	"__c_call0_f64": ffiNotLowered,
-	"__c_call1":     ffiNotLowered,
-	"__c_call1_f32": ffiNotLowered,
-	"__c_call1_f64": ffiNotLowered,
-	"__c_call2":     ffiNotLowered,
-	"__c_call2_f32": ffiNotLowered,
-	"__c_call2_f64": ffiNotLowered,
-	"__c_call3":     ffiNotLowered,
-	"__c_call3_f32": ffiNotLowered,
-	"__c_call3_f64": ffiNotLowered,
-	"__c_call4":     ffiNotLowered,
-	"__c_call4_f32": ffiNotLowered,
-	"__c_call4_f64": ffiNotLowered,
 }
-
-const ffiNotLowered = "the C-ABI trampolines are not lowered on any self-host backend (#4375)"
 
 // stripLineComments drops each `//` comment from Fern source, leaving string
 // and character literals, which may contain `//` or a quote, intact.

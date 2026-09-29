@@ -4773,18 +4773,18 @@ function intrinsic_contracts(): ssasem.Contract[] {
 // pointer and up to four integer arguments, all values, and a scalar result.
 // Each is a direct call of the shim the native backends emit for the name.
 function c_call_contracts(): ssasem.Contract[] {
+    var names: string[] = [
+        "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32", "__c_call1_f64",
+        "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
+        "__c_call4", "__c_call4_f32", "__c_call4_f64"
+    ];
     var out: ssasem.Contract[] = [];
-    var arity: i32 = 0;
-    while (arity <= 4) {
-        for suffix in ["", "_f32", "_f64"] {
-            var name: string = "__c_call" + util.i32_to_string(arity) + suffix;
-            if let typeinfo.TypeFunc(sig) = checker.builtin_sig(name) {
-                var modes: i32[] = [];
-                for _ in sig.param_types { modes = modes.append(ssaunits.value_mode()); }
-                out = out.append(ssasem.Contract { name: name, params: sig.param_types, modes: modes, result: sig.ret_type });
-            }
+    for name in names {
+        if let typeinfo.TypeFunc(sig) = checker.builtin_sig(name) {
+            var modes: i32[] = [];
+            for _ in sig.param_types { modes = modes.append(ssaunits.value_mode()); }
+            out = out.append(ssasem.Contract { name: name, params: sig.param_types, modes: modes, result: sig.ret_type });
         }
-        arity = arity + 1;
     }
     return out;
 }
