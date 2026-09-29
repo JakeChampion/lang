@@ -1,11 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,67 +23,17 @@ func seqArrays(n int, tail string) (string, int) {
 	return b.String(), (2*n*n + 4*n) % 100
 }
 
-// TestSelfHostRcPreciseDropX86IR gates the first Phase-B Perceus optimisation
-// ported to the self-host IR: drop-on-last-use for arrays. A linear, owned
-// array-literal local (declared once, never reassigned, only borrow-read — never
-// aliased / stored / passed / returned / captured) is released right after its
-// LAST top-level use instead of at the function-exit dec-sweep, bounding the
-// live set. Each case asserts the program routes "ir", computes the oracle
-// value, and that the over-release detector (`__rc_underflow_count()`) reads 0 (the
-// drop is sound — no double-free). The byte-identical fixpoint + std-test gates
-// separately prove soundness on the compiler's own array literals.
+// TestSelfHostRcPreciseDropX86IR pins drop-on-last-use and in-place reuse on
+// x86-64, compiled through the self-hosted CLI under FERN_SEM_IR_STRICT. Each
+// case asserts the value the program computes, or that the over-release
+// detector (`__rc_underflow_count()`) reads 0, so the drop is sound. The
+// byte-identical fixpoint and std-test gates separately prove soundness on the
+// compiler's own sources.
 func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-
-	probeSrc, err := os.ReadFile("../../examples/self_host/asm_pathprobe_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), probeSrc, 0o644); err != nil {
-		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
-	}
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	emit := func(t *testing.T, src string) string {
 		t.Helper()
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, "-ir")
-		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(src))
-		out, err := cmd.Output()
-		if err != nil || len(out) == 0 {
-			t.Fatalf("driver failed for %q: %v", src, err)
-		}
-		return string(out)
-	}
-	run := func(t *testing.T, asmText string) int {
-		t.Helper()
-		innerAsm := filepath.Join(dir, "ir_inner.s")
-		innerBin := filepath.Join(dir, "ir_inner")
-		if err := os.WriteFile(innerAsm, []byte(asmText), 0o644); err != nil {
-			t.Fatalf("write inner asm: %v", err)
-		}
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-			t.Fatalf("inner gcc: %v\n%s", err, out)
-		}
-		var inner *exec.Cmd
-		if len(runner) == 0 {
-			inner = exec.Command(innerBin)
-		} else {
-			inner = exec.Command(runner[0], append(append([]string{}, runner[1:]...), innerBin)...)
-		}
-		_ = inner.Run()
-		if inner.ProcessState == nil || !inner.ProcessState.Exited() {
-			t.Fatalf("inner did not exit normally")
-		}
-		return inner.ProcessState.ExitCode()
+		return cli.emit(t, "x86-64-linux", src)
 	}
 
 	seqVal, seqExp := seqArrays(40, "return acc % 100;")
@@ -264,20 +210,25 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// insert/without use of a fresh map local now excludes it from reclaim
 		// (conservative leak). Value 3 + 1 = 4; corruption probe: a fresh array
 		// after the struct-lit reads back intact and c.m survives.
-		{"map-callvalue-struct-field-value", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; return c.id + c.m.len(); }`, 4},
-		{"map-callvalue-struct-field-corruption-detector", `struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (s != 66) { return 91; } if (c.id + c.m.len() != 4) { return 92; } return __rc_underflow_count(); }`, 0},
+		{"map-callvalue-struct-field-value", `import "core/map";
+struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; return c.id + c.m.len(); }`, 4},
+		{"map-callvalue-struct-field-corruption-detector", `import "core/map";
+struct C { id: i32, m: Map[i32, i32] } function main(): i32 { var mm: Map[i32, i32] = map_new(4); var c = C { id: 3, m: mm.insert(1, 1) }; var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (s != 66) { return 91; } if (c.id + c.m.len() != 4) { return 92; } return __rc_underflow_count(); }`, 0},
 		// The own-param sibling (the shape that first surfaced the UAF while
 		// testing #5087): the struct with the aliased mapbox flows through an
 		// `own` param donor site — value stays correct with the map excluded.
-		{"map-callvalue-own-param-field-value", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); var c = C { id: 10, m: mm.insert(1, 5) }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); var c0 = C { id: 3, m: m0.insert(1, 1) }; return f(c0); }`, 15},
+		{"map-callvalue-own-param-field-value", `import "core/map";
+struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { var u: i32 = d.id + d.m.len(); var mm: Map[i32, i32] = map_new(4); var c = C { id: 10, m: mm.insert(1, 5) }; return c.id + c.m.len() + u; } function main(): i32 { var m0: Map[i32, i32] = map_new(4); var c0 = C { id: 3, m: m0.insert(1, 1) }; return f(c0); }`, 15},
 		// The `.without` sibling: its (Map, existed) tuple wraps the SAME mapbox,
 		// so the destructured m2 aliases mm — reclaiming mm at its last use (the
 		// without statement) freed the box before m2.get_or read it (SIGSEGV
 		// before the gate: 2 map_free calls in the old asm). The identity gate
 		// excludes mm; m2.get_or reads the live box. Value 7 (absent key →
 		// default; interp-oracle-checked), detector 0.
-		{"map-without-alias-bind-value", `function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); return m2.get_or(2, 7); }`, 7},
-		{"map-without-alias-bind-detector", `function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); var r: i32 = m2.get_or(2, 7); if (r != 7) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"map-without-alias-bind-value", `import "core/map";
+function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); return m2.get_or(2, 7); }`, 7},
+		{"map-without-alias-bind-detector", `import "core/map";
+function main(): i32 { var mm: Map[i32, i32] = map_new(8); var (m2, e) = mm.without(1); var r: i32 = m2.get_or(2, 7); if (r != 7) { return 99; } return __rc_underflow_count(); }`, 0},
 		// NON-firing: the donor's string field is a bare-ident ALIAS — rejected
 		// by the donor freshness gate; the aliased buffer stays valid.
 		{"struct-string-no-reuse-aliased-donor-detector", `struct N { id: i32, name: string } function main(): i32 { var nm: string = "ab" + "c"; var d = N { id: 1, name: nm }; var u: i32 = d.name.len() as i32 + d.id; var c = N { id: 2, name: "wxyz" + "q" }; var s: i32 = c.name.len() as i32 + c.id + u + nm.len() as i32; if (s != 14) { return 99; } return __rc_underflow_count(); }`, 0},
@@ -1179,13 +1130,15 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// proves the fresh box is reclaimed exactly once.
 		//
 		// `.to_ascii_upper()` field value: fresh cased buffer, freed once.
-		{"strdrop-toupper-field-value", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.to_ascii_upper() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-toupper-field-value", `import "std/string";
+struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.to_ascii_upper() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		// `.to_ascii_lower()` field value: fresh cased buffer, freed once.
-		{"strdrop-tolower-field-detector", `struct P { name: string } function go(): i32 { var s = "AB"; var p = P { name: s.to_ascii_lower() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-tolower-field-detector", `import "std/string";
+struct P { name: string } function go(): i32 { var s = "AB"; var p = P { name: s.to_ascii_lower() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		// `.repeat(n)` field value: a fresh n-copy buffer, freed once.
-		{"strdrop-repeat-field-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 6) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-repeat-field-detector", `import "std/string";
+struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 6) { return 99; } return __rc_underflow_count(); }`, 0},
 		// Free-function spelling `str_to_upper(s)`: same fresh op_str_to_upper, freed.
-		{"strdrop-str-to-upper-freefn-detector", `struct P { name: string } function go(): i32 { var s = "ab"; var p = P { name: str_to_upper(s) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		// FRESH ALLOC BUILTINS (this slice) — fixed fresh-allocating semantics, no user
 		// override, so the field-drop FREES the result with no construction inc.
 		//
@@ -1197,15 +1150,16 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// `data` points into the MIDDLE of a 32-byte scratch buffer, not at an alloc
 		// boundary, so reclaiming it over-releases. This case proves the EXCLUSION is
 		// sound — inc'd, detector 0 (no over-release despite the un-freeable box).
-		{"strdrop-i32-to-string-excluded-detector", `struct P { name: string } function go(): i32 { var p = P { name: i32_to_string(425) }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 3) { return 99; } return __rc_underflow_count(); }`, 0},
 		// EXCLUDED (aliasing) transforms stay inc'd → field-drop decs the dup only.
 		//
 		// `.trim()` is a zero-copy VIEW into the receiver's buffer: inc'd (NOT freed),
 		// so freeing the view never reaches the parent's data. Leaks, detector 0.
-		{"strdrop-trim-field-excluded-detector", `struct P { name: string } function go(): i32 { var s = "  ab  "; var p = P { name: s.trim() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-trim-field-excluded-detector", `import "std/string";
+struct P { name: string } function go(): i32 { var s = "  ab  "; var p = P { name: s.trim() }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		// `.replace(a, b)` returns the receiver box unchanged on no-match: inc'd (NOT
 		// freed) so an alias of the receiver is never over-released. Detector 0.
-		{"strdrop-replace-field-excluded-detector", `struct P { name: string } function go(): i32 { var s = "abXab"; var p = P { name: s.replace("X", "Y") }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 5) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"strdrop-replace-field-excluded-detector", `import "std/string";
+struct P { name: string } function go(): i32 { var s = "abXab"; var p = P { name: s.replace("X", "Y") }; return p.name.len(); } function main(): i32 { var r = go(); if (r != 5) { return 99; } return __rc_underflow_count(); }`, 0},
 		// i64-RESULT match-EXPRESSION fed by a struct-FIELD read of the bound payload
 		// (`V(p) => p.v`, v:i64). The IIFE result temp is marked i64 (recovered from the
 		// payload field type since the binding isn't in scope at classify time); the
@@ -1226,53 +1180,70 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// (get_or), non-escaping + non-iterated, has its keys + values buffers freed
 		// (rc-guarded __fern_rc_dec) at scope exit — the raw 16-byte mapbox leaks. The
 		// buffers are sole-owned (rc==1), so the detector stays 0.
-		{"map-reclaim-value", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { return go(); }`, 30},
-		{"map-reclaim-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); if (r != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-reclaim-value", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; return m.get_or(1, 0) + m.get_or(2, 0); } function main(): i32 { return go(); }`, 30},
+		{"map-reclaim-detector", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); if (r != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// Heap-reuse corruption probe: fresh arrays allocated AFTER the map's buffer
 		// reclaim read back intact (the buffers were freed soundly, exactly once — no
 		// still-live buffer freed early that the fresh alloc could recycle).
-		{"map-reclaim-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-reclaim-corruption-probe-detector", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = m.get_or(1, 0) + m.get_or(2, 0); var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (r != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// NON-firing (escapes / passed to a fn): a map passed as an arg is NOT
 		// reclaimable (body_unsafe_for flags the arg), so its buffers must NOT be freed
 		// here — the callee reads them. Detector 0.
-		{"map-passed-not-freed-detector", `function sum(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = sum(m); if (r != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-passed-not-freed-detector", `import "core/map";
+function sum(m: Map[i32, i32]): i32 { return m.get_or(1, 0) + m.get_or(2, 0); } function go(): i32 { var m = Map { 1: 10, 2: 20 }; var r = sum(m); if (r != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// FIRING (for..in): a `for (k, v) in m` is now RECLAIMED (slice 3) — its iter is
 		// a scoped loop temp (dead by the free) and scalar k/v are copies, so freeing
 		// the buffers after the loop is sound. Value correct + detector 0 (freed once).
-		{"map-foreach-reclaimed-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-foreach-reclaimed-detector", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } if (t != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// FIRING + corruption probe: a fresh array after a `for..in m` loop's reclaim
 		// reads back intact (the buffers were freed soundly after the loop, once).
-		{"map-foreach-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (t != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-foreach-corruption-probe-detector", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; var t = 0; for (k, v) in m { t = t + v; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (t != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// MAP precise-drop: a fresh map last-used in a NESTED block has its buffers
 		// freed right after that statement (emit_map_buffers_free, null-guarded +
 		// slot-zeroed) — earlier than the exit sweep, bounding peak heap. The exit
 		// sweep's re-call sees the zeroed (null) slot and skips (no double-free).
 		// f(5): m built, used in the if (c=35), freed after the if; return 35+5=40.
-		{"map-precise-if-value", `function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { return f(5); }`, 40},
-		{"map-precise-if-detector", `function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { var r = f(5); if (r != 40) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"map-precise-if-value", `import "core/map";
+function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { return f(5); }`, 40},
+		{"map-precise-if-detector", `import "core/map";
+function f(n: i32): i32 { var m = Map { 1: 10, 2: 25 }; var c = 0; if (n > 0) { c = m.get_or(1, 0) + m.get_or(2, 0); } return c + n; } function main(): i32 { var r = f(5); if (r != 40) { return 99; } return __rc_underflow_count(); }`, 0},
 		// CONDITIONALLY-DECLARED map: `m` is declared inside an if-branch. On the taken
 		// path it is precise-dropped after the if-body; the function-exit sweep also
 		// processes the slot — the NULL GUARD in emit_map_buffers_free makes the
 		// untaken-path (null slot) a no-op and the taken-path second-call a no-op.
 		// Detector 0 proves neither a double-free nor a null-deref.
-		{"map-conditional-decl-detector", `function f(n: i32): i32 { var t = 0; if (n > 0) { var m = Map { 1: 10, 2: 20 }; t = m.get_or(1, 0) + m.get_or(2, 0); } if (t != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return f(5); }`, 0},
+		{"map-conditional-decl-detector", `import "core/map";
+function f(n: i32): i32 { var t = 0; if (n > 0) { var m = Map { 1: 10, 2: 20 }; t = m.get_or(1, 0) + m.get_or(2, 0); } if (t != 30) { return 99; } return __rc_underflow_count(); } function main(): i32 { return f(5); }`, 0},
 		// PRECISE drop + heap-reuse corruption probe: fresh arrays allocated AFTER the
 		// map's precise buffer-free read back intact (the buffers were freed soundly,
 		// exactly once — no still-live buffer freed early that the alloc could recycle).
-		{"map-precise-corruption-probe-detector", `function go(): i32 { var m = Map { 1: 10, 2: 20 }; var c = 0; var i = 0; while (i < 1) { c = m.get_or(1, 0) + m.get_or(2, 0); i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
+		{"map-precise-corruption-probe-detector", `import "core/map";
+function go(): i32 { var m = Map { 1: 10, 2: 20 }; var c = 0; var i = 0; while (i < 1) { c = m.get_or(1, 0) + m.get_or(2, 0); i = i + 1; } var fresh = [11, 22, 33]; var s = fresh[0] + fresh[1] + fresh[2]; if (c != 30) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// MAP-typed struct fields in box reuse (#4356 slice 8): maps are
 		// leak-only, so the reuse arms release/inc NOTHING for a map field —
 		// the value contract is that the map read through the reused box (a
 		// carried copy, a fresh override, and the cross-family recipient) is
 		// intact, the detector stays clean (nothing over-released), and a
 		// fresh array allocated next to the reuse reads back unpoisoned.
-		{"map-field-reuse-carried-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; return c.m.get_or(1, 0) + c.id; }`, 12},
-		{"map-field-reuse-carried-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow_count(); }`, 0},
-		{"map-field-reuse-override-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40},
-		{"map-field-reuse-override-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow_count(); }`, 0},
-		{"map-field-reuse-cross-value", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; return c.m.get_or(1, 0) + c.id + u; }`, 20},
-		{"map-field-reuse-cross-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow_count(); }`, 0},
-		{"map-field-reuse-corruption-probe-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.m.get_or(1, 0) + c.id != 40) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); }`, 0},
+		{"map-field-reuse-carried-value", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; return c.m.get_or(1, 0) + c.id; }`, 12},
+		{"map-field-reuse-carried-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, id: 2 }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"map-field-reuse-override-value", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40},
+		{"map-field-reuse-override-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"map-field-reuse-cross-value", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; return c.m.get_or(1, 0) + c.id + u; }`, 20},
+		{"map-field-reuse-cross-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var u: i32 = d.m.get_or(1, 0) + d.id; var c = P { id: 2, m: Map { 1: 7 } }; var s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"map-field-reuse-corruption-probe-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { var d = P { id: 1, m: Map { 1: 10 } }; var c = P { ...d, m: Map { 1: 39 } }; var fresh = [11, 22, 33]; var s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.m.get_or(1, 0) + c.id != 40) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); }`, 0},
 		// TUPLE / OPTION struct fields in box reuse (#4356 slice 9): both are
 		// leak-only boxes like maps — the reuse arms release/inc nothing, and
 		// the value contract is intact reads through the reused box (carried,
@@ -1336,11 +1307,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			route := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, []byte(tc.src))))
-			if route != "ir" {
-				t.Errorf("%s routed through %q path, want \"ir\"", tc.name, route)
-			}
-			if got := run(t, emit(t, tc.src)); got != tc.expected {
+			if got, _ := cli.runX86(t, emit(t, tc.src)); got != tc.expected {
 				t.Errorf("precise-drop x86 IR %q = %d, want %d", tc.name, got, tc.expected)
 			}
 		})
