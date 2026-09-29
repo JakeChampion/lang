@@ -5,6 +5,10 @@
 #
 #   bootstrap.sh build       (make bootstrap)  stage0 -> stage1, install it
 #   bootstrap.sh distcheck   (make distcheck)  stage1 -> stage2 -> stage3, stage2 == stage3
+#   bootstrap.sh stage0      print the verified stage0's path and nothing else,
+#                            for a caller that compiles with the pin itself
+#                            (the self-host test harness builds its drivers
+#                            with it)
 #
 #   stage0   a pinned earlier compiler (bootstrap/stage0.lock), or the binary
 #            named by STAGE0=<path>
@@ -38,7 +42,7 @@ STDLIB="$ROOT/internal/stdlib"
 die() { echo "bootstrap: $*" >&2; exit 1; }
 
 mode="${1:-build}"
-case "$mode" in build|distcheck) ;; *) die "usage: bootstrap.sh [build|distcheck]" ;; esac
+case "$mode" in build|distcheck|stage0) ;; *) die "usage: bootstrap.sh [build|distcheck|stage0]" ;; esac
 
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64)  HOST=x86-64-linux ;;
@@ -63,12 +67,13 @@ lock_field() {
 }
 
 # resolve_stage0 sets $stage0 to an executable: STAGE0=<path> if given, else
-# the lock's pin for this host, fetched into the cache on first use.
+# the lock's pin for this host, fetched into the cache on first use. Its
+# progress lines go to stderr so `bootstrap.sh stage0` can print the path alone.
 resolve_stage0() {
   if [ -n "${STAGE0:-}" ]; then
     [ -x "$STAGE0" ] || die "STAGE0=$STAGE0 is not an executable file"
     stage0="$(cd "$(dirname "$STAGE0")" && pwd)/$(basename "$STAGE0")"
-    echo "stage0: $stage0 (local, sha256 $(sha256 "$stage0"))"
+    echo "stage0: $stage0 (local, sha256 $(sha256 "$stage0"))" >&2
     return
   fi
   [ -f "$LOCK" ] || die "no $LOCK and no STAGE0=<path> given"
@@ -79,7 +84,7 @@ resolve_stage0() {
   stage0="$OUT/stage0/$tag/fern-selfhost-$HOST"
   if [ ! -x "$stage0" ]; then
     asset="$url/fern-selfhost-$HOST.gz"
-    echo "stage0: downloading $asset"
+    echo "stage0: downloading $asset" >&2
     mkdir -p "$(dirname "$stage0")"
     curl -fsSL --retry 3 --retry-delay 2 -o "$stage0.gz" "$asset" \
       || die "download failed: $asset"
@@ -95,7 +100,13 @@ resolve_stage0() {
   fi
   got="$(sha256 "$stage0")"
   [ "$got" = "$want" ] || die "cached $stage0 has sha256 $got, lock pins $want — delete it and re-run"
-  echo "stage0: $tag for $HOST (sha256 $got)"
+  echo "stage0: $tag for $HOST (sha256 $got)" >&2
+}
+
+# stage0 prints the resolved pin's path on stdout and nothing else.
+stage0() {
+  resolve_stage0
+  echo "$stage0"
 }
 
 # stage NAME COMPILER: compile the compiler's own source with COMPILER into

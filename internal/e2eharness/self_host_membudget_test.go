@@ -119,17 +119,6 @@ func TestBuildMemBudgetEnvOverride(t *testing.T) {
 	}
 }
 
-func TestHeavyBuildWeightEnvOverride(t *testing.T) {
-	t.Setenv("FERN_BUILD_HEAVY_MB", "1234")
-	if got := heavyBuildWeightMB(); got != 1234 {
-		t.Fatalf("heavy weight with env override = %d; want 1234", got)
-	}
-	t.Setenv("FERN_BUILD_HEAVY_MB", "")
-	if got := heavyBuildWeightMB(); got <= 0 {
-		t.Fatalf("default heavy weight = %d; want positive", got)
-	}
-}
-
 // withEmitMemLimit caps the runtime's soft memory limit while fn runs,
 // scales it with the number of concurrent holders, and restores unlimited
 // when the last holder releases — including on error and panic-free

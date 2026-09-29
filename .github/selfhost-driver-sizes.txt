@@ -16,12 +16,14 @@
 # tracked-artifact: fern.fern
 #
 # HOW THIS IS MEASURED. The `driver-sizes` job of test-e2e-selfhost.yml reads
-# the driver names out of this file, links every one of them
-# (TestSelfHostWarmStockDriver, ~2 minutes for the set), stats each into
-# FERN_DRIVER_SIZE_REPORT, and compares that report against this file. The
-# emit and the link are in-process pure Go, so a given commit yields the same
-# byte count on any runner — a difference here is a real change in the
-# compiler's output, not runner noise.
+# the driver names out of this file, builds every one of them
+# (TestSelfHostWarmStockDriver), stats each into FERN_DRIVER_SIZE_REPORT, and
+# compares that report against this file. The drivers are built by the pinned
+# stage0 self-host compiler (bootstrap/stage0.lock), whose output is
+# deterministic per input, so a given commit yields the same byte count on any
+# runner — a difference here is a real change in the drivers' sources, the
+# stdlib or the pin, not runner noise. A pin refresh therefore re-baselines
+# every row, in the same PR.
 #
 # ENFORCED, IN BOTH DIRECTIONS. Drift past FERN_SIZE_TOLERANCE_PERCENT (5% by
 # default) is a job-summary line, a warning annotation and a FAILED
@@ -348,15 +350,15 @@
 # wit_proxy_world: ~1,450 lines that no driver linked before), and the wasm
 # extern bridge gained its heap-payload result wrappers. Measured with
 # FERN_WARM_DRIVER=fern.fern FERN_DRIVER_SIZE_REPORT on the branch.
-fern.fern 14118057
-asm_load_run.fern 9924729
-asm_modload_run.fern 9400865
-asm_ir_run.fern 9111545
-asm_run.fern 8624344
-wasm_ir_run.fern 8387056
-wasm_run.fern 8378800
-wasm_runio_run.fern 8345408
-asm_pathprobe_run.fern 7524864
-asm_ir_elig_run.fern 6183304
-irlower_run.fern 7267824
-checker_modload_run.fern 3052684
+fern.fern 12342352
+asm_load_run.fern 8097024
+asm_modload_run.fern 7555472
+asm_ir_run.fern 7301672
+asm_run.fern 6764208
+wasm_ir_run.fern 6704800
+wasm_run.fern 6701912
+wasm_runio_run.fern 6671696
+asm_pathprobe_run.fern 5452200
+asm_ir_elig_run.fern 4626760
+irlower_run.fern 5312696
+checker_modload_run.fern 2218872

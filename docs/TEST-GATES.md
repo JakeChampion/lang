@@ -543,6 +543,17 @@ Several comments in the tree read the other way around. They are wrong, and
 *and* the native suite while segfaulting the driver. `internal/e2eselfhost` is
 what caught it.
 
+Since 2026-09-29 the drivers those suites run are built by the pinned
+stage0 self-host compiler (`bootstrap/stage0.lock`, resolved through
+`bootstrap/bootstrap.sh stage0`; `internal/e2eharness/self_host_compiler.go`),
+not by the Go x86-64 backend, so the suites need no native backend to build
+what they run. A driver is the current source compiled by the pin, the way
+stage1 is under `make bootstrap`, so every driver is held to what the pin can
+compile — a driver using a newer construct fails to build here, and the answer
+is the pin refresh `docs/BOOTSTRAP.md` describes. What these runs prove is the
+current SOURCE's behaviour; the current compiler's own output is what the
+fixture, differential and `cli` lanes run.
+
 ### An answer is not proof the IR path produced it
 
 A case that asserts only an exit code cannot show a shape **stayed on the IR
@@ -1038,8 +1049,11 @@ Worth knowing so you do not assume coverage you do not have:
    reads the entry's local import closure (`e2eharness.TrackFernSources`) so
    those files reach the testlog, and `make fern-test-cache` perturbs a source
    and fails if the cached result survives. `std/…` and `core/…` are already
-   covered, reaching the compiler through `internal/stdlib`'s `go:embed`. Use
-   `-count=1` for anything this does not cover, above all a mutation run: a
+   covered, reaching the Go compiler through `internal/stdlib`'s `go:embed`;
+   the self-host compiler that builds the driver binaries reads them from disk
+   instead, so the harness hashes the whole stdlib tree into its build key
+   (`e2eharness.stdlibHash`), which is also the read that reaches the testlog.
+   Use `-count=1` for anything this does not cover, above all a mutation run: a
    cached PASS on a mutant is indistinguishable from a test that cannot catch
    it. TWO surfaces are compiled through a child process and both needed it:
    the utility's own source in `fernBin`, and **the compiler itself** in

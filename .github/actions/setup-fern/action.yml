@@ -105,12 +105,11 @@ runs:
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-
 
-    # The self-host driver binaries link a ~371 MB freestanding `.s`. The GNU
-    # bfd linker (gcc's default) is minutes-slow and memory-heavy on inputs that
-    # size — the source of intermittent self-host shard link TIMEOUTS (a cold
-    # driver link hanging past the job deadline). The e2e link path
-    # (driverLinkArgs / `-fuse-ld=lld`) uses ld.lld when present — seconds, low
-    # RSS — so make sure gcc can find it under that exact name.
+    # Two tests link through `-fuse-ld=lld`: cmd/fern's arm64-darwin
+    # cross-link from Linux (clang + lld's Mach-O backend, TestArm64DarwinBuilds)
+    # and TestSelfHostLinkerAgnosticIRX86_64, which proves the self-host x86-64
+    # output links under lld as well as bfd. Both look for ld.lld under that
+    # exact name.
     #
     # `ubuntu-latest` ships the VERSIONED linker (`ld.lld-18`) but not the `lld`
     # package that provides the unversioned `ld.lld` gcc's `-fuse-ld=lld` looks
@@ -118,7 +117,7 @@ runs:
     # run 33888241907, across the ~39 jobs that use this action. Symlinking the
     # versioned binary into PATH costs milliseconds and needs no network, and
     # the install stays as the fallback for an image carrying neither.
-    - name: Ensure lld (fast linker for the self-host driver links)
+    - name: Ensure lld (the arm64-darwin cross-link and the linker-agnostic gate)
       shell: bash
       run: |
         if command -v ld.lld >/dev/null 2>&1; then
@@ -144,7 +143,7 @@ runs:
         # handles. It runs under sudo, not over it, so the signal reaches apt
         # rather than the sudo wrapper.
         sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq lld || {
-          echo "lld install failed or timed out; driver links fall back to bfd" >&2
+          echo "lld install failed or timed out; the tests that need it skip" >&2
           exit 0
         }
         command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
