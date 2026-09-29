@@ -1,11 +1,6 @@
 package e2eselfhost
 
-import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // traitsCases cover trait / impl declarations through the self-hosted
 // compiler. Concrete impls desugar (in the shared parser) to ordinary
@@ -156,12 +151,11 @@ var traitsCases = []struct {
 			"function main(): i32 { var a: P = P { x: 1, y: 2 }; var c: P = P { x: 1, y: 9 }; " +
 			"if (a.cmp(c) < 0) { if (c.cmp(a) > 0) { if (a.cmp(a) == 0) { return 42; } } } return 0; }", 42},
 	// `@derive(Display)` renders the same `Name { f: v, … }` string the
-	// Go checker emits, recursing into a nested derived struct. The i32
-	// + string `.to_string()` are emitter intrinsics, so no stdlib
-	// import is needed. Returns the rendered length (oracle-matched).
+	// Go checker emits, recursing into a nested derived struct. Returns the
+	// rendered length (oracle-matched).
 	{"trait-derive-struct-display-nested",
-		"@derive(Display) struct Inner { n: i32 } " +
-			"@derive(Display) struct Outer { a: Inner, tag: string } " +
+		"import \"core/cmp\"; @derive(cmp.Display) struct Inner { n: i32 } " +
+			"@derive(cmp.Display) struct Outer { a: Inner, tag: string } " +
 			"function main(): i32 { var p: Outer = Outer { a: Inner { n: 5 }, tag: \"hi\" }; return p.to_string().len(); }",
 		len("Outer { a: Inner { n: 5 }, tag: hi }")},
 	// Enum RECEIVER method — the dispatch fix. A method registered on
@@ -188,7 +182,7 @@ var traitsCases = []struct {
 	// `@derive(Display)` on an enum: variant-wise `Variant(payload)` /
 	// `Variant`. `Has(7)`→"Has(7)" (6), `Nil`→"Nil" (3); 6+3=9.
 	{"trait-derive-enum-display",
-		"@derive(Display) enum Opt { Has(i32), Nil } " +
+		"import \"core/cmp\"; @derive(cmp.Display) enum Opt { Has(i32), Nil } " +
 			"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_string().len() + n.to_string().len(); }",
 		len("Has(7)") + len("Nil")},
 	// `@derive(Eq)` on an enum: same variant compares payloads, any
@@ -221,7 +215,7 @@ var traitsCases = []struct {
 	// structurally identical to the Display `to_string` body (string
 	// concat + per-field dispatch), so it lowers through the same IR path.
 	{"trait-derive-struct-json",
-		"trait Json { function to_json(self: Self): string; } " +
+		"import \"std/i32\"; trait Json { function to_json(self: Self): string; } " +
 			"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
 			"impl Json for string { function to_json(self: Self): string { return \"\\\"\" + self + \"\\\"\"; } } " +
 			"@derive(Json) struct Item { id: i32, tag: string } " +
@@ -233,7 +227,7 @@ var traitsCases = []struct {
 	// synthEnumJson (self-host enum variants carry at most one payload).
 	// `Has(7)`→`{"Has":7}` (9) + `Nil`→`"Nil"` (5) = 14.
 	{"trait-derive-enum-json",
-		"trait Json { function to_json(self: Self): string; } " +
+		"import \"std/i32\"; trait Json { function to_json(self: Self): string; } " +
 			"impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } } " +
 			"@derive(Json) enum Opt { Has(i32), Nil } " +
 			"function main(): i32 { var h: Opt = Has(7); var n: Opt = Nil; return h.to_json().len() + n.to_json().len(); }",
@@ -245,14 +239,14 @@ var traitsCases = []struct {
 	// string render via emitter intrinsics, so no trait/impl is needed.
 	// `Item { id: 7, tag: "hi" }` (oracle-matched length).
 	{"trait-derive-struct-debug",
-		"@derive(Debug) struct Item { id: i32, tag: string } " +
+		"import \"core/cmp\"; @derive(cmp.Debug) struct Item { id: i32, tag: string } " +
 			"function main(): i32 { var p: Item = Item { id: 7, tag: \"hi\" }; return p.to_debug().len(); }",
 		len(`Item { id: 7, tag: "hi" }`)},
 	// `@derive(Debug)` on an enum: `Variant` / `Variant(<debug payload>)`.
 	// A string payload renders quoted (`Word("hi")`), the Debug vs Display
 	// distinction. `Word("hi")`→10 + `End`→3 = 13.
 	{"trait-derive-enum-debug",
-		"@derive(Debug) enum Msg { Word(string), End } " +
+		"import \"core/cmp\"; @derive(cmp.Debug) enum Msg { Word(string), End } " +
 			"function main(): i32 { var w: Msg = Word(\"hi\"); var e: Msg = End; return w.to_debug().len() + e.to_debug().len(); }",
 		len(`Word("hi")`) + len("End")},
 	// `@derive(Hash)` on a struct synthesises a field-wise fold `h = h*31 +
@@ -283,14 +277,14 @@ var traitsCases = []struct {
 	// `v: i32`, so `self.v.to_string()` dispatches statically to the i32
 	// helper (the erased "T" shape couldn't). Renders "Box { v: 5 }" (12).
 	{"trait-generic-struct-derive-display-i32",
-		"@derive(Display) struct Box[T] { v: T } " +
+		"import \"core/cmp\"; @derive(cmp.Display) struct Box[T] { v: T } " +
 			"function main(): i32 { var b: Box[i32] = Box { v: 5 }; return b.to_string().len(); }",
 		len("Box { v: 5 }")},
 	// Same generic struct instantiated at `Box[string]` — a SEPARATE
 	// `Box__string` clone whose `self.v` is a string. Renders
 	// "Box { v: hi }" (13).
 	{"trait-generic-struct-derive-display-string",
-		"@derive(Display) struct Box[T] { v: T } " +
+		"import \"core/cmp\"; @derive(cmp.Display) struct Box[T] { v: T } " +
 			"function main(): i32 { var b: Box[string] = Box { v: \"hi\" }; return b.to_string().len(); }",
 		len("Box { v: hi }")},
 	// Both instantiations of the same generic struct coexisting: two
@@ -298,7 +292,7 @@ var traitsCases = []struct {
 	// own concrete field type. 12 + 13 = 25. Guards the shared-field-name
 	// dispatch (both clones declare `v`).
 	{"trait-generic-struct-derive-display-both",
-		"@derive(Display) struct Box[T] { v: T } " +
+		"import \"core/cmp\"; @derive(cmp.Display) struct Box[T] { v: T } " +
 			"function main(): i32 { var a: Box[i32] = Box { v: 5 }; var b: Box[string] = Box { v: \"hi\" }; " +
 			"return a.to_string().len() + b.to_string().len(); }",
 		len("Box { v: 5 }") + len("Box { v: hi }")},
@@ -327,7 +321,7 @@ var traitsCases = []struct {
 	// "Box(hi)"=7 = 13. Exercises generic receiver-method monomorphisation
 	// over a primitive AND a string T in one program.
 	{"trait-generic-struct-parametric-impl",
-		"trait Show { function show(self: Self): string; } " +
+		"import \"std/i32\"; trait Show { function show(self: Self): string; } " +
 			"impl Show for i32 { function show(self: Self): string { return self.to_string(); } } " +
 			"impl Show for string { function show(self: Self): string { return self; } } " +
 			"struct Box[T] { v: T } " +
@@ -338,61 +332,25 @@ var traitsCases = []struct {
 }
 
 // TestSelfHostTraitsX86_64 — trait/impl support with the self-hosted
-// x86-64 compiler. Trait parsing lives entirely in the shared lexer +
-// parser, so the asm emitter needed no change.
+// x86-64 compiler.
 func TestSelfHostTraitsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range traitsCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
 	}
 }
 
-// TestSelfHostTraitsArm64 — CI-gated arm64 counterpart. Trait support
-// lives entirely in the shared parser, so the arm64 emitter needed no
-// change; this guards that the shared path stays sound on arm64.
+// TestSelfHostTraitsArm64 — the arm64 counterpart.
 func TestSelfHostTraitsArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range traitsCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.exit {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.exit)
 			}
 		})
