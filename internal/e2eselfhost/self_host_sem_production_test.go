@@ -5512,6 +5512,26 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
 `},
+	// A map value column takes a fresh view too, anchored to the source, and
+	// overwriting an entry releases the view it held.
+	{name: "a-view-stored-in-a-map-is-a-fresh-view", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "std/i32";
+function mk(i: i32): string { return "abcdefghijklmnopqrstuvwxyz0123456789" + i.to_string(); }
+function round(i: i32): i32 {
+    var b: string = mk(i);
+    var u: str = slice_unchecked(b, 2, 30);
+    var w: str = slice_unchecked(b, 0, 5);
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, u);
+    m = m.insert(2, w);
+    m = m.insert(1, w);
+    var junk: string = mk(i + 1);
+    var k: i32 = 0;
+    return m.len() * 10 + k + u.len() + w.len() + junk.len() - 60;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
+`},
 	// An unannotated Some(None): the checker leaves the inner Option's payload
 	// open, and it settles at a void payload, since only None can build it
 	// (#10693).

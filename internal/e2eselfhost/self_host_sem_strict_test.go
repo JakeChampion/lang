@@ -84,4 +84,19 @@ function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
 	if code, out := compile(refused, "FERN_SEM_IR_STRICT="); code != 0 {
 		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
+
+	// A read of a view map value would hand out the column's own view box, whose
+	// retain is a no-op, so the reader's release freed the map's entry.
+	viewRead := `import "core/map";
+function main(): i32 {
+    var b: string = "abcdefgh";
+    var m: Map[i32, str] = map_new(4);
+    m = m.insert(1, slice_unchecked(b, 2, 6));
+    match (m.get(1)) { Some(v) => { return v.len(); }, None => { return 0; } }
+}
+`
+	code, out = compile(viewRead, "FERN_SEM_IR_STRICT=1")
+	if code != 3 || !strings.Contains(out, "a read of a view map value would share the column's view box") {
+		t.Fatalf("a view map value read: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+	}
 }

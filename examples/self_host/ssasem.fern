@@ -2062,11 +2062,11 @@ function counted_view(f: Func, defs: ssa.SInst[], v: i32, seen: boolean[]): bool
     return true;
 }
 
-// A phi, a construction, or an array rebuilt around a new element: a value
-// made of its operands, whose views it holds.
+// A phi, a construction (a fresh map included), or an array or map rebuilt
+// around a new element: a value made of its operands, whose views it holds.
 function gathers_views(kind: i32): boolean {
     return kind == 8 || kind == tuple_new() || kind == record_new() || kind == variant_new() || kind == array_new()
-        || kind == append() || kind == with();
+        || kind == append() || kind == with() || kind == map_new() || kind == map_insert();
 }
 
 // A value that gathers views is anchored to the bytes they read, which its own
