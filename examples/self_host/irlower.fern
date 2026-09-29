@@ -16804,6 +16804,13 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
         if (!sn.ok) { return sn; }
         return sn.emit(ir.op_int_cast(cty));
     }
+    // A 64-bit value wraps to the address, which moves nothing on the
+    // register backends and is the i64-to-i32 wrap on wasm.
+    if (u.op == "as_usize" && infer_expr_width(u.operand, s) == 64) {
+        var wa: LowerState = lower_i64(u.operand, s);
+        if (!wa.ok) { return wa; }
+        return wa.emit(ir.op_int_wrap_ptr());
+    }
     // `E as T` type ascription (#2669) in a non-binding position
     // (return / argument / nested expr): the `as` is a zero-cost
     // identity annotation, so the value of `E as T` is exactly the
@@ -17072,10 +17079,10 @@ function lower_expr_binary(b: ast.ExprBinary, e: ast.Expr, s: LowerState): Lower
     // An address operand makes the op pointer-width: the natives compute
     // it in the full register and wasm32 in an i32, and it never takes the
     // i32 wrap below, which sign-extended `base + n` from 32 bits and so
-    // faulted on any mapping above 2 GiB (#10454). Addresses compare and
-    // divide unsigned, as u32 does.
+    // faulted on any mapping above 2 GiB (#10454). Addresses compare,
+    // divide and shift right unsigned, as u32 does.
     var addr: boolean = expr_is_usize(b.left, s) || expr_is_usize(b.right, s);
-    if (b.op == ">>" && left_u32) { ek = "shr_u"; }
+    if (b.op == ">>" && (left_u32 || expr_is_usize(b.left, s))) { ek = "shr_u"; }
     // u32 ORDERING compares need the UNSIGNED IR kind (lt_u/le_u/gt_u/
     // ge_u): a u32 value ≥ 2^31 is signed-negative in a 32-bit slot, so a
     // signed compare gives the wrong answer on wasm. Remap via the same

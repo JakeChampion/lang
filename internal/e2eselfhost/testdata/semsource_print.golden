@@ -934,8 +934,26 @@ func same {
     ret v2
 }
 
-refused operator contract: usize / usize
-refused operator contract: usize >> usize
+modes 1 result usize
+v0:usize v1:usize v2:usize
+func halved {
+  b0:
+    v0 = param 0
+    v1 = const_int 2
+    v2 = binary / v0 v1
+    ret v2
+}
+
+modes 1 result usize
+v0:usize v1:usize v2:usize
+func shifted {
+  b0:
+    v0 = param 0
+    v1 = const_int 3
+    v2 = binary >> v0 v1
+    ret v2
+}
+
 modes 1 1 result usize
 v0:usize v1:i32 v2:usize v3:usize
 func at {
