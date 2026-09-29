@@ -82,9 +82,10 @@ above is the first run of it.
    (`candidate-arm64-linux`: stage2 in 82 s, stage3 in 79 s, identical); the
    2026-09-25 pin's stage1 looped compiling the compiler there and under
    qemu (#10448), so the pin was refreshed to a self-built stage2 from the
-   PR that wired the lane. Open on arm64-darwin: stage2 exhausts the 16 GiB
-   arena compiling the compiler (#8479), so that host's pin is still built
-   by native.
+   PR that wired the lane. Closed on arm64-darwin on 2026-09-29: the arena
+   exhaustion its stage2 hit compiling the compiler (#8479) stopped
+   reproducing, the `verify-arm64-darwin` lane runs `make distcheck` there
+   too, and its pin is a self-built stage2 like the Linux ones.
 2. **Every target self-contained on the self-host side** — closed.
 3. **The oracle decision** — made on 2026-09-28: the native backends are
    not witnesses, and they go with the next step after the freeze.

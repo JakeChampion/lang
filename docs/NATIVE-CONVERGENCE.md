@@ -128,16 +128,15 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    fixed point on both Linux hosts, so the pin a refresh leaves behind is a
    self-built binary; the first pin published this way still has one
    native-built generation in its ancestry (stage2 is stage1's output, and
-   stage1 is the native candidate's), the one after it none. What is NOT
-   closed: arm64-darwin, whose stage2
-   exhausts the arena compiling the compiler (#8479), so its pin is still the
-   native-built candidate. `docs/BOOTSTRAP.md`. As of 2026-09-29 the
-   exhaustion no longer reproduces: the `macos-15` lane builds the darwin
-   stage 3 on every round and it holds the fixed point (stage2 == stage3,
-   5.85 GB bumped). What is left is the wiring: `bootstrap.yml` running
-   distcheck on darwin and the pin refreshed as a self-built stage 2.
+   stage1 is the native candidate's), the one after it none. **Closed on
+   arm64-darwin (2026-09-29):** its stage2 exhausted the arena compiling the
+   compiler for months (#8479), which stopped reproducing; the fixed point
+   holds there (stage2 == stage3, 5.85 GB bumped, 3.8 GB RSS), the
+   `verify-arm64-darwin` lane runs `make bootstrap` and `make distcheck` on
+   `macos-15` with no Go, and the pin is a self-built stage2 on all three
+   hosts. `docs/BOOTSTRAP.md`; the measurements are in
    `docs/LOCAL-DEV-LOOP.md`, "The stage-1 / stage-2 self-compile on Apple
-   Silicon", has the measurements.
+   Silicon".
 2. **Every target self-contained on the self-host side.** ~~As of this
    writing `-target x86-64-linux` stops at GAS text and needs an external
    assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
