@@ -5766,8 +5766,10 @@ function make(i: i32): dyn Show {
 `
 
 // semUsizeOperatorsSource checks each unsigned operator on addresses that stay
-// inside 32 bits, so it answers 31 on every target.
+// inside 32 bits, so it answers 63 on every target. The last check reads its
+// operands through an index and a field rather than a local.
 const semUsizeOperatorsSource = `
+struct Region { base: usize }
 function main(): i32 {
     var n: i32 = args().len() + 69;
     var one: usize = (n - 69) as usize;
@@ -5780,14 +5782,19 @@ function main(): i32 {
     if ((top >> (n - 40)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
     if (top > b && a >= top && b < a && !(a <= b)) { got = got + 8; }
     if (a / (0 as usize) == (0 as usize) && a % (0 as usize) == a) { got = got + 16; }
+    var words: usize[] = [top, a];
+    var s: Region = Region { base: top };
+    var t: Region = Region { base: b };
+    if ((words[0] >> (n - 40)) as i32 == 2 && (words[1] / b) as i64 == 195225792i64 && s.base > t.base) { got = got + 32; }
     return got;
 }
 `
 
 // semUsizeWideOperatorsSource is semUsizeOperatorsSource past 32 bits, beside
-// the same checks on u64; it answers 127 on the register backends, as the
+// the same checks on u64; it answers 255 on the register backends, as the
 // interpreter does.
 const semUsizeWideOperatorsSource = `
+struct Region { base: usize }
 function scaled(n: i32): usize { return ((n as i64) * 1000000000i64) as usize; }
 function addresses(n: i32): i32 {
     var a: usize = scaled(n);
@@ -5800,6 +5807,10 @@ function addresses(n: i32): i32 {
     if (((one << (n - 30)) >> (n - 32)) as i32 == 4) { got = got + 4; }
     if ((top >> 62) as i32 == 2) { got = got + 8; }
     if (top > a && a >= b && b < top && !(a <= b)) { got = got + 16; }
+    var words: usize[] = [top, a];
+    var s: Region = Region { base: a };
+    var t: Region = Region { base: b };
+    if ((words[0] >> 62) as i32 == 2 && (s.base / t.base) as i32 == 70 && words[0] > s.base) { got = got + 32; }
     return got;
 }
 function wide(n: i32): i32 {
@@ -5814,7 +5825,7 @@ function wide(n: i32): i32 {
 }
 function main(): i32 {
     var n: i32 = args().len() + 69;
-    return addresses(n) + wide(n) * 32;
+    return addresses(n) + wide(n) * 64;
 }
 `
 
