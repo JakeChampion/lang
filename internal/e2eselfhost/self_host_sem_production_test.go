@@ -525,6 +525,26 @@ function main(): i32 {
     return m.goi("a", 1) + m.goi("b", 2) * 100;
 }
 `},
+	// A map column of function values is a column of environment boxes: the
+	// map owns a unit of each, a read retains the box it answers, and the
+	// column's release walks each box's captures. Overwriting and deleting
+	// an entry release the box it held.
+	{name: "a-map-column-of-closures", atLeast: 2, noLeak: true, src: `
+import "core/map";
+function run(k: i32): i32 {
+    var tag: string = "t" + "-past-the-sso-inline-threshold";
+    var m: Map[i32, () => i32] = map_new(4);
+    m = m.insert(1, (): i32 => { return tag.len() + k; });
+    m = m.insert(2, (): i32 => { return 7; });
+    m = m.insert(1, (): i32 => { return tag.len() * 2 + k; });
+    var got: i32 = 0;
+    match (m.get(1)) { Some(f) => { got = f(); }, None => { got = 0 - 1; } }
+    let (rest, had) = m.without(2);
+    if (!had || rest.len() != 1) { return 0 - 2; }
+    return got;
+}
+function main(): i32 { return run(3) - run(1); }
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
