@@ -5369,6 +5369,15 @@ function emit_san_uaf_abort(s: asmcore.EmitState): asmcore.EmitState {
 // same number for the same block — so a block's alloc and eventual free
 // cancel exactly. The capacity a block is rounded up to (__fern_capw, the
 // large tier) is deliberately NOT counted: the free side never sees it.
+// high_heap_probe_on: FERN_HIGH_HEAP=1 raises the arena's mmap hint above
+// 4 GiB (see emit_rt_arena_and_alloc). Read at emit time like FERN_LEAKCHECK.
+function high_heap_probe_on(): boolean {
+    match (env("FERN_HIGH_HEAP")) {
+        Some(v) => { return v == "1"; },
+        None => { return false; }
+    }
+}
+
 function leak_check_on(): boolean {
     if (sanitize_on()) { return true; }
     match (env("FERN_LEAKCHECK")) {
@@ -5925,8 +5934,20 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    stp x4, x5, [sp, #-16]!\n");
     s = s.write("    stp x8, x9, [sp, #-16]!\n");
     s = s.write("    mov x9, x0\n");                  // save rounded size
-    s = s.write("    mov x0, #1\n");
-    s = s.write("    lsl x0, x0, #28\n");             // hint = 0x10000000 — keep in lockstep with the NATIVE arm64 backend, whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower base no-ops every native rc inc/dec)
+    // Address-hint base, shifted left 28 below. 1 -> 0x10000000 (256 MiB) is
+    // the shipped value — keep it in lockstep with the NATIVE arm64 backend,
+    // whose below-heap rc guards classify `ptr >= 0x10000000` as heap (a lower
+    // base no-ops every native rc inc/dec). FERN_HIGH_HEAP=1 uses 32 ->
+    // 0x200000000 (8 GiB) so every heap pointer carries a non-zero high half:
+    // the address regime arm64-darwin runs in (XNU ignores the hint and maps
+    // above the 4 GiB __PAGEZERO), reproducible under qemu-aarch64, which
+    // honours the raised hint. Same knob as arm64codegen.Options.HighHeapProbe.
+    if (high_heap_probe_on()) {
+        s = s.write("    mov x0, #32\n");
+    } else {
+        s = s.write("    mov x0, #1\n");
+    }
+    s = s.write("    lsl x0, x0, #28\n");             // hint = base << 28
     // length = 16 GiB = 0x400000000 = 1 << 34. Built with mov+lsl, not a
     // `ldr =N` literal: the in-process assembler's literal parser is
     // 32-bit (arm64_gas_atoi), so a wide constant would sign-extend and
