@@ -373,3 +373,141 @@ func TestSelfHostOwnParamReleaseIRArm64(t *testing.T) {
 		})
 	}
 }
+
+// --- `return f(xs)` handing a pointer-element array back through an `own`
+// position (#10718) ----------------------------------------------------------
+//
+// A callee that does not consume a pointer-element `own` array hands an
+// identical buffer back uncounted, so `return f(xs)` is `xs = f(xs); return
+// xs`. The AST lowering's exit sweep released `xs` whatever the call returned,
+// freeing the buffer the result still held: exit 77 or a sanitizer
+// use-after-free on every row below before the fix.
+//
+// The elements are static strings, and the array-of-arrays row has no rows,
+// so the only heap unit in play is the buffer the handback moves.
+// Expected values agree with `bin/fern -interp`.
+const ownHandbackReturnHead = `@noinline
+function pass(own xs: string[]): string[] {
+    var n: i32 = 0;
+    var k: i32 = 0;
+    while (k < xs.len()) { n = n + xs[k].len(); k = k + 1; }
+    if (n > 100000) { print("big"); }
+    return xs;
+}
+@noinline
+function swap(own xs: string[], i: i32): string[] {
+    if (i % 2 == 0) { return xs; }
+    return ["cd", "cd", "cd"];
+}
+@noinline
+function churn(i: i32): string[] { var c: string[] = []; c = c.append("zz"); c = c.append("zzz"); return c; }
+`
+
+func ownHandbackBuild(ret string) string {
+	return `@noinline
+function build(i: i32): string[] {
+    var xs: string[] = [];
+    var k: i32 = 0;
+    while (k < i % 5 + 2) { xs = xs.append("ab"); k = k + 1; }
+    return ` + ret + `;
+}
+`
+}
+
+const ownHandbackReturnMain = `var ys: string[] = build(i); var c: string[] = churn(i); if (ys[1].len() != 2) { return 77; } x = x + ys[1].len() + ys.len() + c.len();`
+
+func ownHandbackReturnCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			// The issue's shape: an owned local handed back unchanged.
+			name: "local_handed_back",
+			src:  ownHandbackReturnHead + ownHandbackBuild("pass(xs)") + ownParamReleaseMain(ownHandbackReturnMain),
+			want: 53,
+		},
+		{
+			// The same through an identity callee the inliner takes.
+			name: "local_handed_back_inlined",
+			src: ownHandbackReturnHead + "function same(own xs: string[]): string[] { return xs; }\n" +
+				ownHandbackBuild("same(xs)") + ownParamReleaseMain(ownHandbackReturnMain),
+			want: 53,
+		},
+		{
+			// Every other round the callee returns a different buffer, and
+			// the local it was handed is released at exit as a rebind would.
+			name: "local_replaced",
+			src:  ownHandbackReturnHead + ownHandbackBuild("swap(xs, i)") + ownParamReleaseMain(ownHandbackReturnMain),
+			want: 3,
+		},
+		{
+			// A flagged `own` parameter that owns a grown buffer when it
+			// reaches the return: kept when handed back, released when the
+			// callee replaced it.
+			name: "flagged_param_replaced",
+			src: ownHandbackReturnHead + `@noinline
+function mid(own xs: string[], i: i32): string[] {
+    xs = xs.append("ef");
+    return swap(xs, i);
+}
+` + ownHandbackBuild("mid(xs, i)") + ownParamReleaseMain(ownHandbackReturnMain),
+			want: 53,
+		},
+		{
+			name: "arrarr_local_handed_back",
+			src: `@noinline
+function pass(own xs: i32[][]): i32[][] {
+    if (xs.len() > 100000) { print("big"); }
+    return xs;
+}
+@noinline
+function churn(i: i32): i32[][] { var c: i32[][] = []; return c; }
+@noinline
+function build(i: i32): i32[][] {
+    var xs: i32[][] = [];
+    return pass(xs);
+}
+` + ownParamReleaseMain(`var ys: i32[][] = build(i); var c: i32[][] = churn(i); if (ys.len() != 0) { return 77; } x = x + ys.len() + c.len() + 1;`),
+			want: 17,
+		},
+	}
+}
+
+// TestSelfHostOwnHandbackReturnX86_64 — every row on both lowerings, balanced
+// at live_bytes 0 with no rc underflow, and clean under the quarantining
+// allocator.
+func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
+		for _, tc := range ownHandbackReturnCases() {
+			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
+				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
+				progBin := buildBin(t, cli.gcc, dir, "ownhb_"+lw.name+"_"+tc.name, asm)
+				stderr, exit := hevRun(t, cli.runner, progBin)
+				if exit != tc.want {
+					t.Fatalf("exited %d, want %d (99 = rc underflow; 77 = a read through a freed buffer)", exit, tc.want)
+				}
+				summary := leakSummaryLine(stderr)
+				if summary == "" {
+					t.Fatalf("no leakcheck summary")
+				}
+				var allocs, frees, live int64
+				if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+					t.Fatalf("parse %q: %v", summary, err)
+				}
+				if live != 0 || allocs != frees {
+					t.Errorf("%s — must balance at live_bytes 0", summary)
+				}
+
+				sanAsm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_SANITIZE=1")
+				sanBin := buildBin(t, cli.gcc, dir, "ownhb_san_"+lw.name+"_"+tc.name, sanAsm)
+				sanErr, sanExit := hevRun(t, cli.runner, sanBin)
+				if sanExit != tc.want {
+					t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, tc.want)
+				}
+				if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
+					t.Fatalf("sanitize leg reported:\n%s", sanErr)
+				}
+			})
+		}
+	}
+}

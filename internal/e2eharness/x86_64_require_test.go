@@ -3,6 +3,8 @@ package e2eharness
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -55,5 +57,32 @@ func TestX86_64ToolingMissingVerdict(t *testing.T) {
 				t.Fatalf("child output missing %q:\n%s", tc.wantText, out)
 			}
 		})
+	}
+}
+
+// lookupX86_64Runner is what X86_64Runner and X86_64Tooling share, and on an
+// x86-64 host X86_64Runner returns at the native branch before any skip, so
+// the lookup is pinned directly: native on x86-64 whatever PATH holds, and on
+// any other host qemu-x86_64 from PATH or nothing.
+func TestLookupX86_64RunnerFollowsTheHost(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	runner, ok := lookupX86_64Runner()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		if !ok || runner != nil {
+			t.Fatalf("x86-64 host: runner=%v ok=%v, want native (nil, true)", runner, ok)
+		}
+		return
+	}
+	if ok {
+		t.Fatalf("empty PATH on a non-x86-64 host: runner=%v ok=true, want no runner", runner)
+	}
+	fake := filepath.Join(dir, "qemu-x86_64")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner, ok = lookupX86_64Runner()
+	if !ok || len(runner) != 1 || runner[0] != fake {
+		t.Fatalf("qemu-x86_64 on PATH: runner=%v ok=%v, want [%s]", runner, ok, fake)
 	}
 }
