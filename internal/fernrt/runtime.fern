@@ -743,8 +743,10 @@ function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
 // an interest; EPOLL_CTL_DEL for none. Interest 4 is EPOLLEXCLUSIVE: of the
 // processes watching one descriptor, a readiness wakes one rather than all,
 // which is how forked workers share a listener without every worker racing
-// for each connection. The kernel refuses it on a MOD, so a watch that
-// changes to or from it goes through an unwatch first.
+// for each connection. The kernel refuses it on a MOD (EINVAL), which is
+// what watching a descriptor already in the set with it answers; the
+// listener is only ever unwatched before its next watch, so the loop
+// never asks for that.
 function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
     var ev: usize = __alloc(16);
     var bits: i32 = 0;
@@ -857,7 +859,7 @@ function __fern_reactor_ctl(r: i32, op: i32, fd: i32, arg: i32): i32 {
     if (op == 4) { return __signal_watch(r as i64, fd); }
     if (op == 5) { return __signal_unwatch(r as i64, fd, arg); }
     if (op != 1 && op != 2) { return 0 - 22; }
-    var interest: i32 = arg & 3;
+    var interest: i32 = arg & 7;
     if (op == 2) { interest = 0; }
     if (target_os() == "darwin") { return __kqueue_watch(r as i64, fd, interest); }
     return __epoll_watch(r as i64, fd, interest);
