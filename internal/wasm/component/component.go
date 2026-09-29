@@ -1361,8 +1361,8 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 // `wasi:sockets/tcp@0.2.0` — the `tcp-socket` resource plus the seven
 // methods a listening server uses: start-bind / finish-bind /
 // start-listen / finish-listen / accept / subscribe / local-address,
-// and the three controls set-listen-backlog-size / set-keep-alive-enabled
-// / shutdown. It outer-aliases
+// remote-address, and the three controls set-listen-backlog-size /
+// set-keep-alive-enabled / shutdown. It outer-aliases
 // network / error-code / ip-socket-address (from sockets/network),
 // input-stream / output-stream (from io/streams), and pollable (from
 // io/poll); the caller must have surfaced those six at the top level
@@ -1370,17 +1370,17 @@ func tcpMethodFuncDecl(method string, paramNames []string, paramValtypes []byte,
 //
 // accept returns result<tuple<own<tcp-socket>, own<input-stream>,
 // own<output-stream>>, error-code>; subscribe returns own<pollable>;
-// local-address returns result<ip-socket-address, error-code>; the
-// bind/listen methods return result<_, error-code>.
+// local-address and remote-address return result<ip-socket-address,
+// error-code>; the bind/listen methods return result<_, error-code>.
 //
 // Inner type indices: 0-5 the six outer aliases, 6 tcp-socket
 // resource, 7 borrow<tcp-socket>, 8 borrow<network>, 9
 // result<_,error-code>, 10-13 own<tcp-socket|input|output|pollable>,
 // 14 tuple<10,11,12>, 15 result<14,error-code>, then 16/18/20/22/24/26
-// the method functypes (each followed by its export). local-address and
-// the controls are appended LAST — from 22 here, from 26 in the connect
-// variant — so the indices above hold either way. 39 decls, 45 with
-// connect.
+// the method functypes (each followed by its export). local-address,
+// remote-address and the controls are appended LAST — from 22 here, from
+// 26 in the connect variant — so the indices above hold either way. 41
+// decls, 47 with connect.
 func WasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT uint32) []byte {
 	return wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStreamT, outputStreamT, pollableT, false)
 }
@@ -1403,9 +1403,9 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 		body = append(body, name...)
 		return append(body, 0x01, funcTypeidx)
 	}
-	declCount := byte(0x27) // 39
+	declCount := byte(0x29) // 41
 	if withConnect {
-		declCount = 0x2d // 45: +tuple, +result, +2 functypes, +2 exports
+		declCount = 0x2f // 47: +tuple, +result, +2 functypes, +2 exports
 	}
 	body := []byte{0x01, 0x42, declCount}
 	body = append(body, OuterAliasTypeDecl(1, networkT)...)      // 0
@@ -1472,13 +1472,16 @@ func wasiSocketsTcpInstanceTypeBody(networkT, errorCodeT, ipSockAddrT, inputStre
 	body = append(body, InnerTypeResultOkErr(2, 1)...)
 	body = append(body, tcpMethodFuncDecl("local-address", []string{"self"}, []byte{0x07}, localAddr)...)
 	body = exportMethod(body, "[method]tcp-socket.local-address", localAddr+1)
+	// remote-address(self) -> the same result, the peer of a connection.
+	body = append(body, tcpMethodFuncDecl("remote-address", []string{"self"}, []byte{0x07}, localAddr)...)
+	body = exportMethod(body, "[method]tcp-socket.remote-address", localAddr+2)
 	// The three socket controls tcp_listen_with / tcp_socket_ctl reach:
 	// set-listen-backlog-size(self, u64), set-keep-alive-enabled(self, bool)
 	// and shutdown(self, shutdown-type), each -> result 9. shutdown-type is
-	// the enum at localAddr+2, exported under its name at +3 (a named type
+	// the enum at localAddr+3, exported under its name at +4 (a named type
 	// an exported function mentions has to be exported too); the functypes
 	// follow it.
-	ctl := localAddr + 2
+	ctl := localAddr + 3
 	body = append(body, 0x01)
 	body = append(body, InnerTypeEnum([]string{"receive", "send", "both"})...)
 	body = append(body, ExportTypeEqDecl("shutdown-type", uint32(ctl))...)

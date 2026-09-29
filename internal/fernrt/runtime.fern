@@ -373,12 +373,14 @@ function __fern_tcp_listen(port: i32): i32 {
 // and no error is pending, else the -errno the connect failed with (read
 // through SO_ERROR, which clears it); op 6 is how many bytes handed to
 // the socket the peer has not acknowledged yet (unsent and in flight:
-// SIOCOUTQ on Linux, SO_NWRITE on Darwin). 0 or the count, -errno, or
-// -EINVAL for an op that names no control.
+// SIOCOUTQ on Linux, SO_NWRITE on Darwin); op 7 is the peer's address as
+// one 32-bit key (__peer_key). 0 or the count, -errno, or -EINVAL for an
+// op that names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     var f: i64 = fd as i64;
     if (op == 5) { return __connect_result(f); }
     if (op == 6) { return __send_queue(f); }
+    if (op == 7) { return __peer_key(f); }
     if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
     if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
     if (op == 3) {
@@ -408,6 +410,42 @@ function __send_queue(f: i64): i32 {
     __free(n, 8);
     if (r < 0) { return r as i32; }
     return queued;
+}
+
+// The peer's address as one 32-bit key: an IPv4 address packed as
+// tcp_connect takes it (the first octet in the low byte), a v4-mapped
+// IPv6 address its IPv4 one, any other IPv6 address the two words of its
+// first eight bytes XORed (never 0), so the peers of one /64 share a key.
+// 0 for a socket with no peer, so a key is never mistaken for an error.
+function __peer_key(f: i64): i32 {
+    var sa: usize = __alloc(32);
+    var z: usize = 0;
+    while (z < 32) {
+        __store_u8(sa + z, 0);
+        z = z + 1;
+    }
+    __store_i32(sa + 28, 28);
+    var r: i64 = __syscall3(__sys_getpeername(), f, sa as i64, (sa + 28) as i64);
+    var fam: i32 = __load_u8(sa) | (__load_u8(sa + 1) << 8);
+    if (target_os() == "darwin") { fam = __load_u8(sa + 1); }
+    var key: i32 = 0;
+    if (r >= 0 && fam == 2) {
+        key = __peer_word(sa + 4);
+    } else if (r >= 0 && fam == __af_inet6()) {
+        if (__peer_word(sa + 8) == 0 && __peer_word(sa + 12) == 0 && __peer_word(sa + 16) == 0 && __load_u8(sa + 18) == 255 && __load_u8(sa + 19) == 255) {
+            key = __peer_word(sa + 20);
+        } else {
+            key = __peer_word(sa + 8) ^ __peer_word(sa + 12);
+            if (key == 0) { key = 1; }
+        }
+    }
+    __free(sa, 32);
+    return key;
+}
+
+// Four address bytes at p as one word, the first in the low byte.
+function __peer_word(p: usize): i32 {
+    return __load_u8(p) | (__load_u8(p + 1) << 8) | (__load_u8(p + 2) << 16) | (__load_u8(p + 3) << 24);
 }
 
 // A peer name in the block means the connect completed; otherwise the

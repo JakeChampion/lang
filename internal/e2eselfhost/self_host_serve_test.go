@@ -198,6 +198,13 @@ func TestSelfHostServeShutdownHook(t *testing.T) {
 	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostServePerIPCap(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.PerIPCapServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 func TestSelfHostSupervisedServeHandlerStallsItsWorker(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.StallServerSource(port))

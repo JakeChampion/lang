@@ -1192,6 +1192,12 @@ The socket controls are typed faces over the descriptor builtins
   `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
   got with what was written, which is what a minimum data rate on a
   response is judged by.
+- `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for
+  a socket with no peer: an IPv4 address packed as `tcp_connect` takes
+  it (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
+  one, any other IPv6 address the two words of its first eight bytes
+  XORed, so the peers of one /64 share a key. What
+  `ServeOptions.max_connections_per_ip` counts by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
   shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
 
@@ -1264,9 +1270,9 @@ loop and `std/fetch` the client.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
   `ServeOptions { backlog, reuse_port, recv_deadline, min_data_rate,
   data_rate_grace, keep_alive_idle, keep_alive_requests,
-  max_connections }` (`serve_options()` is 128, one listener per port,
-  the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
-  1024): the accept queue
+  max_connections, max_connections_per_ip }` (`serve_options()` is 128,
+  one listener per port, the 10 s deadline, 240 bytes per second after
+  5 s, 130 s, 1000, 1024 and 100): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm), the read deadline, the least rate a request body must keep
   arriving at once its header block is in and a response must keep
@@ -1280,7 +1286,11 @@ loop and `std/fetch` the client.
   its last response says `Connection: close` (a value below 1 behaves as
   1), how many connections the loop holds open at once (at the cap the
   listener is not read, so further connections wait in its accept queue,
-  `backlog` deep, the kernel refusing past it, until one closes), and
+  `backlog` deep, the kernel refusing past it, until one closes), how
+  many of them one client may hold (`max_connections_per_ip`, counted by
+  the peer's address key, `net.peer_key`, and by each worker's loop
+  alone: a connection past it is closed as it is accepted, without a
+  response; 0 for no cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
   `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps

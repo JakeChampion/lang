@@ -1056,17 +1056,20 @@ func buildTcpListenWithBody(idxs map[string]uint32) []byte {
 }
 
 // buildTcpSocketCtlBody assembles __fern_tcp_socket_ctl over a connection
-// or listener record. op 2 (keep-alive) and op 4 (shutdown) are the two
-// controls wasi:sockets 0.2 has; op 1 (no-delay), op 3 (non-blocking) and
-// op 6 (the send queue) have none and answer -ENOTSUP (58), so a caller
-// learns the host owns Nagle, the blocking mode and the queue rather than
-// believing it set or read them. Any other op is -EINVAL (28).
+// or listener record. op 2 (keep-alive), op 4 (shutdown) and op 7 (the
+// peer's address, through remote-address) are the controls wasi:sockets
+// 0.2 has; op 1 (no-delay), op 3 (non-blocking) and op 6 (the send queue)
+// have none and answer -ENOTSUP (58), so a caller learns the host owns
+// Nagle, the blocking mode and the queue rather than believing it set or
+// read them. Any other op is -EINVAL (28).
 //
 // Signature: (conn, op, arg: i32) → i32.
 //
-// Locals (after the three params): 3: $retptr (4 bytes)
+// Locals (after the three params): 3: $retptr (4 bytes; 36 for op 7),
+// 4: $key (op 7's answer)
 func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	const retptr = 3
+	const key = 4
 	// The result<_, error-code> at retptr: 0, or -errno with the area freed.
 	answer := func(body []byte) []byte {
 		body = inst.InstLocalGet(body, retptr)
@@ -1095,6 +1098,107 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 		body = inst.InstReturn(body)
 		body = inst.InstEnd(body)
 	}
+	// op 7: the peer's address as a 32-bit key, the value the native
+	// runtimes compute from the sockaddr (docs/BACKEND-PARITY.md): an
+	// IPv4 address packed with its first octet in the low byte, a
+	// v4-mapped IPv6 address its IPv4 one, any other IPv6 address the two
+	// words of its first eight bytes XORed and never 0. 0 for a record
+	// with no connected peer, a datagram record included, or an error.
+	// remote-address answers `result<ip-socket-address, error-code>` in
+	// the 36-byte area local-address uses: the family disc at +4, then
+	// for ipv4 the port at +8 and four address bytes at +10, for ipv6 the
+	// port at +8, flow-info at +12 and eight 16-bit groups at +16, each a
+	// little-endian u16 of two network-order bytes.
+	body = opIs(body, 7)
+	{
+		body = emitIsUdpRecord(body, 0)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstI32Const(body, 36)
+		body = inst.InstCall(body, idxs["__fern_alloc"])
+		body = inst.InstLocalSet(body, retptr)
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstCall(body, idxs["wasi_sockets_tcp_remote_address"])
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, key)
+		// byte(off): one byte of the area.
+		byteAt := func(body []byte, off uint32) []byte {
+			body = inst.InstLocalGet(body, retptr)
+			return memory.InstI32Load8U(body, 0, off)
+		}
+		// word(off): four address bytes as one word, the first in the
+		// low byte; an ipv4 address lies in memory order, an ipv6 group's
+		// two bytes are swapped by the u16 lowering.
+		word := func(body []byte, off uint32, swapped bool) []byte {
+			order := []uint32{0, 1, 2, 3}
+			if swapped {
+				order = []uint32{1, 0, 3, 2}
+			}
+			for n, o := range order {
+				body = byteAt(body, off+o)
+				if n > 0 {
+					body = inst.InstI32Const(body, int32(8*n))
+					body = numeric.InstI32Shl(body)
+					body = numeric.InstI32Or(body)
+				}
+			}
+			return body
+		}
+		body = byteAt(body, 0)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = byteAt(body, 4)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				// ipv6: v4-mapped when the first ten bytes are 0 and the
+				// next two 255, else the fold of the first eight.
+				body = word(body, 16, true)
+				body = word(body, 20, true)
+				body = numeric.InstI32Or(body)
+				body = inst.InstLocalGet(body, retptr)
+				body = memory.InstI32Load16U(body, 1, 24)
+				body = numeric.InstI32Or(body)
+				body = numeric.InstI32Eqz(body)
+				body = inst.InstLocalGet(body, retptr)
+				body = memory.InstI32Load16U(body, 1, 26)
+				body = inst.InstI32Const(body, 65535)
+				body = numeric.InstI32Eq(body)
+				body = numeric.InstI32And(body)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				body = word(body, 28, true)
+				body = inst.InstLocalSet(body, key)
+				body = inst.InstElse(body)
+				body = word(body, 16, true)
+				body = word(body, 20, true)
+				body = numeric.InstI32Xor(body)
+				body = inst.InstLocalSet(body, key)
+				body = inst.InstLocalGet(body, key)
+				body = numeric.InstI32Eqz(body)
+				body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+				body = inst.InstI32Const(body, 1)
+				body = inst.InstLocalSet(body, key)
+				body = inst.InstEnd(body)
+				body = inst.InstEnd(body)
+			}
+			body = inst.InstElse(body)
+			body = word(body, 10, false)
+			body = inst.InstLocalSet(body, key)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, retptr)
+		body = inst.InstI32Const(body, 36)
+		body = inst.InstCall(body, idxs["__free"])
+		body = inst.InstLocalGet(body, key)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
 	// A datagram record (wasi_udp.go) has neither control either.
 	body = emitIsUdpRecord(body, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -1194,5 +1298,5 @@ func buildTcpSocketCtlBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 4)
 	body = inst.InstCall(body, idxs["__free"])
 	body = inst.InstI32Const(body, -28)
-	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32), body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32), body)
 }

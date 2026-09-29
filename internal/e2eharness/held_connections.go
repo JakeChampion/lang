@@ -24,7 +24,8 @@ const HeldConnectionsBatch = 64
 
 // HeldConnectionsServerSource is a server on `port` whose handler answers
 // the bump allocator's high-water mark in bytes, with a read deadline long
-// enough that the held connections stay open while it is measured.
+// enough that the held connections stay open while it is measured and no
+// per-client cap, since both batches come from this host.
 func HeldConnectionsServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
@@ -35,7 +36,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 
 function main(): i32 {
-    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64) };
+    var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
     return tcp.tcp_serve_opts(%d, opts, handle);
 }
 `, port)

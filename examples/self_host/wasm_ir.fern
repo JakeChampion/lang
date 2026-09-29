@@ -2818,6 +2818,7 @@ pub function wasi_sockets_socket_ctl_imports(): string {
     var o: string = "";
     o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.set-keep-alive-enabled\" (func $__fern_wasi_tcp_set_keep_alive_enabled (param i32 i32 i32)))\n";
     o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.shutdown\" (func $__fern_wasi_tcp_shutdown (param i32 i32 i32)))\n";
+    o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.remote-address\" (func $__fern_wasi_tcp_remote_address (param i32 i32)))\n";
     return o;
 }
 
@@ -2902,16 +2903,41 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
 }
 
 // $__fern_tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Keep-alive (op 2)
-// and shutdown (op 4) are the two controls wasi:sockets 0.2 has; no-delay
-// (op 1), non-blocking (op 3) and the send queue (op 6) have none and
-// answer -ENOTSUP (58), so a caller learns the host owns Nagle, the
-// blocking mode and the queue rather than believing it set or read them.
-// Any other op is -EINVAL (28).
+// shutdown (op 4) and the peer's address (op 7, through remote-address)
+// are the controls wasi:sockets 0.2 has; no-delay (op 1), non-blocking
+// (op 3) and the send queue (op 6) have none and answer -ENOTSUP (58), so
+// a caller learns the host owns Nagle, the blocking mode and the queue
+// rather than believing it set or read them. Any other op is -EINVAL (28).
+//
+// Op 7 answers the value the native runtimes compute from the sockaddr:
+// an IPv4 address packed with its first octet in the low byte, a
+// v4-mapped IPv6 address its IPv4 one, any other IPv6 address the two
+// words of its first eight bytes XORed and never 0; 0 for a record with no
+// connected peer, a datagram record included. remote-address answers in
+// the 36-byte area local-address uses: the family disc at +4, then for
+// ipv4 the port at +8 and four address bytes at +10, for ipv6 the port at
+// +8, flow-info at +12 and eight 16-bit groups at +16, each a
+// little-endian u16 of two network-order bytes, so a group's bytes are
+// swapped into a word.
 pub function tcp_socket_ctl_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
     o = o + "    (local $ret i32) (local $e i32)\n";
     o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.eq (local.get $op) (i32.const 6))) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
+    o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
+    o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
+    o = o + "      (call $__fern_wasi_tcp_remote_address (i32.load (local.get $c)) (local.get $ret))\n";
+    o = o + "      (local.set $e (i32.const 0))\n";
+    o = o + "      (if (i32.eqz (i32.load8_u (local.get $ret))) (then\n";
+    o = o + "        (if (i32.load8_u offset=4 (local.get $ret))\n";
+    o = o + "          (then\n";
+    o = o + "            (if (i32.and (i32.eqz (i32.or (i32.or " + peer_word(16, true) + " " + peer_word(20, true) + ") (i32.load16_u offset=24 (local.get $ret)))) (i32.eq (i32.load16_u offset=26 (local.get $ret)) (i32.const 65535)))\n";
+    o = o + "              (then (local.set $e " + peer_word(28, true) + "))\n";
+    o = o + "              (else (local.set $e (i32.xor " + peer_word(16, true) + " " + peer_word(20, true) + ")) (if (i32.eqz (local.get $e)) (then (local.set $e (i32.const 1)))))))\n";
+    o = o + "          (else (local.set $e " + peer_word(10, false) + ")))))\n";
+    o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
+    o = o + "      (return (local.get $e))))\n";
     // A datagram record has neither control either.
     o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const -58))))\n";
     // op 5: a connection is complete; a connecting record (kind 4) runs
@@ -2944,6 +2970,23 @@ pub function tcp_socket_ctl_func(): string {
     o = o + "      (else (local.set $e (i32.const 0))))\n";
     o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 4))\n";
     o = o + "    (local.get $e))\n";
+    return o;
+}
+
+// peer_word: four address bytes of the result area at `at` as one word,
+// the first in the low byte; `swapped` for two 16-bit groups, whose bytes
+// the u16 lowering has swapped.
+function peer_word(at: i32, swapped: boolean): string {
+    var order: i32[] = [0, 1, 2, 3];
+    if (swapped) { order = [1, 0, 3, 2]; }
+    var o: string = "";
+    var n: i32 = 0;
+    while (n < 4) {
+        var b: string = "(i32.load8_u offset=" + util.i32_to_string(at + order[n]) + " (local.get $ret))";
+        if (n > 0) { b = "(i32.shl " + b + " (i32.const " + util.i32_to_string(8 * n) + "))"; }
+        if (n == 0) { o = b; } else { o = "(i32.or " + o + " " + b + ")"; }
+        n = n + 1;
+    }
     return o;
 }
 

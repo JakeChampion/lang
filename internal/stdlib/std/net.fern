@@ -804,6 +804,18 @@ pub function send_queue(sock: i32): Result[i32, NetError] {
     return __socket_count(tcp_socket_ctl(sock, 6, 0));
 }
 
+// `peer_key(sock)` — the peer's address as one 32-bit key, or `None` for a
+// socket with no peer: an IPv4 address packed as `tcp_connect` takes it
+// (the first octet in the low byte), a v4-mapped IPv6 address its IPv4
+// one, any other IPv6 address the two words of its first eight bytes
+// XORed, so the peers of one /64 share a key. What a per-client
+// connection cap counts by (`ServeOptions.max_connections_per_ip`).
+pub function peer_key(sock: i32): Option[i32] {
+    var k: i32 = tcp_socket_ctl(sock, 7, 0);
+    if (k == 0) { return None; }
+    return Some(k);
+}
+
 // `shutdown(sock, how)` — close one or both directions while keeping the
 // descriptor; `tcp_close` still releases it.
 pub function shutdown(sock: i32, how: Shutdown): Result[(), NetError] {
