@@ -1074,11 +1074,15 @@ function main(): i32 {
     var arrMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeArray { elem: i32ty, view: false } };
     var arrMapFunc = ssasem.Func { ...mapFunc, values: [arrMapTy], params: [arrMapTy], result: arrMapTy };
     if (!ssaunits.plan(arrMapFunc, [3]).ok) { eprint(ssaunits.plan(arrMapFunc, [3]).why); return 146; }
-    // A column of function values owns nothing it could release: a function
-    // value is lent everywhere here, so it is no element of a container.
+    // A column of function values is a column of environment boxes: the map
+    // owns a unit of each, and the column's release walks their captures.
     var fnMapTy: typeinfo.Type = typeinfo.TypeMap { key: strTy, value: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true } };
     var fnMapFunc = ssasem.Func { ...mapFunc, values: [fnMapTy], params: [fnMapTy], result: fnMapTy };
-    if (ssaunits.plan(fnMapFunc, [3]).why != "function value is not an element") { return 147; }
+    if (!ssaunits.plan(fnMapFunc, [3]).ok) { eprint(ssaunits.plan(fnMapFunc, [3]).why); return 147; }
+    // A function-typed KEY stays refused: nothing hashes or compares one.
+    var fnKeyTy: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true }, value: i32ty };
+    var fnKeyFunc = ssasem.Func { ...mapFunc, values: [fnKeyTy], params: [fnKeyTy], result: fnKeyTy };
+    if (ssaunits.plan(fnKeyFunc, [3]).why != "function value is not an element") { return 235; }
     // A map over 32-bit integer or boolean columns runs on core/map
     // (ssarc.routed_map): it is admitted, and dropped whole through
     // __map_drop_impl. A string value column runs there too, and its drop
