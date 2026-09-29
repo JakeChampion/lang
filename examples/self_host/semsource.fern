@@ -641,6 +641,8 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
     }
     return define(s, ssasem.array_new(), ids, 0, "", ty);
@@ -654,8 +656,9 @@ function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type)
     var at: i32 = 0;
     while (at < t.elements.len()) {
         var v: Value = expr(t.elements[at], s, tuple_element_type(ty, at));
+        if (!v.s.ok) { return Value { s: v.s, id: 0 - 1 }; }
+        v = unaliased_view(v);
         s = v.s;
-        if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         ids = ids.append(v.id);
         types = types.append(s.values[v.id]);
         at = at + 1;
@@ -885,6 +888,8 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
         s = v.s;
         if (!s.ok) { return Written { s: s, ids: [], at: [] }; }
         if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return Written { s: fail(s, "record field type"), ids: [], at: [] }; }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
         at = at.append(slot);
         i = i + 1;
@@ -995,6 +1000,8 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
             s = v.s;
         }
         if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
+        v = unaliased_view(v);
+        s = v.s;
         ids = ids.append(v.id);
         i = i + 1;
     }
@@ -1479,7 +1486,8 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
-    return define(s, ssasem.append(), [recv.id, v.id], 0, "", t);
+    v = unaliased_view(v);
+    return define(v.s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
 
 // `.with` hands the receiver's own unit over the way `.append` does and takes
@@ -1497,7 +1505,8 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
-    return define(s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
+    v = unaliased_view(v);
+    return define(v.s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
 // The join is declared on `string[]` alone, as the AST lowering gates it, so a
@@ -2632,10 +2641,11 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     return State { ...bind(init.s, v.name, init.id), scope: after };
 }
 
-// A view bound under a second name, or yielded by a value block's arm, is a
-// fresh view of the same bytes, so the two names share no box. Otherwise a
-// loop that rebinds one name merges the view the other still holds into its
-// phi, and supplying that phi would retain a view (#9802). A literal and a
+// A view bound under a second name, stored into a container, or yielded by a
+// value block's arm, is a fresh view of the same bytes, so the two holders
+// share no box. Otherwise a loop that rebinds one name merges the view the
+// other still holds into its phi, and a container would take a unit of a view
+// that stays live; either supply would retain a view (#9802). A literal and a
 // retagged string are counted, and retaining them is sound.
 function unaliased_view(v: Value): Value {
     var s: State = v.s;
