@@ -614,12 +614,17 @@ function __kqueue_watch(kq: i64, fd: i32, interest: i32): i32 {
 }
 
 // EPOLL_CTL_ADD, or EPOLL_CTL_MOD once the fd is in the set (EEXIST), for
-// an interest; EPOLL_CTL_DEL for none.
+// an interest; EPOLL_CTL_DEL for none. Interest 4 is EPOLLEXCLUSIVE: of the
+// processes watching one descriptor, a readiness wakes one rather than all,
+// which is how forked workers share a listener without every worker racing
+// for each connection. The kernel refuses it on a MOD, so a watch that
+// changes to or from it goes through an unwatch first.
 function __epoll_watch(ep: i64, fd: i32, interest: i32): i32 {
     var ev: usize = __alloc(16);
     var bits: i32 = 0;
     if ((interest & 1) != 0) { bits = bits | 1; }
     if ((interest & 2) != 0) { bits = bits | 4; }
+    if ((interest & 4) != 0) { bits = bits | 268435456; }
     __store_i32(ev, bits);
     __store_i32(ev + (__epoll_data_at() as usize), fd);
     __store_i32(ev + (__epoll_data_at() as usize) + 4, 0);

@@ -1254,9 +1254,12 @@ loop and `std/fetch` the client.
   turns the rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
-  1), and how many connections the loop holds open at once: at the cap
-  the listener is not read, so further connections wait in its accept
-  queue (`backlog` deep, the kernel refusing past it) until one closes.
+  1), how many connections the loop holds open at once (at the cap the
+  listener is not read, so further connections wait in its accept queue,
+  `backlog` deep, the kernel refusing past it, until one closes), and
+  how many workers `tcp_serve_supervised_opts` forks (`workers`, 1: the
+  runtime does not yet report the core count, so the default stays one
+  until it does).
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1271,8 +1274,12 @@ loop and `std/fetch` the client.
   `ServeOptions`, `tcp_serve_with_deadline` the read deadline alone.
 - `tcp_serve_supervised(port, handler)` — crash-only serving: the
   accept loop runs in a forked worker the parent reforks on
-  death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
-  a refork resets the loop frame.
+  death (docs/CRASH-ONLY-SERVE.md). `tcp_serve_supervised_opts(port,
+  opts, handler)` takes the `ServeOptions`, and with `workers` above
+  one forks that many, each running its own loop over the one
+  listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
+  connection wakes one of them; whichever dies is replaced. No
+  threaded-state variant — a refork resets the loop frame.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where

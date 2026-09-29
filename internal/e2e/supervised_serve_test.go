@@ -222,6 +222,89 @@ func waitStderrContains(t *testing.T, path, needle string, deadline time.Duratio
 // traps the worker (reset + worker-death line, raw exit code 134),
 // and /ok answers 200 again — the service survived what one
 // request did.
+// workersServeSrc serves with two forked workers: /slow burns pure work
+// for well over a second, /boom traps, /ok answers at once.
+const workersServeSrc = `
+import "std/http";
+import "std/tcp";
+import "core/int";
+function burn(n: i32): i32 {
+    var x: i32 = 12345;
+    var i: i32 = 0;
+    while (i < n) {
+        x = (x * 1103515245 + 12345) & 2147483647;
+        i = i + 1;
+    }
+    return x;
+}
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/boom") {
+        var a: i32[] = [1, 2, 3];
+        var i: i32 = a.len() + 5;
+        var x: i32 = a[i];
+        return http.http_response_ok("unreachable " + int.int_to_string(x));
+    }
+    if (req.path == "/slow") {
+        if (burn(400000000) == 0 - 1) { return http.http_response_ok("never"); }
+        return http.http_response_ok("slow");
+    }
+    return http.http_response_ok("ok");
+}
+function main(): i32 {
+    return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2 }, handle);
+}`
+
+// Two workers over one listener (#9854): a request on a second
+// connection is answered while the first worker is deep in /slow, which
+// one worker could not do, since its handlers run to completion; and a
+// worker's death leaves the other serving, before and after the refork.
+func TestSupervisedServeWorkersServeSideBySide(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(workersServeSrc, port))
+	_, stderrPath := startSupervisedServer(t, bin, runner)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitServerReady(t, addr, 10*time.Second)
+
+	if resp := httpRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("first /ok: want 200, got\n%s", resp)
+	}
+	// /slow on one connection holds its worker for seconds; /ok on
+	// another must come back from the other worker long before that.
+	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	time.Sleep(200 * time.Millisecond)
+	if resp := httpRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok beside /slow: want 200, got\n%s", resp)
+	}
+	if waited := time.Since(started); waited > 500*time.Millisecond {
+		t.Fatalf("/ok beside /slow took %v: it waited behind the slow worker rather than being served by the other", waited)
+	}
+	b, err := io.ReadAll(slow)
+	if err != nil || !strings.Contains(string(b), "slow") {
+		t.Fatalf("/slow itself: %q, %v", b, err)
+	}
+	// The proof needs /slow to have outlasted the /ok round trip by far;
+	// a burn the machine finishes in a blink would prove nothing.
+	if held := time.Since(started); held < 500*time.Millisecond {
+		t.Fatalf("/slow held its worker for only %v; too short to show the other worker answered /ok", held)
+	}
+	// A worker's death leaves the other one serving.
+	if resp := httpRoundTrip(t, addr, "/boom", 5*time.Second); strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/boom unexpectedly answered 200:\n%s", resp)
+	}
+	waitStderrContains(t, stderrPath, "worker died with exit code 134", 10*time.Second)
+	if resp := httpRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("post-crash /ok: want 200 (the other worker should have answered), got\n%s", resp)
+	}
+}
+
 func TestSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	port := freeLoopbackPort(t)
 	bin, runner := buildSupervisedServeBin(t, fmt.Sprintf(supervisedServeSrc, port))

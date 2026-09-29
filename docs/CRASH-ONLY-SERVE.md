@@ -137,8 +137,18 @@ the native supervised path and the interp fallback.
 
 ## Deliberately deferred
 
-- fork-per-request / prefork worker pools (SO_REUSEPORT) — needs
-  a real workload to justify.
+- fork-per-request — needs a real workload to justify. Prefork
+  workers exist (#9854): `tcp_serve_supervised_opts` with
+  `ServeOptions.workers` above one forks that many workers over the
+  one inherited listener, each watching it with epoll's
+  `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
+  one worker rather than all, and the supervisor reaps whichever dies
+  (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
+  each) and forks its replacement under the same backoff and
+  fast-death count. Per-worker `SO_REUSEPORT` listeners, and the accept
+  distribution the one-listener shape gives under load, are not
+  measured yet; the default stays one worker until the runtime reports
+  the core count.
 - Graceful drain (SIGTERM → stop accepting, finish in-flight) —
   orthogonal; belongs to a signals design.
 - Windows — no native Windows target exists.

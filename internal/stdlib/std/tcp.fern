@@ -96,9 +96,11 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // long as its bytes buy at that rate, beyond the read deadline), how
 // long an idle persistent connection is kept waiting for its next
 // request, how many requests one connection may carry before its
-// response says `Connection: close`, and how many connections the loop
+// response says `Connection: close`, how many connections the loop
 // holds open at once (past it, the listener is not read and connections
-// wait in its accept queue until one closes).
+// wait in its accept queue until one closes), and how many workers
+// `tcp_serve_supervised_opts` forks, each running its own loop over the
+// one listener (a value below 1 behaves as 1).
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
@@ -108,13 +110,14 @@ pub struct ServeOptions {
     keep_alive_idle: Duration,
     keep_alive_requests: i32,
     max_connections: i32,
+    workers: i32,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span
 // and 1000 requests per connection.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024 };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, workers: 1 };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -695,6 +698,14 @@ function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: str
     return (__Conns { ...c, pending: c.pending.with(at, rest), deadlines: c.deadlines.with(at, monotonic_ns() + deadline.as_nanos()) }, Partial);
 }
 
+// __listener_interest(opts) — how a loop watches its listener: for reads,
+// and exclusively when other workers watch the same listener, so a
+// connection wakes one of them rather than all.
+function __listener_interest(opts: ServeOptions): i32 {
+    if (opts.workers > 1) { return 5; }
+    return 1;
+}
+
 // __serve_gate(drv, listener, c, opts, accepting) — whether the listener
 // is watched after this pass: unwatched once `max_connections` are open,
 // so the accept queue holds the rest, and watched again once one has
@@ -706,7 +717,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: 
         drv.unwatch(listener);
         return false;
     }
-    if (!accepting && !full) { return drv.watch(listener, 1) >= 0; }
+    if (!accepting && !full) { return drv.watch(listener, __listener_interest(opts)) >= 0; }
     return accepting;
 }
 
@@ -751,7 +762,7 @@ function __host_platform(reactor: i32): Platform {
 // read (see `tcp_serve_deadline`) and its persistence.
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions): i32 {
     var drv: async.RealDriver = async.real_driver();
-    var watched: i32 = drv.watch(listener, 1);
+    var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
     var accepting: boolean = true;
     var plat: Platform = __host_platform(drv.handle());
@@ -820,7 +831,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions): i32 {
     var st: S = init;
     var drv: async.RealDriver = async.real_driver();
-    var watched: i32 = drv.watch(listener, 1);
+    var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
     var accepting: boolean = true;
     var plat: Platform = __host_platform(drv.handle());
@@ -883,70 +894,69 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     return 0;
 }
 
-// tcp_serve_supervised(port, handler) — crash-only supervised
-// serving (docs/CRASH-ONLY-SERVE.md, plan item D2'). Same
-// signature as `tcp_serve`, different failure scope: the accept
-// loop runs in a forked WORKER process while the parent does
-// nothing but supervise — `proc_waitpid` on the worker, log the
-// death to stderr (the raw exit code: 134 = trap, 137 = arena
-// exhaustion, 101 = todo, 1 = assert), and refork. A handler
-// trap kills one worker's in-flight connections, not the
-// service: the parent-owned listener keeps its backlog, and the
-// next worker inherits the same fd. A refork also resets the
-// worker heap, reclaiming the cycle-leak class RC cannot collect.
-//
-// Restart policy (TigerStyle — bounded everything):
-//   - backoff 100ms doubling to a 5s cap between reforks;
-//     a worker that lived >= 100ms resets the backoff.
-//   - 8 CONSECUTIVE deaths within 100ms of spawn is a crash
-//     loop (the handler traps on startup / first request):
-//     give up and return the last worker's exit code — an
-//     operator problem, not a retry problem.
-//
-// Where fork doesn't exist, degrade instead of failing:
-// `proc_fork() == -38` (ENOSYS — the interpreter's Go runtime
-// is threaded and cannot bare-fork; ditto any future fork-less
-// target) logs one line and serves single-process via the same
-// accept loop, so the function stays runnable under `-interp`.
-// Other fork/waitpid failures (-errno) return the errno like
-// `tcp_serve` returns a failed bind.
+// tcp_serve_supervised(port, handler) — `tcp_serve` under a supervising
+// parent (docs/CRASH-ONLY-SERVE.md): the listener is made here, before
+// the first fork, and every worker inherits it, so pending connections
+// survive a worker's death; a worker that dies is logged and forked
+// again under a bounded backoff, and eight deaths within 100 ms of
+// their forks in a row give up with the last exit code. Serves
+// single-process where there is no fork (the interpreter).
 pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    return tcp_serve_supervised_opts(port, serve_options(), handler);
+}
+
+// tcp_serve_supervised_opts(port, opts, handler) — `tcp_serve_supervised`
+// with `ServeOptions`: `opts.workers` workers are forked, each running
+// its own loop over the one listener, watched exclusively so a
+// connection wakes one of them; whichever dies is replaced, the backoff
+// and the fast-death count shared among them.
+pub function tcp_serve_supervised_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
     // Listener FIRST, in the parent — the whole design hinges on
     // workers inheriting this fd rather than owning it.
-    var opts: ServeOptions = serve_options();
     var listener: i32 = tcp_listen_with(__every_v4(), port, opts.backlog, opts.reuse_port);
     if (listener < 0) {
         return listener;
     }
+    var workers: i32 = opts.workers;
+    if (workers < 1) { workers = 1; }
+    var pids: i32[] = [];
+    var spawned: i64[] = [];
     var backoff_ms: i64 = 100 as i64;
     var fast_deaths: i32 = 0;
     while (true) {
-        var spawned_at: i64 = now_unix_ms();
-        var pid: i32 = proc_fork();
-        if (pid == -38) {
-            // ENOSYS: no fork on this host. Graceful degradation.
-            eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
-            return __serve_loop(listener, handler, opts);
+        while (pids.len() < workers) {
+            var pid: i32 = proc_fork();
+            if (pid == -38) {
+                // ENOSYS: no fork on this host. Graceful degradation.
+                eprint("tcp_serve_supervised: supervision unavailable; serving single-process");
+                return __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 });
+            }
+            if (pid < 0) {
+                return pid;
+            }
+            if (pid == 0) {
+                // Worker child: run the accept loop against the
+                // inherited listener. It never returns under normal
+                // operation; if it somehow does, exit with its code
+                // rather than falling into a second supervision loop.
+                var rc: i32 = __serve_loop(listener, handler, opts);
+                exit(rc);
+                return rc;
+            }
+            pids = pids.append(pid);
+            spawned = spawned.append(now_unix_ms());
         }
-        if (pid < 0) {
-            return pid;
-        }
-        if (pid == 0) {
-            // Worker child: run the accept loop against the
-            // inherited listener. It never returns under normal
-            // operation; if it somehow does, exit with its code
-            // rather than falling into a second supervision loop.
-            var rc: i32 = __serve_loop(listener, handler, opts);
-            exit(rc);
-            return rc;
-        }
-        // Parent: supervise.
-        var code: i32 = proc_waitpid(pid);
+        // Parent: supervise. -1 reaps whichever worker exits first;
+        // which one it was, a non-blocking probe of each says.
+        var code: i32 = proc_waitpid(0 - 1);
         if (code < 0) {
             return code;
         }
+        var dead: i32 = __reaped_index(pids);
+        var lived_ms: i64 = now_unix_ms() - spawned[dead];
+        pids = __without_index_i32(pids, dead);
+        spawned = __without_index_i64(spawned, dead);
         eprint("tcp_serve_supervised: worker died with exit code " + int.int_to_string(code) + "; restarting");
-        var lived_ms: i64 = now_unix_ms() - spawned_at;
         if (lived_ms < (100 as i64)) {
             fast_deaths = fast_deaths + 1;
             if (fast_deaths >= 8) {
@@ -964,6 +974,40 @@ pub function tcp_serve_supervised(port: i32, handler: (HttpRequest, Platform) =>
         }
     }
     return 0;
+}
+
+// __reaped_index(pids) — which of `pids` a blocking wait just reaped:
+// the one a non-blocking wait answers -ECHILD for, since a live child
+// answers -1 and a reaped one is no longer this process's child. The
+// last one when none says so, which cannot happen after a successful
+// wait.
+function __reaped_index(pids: i32[]): i32 {
+    var i: i32 = 0;
+    while (i < pids.len()) {
+        if (proc_waitpid_nohang(pids[i]) == -10) { return i; }
+        i = i + 1;
+    }
+    return pids.len() - 1;
+}
+
+function __without_index_i32(xs: i32[], at: i32): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i != at) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function __without_index_i64(xs: i64[], at: i32): i64[] {
+    var out: i64[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (i != at) { out = out.append(xs[i]); }
+        i = i + 1;
+    }
+    return out;
 }
 
 // Pull a port number out of an env var. Returns the parsed
