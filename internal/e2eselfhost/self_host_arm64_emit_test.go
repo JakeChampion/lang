@@ -7,59 +7,49 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// Sibling to TestSelfHostAsmRunX86_64 — exercises the
-// asm_arm64.fern ARM64 codegen layer. The driver
-// (asm_ir_run.fern (-target arm64-linux)) is compiled on the host (x86_64),
-// reads lang source from stdin, and prints aarch64 assembly
-// to stdout. The Go test pipes each source in, gcc-assembles
-// the output with aarch64-linux-gnu-gcc, then runs the
-// resulting binary under qemu-aarch64 (or natively on arm64
-// hosts) and asserts the exit code matches.
-//
-// Scope mirrors asm_arm64.fern's: i32 literals + arithmetic
-// (+ - * / %) + unary `-` + `return` only. Locals / control
-// flow / functions land in follow-up PRs.
-
+// TestSelfHostAsmArm64Bootstrap compiles each case through the self-hosted
+// CLI (`fern.fern`, built for the x86-64 host) with `-target arm64-linux
+// -emit asm` under FERN_SEM_IR_STRICT, assembles the output with
+// aarch64-linux-gnu-gcc and runs it under qemu-aarch64 (or natively on an
+// arm64 host), checking the exit code and, where a case names one, stdout.
+// Strict mode makes a declaration the typed lowering refuses a failure rather
+// than an AST-lowered fallback. A case is either a whole program or bare
+// statements, which the CLI wraps into `main`.
 func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	// Build the driver as an x86_64 binary — the driver itself
-	// runs on the test host, only its OUTPUT is arm64 asm.
-	prog, _, err := modload.Load(filepath.Join(dir, "asm_ir_run.fern"))
+	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
-		t.Fatalf("modload: %v", err)
+		t.Fatal(err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	asm, err := x86_64.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
-	driverAsm := filepath.Join(dir, "driver.s")
-	driverBin := filepath.Join(dir, "driver")
-	if err := os.WriteFile(driverAsm, []byte(asm), 0o644); err != nil {
-		t.Fatalf("write driver asm: %v", err)
-	}
-	if out, err := exec.Command(x86gcc, "-static", "-nostdlib", "-no-pie", driverAsm, "-o", driverBin).CombinedOutput(); err != nil {
-		t.Fatalf("driver gcc: %v\n%s", err, out)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	fernBin := buildSelfHostBin(t, x86gcc, dir, "fern.fern", "fern")
+
+	// emit compiles src for arm64 and returns the assembly, or the CLI's
+	// stderr and error when it refuses.
+	emit := func(t *testing.T, src string) ([]byte, string, error) {
+		t.Helper()
+		proj := t.TempDir()
+		mainPath := filepath.Join(proj, "main.fern")
+		if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		asmPath := filepath.Join(proj, "main.s")
+		cmd := runX86_64Bin(x86runner, fernBin, "-target", "arm64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
+		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return nil, stderr.String(), err
+		}
+		asm, err := os.ReadFile(asmPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return asm, stderr.String(), nil
 	}
 
 	cases := []struct {
@@ -76,16 +66,16 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{"modulo", "return 23 % 5;", 3, ""},
 		{"unary-neg-via-zero-minus", "return 0 - 5 + 10;", 5, ""},
 		{"nested-arith", "return (2 + 3) * 4;", 20, ""},
-		{"cmp-lt-true", "return 5 < 10;", 1, ""},
-		{"cmp-lt-false", "return 10 < 5;", 0, ""},
-		{"cmp-le-true", "return 5 <= 5;", 1, ""},
-		{"cmp-gt-true", "return 7 > 3;", 1, ""},
-		{"cmp-ge-true", "return 7 >= 7;", 1, ""},
-		{"cmp-eq-true", "return 4 == 4;", 1, ""},
-		{"cmp-eq-false", "return 4 == 5;", 0, ""},
-		{"cmp-ne-true", "return 4 != 5;", 1, ""},
-		{"bool-true", "return true;", 1, ""},
-		{"bool-false", "return false;", 0, ""},
+		{"cmp-lt-true", `if (5 < 10) { return 1; } return 0;`, 1, ""},
+		{"cmp-lt-false", `if (10 < 5) { return 1; } return 0;`, 0, ""},
+		{"cmp-le-true", `if (5 <= 5) { return 1; } return 0;`, 1, ""},
+		{"cmp-gt-true", `if (7 > 3) { return 1; } return 0;`, 1, ""},
+		{"cmp-ge-true", `if (7 >= 7) { return 1; } return 0;`, 1, ""},
+		{"cmp-eq-true", `if (4 == 4) { return 1; } return 0;`, 1, ""},
+		{"cmp-eq-false", `if (4 == 5) { return 1; } return 0;`, 0, ""},
+		{"cmp-ne-true", `if (4 != 5) { return 1; } return 0;`, 1, ""},
+		{"bool-true", `if (true) { return 1; } return 0;`, 1, ""},
+		{"bool-false", `if (false) { return 1; } return 0;`, 0, ""},
 		{"if-then-taken", "if (true) { return 9; } else { return 0; }", 9, ""},
 		{"if-else-taken", "if (false) { return 9; } else { return 7; }", 7, ""},
 		{"if-no-else-fall", "if (false) { return 9; } return 5;", 5, ""},
@@ -144,20 +134,20 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		// defer — runs the action at function exit (LIFO, conditional via a
 		// per-defer flag, return value captured before cleanup). Observed
 		// via an array a caller mutates and reads back.
-		{"defer-fires", "function inc(a: i32[]): i32 { defer a[0] = 9; return 1; } function main(): i32 { var arr = [0]; inc(arr); return arr[0]; }", 9, ""},
+		{"defer-fires", `function inc(c: Cell[i32]): i32 { defer c.set(9); return 1; } function main(): i32 { var c = cell_new(0); inc(c); return c.get(); }`, 9, ""},
 		{"defer-retval-before-cleanup", "function f(): i32 { var x = 5; defer x = 99; return x; } function main(): i32 { return f(); }", 5, ""},
-		{"defer-lifo", "function f(a: i32[]): i32 { defer a[0] = 1; defer a[0] = 2; return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 1, ""},
-		{"defer-conditional-off", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 0); return arr[0]; }", 0, ""},
-		{"defer-conditional-on", "function f(a: i32[], c: i32): i32 { if (c == 1) { defer a[0] = 7; } return 0; } function main(): i32 { var arr = [0]; f(arr, 1); return arr[0]; }", 7, ""},
-		{"defer-early-return", "function f(a: i32[], c: i32): i32 { defer a[0] = 5; if (c == 1) { return 0; } a[0] = 99; return 0; } function main(): i32 { var arr = [0]; f(arr, 1); return arr[0]; }", 5, ""},
-		{"defer-loop-survives", "function f(a: i32[]): i32 { defer a[0] = a[0] + 50; var i = 0; while (i < 3) { a[0] = a[0] + 1; i = i + 1; } return 0; } function main(): i32 { var arr = [0]; f(arr); return arr[0]; }", 53, ""},
+		{"defer-lifo", `function f(c: Cell[i32]): i32 { defer c.set(1); defer c.set(2); return 0; } function main(): i32 { var c = cell_new(0); f(c); return c.get(); }`, 1, ""},
+		{"defer-conditional-off", `function f(c: Cell[i32], k: i32): i32 { if (k == 1) { defer c.set(7); } return 0; } function main(): i32 { var c = cell_new(0); f(c, 0); return c.get(); }`, 0, ""},
+		{"defer-conditional-on", `function f(c: Cell[i32], k: i32): i32 { if (k == 1) { defer c.set(7); } return 0; } function main(): i32 { var c = cell_new(0); f(c, 1); return c.get(); }`, 7, ""},
+		{"defer-early-return", `function f(c: Cell[i32], k: i32): i32 { defer c.set(5); if (k == 1) { return 0; } c.set(99); return 0; } function main(): i32 { var c = cell_new(0); f(c, 1); return c.get(); }`, 5, ""},
+		{"defer-loop-survives", `function f(c: Cell[i32]): i32 { defer c.set(c.get() + 50); var i = 0; while (i < 3) { c.set(c.get() + 1); i = i + 1; } return 0; } function main(): i32 { var c = cell_new(0); f(c); return c.get(); }`, 53, ""},
 		{"hello-arm64", "print(\"Hello, ARM64!\"); return 0;", 0, "Hello, ARM64!\n"},
 		{"print-twice", "print(\"line A\"); print(\"line B\"); return 0;", 0, "line A\nline B\n"},
 		{"print-then-return", "print(\"out\"); return 7;", 7, "out\n"},
-		{"print-int-literal", "function main(): i32 { print_int(42); write(\"\\n\"); return 0; }", 0, "42\n"},
-		{"print-int-zero", "function main(): i32 { print_int(0); write(\"\\n\"); return 0; }", 0, "0\n"},
-		{"print-int-negative", "function main(): i32 { print_int(0 - 7); write(\"\\n\"); return 0; }", 0, "-7\n"},
-		{"print-int-fact", "function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { print_int(fact(8)); write(\"\\n\"); return 0; }", 0, "40320\n"},
+		{"print-int-literal", `function main(): i32 { print_int(42); write("\n"); return 0; }`, 0, "42\n"},
+		{"print-int-zero", `function main(): i32 { print_int(0); write("\n"); return 0; }`, 0, "0\n"},
+		{"print-int-negative", `function main(): i32 { print_int(0 - 7); write("\n"); return 0; }`, 0, "-7\n"},
+		{"print-int-fact", `function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); } function main(): i32 { print_int(fact(8)); write("\n"); return 0; }`, 0, "40320\n"},
 		{
 			"fizzbuzz-canonical-1-to-15",
 			"function main(): i32 { " +
@@ -243,9 +233,9 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		{
 			// `m.get_or(k, default)` — see x86 mirror.
 			"map-get-or-string",
-			"function main(): i32 { " +
+			"import \"core/map\";\nfunction main(): i32 { " +
 				"var m: Map[string, i32] = map_new(8); " +
-				"m.insert(\"a\", 10); " +
+				"m = m.insert(\"a\", 10); " +
 				"var a: i32 = m.get_or(\"a\", 0); " +
 				"var b: i32 = m.get_or(\"missing\", 99); " +
 				"return a + b; }",
@@ -257,7 +247,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			// so `(n as u32).to_string()` doesn't fall to struct
 			// shape-dispatch. See x86 mirror.
 			"wider-int-as-cast-to-string",
-			"function main(): i32 { var a: u32 = 99 as u32; var b: u64 = 7 as u64; " +
+			"import \"std/u32\";\nimport \"std/u64\";\nfunction main(): i32 { var a: u32 = 99 as u32; var b: u64 = 7 as u64; " +
 				"if (a.to_string() != \"99\") { return 1; } " +
 				"if (b.to_string() != \"7\") { return 2; } " +
 				"return 42; }",
@@ -269,7 +259,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			// __fern_u32_to_string runtime helper, not the signed i32 one.
 			// arm64 mirror of the x86 regression guard for #2649.
 			"u32-high-bit-to-string",
-			"function main(): i32 { " +
+			"import \"std/u32\";\nfunction main(): i32 { " +
 				"if ((4294967295 as u32).to_string() != \"4294967295\") { return 1; } " +
 				"if (((1 as u32) << (31 as u32)).to_string() != \"2147483648\") { return 2; } " +
 				"if (((0 as u32) - (1 as u32)).to_string() != \"4294967295\") { return 3; } " +
@@ -304,7 +294,8 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"function main(): i32 { " +
 				"var a: f64 = 3.5; " +
 				"if (f64_from_bits(f64_bits(a)) != a) { return 1; } " +
-				"if (f32_from_bits(f32_bits(a)) != a) { return 2; } " +
+				"var h: f32 = 3.5 as f32; " +
+				"if (f32_from_bits(f32_bits(h)) != h) { return 2; } " +
 				"sleep_ms(0); " +
 				"match (remove_file(\"/tmp/lang-no-such-file-zzz\")) { Err(_) => {}, Ok(_) => { return 3; } } " +
 				"return 42; }",
@@ -394,37 +385,19 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"match-single-variant-binding",
-			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return x.r; }, _ => { return 0 - 1; } } return 0 - 2; }",
+			`struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 5 }; match (c) { Circle { r } => { return r; } } return 0 - 2; }`,
 			5,
 			"",
 		},
 		{
-			"match-two-variants-first-arm",
-			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var c = Circle { r: 3 }; match (c) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
-			3,
-			"",
-		},
-		{
-			"match-two-variants-second-arm",
-			"struct Circle { r: i32 } struct Square { s: i32 } function main(): i32 { var q = Square { s: 7 }; match (q) { Circle(x) => { return x.r; }, Square(y) => { return y.s; } } return 0 - 1; }",
-			7,
-			"",
-		},
-		{
-			"match-wildcard-fallback",
-			"struct Circle { r: i32 } struct Triangle { b: i32 } function main(): i32 { var t = Triangle { b: 9 }; match (t) { Circle(c) => { return c.r; }, _ => { return 42; } } return 0 - 1; }",
-			42,
-			"",
-		},
-		{
 			"match-no-binding",
-			"struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty => { return 11; }, _ => { return 0 - 1; } } return 0 - 2; }",
+			`struct Empty { } function main(): i32 { var e = Empty { }; match (e) { Empty { } => { return 11; } } return 0 - 2; }`,
 			11,
 			"",
 		},
 		{
 			"match-write-to-outer-var",
-			"struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle(x) => { n = x.r; }, _ => { n = 0 - 1; } } return n; }",
+			`struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 8 }; var n: i32 = 0; match (c) { Circle { r } => { n = r; } } return n; }`,
 			8,
 			"",
 		},
@@ -641,61 +614,71 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"str-method-split-len",
-			"function main(): i32 { var s = \"a,b,c\"; var parts = s.split(\",\"); return parts.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "a,b,c"; var parts = s.split(","); return parts.len(); }`,
 			3,
 			"",
 		},
 		{
 			"str-method-split-content",
-			"function main(): i32 { var s = \"x|y|z\"; var parts = s.split(\"|\"); for t in parts { write(t); } return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "x|y|z"; var parts = s.split("|"); for t in parts { write(t); } return 0; }`,
 			0,
 			"xyz",
 		},
 		{
 			"str-method-trim",
-			"function main(): i32 { var s = \"  hi  \"; var t = s.trim(); write(t); return t.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "  hi  "; var t = s.trim(); write(t); return t.len(); }`,
 			2,
 			"hi",
 		},
 		{
 			"str-method-to-upper",
-			"function main(): i32 { var s = \"hello\"; write(s.to_ascii_upper()); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "hello"; write(s.to_ascii_upper()); return 0; }`,
 			0,
 			"HELLO",
 		},
 		{
 			"str-method-to-lower",
-			"function main(): i32 { var s = \"HELLO\"; write(s.to_ascii_lower()); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "HELLO"; write(s.to_ascii_lower()); return 0; }`,
 			0,
 			"hello",
 		},
 		{
 			"str-method-repeat",
-			"function main(): i32 { var s = \"ab\"; write(s.repeat(3)); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "ab"; write(s.repeat(3)); return 0; }`,
 			0,
 			"ababab",
 		},
 		{
 			"str-method-replace",
-			"function main(): i32 { var s = \"hello\"; write(s.replace(\"l\", \"L\")); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "hello"; write(s.replace("l", "L")); return 0; }`,
 			0,
 			"heLLo",
 		},
 		{
 			"str-method-chain",
-			"function main(): i32 { var s = \"  HELLO WORLD  \"; write(s.trim().to_ascii_lower()); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "  HELLO WORLD  "; write(s.trim().to_ascii_lower()); return 0; }`,
 			0,
 			"hello world",
 		},
 		{
 			"str-literal-method-direct",
-			"function main(): i32 { write(\"hello\".to_ascii_upper()); return 0; }",
+			`import "std/string";
+function main(): i32 { write("hello".to_ascii_upper()); return 0; }`,
 			0,
 			"HELLO",
 		},
 		{
 			"str-literal-method-chain",
-			"function main(): i32 { write(\"  HI  \".trim().repeat(2)); return 0; }",
+			`import "std/string";
+function main(): i32 { write("  HI  ".trim().repeat(2)); return 0; }`,
 			0,
 			"HIHI",
 		},
@@ -746,7 +729,7 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"arr-i64-set-index-large",
-			"function main(): i32 { var xs: i64[] = [1, 2, 3]; xs[1] = 5000000000; if (xs[1] == 5000000000) { return 7; } return 0; }",
+			`function main(): i32 { var xs: i64[] = [1, 2, 3]; xs = xs.with(1, 5000000000); if (xs[1] == 5000000000) { return 7; } return 0; }`,
 			7,
 			"",
 		},
@@ -770,235 +753,274 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"i32-abs-positive",
-			"function main(): i32 { var n: i32 = 7; return n.abs(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 7; return n.abs(); }`,
 			7,
 			"",
 		},
 		{
 			"i32-abs-negative",
-			"function main(): i32 { var n: i32 = 0 - 42; return n.abs(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 42; return n.abs(); }`,
 			42,
 			"",
 		},
 		{
 			"i32-abs-zero",
-			"function main(): i32 { var n: i32 = 0; return n.abs(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; return n.abs(); }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-zero-true",
-			"function main(): i32 { var n: i32 = 0; if (n.is_zero()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; if (n.is_zero()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-is-zero-false",
-			"function main(): i32 { var n: i32 = 5; if (n.is_zero()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 5; if (n.is_zero()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-positive-true",
-			"function main(): i32 { var n: i32 = 5; if (n.is_positive()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 5; if (n.is_positive()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-is-positive-false-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_positive()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; if (n.is_positive()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-positive-false-negative",
-			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_positive()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 5; if (n.is_positive()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-negative-true",
-			"function main(): i32 { var n: i32 = 0 - 5; if (n.is_negative()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 5; if (n.is_negative()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-is-negative-false-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_negative()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; if (n.is_negative()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-even-true",
-			"function main(): i32 { var n: i32 = 4; if (n.is_even()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 4; if (n.is_even()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-is-even-false",
-			"function main(): i32 { var n: i32 = 7; if (n.is_even()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 7; if (n.is_even()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-odd-true",
-			"function main(): i32 { var n: i32 = 9; if (n.is_odd()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 9; if (n.is_odd()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-is-odd-false",
-			"function main(): i32 { var n: i32 = 8; if (n.is_odd()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 8; if (n.is_odd()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"i32-is-even-zero",
-			"function main(): i32 { var n: i32 = 0; if (n.is_even()) { return 1; } return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; if (n.is_even()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
 		{
 			"i32-sign-positive",
-			"function main(): i32 { var n: i32 = 42; return n.sign(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 42; return n.signum(); }`,
 			1,
 			"",
 		},
 		{
 			"i32-sign-zero",
-			"function main(): i32 { var n: i32 = 0; return n.sign(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; return n.signum(); }`,
 			0,
 			"",
 		},
 		{
 			"i32-sign-negative",
-			"function main(): i32 { var n: i32 = 0 - 7; print_int(n.sign()); return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 7; print_int(n.signum()); return 0; }`,
 			0,
 			"-1",
 		},
 		{
 			"i32-clamp-in-range",
-			"function main(): i32 { var n: i32 = 5; return n.clamp(0, 10); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 5; return n.clamp(0, 10); }`,
 			5,
 			"",
 		},
 		{
 			"i32-clamp-below",
-			"function main(): i32 { var n: i32 = 0 - 3; return n.clamp(0, 10); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 3; return n.clamp(0, 10); }`,
 			0,
 			"",
 		},
 		{
 			"i32-clamp-above",
-			"function main(): i32 { var n: i32 = 99; return n.clamp(0, 10); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 99; return n.clamp(0, 10); }`,
 			10,
 			"",
 		},
 		{
 			"i32-clamp-equals-low",
-			"function main(): i32 { var n: i32 = 0; return n.clamp(0, 10); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; return n.clamp(0, 10); }`,
 			0,
 			"",
 		},
 		{
 			"i32-clamp-equals-high",
-			"function main(): i32 { var n: i32 = 10; return n.clamp(0, 10); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 10; return n.clamp(0, 10); }`,
 			10,
 			"",
 		},
 		{
 			"i32-min-pick-first",
-			"function main(): i32 { var a: i32 = 3; return a.min(7); }",
+			`import "std/i32";
+function main(): i32 { var a: i32 = 3; return a.min(7); }`,
 			3,
 			"",
 		},
 		{
 			"i32-min-pick-second",
-			"function main(): i32 { var a: i32 = 9; return a.min(4); }",
+			`import "std/i32";
+function main(): i32 { var a: i32 = 9; return a.min(4); }`,
 			4,
 			"",
 		},
 		{
 			"i32-max-pick-first",
-			"function main(): i32 { var a: i32 = 8; return a.max(3); }",
+			`import "std/i32";
+function main(): i32 { var a: i32 = 8; return a.max(3); }`,
 			8,
 			"",
 		},
 		{
 			"i32-max-pick-second",
-			"function main(): i32 { var a: i32 = 2; return a.max(11); }",
+			`import "std/i32";
+function main(): i32 { var a: i32 = 2; return a.max(11); }`,
 			11,
 			"",
 		},
 		{
 			"i32-min-equal",
-			"function main(): i32 { var a: i32 = 5; return a.min(5); }",
+			`import "std/i32";
+function main(): i32 { var a: i32 = 5; return a.min(5); }`,
 			5,
 			"",
 		},
 		{
 			"arr-i32-first",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.first(); }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = [10, 20, 30]; match (xs.first()) { Some(v) => { return v; }, None => { return 0 - 1; } } }`,
 			10,
 			"",
 		},
 		{
 			"arr-i32-last",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30]; return xs.last(); }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = [10, 20, 30]; match (xs.last()) { Some(v) => { return v; }, None => { return 0 - 1; } } }`,
 			30,
 			"",
 		},
 		{
 			"arr-i32-first-single",
-			"function main(): i32 { var xs: i32[] = [99]; return xs.first(); }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = [99]; match (xs.first()) { Some(v) => { return v; }, None => { return 0 - 1; } } }`,
 			99,
 			"",
 		},
 		{
 			"arr-i32-last-single",
-			"function main(): i32 { var xs: i32[] = [99]; return xs.last(); }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = [99]; match (xs.last()) { Some(v) => { return v; }, None => { return 0 - 1; } } }`,
 			99,
 			"",
 		},
 		{
 			"arr-string-first",
-			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; write(xs.first()); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["hello", "world"]; match (xs.first()) { Some(s) => { write(s); }, None => {} } return 0; }`,
 			0,
 			"hello",
 		},
 		{
 			"arr-string-last",
-			"function main(): i32 { var xs: string[] = [\"hello\", \"world\"]; write(xs.last()); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["hello", "world"]; match (xs.last()) { Some(s) => { write(s); }, None => {} } return 0; }`,
 			0,
 			"world",
 		},
 		{
 			"arr-string-join-basic",
-			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; write(xs.join(\",\")); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["a", "b", "c"]; write(xs.join(",")); return 0; }`,
 			0,
 			"a,b,c",
 		},
 		{
 			"arr-string-join-empty",
-			"function main(): i32 { var xs: string[] = []; var r = xs.join(\",\"); write(\"[\"); write(r); write(\"]\"); return r.len(); }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = []; var r = xs.join(","); write("["); write(r); write("]"); return r.len(); }`,
 			0,
 			"[]",
 		},
 		{
 			"arr-string-join-single",
-			"function main(): i32 { var xs: string[] = [\"solo\"]; write(xs.join(\",\")); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["solo"]; write(xs.join(",")); return 0; }`,
 			0,
 			"solo",
 		},
 		{
 			"arr-string-join-empty-sep",
-			"function main(): i32 { var xs: string[] = [\"a\", \"b\", \"c\"]; write(xs.join(\"\")); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["a", "b", "c"]; write(xs.join("")); return 0; }`,
 			0,
 			"abc",
 		},
 		{
 			"arr-string-join-multi-char-sep",
-			"function main(): i32 { var xs: string[] = [\"x\", \"y\", \"z\"]; write(xs.join(\" - \")); return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: string[] = ["x", "y", "z"]; write(xs.join(" - ")); return 0; }`,
 			0,
 			"x - y - z",
 		},
@@ -1010,13 +1032,15 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"str-method-is-empty-false",
-			"function main(): i32 { var s = \"hi\"; if (s.is_empty()) { return 1; } return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "hi"; if (s.is_empty()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"str-method-is-empty-true",
-			"function main(): i32 { var s = \"\"; if (s.is_empty()) { return 1; } return 0; }",
+			`import "std/string";
+function main(): i32 { var s = ""; if (s.is_empty()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
@@ -1028,13 +1052,15 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"arr-method-is-empty-false",
-			"function main(): i32 { var xs: i32[] = [1]; if (xs.is_empty()) { return 1; } return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = [1]; if (xs.is_empty()) { return 1; } return 0; }`,
 			0,
 			"",
 		},
 		{
 			"arr-method-is-empty-true",
-			"function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }",
+			`import "std/array";
+function main(): i32 { var xs: i32[] = []; if (xs.is_empty()) { return 1; } return 0; }`,
 			1,
 			"",
 		},
@@ -1046,73 +1072,81 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"str-first-byte",
-			"function main(): i32 { var s = \"abc\"; return s.first_byte(); }",
+			`function main(): i32 { var s = "abc"; return s[0] as i32; }`,
 			97,
 			"",
 		},
 		{
 			"str-last-byte",
-			"function main(): i32 { var s = \"abc\"; return s.last_byte(); }",
+			`function main(): i32 { var s = "abc"; return s[s.len() - 1] as i32; }`,
 			99,
 			"",
 		},
 		{
 			"str-first-byte-uppercase",
-			"function main(): i32 { var s = \"Hello\"; return s.first_byte(); }",
+			`function main(): i32 { var s = "Hello"; return s[0] as i32; }`,
 			72,
 			"",
 		},
 		{
 			"str-last-byte-symbol",
-			"function main(): i32 { var s = \"hi!\"; return s.last_byte(); }",
+			`function main(): i32 { var s = "hi!"; return s[s.len() - 1] as i32; }`,
 			33,
 			"",
 		},
 		{
 			"str-bytes-len",
-			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); return bs.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "abc"; var bs = s.bytes(); return bs.len(); }`,
 			3,
 			"",
 		},
 		{
 			"str-bytes-value",
-			"function main(): i32 { var s = \"A\"; var bs = s.bytes(); return bs[0]; }",
+			`import "std/string";
+function main(): i32 { var s = "A"; var bs = s.bytes(); return bs[0] as i32; }`,
 			65,
 			"",
 		},
 		{
 			"str-bytes-multi",
-			"function main(): i32 { var s = \"abc\"; var bs = s.bytes(); print_int(bs[0] + bs[1] + bs[2]); return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "abc"; var bs = s.bytes(); print_int((bs[0] as i32) + (bs[1] as i32) + (bs[2] as i32)); return 0; }`,
 			0,
 			"294",
 		},
 		{
 			"str-bytes-empty",
-			"function main(): i32 { var s = \"\"; var bs = s.bytes(); return bs.len(); }",
+			`import "std/string";
+function main(): i32 { var s = ""; var bs = s.bytes(); return bs.len(); }`,
 			0,
 			"",
 		},
 		{
 			"str-lines-count",
-			"function main(): i32 { var s = \"line1\\nline2\\nline3\"; var ls = s.lines(); return ls.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "line1\nline2\nline3"; var ls = s.lines(); return ls.len(); }`,
 			3,
 			"",
 		},
 		{
 			"str-lines-content",
-			"function main(): i32 { var s = \"foo\\nbar\"; var ls = s.lines(); for l in ls { write(l); write(\"|\"); } return 0; }",
+			`import "std/string";
+function main(): i32 { var s = "foo\nbar"; var ls = s.lines(); for l in ls { write(l); write("|"); } return 0; }`,
 			0,
 			"foo|bar|",
 		},
 		{
 			"str-lines-single",
-			"function main(): i32 { var s = \"alone\"; var ls = s.lines(); return ls.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "alone"; var ls = s.lines(); return ls.len(); }`,
 			1,
 			"",
 		},
 		{
 			"str-lines-trailing-newline",
-			"function main(): i32 { var s = \"x\\n\"; var ls = s.lines(); return ls.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "x\n"; var ls = s.lines(); return ls.len(); }`,
 			1,
 			"",
 		},
@@ -1285,64 +1319,46 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"foo-bar",
 		},
 		{
-			"i32-to-string-zero",
-			"function main(): i32 { var s = i32_to_string(0); write(s); return s.len(); }",
-			1,
-			"0",
-		},
-		{
 			"i32-dot-to-string",
-			"function main(): i32 { var n: i32 = 42; var s = n.to_string(); write(s); return s.len(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 42; var s = n.to_string(); write(s); return s.len(); }`,
 			2,
 			"42",
 		},
 		{
 			"i32-dot-to-string-in-closure",
-			"function main(): i32 { var n = 5; var f = (): string => { return n.to_string(); }; write(f()); return 0; }",
+			`import "std/i32";
+function main(): i32 { var n = 5; var f = (): string => { return n.to_string(); }; write(f()); return 0; }`,
 			0,
 			"5",
 		},
 		{
 			"i32-dot-to-string-concat",
-			"function main(): i32 { var n: i32 = 99; var msg: string = \"value=\" + n.to_string(); write(msg); return 0; }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 99; var msg: string = "value=" + n.to_string(); write(msg); return 0; }`,
 			0,
 			"value=99",
 		},
 		{
 			"i32-dot-to-string-zero",
-			"function main(): i32 { var n: i32 = 0; var s = n.to_string(); write(s); return s.len(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0; var s = n.to_string(); write(s); return s.len(); }`,
 			1,
 			"0",
 		},
 		{
 			"i32-dot-to-string-negative",
-			"function main(): i32 { var n: i32 = 0 - 7; var s = n.to_string(); write(s); return s.len(); }",
+			`import "std/i32";
+function main(): i32 { var n: i32 = 0 - 7; var s = n.to_string(); write(s); return s.len(); }`,
 			2,
 			"-7",
 		},
 		{
 			"string-dot-to-string-identity",
-			"function main(): i32 { var s = \"hi\"; var t = s.to_string(); write(t); return t.len(); }",
+			`import "std/string";
+function main(): i32 { var s = "hi"; var t = s.to_string(); write(t); return t.len(); }`,
 			2,
 			"hi",
-		},
-		{
-			"i32-to-string-positive",
-			"function main(): i32 { var s = i32_to_string(12345); write(s); return s.len(); }",
-			5,
-			"12345",
-		},
-		{
-			"i32-to-string-negative",
-			"function main(): i32 { var s = i32_to_string(0 - 42); write(s); return s.len(); }",
-			3,
-			"-42",
-		},
-		{
-			"i32-to-string-concat",
-			"function main(): i32 { var n = 7; var msg = \"answer: \" + i32_to_string(n); write(msg); return 0; }",
-			0,
-			"answer: 7",
 		},
 		{
 			"eprint-literal-exits-clean",
@@ -1367,150 +1383,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			"function main(): i32 { print(\"out\"); eprint(\"err\\n\"); return 0; }",
 			0,
 			"out\n",
-		},
-		{
-			"str-trim-spaces",
-			"function main(): i32 { var t = str_trim(\"   hello   \"); write(t); return t.len(); }",
-			5,
-			"hello",
-		},
-		{
-			"str-trim-tabs-newlines",
-			"function main(): i32 { var t = str_trim(\"\\t\\n hi \\r\\n\"); write(t); return t.len(); }",
-			2,
-			"hi",
-		},
-		{
-			"str-trim-no-whitespace",
-			"function main(): i32 { var t = str_trim(\"abc\"); write(t); return t.len(); }",
-			3,
-			"abc",
-		},
-		{
-			"str-trim-empty",
-			"function main(): i32 { var t = str_trim(\"\"); return t.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-trim-all-whitespace",
-			"function main(): i32 { var t = str_trim(\"   \\n\\t \"); return t.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-to-upper-basic",
-			"function main(): i32 { var u = str_to_upper(\"hello\"); write(u); return u.len(); }",
-			5,
-			"HELLO",
-		},
-		{
-			"str-to-upper-mixed",
-			"function main(): i32 { var u = str_to_upper(\"Hi 123 World!\"); write(u); return 0; }",
-			0,
-			"HI 123 WORLD!",
-		},
-		{
-			"str-to-lower-basic",
-			"function main(): i32 { var l = str_to_lower(\"HELLO\"); write(l); return l.len(); }",
-			5,
-			"hello",
-		},
-		{
-			"str-to-lower-mixed",
-			"function main(): i32 { var l = str_to_lower(\"AbCdE 99\"); write(l); return 0; }",
-			0,
-			"abcde 99",
-		},
-		{
-			"str-to-upper-empty",
-			"function main(): i32 { return (str_to_upper(\"\")).len(); }",
-			0,
-			"",
-		},
-		{
-			"str-case-round-trip",
-			"function main(): i32 { var s = str_to_lower(str_to_upper(\"AbCd\")); write(s); return 0; }",
-			0,
-			"abcd",
-		},
-		{
-			"str-repeat-basic",
-			"function main(): i32 { var r = str_repeat(\"ab\", 3); write(r); return r.len(); }",
-			6,
-			"ababab",
-		},
-		{
-			"str-repeat-once",
-			"function main(): i32 { var r = str_repeat(\"hi\", 1); write(r); return r.len(); }",
-			2,
-			"hi",
-		},
-		{
-			"str-repeat-zero",
-			"function main(): i32 { var r = str_repeat(\"foo\", 0); return r.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-repeat-negative",
-			"function main(): i32 { var r = str_repeat(\"foo\", 0 - 3); return r.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-repeat-empty-source",
-			"function main(): i32 { var r = str_repeat(\"\", 5); return r.len(); }",
-			0,
-			"",
-		},
-		{
-			"str-repeat-many",
-			"function main(): i32 { var r = str_repeat(\"-=\", 4); write(r); return r.len(); }",
-			8,
-			"-=-=-=-=",
-		},
-		{
-			"str-replace-basic",
-			"function main(): i32 { var r = str_replace(\"hello world\", \"world\", \"there\"); write(r); return r.len(); }",
-			11,
-			"hello there",
-		},
-		{
-			"str-replace-shorter",
-			"function main(): i32 { var r = str_replace(\"abcabc\", \"abc\", \"x\"); write(r); return r.len(); }",
-			2,
-			"xx",
-		},
-		{
-			"str-replace-longer",
-			"function main(): i32 { var r = str_replace(\"a-b\", \"-\", \"---\"); write(r); return r.len(); }",
-			5,
-			"a---b",
-		},
-		{
-			"str-replace-none",
-			"function main(): i32 { var r = str_replace(\"hello\", \"xyz\", \"---\"); write(r); return r.len(); }",
-			5,
-			"hello",
-		},
-		{
-			"str-replace-empty-old",
-			"function main(): i32 { var r = str_replace(\"abc\", \"\", \"xyz\"); write(r); return r.len(); }",
-			3,
-			"abc",
-		},
-		{
-			"str-replace-all-occurrences",
-			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"!\"); write(r); return r.len(); }",
-			6,
-			"b!n!n!",
-		},
-		{
-			"str-replace-empty-new",
-			"function main(): i32 { var r = str_replace(\"banana\", \"a\", \"\"); write(r); return r.len(); }",
-			3,
-			"bnn",
 		},
 		{
 			"chr-uppercase-a",
@@ -1560,58 +1432,6 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 			0,
 			"",
 		},
-		{
-			"str-split-basic",
-			"function main(): i32 { var a = str_split(\"a,b,c\", \",\"); return a.len(); }",
-			3,
-			"",
-		},
-		{
-			"str-split-content",
-			"function main(): i32 { var a = str_split(\"a,bb,ccc\", \",\"); for s in a { write(s); write(\"|\"); } return 0; }",
-			0,
-			"a|bb|ccc|",
-		},
-		{
-			"str-split-no-sep",
-			"function main(): i32 { var a = str_split(\"abc\", \",\"); return a.len(); }",
-			1,
-			"",
-		},
-		{
-			// An empty separator CHAR-SPLITS, matching std/string.split and the
-			// interp. This used to expect 1 (the whole string in one piece);
-			// see the sibling case in self_host_asm_run_test.go for why that
-			// divergence existed and why it no longer does.
-			"str-split-empty-sep",
-			"function main(): i32 { var a = str_split(\"hello\", \"\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			5,
-			"h|e|l|l|o|",
-		},
-		{
-			"str-split-leading-sep",
-			"function main(): i32 { var a = str_split(\",a,b\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"|a|b|",
-		},
-		{
-			"str-split-trailing-sep",
-			"function main(): i32 { var a = str_split(\"a,b,\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"a|b||",
-		},
-		{
-			"str-split-multi-char-sep",
-			"function main(): i32 { var a = str_split(\"foo--bar--baz\", \"--\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"foo|bar|baz|",
-		},
-		{
-			"str-split-consecutive",
-			"function main(): i32 { var a = str_split(\"a,,b\", \",\"); for s in a { write(s); write(\"|\"); } return a.len(); }",
-			3,
-			"a||b|",
-		},
 		// Match-arm guards (`Pat when <expr> =>`): true guard runs the arm; a
 		// false guard falls through to the next arm (the guard reads the binding).
 		{"match-guard-pass", "enum O { Has(i32), Nil } function main(): i32 { var o: O = Has(8); match (o) { Has(n) when n > 5 => { return 1; }, _ => { return 2; } } return 0 - 1; }", 1, ""},
@@ -1623,17 +1443,9 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Run the driver (x86_64 binary) with -target arm64-linux to get the arm64 asm.
-			var cmd *exec.Cmd
-			if len(x86runner) == 0 {
-				cmd = exec.Command(driverBin, "-target", "arm64-linux")
-			} else {
-				cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64-linux")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(withPrintInt(tc.source)))
-			emittedAsm, err := cmd.Output()
+			emittedAsm, stderr, err := emit(t, withPrintInt(tc.source))
 			if err != nil {
-				t.Fatalf("driver run: %v\n--- source ---\n%s", err, tc.source)
+				t.Fatalf("compile: %v\n%s\n--- source ---\n%s", err, stderr, tc.source)
 			}
 			caseDir := t.TempDir()
 			innerAsm := filepath.Join(caseDir, "inner.s")
@@ -1656,27 +1468,16 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		})
 	}
 
-	// Negative: the self-host type-check pass must REJECT a program that
-	// uses an Option[i32] (`.max()`) where an i32 is declared, rather than
-	// silently emitting a box pointer. The driver should exit non-zero and
-	// print an E002 diagnostic; no asm is produced.
+	// Negative: the checker must REJECT a program that uses an Option[i32]
+	// (`.max()`) where an i32 is declared, rather than emitting a box pointer.
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
-		var cmd *exec.Cmd
-		if len(x86runner) == 0 {
-			cmd = exec.Command(driverBin, "-target", "arm64-linux")
-		} else {
-			cmd = exec.Command(x86runner[0], append(append([]string{}, x86runner[1:]...), driverBin, "-target", "arm64-linux")...)
-		}
-		bad := "function main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.max(); }"
-		cmd.Stdin = bytes.NewReader([]byte(bad))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		out, err := cmd.Output()
+		bad := "import \"std/array\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.max(); }"
+		out, stderr, err := emit(t, bad)
 		if err == nil {
-			t.Fatalf("expected driver to reject Option-as-i32, but it exited 0\n--- asm ---\n%s", out)
+			t.Fatalf("expected the CLI to reject Option-as-i32, but it compiled\n--- asm ---\n%s", out)
 		}
-		if !strings.Contains(stderr.String(), "E002") || !strings.Contains(stderr.String(), "Option[i32]") {
-			t.Errorf("expected E002 / Option[i32] diagnostic, got stderr:\n%s", stderr.String())
+		if !strings.Contains(stderr, "E002") || !strings.Contains(stderr, "Option[i32]") {
+			t.Errorf("expected E002 / Option[i32] diagnostic, got stderr:\n%s", stderr)
 		}
 	})
 }
