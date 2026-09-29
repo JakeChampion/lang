@@ -20,6 +20,8 @@ reference is borrowed, scalars are values), and every later decision belongs to
 
 Every produced graph is re-verified by `ssasem.analyze` before it leaves the
 producer, so a producer mistake is an explicit refusal, never a partial graph.
+The check runs in `anchor_module`, once the body carries the module's anchor
+table, so a call's result is anchored to its arguments as the lowering sees it.
 Unsupported constructs refuse the whole function with a reason.
 
 ## Supported surface
