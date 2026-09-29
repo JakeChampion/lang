@@ -702,7 +702,7 @@ spec; diff-oracle is the regression test."
 current shape.** Two stages as below, with two changes
 from this sketch: the snapshot is a compiler binary per
 host published as a release asset — the self-built stage2
-on the Linux hosts, a native build on arm64-darwin — and
+on every host — and
 pinned by sha256 in `bootstrap/stage0.lock` (wasm is ruled
 out for now,
 §7), and `make distcheck` compares stage2 with stage3,
@@ -758,7 +758,7 @@ fern-impl is a `-self-host` opt-in for testers.
 
 **`make bootstrap` runs on PRs** touching the compiler
 source, the stdlib or the bootstrap itself
-(`.github/workflows/bootstrap.yml`, both Linux hosts,
+(`.github/workflows/bootstrap.yml`, all three hosts,
 no Go installed), and `make distcheck` runs in the same
 job — `docs/BOOTSTRAP.md`.
 

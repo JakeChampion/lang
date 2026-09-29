@@ -567,10 +567,11 @@ completes. `asm_load_run.fern` is no longer needed as a stand-in for
 The darwin stage 2 is a fixpoint at the emit level: `fern-s2` and `fern-s1`
 produce byte-identical `-target arm64-darwin -emit asm` listings for all 471
 runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
-inside the compiler's own string literals). What does not yet hold is stage 3:
-`fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
-3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
-1.4-1.7 GB (#8479). The same chain for `-target arm64-linux` in the linux/arm64
+inside the compiler's own string literals). Stage 3 did not hold on
+2026-09-05: `fern-s2` building `fern.fern` exited 125 (arena exhausted) after
+20 s at 3.9-5.1 GB RSS (two runs), where `fern-s1` finished the same build in
+36 s at 1.4-1.7 GB (#8479); it holds since 2026-09-29, below. The same chain
+for `-target arm64-linux` in the linux/arm64
 container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
 byte-identical asm to stage 1, and compiles and runs a strbuf program
 correctly.
@@ -601,13 +602,17 @@ Nor is it the darwin OUTPUT path: on the same container a self-host-built
 x86-64 compiler compiles `fern.fern` for `arm64-darwin` in 111 s at 5.4 GB,
 exit 0, byte-identical to the native-built compiler's Mach-O, and the
 aarch64 self-host-built compiler does the same under qemu in 525 s at 5.5 GB.
-What is left was the self-host-built compiler running ON XNU, and the
-`macos-15` lane now runs that stage 3 on every round (`macos.yml`, "self-host
-stage 3 on Darwin") with `FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes`
-at each `sem:*` phase and at `darwin:emitted` / `darwinized` / `assembled` /
-`unwind` / `linked` / `image` (`fern.fern`), plus `/usr/bin/time -l` for the
-peak RSS. Its first round (2026-09-29, source at ea943e9) passed: 56 s, 3.8 GB
+What was left was the self-host-built compiler running ON XNU, and on
+2026-09-29 the `macos-15` lane ran that stage 3 (source at ea943e9) with
+`FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes` at each `sem:*` phase and
+at `darwin:emitted` / `darwinized` / `assembled` / `unwind` / `linked` /
+`image` (`fern.fern`), under `/usr/bin/time -l`. It passed: 56 s, 3.8 GB
 maximum RSS, 5.66 GB peak footprint, 5.85 GB bumped, stage2 == stage3, with no
 phase running away (5.12 GB after the semantic lowering, 5.82 GB after the
-assembler). The step is a gate from that round on, and the bootstrap lane's
-darwin distcheck is what retires it.
+assembler). The darwin fixed point is gated by `bootstrap.yml`'s
+`verify-arm64-darwin` since (`make bootstrap` + `make distcheck` from the pin,
+no Go); the readout above is how to measure it by hand if it regresses:
+
+```
+FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/examples/self_host/fern.fern $W/internal/stdlib
+```

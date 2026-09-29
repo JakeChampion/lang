@@ -230,7 +230,7 @@ posted comment cannot be edited; only a follow-up can correct it.
 2. **DONE by its criterion (2026-09-28) — the native Perceus implementation
    ported to the self-hosted compiler.** `make distcheck` is green: the
    self-built compiler recompiles the compiler at 5.7 GB and reproduces itself
-   byte for byte, in CI on both Linux hosts (`docs/BOOTSTRAP.md`). Leaks the
+   byte for byte, in CI on all three hosts (`docs/BOOTSTRAP.md`). Leaks the
    AST lowering (`FERN_SEM_IR=`) still has are closed as bug fixes; the live
    list and the traps this area sets: `docs/rc-log/` (newest file) — its §9
    predecessor in `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before
