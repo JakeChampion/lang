@@ -10,7 +10,7 @@ import "std/string";
 // answered 404 in its place, and the chunks a producer answers.
 
 function test_text_body(): test.TestOutcome {
-    var resp: HttpResponse = http.http_response_ok("hello");
+    var resp: HttpResponse = http.ok("hello");
     if (resp.body_len() != 5) { return test.fail("len: " + resp.body_len().to_string()); }
     if (!http.http_serialize_response(resp).ends_with("\r\n\r\nhello")) { return test.fail("wire: " + http.http_serialize_response(resp)); }
     return test.assert_body(resp, "hello");
@@ -18,7 +18,7 @@ function test_text_body(): test.TestOutcome {
 
 function test_bytes_body(): test.TestOutcome {
     var bs: u8[] = [104u8, 105u8];
-    var resp: HttpResponse = http.http_response_bytes(201, bs);
+    var resp: HttpResponse = http.bytes(201, bs);
     if (resp.body_len() != 2) { return test.fail("len: " + resp.body_len().to_string()); }
     if (resp.body_bytes().len() != 2) { return test.fail("bytes: " + resp.body_bytes().len().to_string()); }
     return test.assert_body(resp, "hi");
@@ -27,7 +27,7 @@ function test_bytes_body(): test.TestOutcome {
 function test_stream_body_from_its_cursor(): test.TestOutcome {
     var s: Stream = stream.stream_from_bytes("skip me".bytes());
     var taken: (u8[], Stream) = s.read_n(5);
-    var resp: HttpResponse = http.http_response_stream(200, taken.1);
+    var resp: HttpResponse = http.stream(200, taken.1);
     if (resp.body_len() != 2) { return test.fail("len: " + resp.body_len().to_string()); }
     return test.assert_body(resp, "me");
 }
@@ -43,7 +43,7 @@ function scratch(name: string): string {
 function test_file_body_is_read_by_the_loop(): test.TestOutcome {
     var path: string = scratch("present.txt");
     match (write_file(path, "from a file")) { Ok(v) => {}, Err(e) => { return test.fail("write_file failed"); } }
-    var resp: HttpResponse = http.http_response_file(path);
+    var resp: HttpResponse = http.file(path);
     if (resp.body_len() != 0) { return test.fail("a file body has no length before the loop reads it"); }
     if (resp.body_string() != "") { return test.fail("a file body is not read by the handler"); }
     var whole: HttpResponse = http.http_materialize(resp);
@@ -53,7 +53,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
 }
 
 function test_a_missing_file_is_a_404(): test.TestOutcome {
-    var resp: HttpResponse = http.http_materialize(http.http_response_file(scratch("missing.txt")));
+    var resp: HttpResponse = http.http_materialize(http.file(scratch("missing.txt")));
     if (resp.status != 404) { return test.fail("status: " + resp.status.to_string()); }
     return test.assert_body(resp, "Not Found");
 }
@@ -64,14 +64,14 @@ function three_chunks(i: i32): Option[u8[]] {
 }
 
 function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
-    var resp: HttpResponse = http.http_response_chunks(200, three_chunks);
+    var resp: HttpResponse = http.chunks(200, three_chunks);
     if (resp.body_len() != 6) { return test.fail("len: " + resp.body_len().to_string()); }
     if (!http.http_serialize_response(resp).ends_with("\r\n\r\nc0c1c2")) { return test.fail("wire: " + http.http_serialize_response(resp)); }
     return test.assert_body(resp, "c0c1c2");
 }
 
 function test_other_bodies_pass_through_materialize(): test.TestOutcome {
-    var resp: HttpResponse = http.http_materialize(http.http_response_ok("as is"));
+    var resp: HttpResponse = http.http_materialize(http.ok("as is"));
     return test.assert_body(resp, "as is");
 }
 

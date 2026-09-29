@@ -89,7 +89,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 
 function main(): i32 {
@@ -129,7 +129,7 @@ func LargeResponseServerSource(port int) string {
 import "std/string";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("x".repeat(%d));
+    return http.ok("x".repeat(%d));
 }
 function main(): i32 {
     return tcp.tcp_serve(%d, handle);
@@ -178,7 +178,7 @@ func RecvDeadlineServerSource(port int) string {
 import "std/time";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_deadline(%d, handle, time.duration_millis(400));
@@ -228,9 +228,9 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 1 }, handle);
@@ -327,13 +327,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         var a: i32[] = [1, 2, 3];
         var i: i32 = a.len() + 5;
         var x: i32 = a[i];
-        return http.http_response_ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + int.int_to_string(x));
     }
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.http_response_ok("never"); }
-        return http.http_response_ok("slow");
+        if (burn(400000000) == 0 - 1) { return http.ok("never"); }
+        return http.ok("slow");
     }
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     return tcp.tcp_serve_supervised_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), workers: 2 }, handle);
@@ -418,7 +418,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + int.int_to_string(n)));
 }
 `
 }
@@ -430,7 +430,7 @@ func HandleOnlyServerSource() string {
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("path=" + req.path);
+    return http.ok("path=" + req.path);
 }
 `
 }
@@ -473,7 +473,7 @@ function lookup(path: string): Result[string, http.HttpError] {
 
 function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
     var name: string = lookup(req.path)?;
-    return Ok(http.http_response_ok(name));
+    return Ok(http.ok(name));
 }
 `
 }
@@ -497,7 +497,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[
         Some(prev) => { n = prev + 1; },
         None => {}
     }
-    return (hits.insert(req.path, n), Ok(http.http_response_ok(req.path + "=" + int.int_to_string(n))));
+    return (hits.insert(req.path, n), Ok(http.ok(req.path + "=" + int.int_to_string(n))));
 }
 `
 }
@@ -551,7 +551,7 @@ function init(plat: Platform): (tcp.ServeOptions, i32) {
 }
 
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, http.http_response_ok("hit " + int.int_to_string(hits + 1)));
+    return (hits + 1, http.ok("hit " + int.int_to_string(hits + 1)));
 }
 
 function shutdown(reason: string, hits: i32): void {

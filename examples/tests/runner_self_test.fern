@@ -425,7 +425,7 @@ function test_unique_one_nan_passes(): test.TestOutcome {
 
 // HTTP assertions: a response built by std/http's constructors.
 function http_resp(): HttpResponse {
-    return http.http_response_ok("hello").with_header("X-Kind", "greeting");
+    return http.ok("hello").with_header("X-Kind", "greeting");
 }
 
 function test_assert_status_pass(): test.TestOutcome {

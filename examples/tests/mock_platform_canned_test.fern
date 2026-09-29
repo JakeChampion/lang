@@ -13,7 +13,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var region: string = "nowhere";
     match (plat.env("REGION")) { Some(r) => { region = r; }, None => {} }
     var upstream: i32 = plat.fetch("10.0.0.1", 8080, "/health");
-    return http.http_response_ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream.to_string());
+    return http.ok(region + " " + plat.now_ms().to_string() + " " + plat.random_i32().to_string() + " " + upstream.to_string());
 }
 
 function test_defaults_without_canned_answers(): test.TestOutcome {

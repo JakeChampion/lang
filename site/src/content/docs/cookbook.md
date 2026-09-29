@@ -292,9 +292,9 @@ import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/health") {
-        return http.http_response_ok("ok");
+        return http.ok("ok");
     }
-    return http.http_response_not_found();
+    return http.not_found();
 }
 ```
 

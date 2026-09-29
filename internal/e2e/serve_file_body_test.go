@@ -10,7 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/e2eharness"
 )
 
-// A file body (#9854): the handler names a file with `http_response_file`
+// A file body (#9854): the handler names a file with `file`
 // and the serve loop reads it as it writes the response, or answers 404
 // for one it cannot read; on the native backend and the interpreter, the
 // scenario shared with the self-host twin.

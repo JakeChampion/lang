@@ -210,7 +210,7 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 //                     plat: Platform): (Map[string, i32], HttpResponse) {
 //         var n: i32 = hits.get_or(req.path, 0) + 1;
 //         return (hits.insert(req.path, n),
-//                 http.http_response_ok(int.int_to_string(n)));
+//                 http.ok(int.int_to_string(n)));
 //     }
 //     var init: Map[string, i32] = map_new(8);
 //     tcp.tcp_serve_with(8080, init, handle);
@@ -407,7 +407,7 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
                     }
                     if (size < (0 as i64)) {
                         r.close();
-                        return __serve_wire(method, version, http.http_response_not_found(), keep_alive, clk);
+                        return __serve_wire(method, version, http.not_found(), keep_alive, clk);
                     }
                     var head: string = http.http_serialize_response_head(resp, keep_alive, "Content-Length: " + size.to_string() + "\r\n");
                     if (headless || size == (0 as i64)) {
@@ -416,7 +416,7 @@ function __serve_wire(method: string, version: string, answer: HttpResponse, kee
                     }
                     return __Wire { head: head, tail: FileTail(r, size), keep: keep_alive };
                 },
-                Err(e) => { return __serve_wire(method, version, http.http_response_not_found(), keep_alive, clk); }
+                Err(e) => { return __serve_wire(method, version, http.not_found(), keep_alive, clk); }
             }
             return __Wire { head: "", tail: NoTail, keep: false };
         },
@@ -792,7 +792,7 @@ function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // finished by a later wait, which closes the connection once it has gone
 // out; a refused write closes it now.
 function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions, clk: __Clock): __Conns {
-    var wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.http_response_text(status, ""), false, clk);
+    var wire: __Wire = __serve_wire("GET", "HTTP/1.1", http.text(status, ""), false, clk);
     var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire.head, opts);
     match (sent.1) {
         Partial => { return sent.0; },
@@ -1251,7 +1251,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
                         conns = took.0;
                         count = count + 1;
-                        var resp: HttpResponse = http.http_response_text(503, "");
+                        var resp: HttpResponse = http.text(503, "");
                         if (!__serve_not_ready(f, opts, stop)) { resp = handler(f.request, plat); }
                         var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk);
                         conns = answered.0;
@@ -1334,7 +1334,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         var took: (__Conns, boolean, http.HttpFraming) = __serve_took(conns, at, f, opts, ev.2, stop);
                         conns = took.0;
                         count = count + 1;
-                        var stepped: (S, HttpResponse) = (st, http.http_response_text(503, ""));
+                        var stepped: (S, HttpResponse) = (st, http.text(503, ""));
                         if (!__serve_not_ready(f, opts, stop)) { stepped = handler(st, f.request, plat); }
                         st = stepped.0;
                         var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk);

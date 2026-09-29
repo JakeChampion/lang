@@ -23,7 +23,7 @@ import "std/http";
 import "std/time";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 function main(): i32 {
     var opts: tcp.ServeOptions = tcp.ServeOptions { ...tcp.serve_options(), backlog: 4, reuse_port: true };

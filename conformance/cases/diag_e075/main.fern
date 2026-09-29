@@ -17,5 +17,5 @@ function init(): i32 {
 }
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }

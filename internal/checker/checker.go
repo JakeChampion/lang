@@ -473,7 +473,7 @@ func builtinEnumDecls() []*ast.EnumDecl {
 			// Body — what an HttpResponse carries (std/http): text or
 			// bytes held whole, a Stream drained to the wire, or a
 			// file the serve loop reads. Constructed through std/http's
-			// `http_response_*` functions in ordinary code. The
+			// `http.ok` / `http.text` builders in ordinary code. The
 			// variants carry the enum's name, as JsonValue's do, since
 			// a builtin variant is in every module's scope and a bare
 			// `Text` would ambiguate any user enum's.
@@ -585,7 +585,7 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "status", Type: ast.NumberType{}},
 				// `body` is a Body: text or bytes held whole, a
 				// Stream, or a file the serve loop reads
-				// (std/http's `http_response_*` build each).
+				// (std/http's `ok` / `json` / … build each).
 				{Name: "body", Type: ast.EnumType{Name: "Body"}},
 				// The wasi-http wrapper hardcodes these byte offsets
 				// (status@+0, body@+4, headers@+8) and reads the body

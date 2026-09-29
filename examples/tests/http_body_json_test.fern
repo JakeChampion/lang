@@ -18,7 +18,7 @@ struct Note { text: Option[string] }
 // The handler under test fails with `?`: a decode error becomes the reply.
 function create(req: HttpRequest): Result[HttpResponse, http.BodyError] {
     var item: Item = http.body_json[Item](req)?;
-    return Ok(http.http_response_json_status(201, item.to_json()));
+    return Ok(http.json_status(201, item.to_json()));
 }
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

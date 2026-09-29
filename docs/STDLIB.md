@@ -1033,19 +1033,19 @@ Percent-encoding, URL parsing, query parsing.
 HTTP/1.1 request parsing, response builders, wire-format
 serializer.
 
-- **Response builders:** `http_response_ok`,
-  `http_response_text`, `http_response_not_found`,
-  `http_response_bad_request`, `http_response_internal_error`,
-  `http_response_redirect`, `http_response_no_content`; typed-body
-  variants that set `Content-Type` up front:
-  `http_response_json` / `http_response_json_status` /
-  `http_response_html` / `http_response_plain`
+- **Response builders:** `http.ok(body)`, `http.created(body)`,
+  `http.text(status, body)`, `http.not_found()`, `http.bad_request(body)`,
+  `http.internal_error(body)`, `http.redirect(location)`,
+  `http.no_content()`; typed-body variants that set `Content-Type` up
+  front: `http.json(body)` / `http.json_status(status, body)` /
+  `http.html(body)` / `http.plain(body)`; `http.problem(status, title,
+  detail)` for an RFC 9457 problem document
 - **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
   `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
   `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
   producer asked for chunk 0, 1, 2, … until it answers None).
-  `http_response_bytes(status, bytes)`, `http_response_stream(status, stream)`,
-  `http_response_file(path)` and `http_response_chunks(status, next)` build
+  `http.bytes(status, bytes)`, `http.stream(status, stream)`,
+  `http.file(path)` and `http.chunks(status, next)` build
   the last four. `(resp).body_string()`, `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries, a producer's chunks
   joined; a `BodyFile` reads as empty from a handler, since a handler may not
@@ -1574,7 +1574,7 @@ import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log(req.method + " " + req.path);
-    return http.http_response_ok("ok");
+    return http.ok("ok");
 }
 ```
 

@@ -6917,9 +6917,9 @@ function main(): i32 {
     if (("".lines_non_empty()).len() != 0) { return 54; }
 
     // http builders
-    var r1: HttpResponse = http.http_response_redirect("/login");
+    var r1: HttpResponse = http.redirect("/login");
     if (r1.status != 302 || r1.body != "/login") { return 60; }
-    var r2: HttpResponse = http.http_response_no_content();
+    var r2: HttpResponse = http.no_content();
     if (r2.status != 204 || r2.body != "") { return 61; }
     return 0;
 }`
@@ -7046,9 +7046,9 @@ function main(): i32 {
     if (empty.any_contains("x")) { return 42; }
 
     // HTTP response builders
-    var r1: HttpResponse = http.http_response_bad_request("missing field");
+    var r1: HttpResponse = http.bad_request("missing field");
     if (r1.status != 400 || r1.body != "missing field") { return 50; }
-    var r2: HttpResponse = http.http_response_internal_error("server boom");
+    var r2: HttpResponse = http.internal_error("server boom");
     if (r2.status != 500 || r2.body != "server boom") { return 51; }
     return 0;
 }`
@@ -7665,11 +7665,11 @@ function main(): i32 {
     if ("\n".count_lines() != 1) { return 20; }
 
     // HTTP response builders
-    var r1: HttpResponse = http.http_response_ok("hello");
+    var r1: HttpResponse = http.ok("hello");
     if (r1.status != 200 || r1.body != "hello") { return 21; }
-    var r2: HttpResponse = http.http_response_not_found();
+    var r2: HttpResponse = http.not_found();
     if (r2.status != 404 || r2.body != "Not Found") { return 22; }
-    var r3: HttpResponse = http.http_response_text(500, "boom");
+    var r3: HttpResponse = http.text(500, "boom");
     if (r3.status != 500 || r3.body != "boom") { return 23; }
 
     // Log helpers — sanity-check they don't crash; output
@@ -9730,7 +9730,7 @@ func TestArm64HttpHandler(t *testing.T) {
 import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
+    return http.ok("method=" + req.method + " path=" + req.path + " body-len=" + req.body_len().to_string());
 }`
 
 	dir := t.TempDir()

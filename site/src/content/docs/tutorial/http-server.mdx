@@ -22,7 +22,7 @@ import "std/http";
 import "std/tcp";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return http.http_response_ok("hello, world");
+    return http.ok("hello, world");
 }
 ```
 
@@ -56,13 +56,13 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
         // with_header returns a NEW response with the header set —
         // responses are immutable, like every value in Fern.
-        return http.http_response_ok("hello, world")
+        return http.ok("hello, world")
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        return http.http_response_ok(req.body_string());
+        return http.ok(req.body_string());
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }`}
   autoRun={false}
 />
@@ -117,23 +117,23 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   </thead>
   <tbody>
     <tr>
-      <td><code>http.http_response_ok(body)</code></td>
+      <td><code>http.ok(body)</code></td>
       <td><code>200 OK</code> with <code>body</code></td>
     </tr>
     <tr>
-      <td><code>http.http_response_text(status, body)</code></td>
+      <td><code>http.text(status, body)</code></td>
       <td>any status + body</td>
     </tr>
     <tr>
-      <td><code>http.http_response_not_found()</code></td>
+      <td><code>http.not_found()</code></td>
       <td><code>404 Not Found</code></td>
     </tr>
     <tr>
-      <td><code>http.http_response_bad_request(body)</code></td>
+      <td><code>http.bad_request(body)</code></td>
       <td><code>400</code> + body</td>
     </tr>
     <tr>
-      <td><code>http.http_response_redirect(location)</code></td>
+      <td><code>http.redirect(location)</code></td>
       <td><code>302</code> + <code>Location</code></td>
     </tr>
   </tbody>
@@ -160,7 +160,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     // req.path is path+query; anchor it against a host so url_parse
     // has something to chew on.
     match (url.url_parse("http://x.local" + req.path)) {
-        None => { return http.http_response_bad_request("bad URL\n"); },
+        None => { return http.bad_request("bad URL\n"); },
         Some(u) => {
             var q: Map[string, string[]] = url.query_parse(u.query);
             var out: Map[string, JsonValue] = map_new(2);
@@ -173,7 +173,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
             }
             // `|>` pipes the left value into the right function.
             var body: string = JObject(out) |> json.json_encode;
-            return http.http_response_ok(body);
+            return http.ok(body);
         }
     }
 }
@@ -208,7 +208,7 @@ function handle(hits: Map[string, i32], req: HttpRequest,
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.http_response_ok(int.int_to_string(n)));
+            http.ok(int.int_to_string(n)));
 }
 ```
 

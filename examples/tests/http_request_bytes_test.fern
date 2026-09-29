@@ -439,7 +439,7 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
 }
 
 function test_serialize_names_the_connection(): test.TestOutcome {
-    var r: HttpResponse = http.http_response_ok("ok");
+    var r: HttpResponse = http.ok("ok");
     var kept: string = http.http_serialize_response_conn(r, true);
     if (!kept.contains("\r\nConnection: keep-alive\r\n")) { return test.fail("a persisting response did not say keep-alive: " + kept); }
     var closed: string = http.http_serialize_response_conn(r, false);

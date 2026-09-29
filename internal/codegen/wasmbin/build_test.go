@@ -679,7 +679,7 @@ import "std/http";
 import "std/tcp";
 function init(): i32 { return 0; }
 function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
-    return (hits + 1, http.http_response_ok("ok"));
+    return (hits + 1, http.ok("ok"));
 }
 `
 	prog, info := loadAndCheckModule(t, src)
@@ -701,9 +701,9 @@ import "std/http";
 import "std/tcp";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     if (req.path == "/hello") {
-        return http.http_response_ok("world");
+        return http.ok("world");
     }
-    return http.http_response_text(404, "not found");
+    return http.text(404, "not found");
 }
 `
 	prog, info := loadAndCheckModule(t, src)
