@@ -95,6 +95,18 @@ function main(): i32 {
     // claim unrelated strings are equal.
     if (!unicode.eq_canonical("abc", "abc")) { return 31; }
     if (unicode.eq_canonical("abc", "abd")) { return 32; }
+
+    // Code points added after Unicode 14.0, which the tables once stopped
+    // short of (#10472): a Todhri letter with a dot above and a doubled
+    // Gurung Khema vowel (16.0) decompose and recompose, and a 17.0 mark
+    // (U+1ADD, class 220) and a 15.0 one (U+1E08F, class 230) take their
+    // canonical order rather than standing as starters.
+    if (unicode.nfd(cp(67017)) != cp(67026) + cp(775)) { return 33; }
+    if (unicode.nfc(cp(67026) + cp(775)) != cp(67017)) { return 34; }
+    if (unicode.nfd(cp(90401)) != cp(90398) + cp(90398)) { return 35; }
+    if (unicode.nfc(cp(90398) + cp(90398)) != cp(90401)) { return 36; }
+    if (unicode.nfd("a" + cp(769) + cp(6877)) != "a" + cp(6877) + cp(769)) { return 37; }
+    if (unicode.nfd("a" + cp(123023) + cp(803)) != "a" + cp(803) + cp(123023)) { return 38; }
     return 0;
 }
 `
