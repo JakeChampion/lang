@@ -46,6 +46,8 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 		{"usize-operators", semUsizeOperatorsSource, 63},
 		// 70000000000 wraps to the 32-bit address 1280523264 (#10743).
 		{"usize-wide-literal", semUsizeWideLiteralSource, 1},
+		// A computed i64 wraps the same way, bound and returned (12 + 25*4).
+		{"usize-wide-product", semUsizeWideProductSource, 112},
 	}
 	for _, tc := range wasm {
 		t.Run(tc.name+"/wasm", func(t *testing.T) {
