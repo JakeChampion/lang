@@ -27,7 +27,7 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -37,9 +37,9 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 	}
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(expFern))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(expFern))
 	expWatPath := filepath.Join(dir, "exp_core.wat")
 	if err := os.WriteFile(expWatPath, watBytes, 0o644); err != nil {
 		t.Fatalf("write exporter wat: %v", err)

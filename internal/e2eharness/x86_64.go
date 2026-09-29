@@ -51,11 +51,8 @@ func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 // FERN_REQUIRE_X86_64_TOOLING=1) when the host can run no x86-64 binary at all.
 func X86_64Runner(t testing.TB) []string {
 	t.Helper()
-	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		return nil
-	}
-	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
-		return []string{p}
+	if runner, ok := lookupX86_64Runner(); ok {
+		return runner
 	}
 	if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
 		t.Fatal("non-x86_64 host and no qemu-x86_64 on PATH, and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the toolchain and is the only one running this test, so a skip here covers nothing")
@@ -81,25 +78,34 @@ func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
 	if gcc == "" {
 		return "", nil, false
 	}
-	// Pick the runner. Native exec is preferred — no qemu
-	// transition overhead — but we'll fall back to
-	// qemu-x86_64 on non-x86_64 hosts so the same test suite
-	// passes on aarch64 dev boxes.
-	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		return gcc, nil, true
-	}
-	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
-		return gcc, []string{p}, true
+	if runner, ok := lookupX86_64Runner(); ok {
+		return gcc, runner, true
 	}
 	if InterpDriverMode() {
 		// Interpret-the-driver mode: the caller only wants a driver's STDOUT
 		// (an emitted .wat / .s), which InterpDriver produces without ever
 		// linking or executing an x86-64 binary. No runner, and gcc is unused
 		// downstream. A test that also execs a compiled x86 binary will fail
-		// loudly on the missing runner rather than silently skipping.
+		// loudly on the missing runner rather than silently skipping. This arm
+		// stays out of lookupX86_64Runner: X86_64Runner's callers exec a real
+		// binary, so for them no runner is a skip, not a pass.
 		return gcc, nil, true
 	}
 	return gcc, nil, false
+}
+
+// lookupX86_64Runner decides how an x86-64 Linux binary is run, for both
+// X86_64Tooling and X86_64Runner: natively on an x86-64 host (no qemu
+// transition overhead), else through qemu-x86_64 so the same suite passes on
+// an aarch64 dev box. ok is false when the host can run one neither way.
+func lookupX86_64Runner() (runner []string, ok bool) {
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		return nil, true
+	}
+	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
+		return []string{p}, true
+	}
+	return nil, false
 }
 
 // RunX86_64Bin builds the exec.Cmd for running an x86-64 Linux binary either

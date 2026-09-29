@@ -18,11 +18,11 @@ import (
 // the codegen slice), so the exported function compiles as an ordinary
 // function — here it's called from main and the self-host emits a working core.
 func TestSelfHostExportAttributeCompiles(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	// An `@export` function, also called from main. The self-host must parse
 	// the attribute and compile the program.
@@ -30,7 +30,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 function run(): i32 { return 42; }
 
 function main(): i32 { return run(); }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(prog))
 	if len(watBytes) == 0 {
 		t.Fatal("self-host wasm emitter produced 0 bytes for an @export program")
 	}
@@ -55,7 +55,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -66,13 +66,13 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 
 	// --- self-host emits the exporter core (a command with main + @export). ---
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/math@0.1.0#add")) {
 		t.Fatalf("self-host core is missing the surfaced @export core export:\n%s", watBytes)
 	}
@@ -198,7 +198,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -209,13 +209,13 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 
 	// self-host emits the exporter core (command with main + string @export).
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "greet")
 function greet(): string { return "hi"; }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#greet")) {
 		t.Fatalf("self-host core missing the surfaced string @export:\n%s", watBytes)
 	}
@@ -335,7 +335,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -345,13 +345,13 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#len-of")) {
 		t.Fatalf("self-host core missing the surfaced string-param @export:\n%s", watBytes)
 	}

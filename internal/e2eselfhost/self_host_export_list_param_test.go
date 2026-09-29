@@ -28,7 +28,7 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -39,7 +39,7 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 
 	// self-host emits the exporter core (command with main + list-param @export).
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/nums@0.1.0", "sum")
 function sum(xs: i32[]): i32 {
@@ -49,7 +49,7 @@ function sum(xs: i32[]): i32 {
 }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/nums@0.1.0#sum")) {
 		t.Fatalf("self-host core missing the surfaced list-param @export:\n%s", watBytes)
 	}
