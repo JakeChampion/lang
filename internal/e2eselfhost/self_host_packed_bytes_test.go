@@ -166,6 +166,31 @@ function main(): i32 {
 
 const packedBytesRuntimeWant = "HELLO, WORLD\nfbarb\na<->b<->c\nabc\nscan 3 7 19\nruns 3\nfile 6 69807"
 
+// packedBytesConstSrc: a constant u8[] literal whose length is not a
+// multiple of 8, appended to on every evaluation. The constant has no spare
+// capacity, so each append copies; with room in its padding the first append
+// grew the constant in place and every later evaluation read the byte and
+// the length it had written (#10647).
+const packedBytesConstSrc = `import "std/i32";
+
+function mk(): u8[] { return [1, 2, 3]; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var a: u8[] = mk().append(9);
+        t = t + a.len();
+        i = i + 1;
+    }
+    var b: u8[] = mk().with(0, 7);
+    print("const " + t.to_string() + " " + mk().len().to_string() + " " + (b[0] as i32).to_string() + " " + (mk()[0] as i32).to_string());
+    return 0;
+}
+`
+
+const packedBytesConstWant = "const 12 3 7 1"
+
 func TestSelfHostPackedBytes(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -183,6 +208,7 @@ func TestSelfHostPackedBytes(t *testing.T) {
 		{"elements", packedBytesElementsSrc, packedBytesElementsWant},
 		{"containers", packedBytesContainersSrc, packedBytesContainersWant},
 		{"runtime", packedBytesRuntimeSrc, packedBytesRuntimeWant},
+		{"constant", packedBytesConstSrc, packedBytesConstWant},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
