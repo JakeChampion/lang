@@ -18276,10 +18276,9 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 		// releases its elements through the dedicated __drop_arr_dyn_<set>
 		// walk (arrElemStructDropName's dyn arm, gated on the backend's
 		// dyn-RC capability there). Without this the function-exit sweep fell
-		// to the plain box dec below and leaked every element. NATIVES ONLY
-		// (ptrW==8) — see the exit-sweep arm's wasm caveat.
+		// to the plain box dec below and leaked every element.
 		_, elemIsDyn := at.Elem.(ast.DynTraitType)
-		if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.ptrW == 8 && b.dynReclaim()) {
+		if arrElemIsRcTracked(at.Elem) || (elemIsDyn && b.dynReclaim()) {
 			// Transitive reclamation Stage B: an array of CONCRETE structs drops
 			// each element box deeply (via __drop_arr_struct_<Elem> →
 			// __drop_struct_<Elem> per element) before freeing the buffer, instead

@@ -220,3 +220,58 @@ func TestWASMDynMultiTraitArrayHeapBumpBounded(t *testing.T) {
 		t.Errorf("expected a non-zero bounded high-water, got 0")
 	}
 }
+
+// dynShapeArrayExitSrc: a FUNCTION-local `dyn Shape[]`, released by the exit
+// sweep rather than a loop re-init (#10551), with each way an element leaves
+// the array: iterated into a call argument, returned through a borrow, and
+// bound to a local. `tail` is main's return expression.
+func dynShapeArrayExitSrc(n, tail string) string {
+	return `import "std/i32";
+trait Shape {
+    function area(self: Self): i32;
+}
+struct Circle { tag: string }
+struct Rect   { label: string }
+impl Shape for Circle { function area(self: Self): i32 { return self.tag.len(); } }
+impl Shape for Rect   { function area(self: Self): i32 { return self.label.len(); } }
+function measure(s: dyn Shape): i32 { return s.area(); }
+function keep(s: dyn Shape): dyn Shape { return s; }
+function build(i: i32): i32 {
+    var shapes: dyn Shape[] = [
+        Circle { tag: "circle " + (i % 10).to_string() },
+        Rect   { label: "rect " + (i % 10).to_string() }
+    ];
+    var t: i32 = 0;
+    for s in shapes { t = t + measure(s); }
+    var k = keep(shapes[0]);
+    var second: dyn Shape = shapes[1];
+    return t + k.area() + second.area();
+}
+function main(): i32 {
+    var before: i32 = (__heap_bump_bytes() as i32);
+    var i: i32 = 0;
+    var sum: i32 = 0;
+    while (i < ` + n + `) {
+        sum = sum + build(i);
+        i = i + 1;
+    }
+    return ` + tail + `;
+}`
+}
+
+// TestWASMDynShapeArrayExitBounded: the exit sweep walks a function-local
+// `dyn Shape[]`'s elements on wasm, and releases none of them twice.
+func TestWASMDynShapeArrayExitBounded(t *testing.T) {
+	prev := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	defer func() { ast.RcFreeEnabled = prev }()
+	bump := "(__heap_bump_bytes() as i32) - before"
+	small := runWasm(t, dynShapeArrayExitSrc("50", bump))
+	large := runWasm(t, dynShapeArrayExitSrc("5000", bump))
+	if small != large {
+		t.Errorf("function-local dyn Shape[] bump growth should be bounded: N=50 -> %d, N=5000 -> %d (a leak would grow with N)", small, large)
+	}
+	if got := runWasm(t, dynShapeArrayExitSrc("200", "__rc_underflow_count()")); got != 0 {
+		t.Errorf("function-local dyn Shape[] over-releases = %d, want 0", got)
+	}
+}
