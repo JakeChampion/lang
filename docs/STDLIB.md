@@ -1259,7 +1259,15 @@ loop and `std/fetch` the client.
   `backlog` deep, the kernel refusing past it, until one closes), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`, 1: the
   runtime does not yet report the core count, so the default stays one
-  until it does).
+  until it does), and the shutdown SIGTERM starts: the loop keeps
+  accepting for `shutdown_grace` (2 s, since whoever routes to it removes
+  it in parallel), answers 503 on `readiness_path` ("" for none), then
+  closes the listener, ends keep-alive, closes the connections with
+  nothing in flight and gives the rest `drain_deadline` (30 s) from the
+  signal to finish before closing them; the loop returns 0 once every
+  connection is gone and 1 when it cut one off, so `main` exits with it.
+  A listener the process was started with (`LISTEN_FDS` at least 1,
+  descriptor 3) is served instead of a fresh one.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1278,8 +1286,9 @@ loop and `std/fetch` the client.
   opts, handler)` takes the `ServeOptions`, and with `workers` above
   one forks that many, each running its own loop over the one
   listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
-  connection wakes one of them; whichever dies is replaced. No
-  threaded-state variant — a refork resets the loop frame.
+  connection wakes one of them; whichever dies is replaced, and SIGTERM
+  is forwarded to every worker and waited for. No threaded-state variant
+  — a refork resets the loop frame.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where

@@ -281,6 +281,18 @@ and native Darwin run the same fixture; QEMU is permitted for correctness.
 (x86-64 and arm64 on both the flat and SSA backends, native Darwin, and real
 wasi:sockets), the bounded-serve exit criterion of #9853 on that compiler.
 
+`TestServeShutdownDrainsAndExitsClean`, `TestServeShutdownAbortsAtDrainDeadline`,
+`TestSupervisedServeForwardsShutdown` and `TestServeInheritsListenFds`
+(`internal/e2e`, native x86-64) pin the shutdown (#9854): after SIGTERM
+a request in flight is answered with close, the readiness path answers
+503 within the grace, an idle keep-alive connection is closed and the
+process exits 0; a request that never completes is cut off at the drain
+deadline and the process exits 1; the supervisor forwards the signal to
+two workers and exits 0 once they drained, logging no death; and a
+listener handed in through `LISTEN_FDS` is served.
+`TestSupervisedServeWorkersServeSideBySide` pins two workers over one
+listener answering side by side and surviving one worker's death.
+
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
 522 requests, its README for the columns and the sources) through
