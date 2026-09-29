@@ -1921,7 +1921,7 @@ function is_reserved_enum_name(name: string): boolean {
 // against builtinStructDecls() so the two cannot drift.
 function is_reserved_struct_name(name: string): boolean {
   var reserved: string[] = [
-    "BytesWriter", "Cell", "Date", "DateTime", "Duration", "FileStat",
+    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
@@ -8362,7 +8362,7 @@ function mx_builtin_enum_of(name: string): string {
   if (name == "NotFound" || name == "PermissionDenied" || name == "AlreadyExists" || name == "InvalidUtf8" || name == "Interrupted" || name == "Unsupported" || name == "Other") {
     return "IoError";
   }
-  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile") {
+  if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks") {
     return "Body";
   }
   return "";

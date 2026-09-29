@@ -3,10 +3,11 @@ import "std/http";
 import "std/stream";
 import "std/string";
 
-// examples/tests/http_body_test.fern — the four bodies an HttpResponse
-// carries (#9854): text and bytes held whole, a Stream's remainder, and
-// a file the serve loop reads as it writes the response
-// (`http_materialize`), a missing file answered 404 in its place.
+// examples/tests/http_body_test.fern — the five bodies an HttpResponse
+// carries (#9854): text and bytes held whole, a Stream's remainder, a
+// file the serve loop streams as it writes the response
+// (`http_materialize` reads one whole for a test), a missing file
+// answered 404 in its place, and the chunks a producer answers.
 
 function test_text_body(): test.TestOutcome {
     var resp: HttpResponse = http.http_response_ok("hello");
@@ -57,6 +58,18 @@ function test_a_missing_file_is_a_404(): test.TestOutcome {
     return test.assert_body(resp, "Not Found");
 }
 
+function three_chunks(i: i32): Option[u8[]] {
+    if (i >= 3) { return None; }
+    return Some(("c" + i.to_string()).bytes());
+}
+
+function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
+    var resp: HttpResponse = http.http_response_chunks(200, three_chunks);
+    if (resp.body_len() != 6) { return test.fail("len: " + resp.body_len().to_string()); }
+    if (!http.http_serialize_response(resp).ends_with("\r\n\r\nc0c1c2")) { return test.fail("wire: " + http.http_serialize_response(resp)); }
+    return test.assert_body(resp, "c0c1c2");
+}
+
 function test_other_bodies_pass_through_materialize(): test.TestOutcome {
     var resp: HttpResponse = http.http_materialize(http.http_response_ok("as is"));
     return test.assert_body(resp, "as is");
@@ -69,6 +82,7 @@ function main(): i32 {
     t = t.it("a stream body is its remainder", test_stream_body_from_its_cursor);
     t = t.it("a file body is read by the loop", test_file_body_is_read_by_the_loop);
     t = t.it("a missing file is a 404", test_a_missing_file_is_a_404);
+    t = t.it("a chunks body reads as its chunks joined", test_a_chunks_body_reads_as_its_chunks_joined);
     t = t.it("other bodies pass through materialize", test_other_bodies_pass_through_materialize);
     return t.finish();
 }

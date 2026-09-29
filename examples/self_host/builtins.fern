@@ -51,13 +51,20 @@ enum IoError {
     Other(string, string),
 }
 
+// ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,
+// 1, 2, … until it answers None. A record rather than the bare function
+// because a closure is released as a struct member and only leaks as an
+// enum payload on the native backends.
+struct ChunkProducer { next: (i32) => Option[u8[]] }
 // Body — what an HttpResponse carries (std/http): text or bytes held
-// whole, a Stream drained to the wire, or a file the serve loop reads.
+// whole, a Stream drained to the wire, a file the serve loop streams, or
+// chunks the loop pulls from a producer by index until it answers None.
 enum Body {
     BodyText(string),
     BodyBytes(u8[]),
     BodyStream(Stream),
     BodyFile(string),
+    BodyChunks(ChunkProducer),
 }
 
 // FileStat — returned by stat(path). The emitter resolves

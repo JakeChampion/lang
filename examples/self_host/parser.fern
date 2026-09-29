@@ -8557,6 +8557,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_variant(structs, "BodyBytes", "u8[]", "Body");
     structs = add_builtin_variant(structs, "BodyStream", "Stream", "Body");
     structs = add_builtin_variant(structs, "BodyFile", "string", "Body");
+    structs = add_builtin_variant(structs, "BodyChunks", "ChunkProducer", "Body");
     // Other carries TWO payloads (path, message) like native's declaration
     // (#4370) — open-coded because add_builtin_variant takes one payload.
     // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
@@ -8660,6 +8661,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }
+    // ChunkProducer is what a `BodyChunks` carries, so it has to be here for
+    // `resp.body`'s payload to resolve its `next` field.
+    if (!name_declared(structs, "ChunkProducer")) {
+        var cpf: StructFieldDecl[] = [];
+        cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+        structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
+    }
     if (!name_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
         hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
@@ -8750,6 +8758,11 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // strings (leaf-safe).
     structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
     structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
+    if (!name_declared(structs, "ChunkProducer")) {
+        var cpf: StructFieldDecl[] = [];
+        cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "i32" });
+        structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
+    }
     if (!name_declared(structs, "BytesWriter")) {
         var bwf: StructFieldDecl[] = [];
         bwf = bwf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });

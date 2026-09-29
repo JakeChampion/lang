@@ -3890,7 +3890,7 @@ func TestRunnerHttpBodyExample(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: HttpResponse bodies", "# pass 6", "# fail 0", "1..6"} {
+	for _, w := range []string{"# Suite: HttpResponse bodies", "# pass 7", "# fail 0", "1..7"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

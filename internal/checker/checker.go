@@ -483,6 +483,7 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "BodyBytes", Payloads: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
 				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
 				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
 			},
 		},
 		// JsonValue — recursive AST representation for JSON
@@ -671,6 +672,19 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{
 				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
 				{Name: "pos", Type: ast.NumberType{}},
+			},
+		},
+		// ChunkProducer — the producer a `BodyChunks` carries: asked for
+		// chunk 0, 1, 2, … until it answers None. A record rather than the
+		// bare function because a closure is released as a struct member
+		// and only leaks as an enum payload (rc_insert.go's variant drop).
+		{
+			Name: "ChunkProducer",
+			Fields: []ast.Param{
+				{Name: "next", Type: &ast.FuncType{
+					Params: []ast.Type{ast.NumberType{}},
+					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				}},
 			},
 		},
 		// BytesWriter — in-memory buffered writer

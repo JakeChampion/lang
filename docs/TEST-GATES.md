@@ -349,6 +349,11 @@ sees is deterministic. On wasm32-wasi, which has no processes, the
 synthesis serves single-process: `TestSynthesisedHandleMainFollowsTargetProcesses`
 (`internal/checker`), `TestHandlerKindsMatchWhatTheCompilerAccepts` and
 `TestSelfHostWasiCliHandlerProgramBuilds` pin that on both compilers.
+`TestServeStreamingBodyX86_64`, `TestServeStreamingBodyInterp` and
+`TestSelfHostServeStreamingBody` pin the produced bodies: a three-million-byte
+file streamed whole under its length on a keep-alive connection, a chunk
+producer under chunked transfer coding and close-delimited over HTTP/1.0,
+an empty chunk skipped, and a bare head for HEAD.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

@@ -252,6 +252,17 @@ func TestSelfHostServeFileBody(t *testing.T) {
 	e2eharness.CheckFileBody(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
+func TestSelfHostServeStreamingBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.bin")
+	if err := os.WriteFile(path, e2eharness.StreamingBodyContent(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StreamingBodyServerSource(port, path))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckStreamingBody(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 func TestSelfHostServeAcceptDistribution(t *testing.T) {
 	held := selfHostRaiseNofile(t, 4096+128) - 128
 	if held > 4096 {
