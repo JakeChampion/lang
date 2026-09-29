@@ -3479,6 +3479,8 @@ function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Bi
     var (returned, at) = checker.first_returned(fd.body, scope);
     if (checker.bare_return(returned)) { return t_void(); }
     if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts); }
+    var constructed: typeinfo.Type = closure_slot_type(returned, contracts);
+    if (semtypes.concrete(constructed, false)) { return constructed; }
     if let ast.ExprIdent(id) = returned {
         var slot: typeinfo.Type = closure_slot_type(slot_init(fd.body, id.name), contracts);
         if (semtypes.concrete(slot, false)) { return slot; }
@@ -3532,9 +3534,11 @@ function is_unknown_expr(e: ast.Expr): boolean {
     return false;
 }
 
+// A closure constructor is not a call of the body it names, though a body
+// hoisted out of a `$iife` one carries that spelling.
 function calls_synthesised(e: ast.Expr): boolean {
     if let ast.ExprCall(c) = e {
-        if let ast.ExprIdent(id) = c.callee { return synthesised_name(id.name); }
+        if let ast.ExprIdent(id) = c.callee { return synthesised_name(id.name) && parser.mkclo_body(id.name).len() == 0; }
     }
     return false;
 }

@@ -57277,11 +57277,11 @@ function elem_arm_bindings_confined(arm: ast.MatchArm): boolean {
 
 // arrenum_param_esc_expr: the expression half of arrenum_param_escapes. It
 // widens arrenum_esc_expr in exactly ONE place — a zero-param IIFE, the shape
-// the parser builds for an `if` / `match` in VALUE position. lower_iife lowers
-// such a body INLINE in the enclosing frame and builds no env box
-// (is_iife_callee's own argument), so an element read inside it is the same
-// read the statement form makes and earns the same admissions. Without it the
-// lambda-capture arm reads the param as carried out of the frame entirely and
+// the parser builds for an `if` / `match` in VALUE position. Such a body is
+// lowered INLINE in the enclosing frame, or a hand-written one becomes a direct
+// call taking its captures as arguments; neither builds an env box, so an
+// element read inside it is the same read the statement form makes and earns
+// the same admissions. Without it the lambda-capture arm reads the param as carried out of the frame entirely and
 // refuses, which is why `return (match (src[0]) { … })` leaked where its
 // statement sibling balanced. Every other form delegates to the stricter
 // walker, so the widening cannot reach past this shape.
@@ -75852,13 +75852,45 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 // paths, and the outer form then refuses. Its body is still walked, so a user
 // lambda nested in the desugar is lifted either way.
 function lift_call_callee(c: ast.ExprCall, acc: LiftAcc, gfns: string[]): LiftExpr {
-    if (is_iife_callee(c) && lifting_inside_iife(gfns)) {
+    if (parser.is_value_block(c) && lifting_inside_iife(gfns)) {
         match (c.callee) {
             ast.ExprLambda(lam) => { return lift_lambda_body_only(lam, acc, gfns); },
             _ => { return LiftExpr { expr: c.callee, acc: acc }; }
         }
     }
     return lift_call_arg(c.callee, acc, gfns);
+}
+
+// lift_capturing_iife hoists a hand-written, immediately called capturing lambda
+// to `__lam_N(params…, captures…)` and calls it with the written arguments and
+// then the captured names, the direct-call lift try_lift_binding gives a bound
+// lambda that is only called. A hand-written IIFE is a call with a scope of its
+// own (parser.is_value_block_origin), so its `return` leaves the lambda, not the
+// enclosing function. Declines, with the counter unchanged, when a capture's
+// type is not in hand.
+function lift_capturing_iife(c: ast.ExprCall, lam: ast.ExprLambda, acc: LiftAcc, gfns: string[]): LiftExpr {
+    var declined: LiftExpr = LiftExpr { expr: ast.ExprCall { ...c }, acc: acc };
+    if (lam.captures.len() == 0) { return declined; }
+    var params: ast.ParamDecl[] = [];
+    for lp in lam.params { params = params.append(lp); }
+    var capargs: ast.Expr[] = [];
+    for cap in lam.captures {
+        var cp: ast.ParamDecl = lambda_capture_param(lam, cap.name);
+        if (cp.type_name.len() == 0) { return declined; }
+        params = params.append(ast.ParamDecl { ...cp, own: false, has_default: false, default_value: parser.e_unknown("") });
+        capargs = capargs.append(ast.ExprIdent { name: cap.name, line: 0, col: 0, ty: "" });
+    }
+    var nm: string = "__lam_" + util.i32_to_string(acc.counter);
+    var nf: parser.FuncDecl = parser.FuncDecl { no_inline: false, name: nm, receiver_name: "", receiver_type: "", type_params: [], params: params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: lam.ret_fn_ret, ret_fn_param_types: lam.ret_fn_param_types, is_package: false, module: "" };
+    var a: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
+    var nargs: ast.Expr[] = [];
+    for arg in c.args {
+        var r: LiftExpr = lift_call_arg(arg, a, gfns);
+        a = r.acc;
+        nargs = nargs.append(r.expr);
+    }
+    for ca in capargs { nargs = nargs.append(ca); }
+    return LiftExpr { expr: ast.ExprCall { callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, acc: a };
 }
 
 // `$in_iife$` is stored in `gfns` to carry "already inside a desugar's IIFE body"
@@ -75900,7 +75932,14 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             // the call becomes a direct `__lam_N(args)`. lift_call_arg recurses for
             // a non-lambda callee (ident / `mk()` / etc.), leaving it unchanged, so
             // a normal call's numbering is untouched (an ident callee consumes no
-            // counter). A capturing lambda callee is left in place (stays on AST).
+            // counter). A capturing hand-written one hoists with its captures
+            // as trailing parameters (lift_capturing_iife).
+            if let ast.ExprLambda(clam) = c.callee {
+                if (!parser.is_value_block_origin(clam.origin) && !lambda_has_no_captures(clam, gfns)) {
+                    var hoisted: LiftExpr = lift_capturing_iife(c, clam, a, gfns);
+                    if (hoisted.acc.counter > a.counter) { return hoisted; }
+                }
+            }
             var ce: LiftExpr = lift_call_callee(c, a, gfns);
             a = ce.acc;
             var nargs: ast.Expr[] = [];
@@ -76038,7 +76077,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
     }
     return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, is_view: false, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys };
 }
-// contract_spelling is how returned_lambda_contract names one type. It goes
+// contract_spelling is how returned_fn_contract names one type. It goes
 // through fn_tag_spelling because a parameter or result that is ITSELF callable
 // carries the same coarse tag with its own sidecars beside it. Recording the
 // bare tag rebuilds `(fn) => R` — a contract that LIES, which is worse than one
@@ -76050,57 +76089,45 @@ function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string
     return spelled;
 }
 
-// returned_lambda_contract reads the #5986 sidecar pair off the first lambda a
-// body RETURNS, walking the same branch shapes desugar_lambda_returns rewrites.
+// returned_fn_contract reads the #5986 sidecar pair off the first function
+// value a body RETURNS, walking the same branch shapes desugar_lambda_returns
+// rewrites: an inline lambda, a bare module function name (read off its
+// declaration unless `shadowed` names a local of that spelling), or a nested
+// value-position if/match whose own arms answer.
 //
 // hoist_value_iife declares its hoisted function with the coarse "fn" tag and
 // needs the pair that tag drops. A lambda the source wrote INSIDE an
 // if/match-expression arm never had one to give: e_lambda_origin builds the
 // IIFE and writes the pair empty, so the declaration reached semsource with a
 // tag and no contract and was refused for an unresolved result type.
-function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
+function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFuncs): (string, string) {
     var i: i32 = 0;
     while (i < body.len()) {
         match (body[i]) {
             ast.StmtReturn(r) => {
-                match (r.value) {
-                    ast.ExprLambda(lm) => {
-                        var res: string = contract_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types);
-                        if (res.len() == 0) { return ("", ""); }
-                        var ptys: string = "";
-                        var k: i32 = 0;
-                        while (k < lm.params.len()) {
-                            var pt: string = contract_spelling(lm.params[k].type_name, lm.params[k].fn_ret, lm.params[k].fn_param_types);
-                            if (pt.len() == 0) { return ("", ""); }
-                            if (k > 0) { ptys = ptys + ","; }
-                            ptys = ptys + pt;
-                            k = k + 1;
-                        }
-                        return (res, ptys);
-                    },
-                    _ => {}
-                }
+                var (vr, vp, found) = value_fn_contract(r.value, shadowed, mfuncs);
+                if (found) { return (vr, vp); }
             },
             ast.StmtIf(f) => {
-                var (tr, tp) = returned_lambda_contract(f.then_body);
+                var (tr, tp) = returned_fn_contract(f.then_body, shadowed, mfuncs);
                 if (tr.len() > 0) { return (tr, tp); }
-                var (er, ep) = returned_lambda_contract(f.else_body);
+                var (er, ep) = returned_fn_contract(f.else_body, shadowed, mfuncs);
                 if (er.len() > 0) { return (er, ep); }
             },
             ast.StmtMatch(m) => {
                 var a: i32 = 0;
                 while (a < m.arms.len()) {
-                    var (mr, mp) = returned_lambda_contract(m.arms[a].body);
+                    var (mr, mp) = returned_fn_contract(m.arms[a].body, shadowed, mfuncs);
                     if (mr.len() > 0) { return (mr, mp); }
                     a = a + 1;
                 }
             },
             ast.StmtWhile(w) => {
-                var (wr, wp) = returned_lambda_contract(w.body);
+                var (wr, wp) = returned_fn_contract(w.body, shadowed, mfuncs);
                 if (wr.len() > 0) { return (wr, wp); }
             },
             ast.StmtFor(fo) => {
-                var (fr, fp) = returned_lambda_contract(fo.body);
+                var (fr, fp) = returned_fn_contract(fo.body, shadowed, mfuncs);
                 if (fr.len() > 0) { return (fr, fp); }
             },
             _ => {}
@@ -76108,6 +76135,53 @@ function returned_lambda_contract(body: ast.Stmt[]): (string, string) {
         i = i + 1;
     }
     return ("", "");
+}
+
+// value_fn_contract is returned_fn_contract for one returned value. `found` is
+// false for a value that names no contract, so the walk moves on to the next
+// arm; a function value whose contract does not spell ends the walk empty.
+function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (string, string, boolean) {
+    match (v) {
+        ast.ExprLambda(lm) => {
+            var (lr, lp) = params_fn_contract(lm.params, contract_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types));
+            return (lr, lp, true);
+        },
+        ast.ExprIdent(id) => {
+            if (util.index_of_str(shadowed, id.name) >= 0) { return ("", "", false); }
+            for d in mfuncs.decls {
+                if (d.name == id.name && d.receiver_type.len() == 0 && !d.is_const) {
+                    var (dr, dp) = params_fn_contract(d.params, contract_spelling(d.ret_type, d.ret_fn_ret, d.ret_fn_param_types));
+                    return (dr, dp, true);
+                }
+            }
+        },
+        ast.ExprCall(c) => {
+            if let ast.ExprLambda(il) = c.callee {
+                if (c.args.len() == 0 && il.params.len() == 0) {
+                    var (nr, np) = returned_fn_contract(il.body, shadowed, mfuncs);
+                    return (nr, np, nr.len() > 0);
+                }
+            }
+        },
+        _ => {}
+    }
+    return ("", "", false);
+}
+
+// A consuming parameter spells `own`, as the `$wrap` trampoline mirrors it.
+function params_fn_contract(params: ast.ParamDecl[], res: string): (string, string) {
+    if (res.len() == 0) { return ("", ""); }
+    var ptys: string = "";
+    var k: i32 = 0;
+    while (k < params.len()) {
+        var pt: string = contract_spelling(params[k].type_name, params[k].fn_ret, params[k].fn_param_types);
+        if (pt.len() == 0) { return ("", ""); }
+        if (params[k].own && !parser.spelling_is_own(pt)) { pt = "own " + pt; }
+        if (k > 0) { ptys = ptys + ","; }
+        ptys = ptys + pt;
+        k = k + 1;
+    }
+    return (res, ptys);
 }
 
 function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): DesugarRet {
@@ -76831,7 +76905,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
                         var ce2: ast.Expr = ast.ExprCall { callee: cl2, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
                         return InlineCloRes { expr: ce2, funcs: cnda.funcs, counter: cnda.counter };
                     }
-                    if (!iife_arms_all_boxable(il.body)) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
+                    if (!iife_arms_all_boxable(il.body, iife_scope_fd(fd, il.body), mfuncs)) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
                     // The arms are lowered INLINE in the enclosing function, so a
                     // name the IIFE itself binds — a match arm's payload, an
                     // arm-body local — is an ordinary local slot there. Boxing an
@@ -76880,12 +76954,12 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
 
 // iife_arms_all_boxable reports whether EVERY arm of a value-position if/match
 // yields something try_fn_field_value turns into an env box — an inline lambda,
-// or a nested value-position if/match that is itself all-boxable — and that at
-// least one arm is a lambda. Both halves matter: below "every arm" the
-// destination would carry two dispatch ABIs (#5071 one container out), and
-// without a lambda there is nothing to box.
-function iife_arms_all_boxable(stmts: ast.Stmt[]): boolean {
-    return iife_arm_values_boxable(stmts, 0) > 0;
+// a bare module function name, or a nested value-position if/match that is
+// itself all-boxable — and that at least one arm does. Both halves matter:
+// below "every arm" the destination would carry two dispatch ABIs (#5071 one
+// container out), and without such an arm there is nothing to box.
+function iife_arms_all_boxable(stmts: ast.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+    return iife_arm_values_boxable(stmts, 0, fd, mfuncs) > 0;
 }
 
 // iife_scope_fd returns `fd` with the IIFE's own statements appended to its
@@ -76898,20 +76972,24 @@ function iife_scope_fd(fd: parser.FuncDecl, body: ast.Stmt[]): parser.FuncDecl {
     return parser.FuncDecl { ...fd, body: nb };
 }
 
-// Returns the number of lambda arms found, or -1 as soon as an arm yields
+// Returns the number of boxable arms found, or -1 as soon as an arm yields
 // something that is not boxable.
-function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32): i32 {
+function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDecl, mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
                 match (r.value) {
                     ast.ExprLambda(_) => { n = n + 1; },
+                    ast.ExprIdent(rid) => {
+                        if (!arm_names_module_fn(rid.name, fd, mfuncs)) { return 0 - 1; }
+                        n = n + 1;
+                    },
                     ast.ExprCall(rc) => {
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                var deep: i32 = iife_arm_values_boxable(ril.body, n);
+                                var deep: i32 = iife_arm_values_boxable(ril.body, n, fd, mfuncs);
                                 if (deep < 0) { return 0 - 1; }
                                 n = deep;
                             },
@@ -76922,15 +77000,15 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32): i32 {
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arm_values_boxable(iff.then_body, n);
+                n = iife_arm_values_boxable(iff.then_body, n, fd, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_values_boxable(iff.else_body, n);
+                n = iife_arm_values_boxable(iff.else_body, n, fd, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_values_boxable(mm.arms[a].body, n);
+                    n = iife_arm_values_boxable(mm.arms[a].body, n, fd, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -77552,7 +77630,7 @@ function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: Stru
             match (c.callee) {
                 ast.ExprLambda(il) => {
                     return c.args.len() == 0 && il.params.len() == 0
-                        && iife_arms_have_lambda(il.body, mfuncs)
+                        && iife_arms_have_unboxed_fn(il.body, iife_scope_fd(fd, il.body), mfuncs)
                         && iife_arms_hold_fn_value(il.body, fd, structs, mfuncs);
                 },
                 ast.ExprIdent(cid) => {
@@ -77837,38 +77915,41 @@ function expr_is_closure_box(e: ast.Expr, s: LowerState): boolean {
 // arm stayed a bare pointer (#7438). hoist_value_iife applies that desugar itself.
 //
 // Gated on the IIFE holding a fn-VALUED arm; everything else keeps its path.
-// iife_arms_have_lambda reports whether any arm of a value-position if/match
-// yields an inline LAMBDA — directly, or through a generic passthrough call that
-// hands it back unchanged — which is the only thing the hoist is needed for.
+// iife_arms_have_unboxed_fn reports whether any arm of a value-position
+// if/match yields a function value nothing has boxed yet: an inline LAMBDA —
+// directly, or through a generic passthrough call that hands it back unchanged
+// — or a bare module function name. Those are the only things the hoist is
+// needed for.
 //
 // The two halves of #6256 must not both fire on the same IIFE. An IIFE whose
 // arms are all already-boxed fn values (closure locals) needs no hoist at all:
 // #6323's clo_init marking recognises the IIFE init directly and binds the
 // destination as a closure local. Hoisting it would REPLACE the IIFE with an
 // ordinary call, so that marking no longer matches — measured, it turned three
-// green shapes back into SIGSEGVs. A lambda arm is different: nothing has boxed
-// it yet, so it needs to become a FuncDecl for the ordinary passes to reach.
+// green shapes back into SIGSEGVs. A lambda or function-name arm is different:
+// nothing has boxed it yet, so it needs to become a FuncDecl for the ordinary
+// passes to reach.
 //
-// So the hoist takes the lambda-arm case and #6323 takes the boxed-arm case,
+// So the hoist takes the unboxed-arm case and #6323 takes the boxed-arm case,
 // and a MIXED IIFE (Repro D — one closure-local arm, one lambda) hoists,
 // because the lambda is the binding constraint.
-function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
+function iife_arms_have_unboxed_fn(stmts: ast.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                if (passthrough_arg_has_lambda(r.value, mfuncs)) { return true; }
+                if (arm_value_is_unboxed_fn(r.value, fd, mfuncs)) { return true; }
             },
             ast.StmtAssign(a) => {
-                if (is_arm_value_store(a) && passthrough_arg_has_lambda(a.value, mfuncs)) { return true; }
+                if (is_arm_value_store(a) && arm_value_is_unboxed_fn(a.value, fd, mfuncs)) { return true; }
             },
             ast.StmtIf(iff) => {
-                if (iife_arms_have_lambda(iff.then_body, mfuncs)) { return true; }
-                if (iife_arms_have_lambda(iff.else_body, mfuncs)) { return true; }
+                if (iife_arms_have_unboxed_fn(iff.then_body, fd, mfuncs)) { return true; }
+                if (iife_arms_have_unboxed_fn(iff.else_body, fd, mfuncs)) { return true; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    if (iife_arms_have_lambda(mm.arms[a].body, mfuncs)) { return true; }
+                    if (iife_arms_have_unboxed_fn(mm.arms[a].body, fd, mfuncs)) { return true; }
                     a = a + 1;
                 }
             },
@@ -77876,6 +77957,17 @@ function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
         }
     }
     return false;
+}
+
+function arm_value_is_unboxed_fn(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+    if let ast.ExprIdent(id) = e { return arm_names_module_fn(id.name, fd, mfuncs); }
+    return passthrough_arg_has_lambda(e, fd, mfuncs);
+}
+
+// arm_names_module_fn: a bare name in an arm is a module function's address,
+// not a local or parameter that shadows one (#6191).
+function arm_names_module_fn(name: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+    return !lift_ident_is_param(fd, name) && lift_names_fn_value(mfuncs, name);
 }
 
 // passthrough_arg_has_lambda reports whether `e` is a raw lambda, directly or at
@@ -77887,7 +77979,7 @@ function iife_arms_have_lambda(stmts: ast.Stmt[], mfuncs: MFuncs): boolean {
 // An arm that is ITSELF a value-position if/match holds its lambdas one level
 // in, and the walk stops at that nested IIFE for the same reason it stops at the
 // outer one, so the question recurses through it.
-function passthrough_arg_has_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
+function passthrough_arg_has_lambda(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     match (e) {
         ast.ExprLambda(_) => { return true; },
         ast.ExprCall(c) => {
@@ -77896,12 +77988,12 @@ function passthrough_arg_has_lambda(e: ast.Expr, mfuncs: MFuncs): boolean {
                     var i: i32 = 0;
                     while (i < c.args.len()) {
                         if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
-                                && passthrough_arg_has_lambda(c.args[i], mfuncs)) { return true; }
+                                && passthrough_arg_has_lambda(c.args[i], fd, mfuncs)) { return true; }
                         i = i + 1;
                     }
                 },
                 ast.ExprLambda(il) => {
-                    if (c.args.len() == 0 && il.params.len() == 0) { return iife_arms_have_lambda(il.body, mfuncs); }
+                    if (c.args.len() == 0 && il.params.len() == 0) { return iife_arms_have_unboxed_fn(il.body, fd, mfuncs); }
                 },
                 _ => {}
             }
@@ -78204,7 +78296,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     var fnret: string = lam.ret_fn_ret;
     var fnptys: string = lam.ret_fn_param_types;
     if (fnret.len() == 0) {
-        var (armret, armptys) = returned_lambda_contract(lam.body);
+        var (armret, armptys) = returned_fn_contract(lam.body, caps, mfuncs);
         fnret = armret;
         fnptys = armptys;
     }
@@ -78347,7 +78439,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // replaces it is an ordinary fn-value-returning call both a
                     // binding and a return already handle.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && iife_arms_have_lambda(ielam.body, mfuncs)
+                        && iife_arms_have_unboxed_fn(ielam.body, iife_scope_fd(fd, ielam.body), mfuncs)
                         && iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
                         var iar: InlineCloRes = hoist_value_iife(ielam, fd, fs, ct, structs, mfuncs);
                         if (iar.counter > ct) {
@@ -79047,24 +79139,10 @@ function is_wide_cap_type(t: string): boolean {
 // is_iife_callee reports whether `c` is an immediately-invoked zero-param
 // lambda — `(<lambda>)()`, the shape the parser builds for `if` / `match` in
 // value position and for the array / map comprehension desugars.
-//
-// It matters to the wide-capture pass because such a lambda is invoked in the
-// enclosing scope and cannot escape it: lower_iife lowers the body INLINE, so
-// the names it reads are the enclosing function's own locals and no env box is
-// ever built. Snapshotting them into cells is therefore not merely wasted —
-// the cell RE-BIND it prepends turns a one-statement body into a value BLOCK,
-// and a 64-bit block tail is deferred (#6267), so the enclosing function bailed
-// off the IR path over a capture that never needed boxing (#6278).
 function is_iife_callee(c: ast.ExprCall): boolean {
     if (c.args.len() != 0) { return false; }
     match (c.callee) {
-        ast.ExprLambda(lm) => {
-            if (lm.params.len() != 0) { return false; }
-            // A defer-carrying IIFE is CALLED, not inlined, so its captures do
-            // need boxing and it is not exempt. Every other zero-param
-            // immediate call still inlines, so the exemption stands (#7192).
-            return lm.origin != parser.ORIGIN_IIFE_SCOPED;
-        },
+        ast.ExprLambda(lm) => { return lm.params.len() == 0; },
         _ => { return false; }
     }
 }
@@ -79168,26 +79246,29 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: St
             // wide captures need no cell — the same argument
             // wcap_stmt_needs_env_box already makes for a `var f = <lambda>`
             // that is only ever direct-called, applied to the other shape that
-            // cannot escape. Recurse into the body (a lambda nested THERE may
-            // still escape) but leave this lambda's own captures alone.
-            if (is_iife_callee(c)) {
-                match (c.callee) {
-                    ast.ExprLambda(ilm) => {
-                        var iacc: WCaps = acc;
-                        var ib: ast.Stmt[] = [];
-                        var ii: i32 = 0;
-                        while (ii < ilm.body.len()) {
-                            var irs: WCapStmt = wcap_stmt(ilm.body[ii], fd, gfns, structs, mfuncs, iacc, atargets);
-                            iacc = irs.caps;
-                            ib = ib.append(irs.stmt);
-                            ii = ii + 1;
-                        }
-                        var ilam: ast.Expr = ast.ExprLambda { ...ilm, body: ib };
-                        var noargs: ast.Expr[] = [];
-                        return WCapExpr { expr: ast.ExprCall { callee: ilam, args: noargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: iacc };
-                    },
-                    _ => {}
+            // cannot escape: a value block is inlined, and a hand-written one
+            // becomes a direct call taking its captures as arguments
+            // (lift_capturing_iife), with parameters or without (#6278).
+            // Recurse into the body and the arguments (a lambda nested THERE
+            // may still escape) but leave this lambda's own captures alone.
+            if let ast.ExprLambda(ilm) = c.callee {
+                var iacc: WCaps = acc;
+                var ib: ast.Stmt[] = [];
+                var ii: i32 = 0;
+                while (ii < ilm.body.len()) {
+                    var irs: WCapStmt = wcap_stmt(ilm.body[ii], fd, gfns, structs, mfuncs, iacc, atargets);
+                    iacc = irs.caps;
+                    ib = ib.append(irs.stmt);
+                    ii = ii + 1;
                 }
+                var iargs: ast.Expr[] = [];
+                for iarg in c.args {
+                    var iar: WCapExpr = wcap_expr(iarg, fd, gfns, structs, mfuncs, iacc, atargets);
+                    iacc = iar.caps;
+                    iargs = iargs.append(iar.expr);
+                }
+                var ilam: ast.Expr = ast.ExprLambda { ...ilm, body: ib };
+                return WCapExpr { expr: ast.ExprCall { callee: ilam, args: iargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, caps: iacc };
             }
             var cal: WCapExpr = wcap_expr(c.callee, fd, gfns, structs, mfuncs, acc, atargets);
             var a: WCaps = cal.caps;
@@ -79401,18 +79482,16 @@ function has_wide_cap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], str
             // lambda's OWN wide captures need no cell, so looking at them here
             // would report work the rewriter declines to do — and
             // box_wide_captures would rebuild a body it did not change.
-            if (is_iife_callee(c)) {
-                match (c.callee) {
-                    ast.ExprLambda(ilm) => {
-                        var isi: i32 = 0;
-                        while (isi < ilm.body.len()) {
-                            if (has_wide_cap_stmt(ilm.body[isi], fd, gfns, structs, mfuncs, atargets)) { return true; }
-                            isi = isi + 1;
-                        }
-                        return false;
-                    },
-                    _ => {}
+            if let ast.ExprLambda(ilm) = c.callee {
+                var isi: i32 = 0;
+                while (isi < ilm.body.len()) {
+                    if (has_wide_cap_stmt(ilm.body[isi], fd, gfns, structs, mfuncs, atargets)) { return true; }
+                    isi = isi + 1;
                 }
+                for iarg in c.args {
+                    if (has_wide_cap_expr(iarg, fd, gfns, structs, mfuncs, atargets)) { return true; }
+                }
+                return false;
             }
             if (has_wide_cap_expr(c.callee, fd, gfns, structs, mfuncs, atargets)) { return true; }
             for arg in c.args {
@@ -79751,150 +79830,6 @@ function box_nested_lambdas_stmts(stmts: ast.Stmt[], acc: ast.ExprLambda[]): ast
     return out;
 }
 
-// name_source_iifes gives a hand-written IIFE a name, so the ordinary
-// bound-lambda lift handles it.
-//
-// `(() => { B })()` is exactly `var $iife$N = () => { B }; $iife$N()`,
-// and try_lift_binding already lifts a bound lambda that is only called. So
-// rather than teach the lift walk a second shape — it only ever looks at a
-// StmtVar initialiser — this normalises the shape it does not know into the one
-// it does.
-//
-// Only the BINDING is hoisted; the call stays where it was. Constructing a
-// lambda literal has no side effects, so evaluation order is unchanged.
-//
-// A MARKED value block is left alone: irlower inlines those, and its defers
-// belong to the enclosing function (parser.is_value_block_origin). This pass
-// exists for the unmarked one, whose defers belong to itself (#7192).
-//
-// Scope: an IIFE that is the whole of a `var` initialiser, a `return` value, an
-// assignment value, or an expression statement, at any statement nesting depth.
-// One nested inside a larger expression is left for the bail to name — the
-// counter cannot be threaded through astwalk.map_expr's stateless callback, and
-// a partial rewrite there would be worse than a diagnostic.
-struct IifeNamed { stmts: ast.Stmt[], k: i32 }
-
-function iife_is_source_written(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 0) { return false; }
-            match (c.callee) {
-                ast.ExprLambda(lm) => {
-                    if (lm.params.len() != 0) { return false; }
-                    return lm.origin == parser.ORIGIN_IIFE_SCOPED;
-                },
-                _ => { return false; }
-            }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
-}
-
-function iife_lambda_of(e: ast.Expr): ast.Expr {
-    match (e) {
-        ast.ExprCall(c) => { return c.callee; },
-        _ => { return e; }
-    }
-    return e;
-}
-
-function iife_name(fdname: string, k: i32): string {
-    return "$iife$" + fdname + "$" + util.i32_to_string(k);
-}
-
-// iife_call_to replaces the IIFE's lambda callee with a reference to the name
-// the hoisted binding introduced, keeping the call itself in place.
-function iife_call_to(c: ast.ExprCall, nm: string): ast.Expr {
-    return ast.ExprCall { ...c, callee: ast.ExprIdent { name: nm, line: c.line, col: c.col, ty: "" } };
-}
-
-// iife_bind is the hoisted `var <nm> = <lambda>;`. Untyped: the checker infers
-// the lambda's own type, exactly as it does for a written `var f = () => …`.
-function iife_bind(nm: string, lam: ast.Expr, line: i32, col: i32): ast.Stmt {
-    return ast.StmtVar { name: nm, type_name: "", init: lam, line: line, col: col, is_view: false, fn_ret: "", fn_param_types: "" };
-}
-
-function name_source_iifes_stmts(stmts: ast.Stmt[], fdname: string, k0: i32): IifeNamed {
-    var out: ast.Stmt[] = [];
-    var k: i32 = k0;
-    for stmt in stmts {
-        var st: ast.Stmt = stmt;
-        match (st) {
-            ast.StmtVar(v) => {
-                if (iife_is_source_written(v.init)) {
-                    var nm: string = iife_name(fdname, k);
-                    k = k + 1;
-                    out = out.append(iife_bind(nm, iife_lambda_of(v.init), v.line, v.col));
-                    match (v.init) {
-                        ast.ExprCall(c) => { st = ast.StmtVar { ...v, init: iife_call_to(c, nm) }; },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtReturn(r) => {
-                if (iife_is_source_written(r.value)) {
-                    var nmr: string = iife_name(fdname, k);
-                    k = k + 1;
-                    out = out.append(iife_bind(nmr, iife_lambda_of(r.value), r.line, r.col));
-                    match (r.value) {
-                        ast.ExprCall(c2) => { st = ast.StmtReturn { ...r, value: iife_call_to(c2, nmr) }; },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtAssign(a) => {
-                if (iife_is_source_written(a.value)) {
-                    var nma: string = iife_name(fdname, k);
-                    k = k + 1;
-                    out = out.append(iife_bind(nma, iife_lambda_of(a.value), a.line, a.col));
-                    match (a.value) {
-                        ast.ExprCall(c3) => { st = ast.StmtAssign { ...a, value: iife_call_to(c3, nma) }; },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtExpr(x) => {
-                if (iife_is_source_written(x.value)) {
-                    var nmx: string = iife_name(fdname, k);
-                    k = k + 1;
-                    out = out.append(iife_bind(nmx, iife_lambda_of(x.value), x.line, 0));
-                    match (x.value) {
-                        ast.ExprCall(c4) => { st = ast.StmtExpr { ...x, value: iife_call_to(c4, nmx) }; },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtWhile(w) => {
-                var rw: IifeNamed = name_source_iifes_stmts(w.body, fdname, k);
-                k = rw.k;
-                st = ast.StmtWhile { ...w, body: rw.stmts };
-            },
-            ast.StmtFor(f) => {
-                var rf: IifeNamed = name_source_iifes_stmts(f.body, fdname, k);
-                k = rf.k;
-                st = ast.StmtFor { ...f, body: rf.stmts };
-            },
-            ast.StmtIf(ifs) => {
-                var rt: IifeNamed = name_source_iifes_stmts(ifs.then_body, fdname, k);
-                var re: IifeNamed = name_source_iifes_stmts(ifs.else_body, fdname, rt.k);
-                k = re.k;
-                st = ast.StmtIf { ...ifs, then_body: rt.stmts, else_body: re.stmts };
-            },
-            _ => {}
-        }
-        out = out.append(st);
-    }
-    return IifeNamed { stmts: out, k: k };
-}
-
-function name_source_iifes(fd: parser.FuncDecl): parser.FuncDecl {
-    var r: IifeNamed = name_source_iifes_stmts(fd.body, fd.name, 0);
-    if (r.k == 0) { return fd; }
-    return parser.FuncDecl { ...fd, body: r.stmts };
-}
-
 // lift_lambdas is the module pre-pass. Returns the module unchanged when no
 // lambda was lifted (keeping lambda-free modules byte-identical), else a module
 // whose bodies reference the hoisted __lam_<k> functions, with those functions
@@ -80073,10 +80008,6 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
         // statements the lifts below can reach (#nested-capture). Inline, not
         // hoist — control flow + captures stay in scope.
         fd = unwrap_sole_iife_return(fd);
-        // 0-pre. Name a hand-written IIFE so the bound-lambda lift below sees a
-        // shape it knows. Must run BEFORE the lifts, and after the beta-reduce
-        // above so a genuine block-body arrow lambda is already gone (#7192).
-        fd = name_source_iifes(fd);
         // 0-pre. Snapshot 8-byte scalar captures (i64 / u64 / f64) into 1-element
         // cells so they fit the env box's 32-bit slot (#6046). Must run BEFORE
         // the lifts so they see the `i64[]` cell — pointer-shaped, which
