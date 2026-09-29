@@ -1290,7 +1290,9 @@ loop and `std/fetch` the client.
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
-  response; 0 for no cap), and
+  response; on by default at 100, which clients behind one NAT or one
+  reverse proxy share, so a server behind either sets it to 0 for no
+  cap), and
   how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
   default, is one per processing unit the process may use, what
   `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
@@ -1309,8 +1311,7 @@ loop and `std/fetch` the client.
   `shutdown(reason, state)` with the state as the last request left it,
   where a counter is flushed or a store closed. The reason is "sigterm"
   when every request in flight was answered after the signal and
-  "drain-deadline" when one was cut off. Under `tcp_serve_supervised_opts`
-  each worker's loop calls its own hook on the way out.
+  "drain-deadline" when one was cut off.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is

@@ -111,7 +111,7 @@ pub function (plat: Platform) canned(key: string): Option[string] {
     var found: Option[string] = None;
     var prefix: string = "canned\t" + key + "\t";
     for line in plat.sink.get().split("\n") {
-        if (line.len() > prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
+        if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
             found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
         }
     }

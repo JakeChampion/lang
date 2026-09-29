@@ -188,6 +188,10 @@ function __o_nonblock(): i64 {
     if (target_os() == "darwin") { return 4; }
     return 2048;
 }
+function __so_type(): i64 {
+    if (target_os() == "darwin") { return 4104; }
+    return 3;
+}
 function __so_error(): i64 {
     if (target_os() == "darwin") { return 4103; }
     return 4;
@@ -394,6 +398,19 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     return 0 - 22;
 }
 
+// SO_TYPE: 1 for a stream socket, 2 for a datagram one, -errno when the
+// descriptor is no socket.
+function __sock_type(f: i64): i32 {
+    var v: usize = __alloc(8);
+    __store_i32(v, 0);
+    __store_i32(v + 4, 4);
+    var r: i64 = __syscall5(__sys_getsockopt(), f, __sol_socket(), __so_type(), v as i64, (v + 4) as i64);
+    var ty: i32 = __load_i32(v);
+    __free(v, 8);
+    if (r < 0) { return r as i32; }
+    return ty;
+}
+
 // The bytes queued to send on the socket: a four-byte count the kernel
 // fills, read through the ioctl on Linux and the socket option on Darwin.
 function __send_queue(f: i64): i32 {
@@ -418,6 +435,7 @@ function __send_queue(f: i64): i32 {
 // first eight bytes XORed (never 0), so the peers of one /64 share a key.
 // 0 for a socket with no peer, so a key is never mistaken for an error.
 function __peer_key(f: i64): i32 {
+    if (__sock_type(f) == 2) { return 0; }
     var sa: usize = __alloc(32);
     var z: usize = 0;
     while (z < 32) {

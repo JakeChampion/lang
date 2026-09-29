@@ -75,6 +75,16 @@ function test_a_value_with_tabs_and_newlines_round_trips(): test.TestOutcome {
     return test.pass();
 }
 
+function test_an_empty_value_round_trips(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    m.env_set("EMPTY", "");
+    match (m.as_platform().env("EMPTY")) {
+        Some(v) => { if (v != "") { return test.fail("env: " + v); } },
+        None => { return test.fail("env: None") ; }
+    }
+    return test.pass();
+}
+
 function main(): i32 {
     var t: test.TestRunner = test.test_new("MockPlatform canned answers");
     t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
@@ -83,5 +93,6 @@ function main(): i32 {
     t = t.it("the last answer canned wins", test_the_last_answer_wins);
     t = t.it("canned rows are not calls and survive reset", test_canned_rows_are_not_calls_and_survive_reset);
     t = t.it("a value with tabs and newlines round-trips", test_a_value_with_tabs_and_newlines_round_trips);
+    t = t.it("an empty value round-trips", test_an_empty_value_round_trips);
     return t.finish();
 }

@@ -192,8 +192,9 @@ pub function http_response_plain(body: string): HttpResponse {
 // status text, a detail of "" left out), `HttpError` the error value
 // carrying one, and `fail(status, detail)` builds it titled with the
 // status text. std/json's `JsonError` answers 400 with where the text
-// broke, and a `string` error answers 500 with the status text alone: an
-// internal message is for the log, not the peer.
+// broke, and a `string` error answers 500 with the status text alone —
+// the message is dropped, so log it before the `?` when it matters, or
+// fail with an `HttpError` to put it on the wire.
 
 pub trait ToResponse {
     function to_response(self: Self): HttpResponse;

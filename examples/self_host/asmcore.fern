@@ -1824,6 +1824,7 @@ function sockopt(t: string, name: string): string {
         if (name == "so_reuseport") { return "512"; }
         if (name == "so_keepalive") { return "8"; }
         if (name == "so_error") { return "4103"; }
+        if (name == "so_type") { return "4104"; }
         if (name == "einprogress") { return "36"; }
         if (name == "af_inet6") { return "30"; }
         if (name == "eafnosupport") { return "47"; }
@@ -1833,6 +1834,7 @@ function sockopt(t: string, name: string): string {
     if (name == "so_reuseport") { return "15"; }
     if (name == "so_keepalive") { return "9"; }
     if (name == "so_error") { return "4"; }
+    if (name == "so_type") { return "3"; }
     if (name == "einprogress") { return "115"; }
     if (name == "af_inet6") { return "10"; }
     if (name == "eafnosupport") { return "97"; }
@@ -1884,7 +1886,7 @@ pub function rt_src_tcp_socket_ctl(t: string): string {
     var nb: string = sockopt(t, "o_nonblock");
     var family: string = "var fam: i32 = __raw_load8(sa, 0) | (__raw_load8(sa, 1) << 8);";
     if (t == "arm64-darwin") { family = "var fam: i32 = __raw_load8(sa, 1);"; }
-    var peer: string = "if (op == 7) { var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) < 0) { return 0; } " + family + " if (fam == 2) { return " + peer_word("4") + "; } if (fam != " + sockopt(t, "af_inet6") + ") { return 0; } if (" + peer_word("8") + " == 0 && " + peer_word("12") + " == 0 && " + peer_word("16") + " == 0 && __raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) { return " + peer_word("20") + "; } var key: i32 = " + peer_word("8") + " ^ " + peer_word("12") + "; if (key == 0) { return 1; } return key; }";
+    var peer: string = "if (op == 7) { var ty: usize = __raw_scratch(8); __raw_store8(ty, 0, 0); __raw_store8(ty, 1, 0); __raw_store8(ty, 2, 0); __raw_store8(ty, 3, 0); __raw_store8(ty, 4, 4); __raw_store8(ty, 5, 0); __raw_store8(ty, 6, 0); __raw_store8(ty, 7, 0); if (__syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", " + sockopt(t, "so_type") + ", ty as i64, __raw_addr(ty, 4) as i64) >= 0 && __raw_load8(ty, 0) == 2) { return 0; } var sa: usize = __raw_scratch(32); var z: i32 = 0; while (z < 32) { __raw_store8(sa, z, 0); z = z + 1; } __raw_store8(sa, 28, 28); if (__syscall3(" + sysno(t, "getpeername") + ", fd as i64, sa as i64, __raw_addr(sa, 28) as i64) < 0) { return 0; } " + family + " if (fam == 2) { return " + peer_word("4") + "; } if (fam != " + sockopt(t, "af_inet6") + ") { return 0; } if (" + peer_word("8") + " == 0 && " + peer_word("12") + " == 0 && " + peer_word("16") + " == 0 && __raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) { return " + peer_word("20") + "; } var key: i32 = " + peer_word("8") + " ^ " + peer_word("12") + "; if (key == 0) { return 1; } return key; }";
     var queue: string = "var r: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21521, q as i64) as i32;";
     if (t == "arm64-darwin") {
         queue = "__raw_store8(q, 4, 4); var r: i32 = __syscall5(" + sysno(t, "getsockopt") + ", fd as i64, " + sockopt(t, "sol_socket") + ", 4132, q as i64, __raw_addr(q, 4) as i64) as i32;";

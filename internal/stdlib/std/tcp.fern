@@ -154,9 +154,7 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 // tcp_serve_shutdown(port, opts, handler, shutdown) — `tcp_serve_opts`
 // with a hook the loop calls once it has stopped, before returning: with
 // "sigterm" when every request in flight was answered after SIGTERM, or
-// "drain-deadline" when one was cut off at the drain deadline. Under
-// `tcp_serve_supervised_opts` each worker's loop calls it on its own way
-// out.
+// "drain-deadline" when one was cut off at the drain deadline.
 pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
@@ -459,10 +457,13 @@ function __conns_timeout(c: __Conns, now: i64): i32 {
 function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions): __Conns {
     var fd: i32 = tcp_accept(listener);
     if (fd < 0) { return c; }
-    var peer: i32 = tcp_socket_ctl(fd, 7, 0);
-    if (peer != 0 && opts.max_connections_per_ip > 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
-        tcp_close(fd);
-        return c;
+    var peer: i32 = 0;
+    if (opts.max_connections_per_ip > 0) {
+        peer = tcp_socket_ctl(fd, 7, 0);
+        if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
+            tcp_close(fd);
+            return c;
+        }
     }
     tcp_socket_ctl(fd, 3, 1);
     if (drv.watch(fd, 1) < 0) {
