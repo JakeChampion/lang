@@ -31,11 +31,9 @@ import (
 // so its `rebind` scope exercises only the clean spelling. A row added there
 // would not have caught it either.
 //
-// ONE SHAPE STAYS REFUSED: `alias_into_container` appends the old value to a
-// live `S[]` before the rebind, so releasing at the rebind would free a box the
-// container still points at. It keeps its leak and asserts its exit code only,
-// never balance. If it starts balancing, the gate that declines it has stopped
-// firing.
+// `alias_into_container` appends the old value to a live `S[]` before the
+// rebind, so releasing at the rebind would free a box the container still
+// points at; its exit code guards that. On the typed lowering it balances.
 //
 // `field_moved_out` balances: `var held: string = s.name` takes its own count
 // on the field (#10371), so the deep drop of the orphaned box leaves `held`
@@ -86,10 +84,6 @@ type freshRetRebindCase struct {
 	name string
 	src  string
 	want int
-	// balance: the run must end at live_bytes 0 with allocs == frees. False for
-	// the aliasing shape the credit is refused for — it keeps its leak, and
-	// asserting balance would pin the wrong behaviour.
-	balance bool
 }
 
 func freshRetRebindCases() []freshRetRebindCase {
@@ -102,7 +96,7 @@ func freshRetRebindCases() []freshRetRebindCase {
     s = mk(i + 1);
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
-			want: 79, balance: true,
+			want: 79,
 		},
 		{
 			// Same local, rebound from a struct LITERAL instead. The init is what
@@ -113,7 +107,7 @@ func freshRetRebindCases() []freshRetRebindCase {
     s = S { name: w("z"), n: i + 1 };
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
-			want: 79, balance: true,
+			want: 79,
 		},
 		{
 			// The control that was ALWAYS clean: literal init under the identical
@@ -125,7 +119,7 @@ func freshRetRebindCases() []freshRetRebindCase {
     s = S { name: w("z"), n: i + 1 };
     return (s.name.len() + s.n) % 101;
 }` + freshRetRebindMain,
-			want: 79, balance: true,
+			want: 79,
 		},
 		{
 			// A struct with NO rc fields at all: the box itself is what leaked,
@@ -140,7 +134,7 @@ function round(i: i32): i32 {
     s = mkn(i + 1);
     return (s.a + s.n) % 101;
 }` + freshRetRebindMain,
-			want: 79, balance: true,
+			want: 79,
 		},
 		{
 			// An ARRAY field: the rebind must reach the deep field drop, not just
@@ -157,7 +151,7 @@ function round(i: i32): i32 {
     if (s.f[0].len() != 31) { return 0 - 1; }
     return (s.f.len() + s.n + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 81, balance: true,
+			want: 81,
 		},
 		{
 			// Three generations inside a loop, so the rebind release runs on a box
@@ -171,10 +165,10 @@ function round(i: i32): i32 {
     if (s.name.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 56, balance: true,
+			want: 56,
 		},
 		{
-			// REFUSED: the old value is in a live container when the rebind
+			// The old value is in a live container when the rebind
 			// orphans it. Releasing there frees a box `keep` still points at, so
 			// the readback is what proves the refusal is required.
 			name: "alias_into_container",
@@ -201,7 +195,7 @@ function round(i: i32): i32 {
     if (held.len() != 31) { return 0 - 1; }
     return (s.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 56, balance: true,
+			want: 56,
 		},
 		{
 			// The local escapes, but the box the rebind orphans is dead at that
@@ -220,7 +214,7 @@ function round(i: i32): i32 {
     if (p.name.len() != 31) { return 0 - 1; }
     return (p.name.len() + j) % 101;
 }` + freshRetRebindCheckedMain,
-			want: 56, balance: true,
+			want: 56,
 		},
 	}
 }
@@ -254,12 +248,8 @@ func TestSelfHostFreshRetRebindX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && allocs == frees && live == 0 {
-				t.Errorf("%s: %s — this shape holds a live ALIAS of the orphaned box and is "+
-					"refused the credit; balancing means the gate that declines it stopped firing", tc.name, summary)
 			}
 		})
 	}

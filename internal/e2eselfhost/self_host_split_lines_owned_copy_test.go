@@ -20,15 +20,8 @@ import (
 // alone, would strand each element's data buffer. The strarr_builtin flag
 // survives only as the SARRB credit's binding-site type confirmation.
 //
-// The escaping result itself is REFUSED a credit (the non-escape gate), so
-// these shapes now leak their arrays soundly instead of dangling — the pinned
-// counts say so explicitly, and the exits are the part that must hold.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against main, and every
-// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
-// row leaks the same bytes it did — so what moved is block volume, not
-// behaviour. A pre-fusion number quoted in a row note below is the older one.
+// The escaping rows return the result across a frame; the exits are the part
+// that must hold. On the typed lowering every row balances.
 
 type splitOwnedCase struct {
 	name   string
@@ -54,7 +47,7 @@ function round(i: i32): i32 {
     return (ps[0][0] as i32 + ps.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 600, frees: 300,
+			want: 29, allocs: 600, frees: 600,
 		},
 		{
 			// The lines sibling — same mechanism, same pre-fix wrong answer.
@@ -68,7 +61,7 @@ function round(i: i32): i32 {
     return (rs[0][0] as i32 + rs.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 600, frees: 300,
+			want: 29, allocs: 600, frees: 600,
 		},
 		{
 			// Same-frame split, receiver read after — correct under the views
@@ -115,9 +108,7 @@ func TestSelfHostSplitLinesOwnedCopyX86_64(t *testing.T) {
 				t.Fatalf("%s: parse %q: %v", tc.name, summary, err)
 			}
 			if allocs != tc.allocs || frees != tc.frees {
-				t.Errorf("%s: %s — want allocs=%d frees=%d. The escaping rows pin a "+
-					"SOUND refusal-leak; MORE frees there must come with a credit that "+
-					"proves the escape, never from re-viewing the segments", tc.name, summary, tc.allocs, tc.frees)
+				t.Errorf("%s: %s — want allocs=%d frees=%d", tc.name, summary, tc.allocs, tc.frees)
 			}
 		})
 	}

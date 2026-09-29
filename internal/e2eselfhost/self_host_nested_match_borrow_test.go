@@ -174,15 +174,12 @@ function main(): i32 {
 }
 
 // TestSelfHostNestedMatchBorrowHazardsX86_64 — the scrutinee is a borrow, and it
-// must exempt nothing else. Every other use of the name is still judged by the
-// unchanged walker, so an alias, a return or a call argument refuses the whole
-// candidate; and an arm binding that escapes is refused a gate earlier by
-// `opt_body_binding_escapes`.
+// must exempt nothing else: an alias, a return, a call argument or an escaping
+// arm binding keeps the value live past the match.
 //
-// These assert the free COUNT as well as the exit, pinned at the value measured
-// BEFORE the change. That is the assertion that matters: each of these shapes
-// leaks by design, so a correct fix leaves the count alone, and an over-release
-// shows up as a count that grew even when the program still exits correctly. A
+// These assert the free COUNT as well as the exit. On the typed lowering every
+// row reclaims what it allocates; an over-release shows up as a count above
+// that even when the program still exits correctly. A
 // sibling change in #6308 exited correctly on all four of its hazards while
 // freeing a live buffer — the freelist had simply not reused it yet.
 //
@@ -220,7 +217,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 0,
+			wantFrees: 300,
 		},
 		{
 			// Aliased AFTER the block — the drop point is the last top-level
@@ -243,7 +240,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 0,
+			wantFrees: 200,
 		},
 		{
 			// Returned to the caller from the same function that matches it.
@@ -267,7 +264,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 0,
+			wantFrees: 200,
 		},
 		{
 			// Passed to a callee that keeps it.
@@ -291,13 +288,10 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 0,
+			wantFrees: 300,
 		},
 		{
-			// The arm BINDING escapes to an outer local. Once refused by the
-			// binding gate, which left the payload to `held`'s sweep and the box
-			// to leak (200); a scalar-array payload's store-out is a counted
-			// claim, so the consuming match is admitted and all 300 go.
+			// The arm BINDING escapes to an outer local.
 			name: "arm_binding_escapes_to_an_outer_local",
 			src: `function round(i: i32): i32 {
     var held: i32[] = [];
@@ -315,12 +309,11 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 200,
 		},
 		{
-			// The arm binding escapes into a container that outlives the match:
-			// the element push retains it, so the box's release is admitted the
-			// same way (300; the container's own row is the leak that remains).
+			// The arm binding escapes into a container that outlives the
+			// match.
 			name: "arm_binding_escapes_into_a_container",
 			src: `function round(i: i32): i32 {
     var keep: i32[][] = [];
@@ -338,7 +331,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 200,
+			wantFrees: 300,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

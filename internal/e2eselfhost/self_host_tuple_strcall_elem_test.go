@@ -14,9 +14,9 @@ import (
 // unbounded). `.to_string()` was the one call form the syntactic predicate
 // accepted, which is what proved the whole downstream path already worked.
 //
-// The registry's own fixpoint keeps an aliased producer (`id(s) { return s; }`
-// and every param/field return) out — the refused pin below asserts that shape
-// stays a safe leak, never a release. The sole-owner flavour
+// An aliased producer (`id(s) { return s; }` and every param/field return) must
+// never be released under its alias — the row below asserts that. The sole-owner
+// flavour
 // (tuple_arg_payload_fresh: an Option's tuple payload, an array-of-tuples
 // element) deliberately keeps the syntactic admission; #7374 records the
 // scope split.
@@ -38,7 +38,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// Freed-block-reuse net: same-size string churn between sweeps and
@@ -60,7 +60,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (t + ok) % 97;
 }`,
-			want: 17, balance: true,
+			want: 17,
 		},
 		{
 			// The rebind flavour: every assignment rebuilds the same shape
@@ -82,16 +82,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 11, balance: true,
+			want: 11,
 		},
 		{
-			// REFUSED: a producer that returns its parameter is exactly what
-			// the registry's fixpoint exists to exclude — `id(q)` at the
-			// element aliases the live local `q`, so crediting the tuple
-			// would put q's box under the blind type-driven str_free. The
-			// shape must stay a leak (native reclaims it via dup-at-extract;
-			// the self-host's safe floor is recorded on #7374), and the
-			// sanitize leg must stay silent.
+			// A producer that returns its parameter: `id(q)` at the element
+			// aliases the live local `q`, so a release of the tuple under
+			// it would free q's box. The sanitize leg must stay silent.
 			name: "aliased_producer_refused",
 			src: `function id(s: string): string { return s; }
 function w(a: string): string { return a + "!"; }
@@ -102,7 +98,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 53, balance: false, wantFrees: 0,
+			want: 53,
 		},
 	}
 }
@@ -132,17 +128,8 @@ func TestSelfHostTupleStrCallElemX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-				}
-			} else {
-				if live == 0 {
-					t.Errorf("%s: %s — a refused alias shape came back clean; the admission widened past the registry's fixpoint, which is the double-free direction", tc.name, summary)
-				}
-				if frees != tc.wantFrees {
-					t.Errorf("%s: frees=%d, want %d — a moved count on a refused row is a silent widening or regression", tc.name, frees, tc.wantFrees)
-				}
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
 			}
 
 			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})

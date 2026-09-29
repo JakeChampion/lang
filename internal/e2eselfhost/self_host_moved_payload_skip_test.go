@@ -8,47 +8,17 @@ import (
 	"testing"
 )
 
-// --- The moved-payload dec-skip applies to a hand-over, not to every escape ----
+// --- A payload bound out of a match arm, by store, call or return ----------
 //
-// match_moved_rc_payloads drops a (variant, field) into the MOVED set whenever an
-// arm binds an rc payload to a name that ESCAPES the arm, and the post-match deep
-// drop then SKIPS that field's dec — on the stated theory that "the binding
-// inherits the box's counted reference". binding_escapes_arm is body_unsafe_for
-// over an EMPTY borrowable registry, so a return, a store to an outer local and a
-// call argument all reach that one verdict.
+// Each row binds an rc enum payload to a name that escapes the arm, by a store
+// to an outer local, a borrow-only call or a return, and reads it back. On the
+// typed lowering every row reclaims all it allocates. The exit codes are the
+// guards: 99 is an rc underflow (the drop released a payload its escapee still
+// owns), a wrong value is a use-after-free, and 139 a segfault. Every want was
+// confirmed against the native x86-64 backend.
 //
-// Only the first of those hands the reference over. A store takes its own counted
-// claim (one __fern_rc_inc), so the drop's dec lands on that claim rather than on
-// zero; skipping it strands one and the payload leaks. A borrow-only callee takes
-// no claim at all, so the box is sole owner and the skip suppresses its only dec.
-// Measured against native over 100 rounds: the store was 300/200 against 300/300,
-// the call argument 200/100 against 200/200.
-//
-// The narrowing is guarded on both sides, and the guards are the point of this
-// file. Removing the skip WHOLESALE — the shape of the fix the counts alone
-// suggest, since every row then reports N/N — breaks three ways:
-//
-//	return escape, conditional or not  -> exit 99, rc underflow (over-release)
-//	STRING payload                     -> wrong value (use-after-free)
-//	nested STRUCT payload              -> SIGSEGV
-//
-// The reason is NOT that those drops are unguarded — __fern_str_free reads rc at
-// box-8 and only frees at rc==1. It is that their escaping STORE is uncounted: an
-// i32[] payload's `keep = xs` emits one __fern_rc_inc, a string payload's and a
-// nested struct's emit none, so the box stays sole owner and a dec at the match
-// frees a value the alias still reads. Those keep the skip whatever the escape is;
-// only a payload whose store retains gives it up, and only when it does not leave
-// by return.
-//
-// Every want below was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against the commit
-// before it, and every live_bytes is unchanged — the clean rows stayed clean
-// and each refusal-leak row leaks the same bytes — so what moved is block
-// volume, not behaviour. A pre-fusion number in a row note below is the older
-// one.
+// The churn arrays the *_read_back_after_churn rows build are constant and not
+// heap-allocated, so their counts cover only the payload.
 
 type movedSkipCase struct {
 	name   string
@@ -80,8 +50,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []movedSkipCase{
 		{
-			// THE REPRO. `keep = xs` retains, so the payload has two counted
-			// owners and the drop's dec would land on 1, not 0. Base: 300/200.
+			// `keep = xs` retains, so the payload has two counted owners.
 			name: "array_payload_stored_out",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
@@ -90,7 +59,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
     return (keep.len() + keep[0]) % 101;
 }
 ` + mvsMain,
-			want: 5, allocs: 300, frees: 300,
+			want: 5, allocs: 200, frees: 200,
 		},
 		{
 			// The same shape read back as a VALUE with three fresh arrays after
@@ -109,11 +78,11 @@ function round(i: i32): i32 {
     return keep[0] + keep[keep.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
-			want: 9, allocs: 120, frees: 120,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A BORROW-ONLY callee. It takes no claim, so the box is the payload's
-			// sole owner and the skip suppressed its only dec. Base: 200/100.
+			// A borrow-only callee takes no claim, so the box is the payload's
+			// sole owner.
 			name: "array_payload_borrowed_by_callee",
 			src: decls + `function sink(a: i32[]): i32 { return a.len() + a[0]; }
 function round(i: i32): i32 {
@@ -141,14 +110,10 @@ function round(i: i32): i32 {
     return n + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
-			want: 9, allocs: 100, frees: 100,
+			want: 9, allocs: 20, frees: 20,
 		},
 		{
-			// A GUARDED arm whose payload is stored out. This row moved without
-			// being aimed at: consumed_rcpayload_enum_frees refuses any candidate
-			// mixing a guard with a NON-EMPTY moved set (guarded_move), and the
-			// set is empty for this shape now, so the candidate is admitted and
-			// the free fires. Base: 350/150 — pinned as a gap by #7509.
+			// A guarded arm whose payload is stored out.
 			name: "guarded_arm_store_now_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
@@ -157,7 +122,7 @@ function round(i: i32): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + mvsMain,
-			want: 81, allocs: 350, frees: 350,
+			want: 81, allocs: 250, frees: 250,
 		},
 		{
 			// The guarded row as a VALUE with churn — both arms are exercised
@@ -175,14 +140,11 @@ function round(i: i32): i32 {
     return keep[0] + keep[keep.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0] + j3[0] - j3[0];
 }
 ` + mvsChurnMain,
-			want: 96, allocs: 130, frees: 130,
+			want: 96, allocs: 30, frees: 30,
 		},
 		{
-			// GUARD 1 — the RETURN escape, which really does hand the reference
-			// over: the self-host IR path has no return-transfer inc, so the value
-			// leaves owning the payload. The skip is retained and this row is at
-			// native parity. Drop the skip here and it becomes exit 99, an rc
-			// underflow: the drop decs a payload the returned value owns.
+			// The return escape hands the reference over. A drop that also
+			// released the payload would underflow: exit 99.
 			name: "return_escape_keeps_the_skip",
 			src: decls + `function take(i: i32): i32[] {
     var v: E = mkv(i);
@@ -197,11 +159,8 @@ function round(i: i32): i32 {
 			want: 5, allocs: 200, frees: 200,
 		},
 		{
-			// The dynamic scalar-projection flag supplies the per-path ownership
-			// that this case previously lacked. The return path moves the unit;
-			// the fallthrough path releases it in the binding's exit sweep.
-			// Require native's 250/250 balance and keep the value/underflow
-			// guards: merely removing the pending drop skip over-releases.
+			// The return path moves the payload out; the fallthrough path
+			// releases it.
 			name: "conditional_return_balances_both_paths",
 			src: decls + `function take(i: i32): i32[] {
     var v: E = mkv(i);
@@ -213,16 +172,11 @@ function round(i: i32): i32 {
     return (r.len() + r[0]) % 101;
 }
 ` + mvsMain,
-			want: 40, allocs: 250, frees: 250,
+			want: 40, allocs: 200, frees: 200,
 		},
 		{
-			// GUARD 3 — a STRING payload stored out. `keep = s` emits NO retain, so
-			// the box remains the payload's sole owner and a dec at the match frees
-			// what `keep` still reads. The skip is retained whatever the escape: 140/100, a sound leak against native's 20/20 (native folds
-			// the constant concat, hence the different alloc count — what matters
-			// is that both reclaim everything they allocate and return 24).
-			// Drop the skip here and the value comes back 33: a use-after-free that
-			// the leak counts and __rc_underflow_count() both report as clean.
+			// A string payload stored out. A release at the match would free what
+			// `keep` still reads, and the value would come back 33.
 			name: "string_payload_keeps_the_skip",
 			src: `enum T { W(string), N }
 function round(i: i32): i32 {
@@ -234,12 +188,11 @@ function round(i: i32): i32 {
     return keep.len() * 10 + (keep[0] as i32) + j1.len() - j1.len() + j2.len() - j2.len();
 }
 ` + mvsChurnMain,
-			want: 24, allocs: 80, frees: 60,
+			want: 24, allocs: 80, frees: 80,
 		},
 		{
-			// GUARD 4 — a nested STRUCT payload stored out. Its store emits no retain
-			// either, same uncounted alias as GUARD 3. Retained: 140/60, a sound leak against native's 140/140.
-			// Drop the skip here and the program SEGFAULTS (exit 139).
+			// A nested struct payload stored out. Releasing it at the match
+			// segfaults (exit 139).
 			name: "struct_payload_keeps_the_skip",
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }
@@ -252,7 +205,7 @@ function round(i: i32): i32 {
     return keep.xs[0] + keep.xs[keep.xs.len() - 1] + j1[0] - j1[0] + j2[0] - j2[0];
 }
 ` + mvsChurnMain,
-			want: 9, allocs: 140, frees: 60,
+			want: 9, allocs: 60, frees: 60,
 		},
 		{
 			// A 16-element payload, which is what established that the block the
@@ -269,7 +222,7 @@ function round(i: i32): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + mvsChurnMain,
-			want: 49, allocs: 60, frees: 60,
+			want: 49, allocs: 20, frees: 20,
 		},
 	}
 }
@@ -302,9 +255,7 @@ func TestSelfHostMovedPayloadSkipX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER on a reclaiming row means the "+
-					"narrowing stopped applying; MORE on a *keeps_the_skip* row means the "+
-					"skip was widened away and that shape now over-releases", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d: every row reclaims what it allocates", tc.name, summary, tc.frees)
 			}
 		})
 	}

@@ -96,12 +96,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 12, allocs: 200, frees: 200,
 		},
 		{
-			// The hazard this slice has to answer, ON THE BRANCH IT WIDENS: a
-			// non-sole match whose arm binds the payload OUT. The scrutinee is now
-			// forgiven, and the arm body mentions `xs` rather than `v`, so nothing
-			// in the enum walk refuses it. It is sound because `keep = xs` RETAINS
-			// the payload: two counted owners, and the sweep's dec leaves `keep`
-			// holding one. 300/100 before, native parity now.
+			// A non-sole match whose arm binds the payload OUT: `keep = xs`
+			// retains the payload, so there are two counted owners and the
+			// sweep leaves `keep` holding one.
 			name: "non_sole_match_binds_payload_out",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
@@ -110,14 +107,13 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
     return (keep.len() + keep[0]) % 101;
 }
 ` + escrMain,
-			want: 78, allocs: 300, frees: 300,
+			want: 78, allocs: 200, frees: 200,
 		},
 		{
-			// The same hazard read as a VALUE, with three fresh arrays after the
-			// match so a freed payload would be reused before it is read. Counts
-			// and the underflow guard cannot see a use-after-READ — that is the
-			// lesson from the arrstruct live-element slice, which shipped one.
-			// Native returns 53; so do all three backends here.
+			// The same hazard read as a VALUE after the match. Counts and the
+			// underflow guard cannot see a use-after-READ; the value can. Native
+			// returns 53; so do all three backends here. The arrays after the
+			// match are constant and not heap-allocated on the typed lowering.
 			//
 			// The modulus is 97 rather than something larger because WASI rejects
 			// an exit status outside [0, 126) and the wasm leg reads the value
@@ -141,15 +137,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 53, allocs: 120, frees: 120,
+			want: 53, allocs: 20, frees: 20,
 		},
 		{
-			// The SOLE top-level match binding its payload out, now at native parity.
-			// It took two slices: the box free arrived with the "RCE:" call-bind
-			// admission, and the PAYLOAD dec with the moved-set narrowing —
-			// match_moved_rc_payloads had skipped it on the theory that the arm
-			// binding took the box's reference, while `keep = xs` takes a counted
-			// claim of its own, so the dec lands on that claim rather than on zero.
+			// The SOLE top-level match binding its payload out: `keep = xs`
+			// takes a counted claim of its own, so every box and payload is
+			// reclaimed.
 			name: "sole_match_binds_payload_out_reclaimed",
 			src: decls + `function round(i: i32): i32 {
     var v: E = mkv(i);
@@ -158,7 +151,7 @@ function main(): i32 {
     return (keep.len() + keep[0]) % 101;
 }
 ` + escrMain,
-			want: 5, allocs: 300, frees: 300,
+			want: 5, allocs: 200, frees: 200,
 		},
 		{
 			// The single top-level match on an INLINE ctor bind, which takes the
@@ -205,9 +198,7 @@ func TestSelfHostEnumMatchScrutineeBorrowX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the scrutinee reading "+
-					"stopped applying; MORE on the refused row means the carve-out "+
-					"reached an arm that hands its payload out", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

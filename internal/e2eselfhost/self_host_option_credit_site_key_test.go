@@ -10,46 +10,16 @@ import (
 
 // --- The Option-family reclaim credits, keyed on the binding (#7253 step 1) --
 //
-// Seven tags — "OPTAARR:", "OPTTUP:", "OPTSTRUCT:", "OPTARRARR:", "OPTARR:",
-// "OPTARRERR:", "OPTSTR:" — all resolved their credit through
-// reclaim_slot_name, i.e. by the variable's NAME. A name has no scope, so two
-// same-named Option locals in sibling blocks are two slots under one key, and
-// when only one is proven fresh the other inherits its verdict and releases a
-// payload it does not own.
+// A name has no scope, so two same-named Option locals in sibling blocks must
+// each keep their own reclaim verdict; a collision releases a payload the other
+// local owns. That shows as exit 99 on __rc_underflow_count() where the source
+// has another owner, and as the colliding row's census differing from its
+// rename control where it does not. The census alone cannot see the first, so
+// every row is asserted on the exit code AND on exact counts. On the typed
+// lowering every pair has identical, balanced censuses.
 //
-// THE SEVERITY IS NOT A PROPERTY OF THE CLASS. It depends on whether the
-// aliased source has another owner:
-//
-//	OPTTUP / OPTSTRUCT / OPTAARR   the source is released elsewhere -> exit 99
-//	OPTARRARR / OPTARR / OPTSTR    the class leaks its own source   -> silent
-//
-// The second group is the dangerous one. Its stray dec lands on a box nothing
-// else claimed, so no underflow fires and the census even looks *better* — the
-// colliding program frees more than its rename control. It becomes a double
-// free the moment the class's own leak is fixed. That is why three of the rows
-// below get a LARGER leak after this change: removing a release that was never
-// owed exposes the leak it was masking.
-//
-// The census cannot see the first group either: `allocs == frees` at
-// `live_bytes == 0` on both sides of the fault, because a doubly-released block
-// goes straight back to the freelist. `optaarr_collide` is the extreme case —
-// it and its rename control have byte-identical censuses (600/300, 12000) and
-// differ only in the exit code. Every row is therefore asserted on
-// `__rc_underflow_count()` AND on exact counts; neither alone is sufficient.
-//
-// The six `credited_*` rows pin that every class still fires where there is no
-// collision — the silent half of a key migration, where a site key that
-// resolves to nothing denies the credit and no exit code moves.
-//
-// One credit HAS since been widened: #7414 readmitted `for o in xs` to the
-// OPTAARR credit on a confinement proof, so the two `binder_forin_*` rows went
-// from 300 frees to 700 and now balance at live_bytes 0. That is the leak
-// closing, not the collision this file hunts, and three things say so
-// independently: OPTAARR is in the group above where a release of a
-// still-owned source surfaces as exit 99, and both rows still exit 25; the
-// silent fault's signature is the COLLIDING row freeing more than its rename
-// control, and here the two moved together to the same number; and `allocs` is
-// unchanged, so the probe still measures the shape it was written for.
+// The `credited_*` rows pin that every class still reclaims where there is no
+// collision.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
@@ -69,9 +39,9 @@ type optKeyCase struct {
 func optKeyCases() []optKeyCase {
 	return []optKeyCase{
 		{
-			// THE FAULT. Two `var o` in sibling `if` arms: the first a fresh
-			// Some((..)) that earns "OPTTUP:", the second a bare alias of a local
-			// that outlives the block AND is released elsewhere. Base: 99.
+			// Two `var o` in sibling `if` arms: the first a fresh
+			// Some((..)), the second a bare alias of a local that outlives
+			// the block AND is released elsewhere.
 			name: "opttup_collide",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
@@ -88,12 +58,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 61, allocs: 153, frees: 150,
+			want: 61, allocs: 152, frees: 152,
 		},
 		{
 			// The pairwise control — the same program with the second local
-			// named `u`. Already correct at base, and after the fix the colliding
-			// program measures identically to it, exit code and census alike.
+			// named `u`. The colliding program must measure identically to
+			// it, exit code and census alike.
 			name: "opttup_renamed",
 			src: `
 function round(b: Option[(i32, i32[])], i: i32): i32 {
@@ -110,10 +80,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 61, allocs: 153, frees: 150,
+			want: 61, allocs: 152, frees: 152,
 		},
 		{
-			// The same fault on "OPTSTRUCT:". Base: 99.
+			// The same shape on an Option of a struct.
 			name: "optstruct_collide",
 			src: `struct P { xs: i32[] }
 function round(b: Option[P], i: i32): i32 {
@@ -130,7 +100,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 34, allocs: 153, frees: 150,
+			want: 34, allocs: 152, frees: 152,
 		},
 		{
 			// Its pairwise control.
@@ -150,13 +120,12 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 34, allocs: 153, frees: 150,
+			want: 34, allocs: 152, frees: 152,
 		},
 		{
-			// The same fault on "OPTAARR:", and the sharpest row here: the
-			// colliding and renamed programs have BYTE-IDENTICAL censuses —
-			// 600/300 live_bytes=12000 both — and differ only in the exit code,
-			// 99 against 68. No reading of FERN_LEAKCHECK separates them.
+			// The same shape on an Option of a struct array. A collision
+			// here does not show in the census at all, only in the exit
+			// code (99).
 			name: "optaarr_collide",
 			src: `function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([7, 8]), None];
@@ -166,10 +135,10 @@ function main(): i32 {
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 300,
+			want: 68, allocs: 500, frees: 500,
 		},
 		{
-			// Its pairwise control, identical census to the row above at base.
+			// Its pairwise control.
 			name: "optaarr_renamed",
 			src: `function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([7, 8]), None];
@@ -179,17 +148,13 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 300,
+			want: 68, allocs: 500, frees: 500,
 		},
 		{
-			// LATENT, not faulting: the credit crosses bindings exactly as
-			// above, but "OPTARRARR:" leaks its own source box, so the stray
-			// release lands on something nothing else claimed and no underflow
-			// fires. Base 600/400 (8000); after, 600/200 (16000) — the same as
-			// its rename control. THE LEAK GETS BIGGER AND THAT IS THE FIX: the
-			// stray dec was releasing a structure this binding does not own, and
-			// it was masking half the class's own leak. It becomes a double free
-			// the moment that leak is closed.
+			// The same shape on an Option of an array of arrays, whose
+			// source has no other owner: a stray release would show as the
+			// census moving away from its rename control, not as an
+			// underflow.
 			name: "optarrarr_collide",
 			src: `
 function round(i: i32): i32 {
@@ -201,11 +166,10 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 200,
+			want: 68, allocs: 400, frees: 400,
 		},
 		{
-			// Its pairwise control — unchanged by this change, and the number
-			// the colliding row converges to.
+			// Its pairwise control.
 			name: "optarrarr_renamed",
 			src: `
 function round(i: i32): i32 {
@@ -217,11 +181,10 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 600, frees: 200,
+			want: 68, allocs: 400, frees: 400,
 		},
 		{
-			// The same latent form on "OPTARR:" (the unmatched half).
-			// Base 300/200 (4000) -> 300/100 (8000).
+			// The same shape on an Option of an array (the unmatched half).
 			name: "optarr_collide",
 			src: `
 function round(i: i32): i32 {
@@ -233,7 +196,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 20, allocs: 300, frees: 100,
+			want: 20, allocs: 200, frees: 200,
 		},
 		{
 			// Its pairwise control.
@@ -248,11 +211,10 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 20, allocs: 300, frees: 100,
+			want: 20, allocs: 200, frees: 200,
 		},
 		{
-			// The same latent form on "OPTSTR:". Base 150/100 (2000) ->
-			// 150/50 (4000).
+			// The same shape on an Option of a string.
 			name: "optstr_collide",
 			src: `function round(i: i32): i32 {
     var keep: Option[string] = Some("keeper");
@@ -263,7 +225,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 3, allocs: 150, frees: 50,
+			want: 3, allocs: 150, frees: 150,
 		},
 		{
 			// Its pairwise control.
@@ -277,7 +239,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 3, allocs: 150, frees: 50,
+			want: 3, allocs: 150, frees: 150,
 		},
 		{
 			// POSITIVE CONTROL — a single credited binding with no sibling.
@@ -351,18 +313,9 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
 			want: 70, allocs: 100, frees: 100,
 		},
 		{
-			// THE PREDICTED CLASS, made reachable. A `for` element binder is not a
-			// StmtVar, so no collector ever credited it — but it has a NAME, and
-			// under the name key it inherited the "OPTARR:" verdict of the `var o`
-			// in the sibling block. It was then releasing elements of `keep` that
-			// `keep` still owns: base 700/500 (8000) against the rename control's
-			// 700/300 (16000) — two stray releases a round.
-			//
-			// A for-in binder carries no binding site, so the site key refuses it
-			// and this row converges onto its control. This is the row class the
-			// emit-hash prediction names; whether any corpus FIXTURE has the shape
-			// is a separate question, and this case is what proves the shape real
-			// either way.
+			// A `for` element binder in one block and a same-named `var o`
+			// in the sibling: the binder must not inherit the var's verdict
+			// and release elements of `keep` that `keep` still owns.
 			name: "binder_forin_collide",
 			src: `function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -424,9 +377,7 @@ func TestSelfHostOptionCreditSiteKeyX86_64(t *testing.T) {
 					"probe stopped measuring this shape", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. MORE means a binding is releasing something "+
-					"it does not own (the collision); FEWER means a binding resolved no credit "+
-					"at all, which is the silent half of a key migration", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

@@ -156,14 +156,10 @@ function main(): i32 {
 
 // TestSelfHostOptStrArrFieldHazardsX86_64 — the string[] field extracted out of
 // the arm binding, and a string ELEMENT extracted through it. All four must keep
-// their answers, and none may release the extracted value.
+// their answers, and none may release the extracted value while it is live.
 //
-// These assert the underflow counter rather than an exact free count, because the
-// admission legitimately MOVES the counts (a shape that released nothing now
-// releases its option and payload boxes) and a count alone cannot say whether the
-// extra release was the safe one. The counter can: an over-release lands on a box
-// whose count is already zero. Each case also still leaks the extracted value,
-// which is the positive evidence that the deep drop was declined.
+// Each asserts a balanced census and the underflow counter: an over-release
+// lands on a box whose count is already zero, which a count alone cannot see.
 //
 // Every `want` is from `fern -interp`.
 func TestSelfHostOptStrArrFieldHazardsX86_64(t *testing.T) {
@@ -259,10 +255,8 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if live == 0 {
-				t.Errorf("live_bytes=0 (allocs=%d frees=%d) — the extracted value is expected "+
-					"to LEAK here; nothing live means the deep drop was granted after all",
-					allocs, frees)
+			if live != 0 || allocs != frees {
+				t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 			}
 
 			// The same program returning the underflow counter. A moved value released
@@ -285,15 +279,10 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostOptStrArrFieldPartialReclaimX86_64 — the emit-time fallback, pinned
-// because it looks like a bug and is the design.
-//
-// This program reads a string ELEMENT (`p.xs[0].len()`), which disqualifies the
-// type in the whole-program strarrfld scan. The candidate is still admitted, so
-// the option box and the payload box are released — but `struct_routes_field_reclaim`
-// refuses at emit time, `emit_struct_field_drops` emits nothing, and the string[]
-// stays live. Partial reclaim, no over-release: strictly better than the zero
-// releases this shape had, and the counter confirms which side of the line it is on.
+// TestSelfHostOptStrArrFieldPartialReclaimX86_64 reads a string ELEMENT through
+// an Option's struct payload (`p.xs[0].len()`), the shape the AST lowering could
+// reclaim only partially. The typed lowering releases the option box, the
+// payload and the string[], with no over-release.
 func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -330,13 +319,7 @@ function main(): i32 {
 	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 		t.Fatalf("parse %q: %v", summary, err)
 	}
-	if frees == 0 {
-		t.Errorf("frees=0 (allocs=%d) — the candidate should still be admitted and free "+
-			"the option and payload boxes even when the field drop is declined", allocs)
-	}
-	if frees == allocs {
-		t.Errorf("allocs=%d frees=%d — this shape is expected to reclaim only PARTIALLY; "+
-			"a full balance means the whole-program strarrfld gate stopped declining and "+
-			"this case no longer pins the fallback", allocs, frees)
+	if allocs == 0 || allocs != frees || live != 0 {
+		t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance", allocs, frees, live)
 	}
 }

@@ -45,11 +45,9 @@ import (
 // Every want was confirmed against BOTH oracles — `bin/fern -interp` and the
 // native x86-64 backend agreed on each — never read off the self-host run.
 type optAliasBindCase struct {
-	name      string
-	src       string
-	want      int
-	balance   bool
-	wantFrees int64 // asserted exactly on every row that does not set balance
+	name string
+	src  string
+	want int
 }
 
 const optAliasBindMain = "\nfunction main(): i32 { var t: i32 = 0; var i: i32 = 0; " +
@@ -67,7 +65,7 @@ func optAliasBindCases() []optAliasBindCase {
     var x: Option[i32[]] = src;
     return 7;
 }` + optAliasBindMain,
-			want: 36, balance: true,
+			want: 36,
 		},
 		{
 			// Its control: the same program without the bind. Clean throughout.
@@ -76,7 +74,7 @@ func optAliasBindCases() []optAliasBindCase {
     var src: Option[i32[]] = Some([i, i + 1]);
     return 7;
 }` + optAliasBindMain,
-			want: 36, balance: true,
+			want: 36,
 		},
 		{
 			// The alias is itself matched — the commonest use of one, and the row
@@ -92,7 +90,7 @@ func optAliasBindCases() []optAliasBindCase {
     match (x) { Some(a) => { t = a.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
-			want: 34, balance: true,
+			want: 34,
 		},
 		{
 			// Both matched. Clean before this change (the source's own
@@ -107,7 +105,7 @@ func optAliasBindCases() []optAliasBindCase {
     match (src) { Some(b) => { t = t + b.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
-			want: 68, balance: true,
+			want: 68,
 		},
 		{
 			// Only the SOURCE is matched: the alias depends on the consuming-match
@@ -120,7 +118,7 @@ func optAliasBindCases() []optAliasBindCase {
     match (src) { Some(b) => { t = b.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
-			want: 34, balance: true,
+			want: 34,
 		},
 		{
 			// The STRING payload class ("OPTSTR:"), whose release is
@@ -133,7 +131,7 @@ function round(i: i32): i32 {
     var x: Option[string] = src;
     return 7;
 }` + optAliasBindMain,
-			want: 36, balance: true,
+			want: 36,
 		},
 		{
 			name: "str_alias_matched",
@@ -145,7 +143,7 @@ function round(i: i32): i32 {
     match (x) { Some(s) => { t = s.len(); }, None => {} }
     return t;
 }` + optAliasBindMain,
-			want: 51, balance: true,
+			want: 51,
 		},
 		{
 			// The NESTED-Option class ("OPTOPTRC:"), whose release is the guarded
@@ -158,7 +156,7 @@ function round(i: i32): i32 {
     var x: Option[Option[string]] = src;
     return 7;
 }` + optAliasBindMain,
-			want: 36, balance: true,
+			want: 36,
 		},
 		{
 			// A CONDITIONAL alias: the bind runs on half the rounds, so the alias
@@ -174,7 +172,7 @@ function round(i: i32): i32 {
     }
     return 7;
 }` + optAliasBindMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 		{
 			// THE CHAIN (#7750). `var t = …; var v = t; var u = v;` shares one box
@@ -190,7 +188,7 @@ function round(i: i32): i32 {
     var u: Option[i32[]] = v;
     return i % 7;
 }` + optAliasBindMain,
-			want: 46, balance: true,
+			want: 46,
 		},
 		{
 			// Three links: the closure is transitive, so the rule has no length it
@@ -203,7 +201,7 @@ function round(i: i32): i32 {
     var z: Option[i32[]] = u;
     return i % 7;
 }` + optAliasBindMain,
-			want: 46, balance: true,
+			want: 46,
 		},
 		{
 			// The last link is MATCHED — the commonest use of a chain, and the row
@@ -218,7 +216,7 @@ function round(i: i32): i32 {
     match (u) { Some(a) => { n = a.len(); }, None => {} }
     return n + i;
 }` + optAliasBindMain,
-			want: 4, balance: true,
+			want: 4,
 		},
 		{
 			// The STRING payload class through a chain.
@@ -230,7 +228,7 @@ function round(i: i32): i32 {
     var u: Option[string] = v;
     return i % 7;
 }` + optAliasBindMain,
-			want: 46, balance: true,
+			want: 46,
 		},
 		{
 			// The NESTED-Option class through a chain — the deepest release in the
@@ -244,7 +242,7 @@ function round(i: i32): i32 {
     var u: Option[Option[string]] = v;
     return i % 7;
 }` + optAliasBindMain,
-			want: 46, balance: true,
+			want: 46,
 		},
 		{
 			// The chain lives in an IF ARM while the source outlives it: every link
@@ -261,15 +259,10 @@ function round(i: i32): i32 {
     }
     return n + i;
 }` + optAliasBindMain,
-			want: 20, balance: true,
+			want: 20,
 		},
 		{
-			// REFUSED: a link hands the PAYLOAD out. All-or-nothing — the escape is
-			// on `u`, and it costs `t` and `v` their credit too.
-			// 100, not 200: the payload the arm carries out is a counted
-			// reference since the Some binding is spelled as an array (#9190),
-			// so `out`'s sweep no longer frees it out from under the refused
-			// box; the call-scrutinee form of the same shape always read 100.
+			// A link hands the PAYLOAD out of an alias chain.
 			name: "refuses_alias_chain_payload_out",
 			src: `function round(i: i32): i32 {
     var t: Option[i32[]] = Some([i, i + 1]);
@@ -279,11 +272,10 @@ function round(i: i32): i32 {
     match (u) { Some(a) => { out = a; }, None => {} }
     return out.len() + i;
 }` + optAliasBindMain,
-			want: 4, wantFrees: 100,
+			want: 4,
 		},
 		{
-			// REFUSED: the last link is RETURNED, so the box outlives the frame and
-			// all three names describe what the caller now holds.
+			// The last link is RETURNED, so the box outlives the frame.
 			name: "refuses_alias_chain_returned",
 			src: `function esc(i: i32): Option[i32[]] {
     var t: Option[i32[]] = Some([i, i + 1]);
@@ -296,15 +288,13 @@ function round(i: i32): i32 {
     match (esc(i)) { Some(a) => { n = a.len(); }, None => {} }
     return n + i;
 }` + optAliasBindMain,
-			want: 4, wantFrees: 0,
+			want: 4,
 		},
 		{
-			// REFUSED, and it must stay refused: the alias carries the PAYLOAD out
-			// of its arm, so the element buffer outlives the source's deep release.
-			// Admitting it is a use-after-free, not a leak — the shape
-			// docs/rc-log/2026-08-29-option-alias-payload-out.md measured at exit
-			// 99 with a perfectly balanced census. Refusing costs a leak, which is
-			// the safe direction and what the count below pins.
+			// The alias carries the PAYLOAD out of its arm, so the element
+			// buffer outlives the source. A release under it is a use-
+			// after-free that exits 99 with a perfectly balanced census,
+			// which is why the exit and the sanitizer leg are the guard.
 			name: "refuses_alias_carrying_payload_out",
 			src: `function round(i: i32): i32 {
     var src: Option[i32[]] = Some([i, i + 1]);
@@ -313,10 +303,10 @@ function round(i: i32): i32 {
     match (x) { Some(xs) => { out = xs; }, None => {} }
     return out.len();
 }` + optAliasBindMain,
-			want: 34, wantFrees: 100,
+			want: 34,
 		},
 		{
-			// REFUSED: the alias is REASSIGNED, so its final value is not the box
+			// The alias is REASSIGNED, so its final value is not the box
 			// the credit describes.
 			name: "refuses_reassigned_alias",
 			src: `function round(i: i32): i32 {
@@ -325,7 +315,7 @@ function round(i: i32): i32 {
     x = None;
     return 7;
 }` + optAliasBindMain,
-			want: 36, wantFrees: 0,
+			want: 36,
 		},
 		{
 			// A LOOP-resident pair: both slots are re-declared each iteration, so
@@ -343,7 +333,7 @@ function round(i: i32): i32 {
     }
     return t;
 }` + optAliasBindMain,
-			want: 19, balance: true,
+			want: 19,
 		},
 	}
 }
@@ -378,16 +368,10 @@ func TestSelfHostOptAliasBindX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance {
-				if live != 0 || allocs != frees {
-					t.Errorf("%s: %s — must balance at live_bytes 0 (native does). A "+
-						"short free count is the alias bind denying the source its "+
-						"credit again", tc.name, summary)
-				}
-			} else if frees != tc.wantFrees {
-				t.Errorf("%s: %s — refused row's frees moved (want exactly %d). A "+
-					"HIGHER count is the refusal breaking down: a payload released "+
-					"under a live reference", tc.name, summary, tc.wantFrees)
+			if live != 0 || allocs != frees {
+				t.Errorf("%s: %s — must balance at live_bytes 0 (native does). A "+
+					"short free count is the alias bind denying the source its "+
+					"credit again", tc.name, summary)
 			}
 
 			// The census cannot separate a correct build from a double-freeing

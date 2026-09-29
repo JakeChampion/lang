@@ -33,19 +33,11 @@ var ownBorrowedParamArgCases = []struct {
 	name     string
 	src      string
 	expected int
-	// selfHostLeaks pins what the self-host's FERN_LEAKCHECK verdict IS, since
-	// native is clean on every row and the two disagree. A `true` here is this
-	// compiler's pre-existing main-exit gap — `main`'s struct locals are never
-	// swept, so every fork row strands its boxes before this change and after
-	// it. The rows that matter are the `false` ones: a retain emitted where the
-	// frame already owns its value strands one box per call, and those two rows
-	// are where that would land.
-	selfHostLeaks bool
 }{
 	// The reported shape, minimised: a plain-receiver method threads its
 	// receiver through an `own` consumer while the caller keeps two names on
 	// the box. Before the fix all three read n == 1 (111); the fork is 100.
-	{name: "receiver-fork-under-alias", expected: 100, selfHostLeaks: true, src: `struct S { buf: u8[], n: i32 }
+	{name: "receiver-fork-under-alias", expected: 100, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
     var a: u8[] = __alloc_u8(n);
@@ -66,7 +58,7 @@ function main(): i32 {
 	// The same fork with NO second name: `a` alone stays live across the call,
 	// which is enough — the count the callee reads is the caller's one
 	// reference either way.
-	{name: "receiver-fork-single-name", expected: 10, selfHostLeaks: true, src: `struct S { buf: u8[], n: i32 }
+	{name: "receiver-fork-single-name", expected: 10, src: `struct S { buf: u8[], n: i32 }
 @noinline
 function zero(n: i32): u8[] {
     var a: u8[] = __alloc_u8(n);
@@ -86,7 +78,7 @@ function main(): i32 {
 	// The hasher the issue was split from: a u64 counter carried through 100
 	// rebinds and then forked. `keep` must still hold the pre-fork total, so
 	// the difference is 1 and not 0.
-	{name: "hasher-state-fork", expected: 7, selfHostLeaks: true, src: `struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }
+	{name: "hasher-state-fork", expected: 7, src: `struct St { a: u32, buf: u8[], buf_len: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
     var a: u8[] = __alloc_u8(n);
@@ -115,7 +107,7 @@ function main(): i32 {
 	// The aggregate rows compare full state and return a portable 0/1 status.
 	// Their former large checksums were truncated by native process exits, but
 	// rejected by WASI. Do not mask the checksum: that could hide a wrong field.
-	{name: "array-field-struct-fork", expected: 0, selfHostLeaks: true, src: `struct P { xs: i32[], k: i32 }
+	{name: "array-field-struct-fork", expected: 0, src: `struct P { xs: i32[], k: i32 }
 @noinline
 function mk(n: i32): i32[] {
     var a: i32[] = [];
@@ -138,7 +130,7 @@ function main(): i32 {
 	// string limb of the alias ladder already retains at the bind), and here so
 	// the retain landing on the wrong side shows up as a leak rather than
 	// silently.
-	{name: "string-field-struct-fork", expected: 0, selfHostLeaks: true, src: `struct T { name: string, n: i32 }
+	{name: "string-field-struct-fork", expected: 0, src: `struct T { name: string, n: i32 }
 @noinline
 function cat(own s: string, x: string): string { s = s + x; return s; }
 @noinline
@@ -156,7 +148,7 @@ function main(): i32 {
 	// The retain still fires (the frame still borrows), so the reuse guard sees
 	// rc 2 and forks a box per call — the documented cost of this compiler's
 	// missing caller-side retain. It must stay CORRECT and must not leak.
-	{name: "rebind-loop-no-alias", expected: 50, selfHostLeaks: true, src: `struct S { buf: u8[], n: i32, total: u64 }
+	{name: "rebind-loop-no-alias", expected: 50, src: `struct S { buf: u8[], n: i32, total: u64 }
 @noinline
 function zero(n: i32): u8[] {
     var a: u8[] = __alloc_u8(n);
@@ -327,7 +319,7 @@ func TestSelfHostOwnBorrowedParamArgWasmIR(t *testing.T) {
 }
 
 // TestSelfHostOwnBorrowedParamArgLeakCheck runs every case under FERN_LEAKCHECK,
-// on BOTH compilers, and requires the self-host to match native's verdict.
+// on BOTH compilers, and requires both to be clean.
 //
 // The exit-code legs above see only the wrong-answer direction. A retain landing
 // where the frame already owns its value — the `own`-param and dying-local
@@ -351,12 +343,8 @@ func TestSelfHostOwnBorrowedParamArgLeakCheck(t *testing.T) {
 			if natExit != tc.expected {
 				t.Fatalf("native returned %d under leakcheck, want specified result %d", natExit, tc.expected)
 			}
-			want := verdictClean
-			if tc.selfHostLeaks {
-				want = verdictLeak
-			}
-			if shV != want {
-				t.Errorf("self-host %s: %s (exit %d), want %s", tc.name, shV, shExit, want)
+			if shV != verdictClean {
+				t.Errorf("self-host %s: %s (exit %d), want %s", tc.name, shV, shExit, verdictClean)
 			}
 			if shExit != natExit {
 				t.Errorf("self-host %s exited %d under leakcheck, native %d", tc.name, shExit, natExit)

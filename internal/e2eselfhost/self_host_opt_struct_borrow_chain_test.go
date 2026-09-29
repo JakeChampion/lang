@@ -177,10 +177,9 @@ function main(): i32 {
 }
 
 // TestSelfHostOptStructBorrowChainHazardsX86_64 — a chain READ is a borrow; a
-// chain whose leaf is EXTRACTED is not, at any depth. Free counts are exact and
-// pinned at the values measured before the change: these shapes leak by design,
-// so a correct fix leaves the count alone, and an over-release shows up as a
-// count that grew even where the program still exits correctly.
+// chain whose leaf is EXTRACTED is not, at any depth. Free counts are exact; on
+// the typed lowering every row reclaims what it allocates, and an over-release
+// shows up as a count above that even where the program still exits correctly.
 //
 // Every `want` is from `fern -interp`.
 func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
@@ -215,7 +214,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 200,
+			wantFrees: 500,
 		},
 		{
 			// The LEAF array extracted through the chain.
@@ -236,7 +235,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 400,
 		},
 		{
 			// The leaf moved into a container that outlives the match.
@@ -257,7 +256,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 500,
 		},
 		{
 			// The leaf passed to a callee that keeps it.
@@ -279,7 +278,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 400,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

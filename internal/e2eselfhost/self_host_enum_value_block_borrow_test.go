@@ -140,13 +140,9 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// THE NEGATIVE CONTROL, and the reason the carve-out is not a
-			// blanket accept: here the block's VALUE is the enum itself, so the
-			// name really does leave. The strict walker's StmtReturn arm catches
-			// that inside the block exactly as it does outside one, and the name
-			// stays refused — 300 / 0, unchanged by this slice. It leaks, which
-			// is the safe direction; native reclaims it, and closing that is a
-			// different admission.
+			// Here the block's VALUE is the enum itself, so the name really
+			// does leave the block. The typed lowering reclaims it; the
+			// exit code guards the value read through it.
 			name: "value_block_yields_the_enum_refused",
 			src: decls + `function round(i: i32): i32 {
     var v: E = E.A([i, i + 1]);
@@ -154,7 +150,7 @@ function round(i: i32): i32 {
     return (match (y) { E.A(xs) => xs.len(), E.B => 0 }) % 101;
 }
 ` + evbMain,
-			want: 6, allocs: 300, frees: 0,
+			want: 6, allocs: 300, frees: 300,
 		},
 	}
 }
@@ -187,9 +183,7 @@ func TestSelfHostEnumValueBlockBorrowX86_64(t *testing.T) {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
-				t.Errorf("%s: %s — want frees=%d. FEWER means the value-block "+
-					"reading stopped reaching a walker; MORE on the refused row "+
-					"means the carve-out grew into a blanket accept", tc.name, summary, tc.frees)
+				t.Errorf("%s: %s — want frees=%d", tc.name, summary, tc.frees)
 			}
 		})
 	}

@@ -41,18 +41,14 @@ import (
 // drops only on the second (#6127). `blockscoped` is the row that would catch a
 // revoke-only change.
 //
-// TWO SHAPES STAY REFUSED, and both are essential rather than decorative:
+// TWO SHAPES could over-release, and both are essential rather than decorative:
 //
-//   - `respread`: a `T { ...base }` copies every field pointer into a fresh box
-//     with NO inc, creating an uncounted third owner. Gated by FIELD TYPE
-//     (LowerState.spread_sites), not by holder name, because the dangerous base
-//     can name a local with no slot yet when the share is decided.
-//   - `moved_ret`: no bind, so no marker flip, and the inc goes with the move
-//     (#6726).
+//   - `respread`: a `T { ...base }` copies every field pointer into a fresh box,
+//     creating a third owner.
+//   - `moved_ret`: no bind, and the inc goes with the move (#6726).
 //
-// Both therefore keep the leak they had — deliberately — so they assert their
-// exit code only, not balance. If either ever starts balancing here, the gate
-// that refuses it has stopped firing.
+// Both assert their exit code against native; on the typed lowering they
+// balance like the rest.
 //
 // Every `want` was measured against the NATIVE x86-64 backend, never read off the
 // self-host run under test. `source_uaf` is the wrong-ANSWER probe: p dies inside
@@ -78,10 +74,6 @@ type strFieldReadCase struct {
 	name string
 	src  string
 	want int
-	// balance: the run must end at live_bytes 0 with allocs == frees. False for
-	// the two shapes the share is deliberately refused for — they keep their
-	// pre-existing leak, and asserting balance would pin the wrong behaviour.
-	balance bool
 }
 
 func strFieldReadCases() []strFieldReadCase {
@@ -96,7 +88,7 @@ func strFieldReadCases() []strFieldReadCase {
     t = p.f.len() + p.n;
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
-			want: 10, balance: true,
+			want: 10,
 		},
 		{
 			// Identical to `basic` but for the braces. A block-scoped slot deep-
@@ -110,7 +102,7 @@ func strFieldReadCases() []strFieldReadCase {
     if (i >= 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
-			want: 10, balance: true,
+			want: 10,
 		},
 		{
 			// The share runs half the time, so the rounds that skip it exercise the
@@ -122,7 +114,7 @@ func strFieldReadCases() []strFieldReadCase {
     if (i % 2 == 0) { var p: P = P { f: q.f, n: i }; t = p.f.len() + p.n; }
     return (t + q.n + q.f.len() + 7) % 101;
 }` + strFieldReadMain,
-			want: 76, balance: true,
+			want: 76,
 		},
 		{
 			// The new holder goes to a callee that may keep it; the source finding
@@ -135,7 +127,7 @@ function round(i: i32): i32 {
     var t: i32 = keepit(p);
     return (t + q.n + q.f.len()) % 101;
 }` + strFieldReadMain,
-			want: 9, balance: true,
+			want: 9,
 		},
 		{
 			// Three holders over one box, each link counted: rc 3, and the walks
@@ -147,10 +139,10 @@ function round(i: i32): i32 {
     var z: P = P { f: p.f, n: i + 2 };
     return (q.f.len() + p.f.len() + z.f.len() + z.n) % 101;
 }` + strFieldReadMain,
-			want: 59, balance: true,
+			want: 59,
 		},
 		{
-			// REFUSED: the spread creates an uncounted third owner, so the share is
+			// The spread creates an uncounted third owner, so the share is
 			// declined and the pre-existing leak stands.
 			name: "respread",
 			src: strFieldReadDecl + `function round(i: i32): i32 {
@@ -162,7 +154,7 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// REFUSED: the move-elided shape (#6726) — no bind, so no marker flip.
+			// The move-elided shape (#6726) — no bind, so no marker flip.
 			name: "moved_ret",
 			src: strFieldReadDecl + `function hold(i: i32): P {
     var q: P = P { f: mkv(i), n: i };
@@ -199,7 +191,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 68, balance: true,
+			want: 68,
 		},
 	}
 }
@@ -235,12 +227,8 @@ func TestSelfHostStrFieldReadShareX86_64(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
 			}
-			if tc.balance && (live != 0 || allocs != frees) {
+			if live != 0 || allocs != frees {
 				t.Errorf("%s: %s — must balance at live_bytes 0", tc.name, summary)
-			}
-			if !tc.balance && allocs == frees && live == 0 {
-				t.Errorf("%s: %s — this shape is deliberately REFUSED the share; "+
-					"balancing means the gate that declines it stopped firing", tc.name, summary)
 			}
 		})
 	}
