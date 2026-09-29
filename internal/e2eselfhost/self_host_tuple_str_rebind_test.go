@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -12,25 +8,13 @@ import (
 // --- The STRING-position assign-form tuple rebind (#7226) --------------------
 //
 // `t = (k, u)` where the tuple's annotation puts a string at position 1. The
-// array half of this rebind has released since #7929; the string half was held
-// back because the element-kinds string is recorded ONCE, from the var site's
-// literal, and then replayed by every site that frees the box — the rebind
-// store, the scope-exit sweep, the precise drop. Those sites therefore replay it
-// against a box some OTHER writer filled, and a writer that left a view there
-// would have its box freed out from under the view's own sweep.
+// rebind must release the old tuple's string exactly once, whichever writer
+// filled it, and must never release a box a view or a borrowed alias still
+// needs.
 //
-// The admission is WRITER AGREEMENT: an 's' kind is recorded only when every
-// assign-form rebind stores a counted owned string at that position — a literal,
-// a fresh concat / producer call, or a bare ident whose sole binding is one of
-// those and which is never reassigned. Views and borrowed aliases are refused by
-// positive proof rather than detected, because the pass that decides the credit
-// runs before lowering and has no slot facts to ask.
-//
-// Two counts per shape are the discriminator this needs. The leak these close is
-// per ROUND, so `live_bytes` doubles with the loop bound; a bounded strand does
-// not move. Every want below was confirmed against BOTH oracles — bin/fern
-// -interp and the native x86-64 backend agreed on each — never read off the
-// self-host run under test.
+// The leak these close is per ROUND, so `live_bytes` doubles with the loop
+// bound; a bounded strand does not move. Every want was confirmed against BOTH
+// oracles — bin/fern -interp and the native x86-64 backend.
 
 type tupStrRebindCase struct {
 	name string
@@ -39,9 +23,8 @@ type tupStrRebindCase struct {
 }
 
 func tupStrRebindCases() []tupStrRebindCase {
-	// The main shape at two round counts. On the parent both fail with
-	// live_bytes 16000 and 32000 — exactly 2.0x per doubling, which is what
-	// separates this from a bounded strand.
+	// The main shape at two round counts: a per-round leak doubles live_bytes
+	// between them, which separates it from a bounded strand.
 	repro := `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function round(i: i32): i32 {
@@ -160,8 +143,8 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 	}
 }
 
-// tupStrRebindHazards — the writers the agreement must NOT admit. Each keeps a
-// bounded-per-round leak (the safe direction) and is pinned by answer plus
+// tupStrRebindHazards — writers that store a static literal, a borrowed alias
+// or a view at the string position. Each is pinned by answer plus
 // __rc_underflow_count(): a doubly-released block returns to the freelist, so
 // the byte count and the sum both still come out right and only the counter
 // separates the two readings.
@@ -233,16 +216,11 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x +
 // sanitizer leg re-runs each. allocs == frees is essential in both
 // directions: short is the leak this closes, above is a double free.
 func TestSelfHostTupleStrRebindX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range tupStrRebindCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
-			progBin := buildBin(t, gcc, dir, "tupstr_"+tc.name, asm)
-			stderr, exit := hevRun(t, runner, progBin)
+			asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
+			stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "tupstr", asm))
 			if exit != tc.want {
 				t.Fatalf("%s exited %d, want %d (both oracles agree on %d; an offset of "+
 					"+N is N rc underflows)", tc.name, exit, tc.want, tc.want)
@@ -263,49 +241,36 @@ func TestSelfHostTupleStrRebindX86_64(t *testing.T) {
 					"retain is per round, so anything stranded scales with the loop "+
 					"bound; compare the 100- and 200-round rows", tc.name, summary)
 			}
-
-			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
-			sanBin := buildBin(t, gcc, dir, "tupstrsan_"+tc.name, sanAsm)
-			sanErr, sanExit := hevRun(t, runner, sanBin)
-			if sanExit != tc.want {
-				t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
-			}
-			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
-				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
-			}
+			tupStrRebindSanitize(t, cli, tc)
 		})
 	}
 }
 
 // TestSelfHostTupleStrRebindHazardsX86_64 — the refused writers, each answered
 // correctly with a zero underflow count under the sanitizer too. These assert
-// answers, not leak counts: a refusal falls back to leak-mode by design.
+// answers, not leak counts.
 func TestSelfHostTupleStrRebindHazardsX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range tupStrRebindHazards() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, nil)
-			progBin := buildBin(t, gcc, dir, "tupstrhaz_"+tc.name, asm)
-			_, exit := hevRun(t, runner, progBin)
-			if exit != tc.want {
+			if exit, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); exit != tc.want {
 				t.Errorf("%s exited %d, want %d (an offset of +N is N rc underflows — "+
 					"a wrongly granted credit, not a wrong sum)", tc.name, exit, tc.want)
 			}
-
-			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
-			sanBin := buildBin(t, gcc, dir, "tupstrhazsan_"+tc.name, sanAsm)
-			sanErr, sanExit := hevRun(t, runner, sanBin)
-			if sanExit != tc.want {
-				t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
-			}
-			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
-				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
-			}
+			tupStrRebindSanitize(t, cli, tc)
 		})
+	}
+}
+
+func tupStrRebindSanitize(t *testing.T, cli *strictCLI, tc tupStrRebindCase) {
+	t.Helper()
+	asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_SANITIZE=1")
+	sanErr, sanExit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "tupstrsan", asm))
+	if sanExit != tc.want {
+		t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
+	}
+	if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
+		t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 	}
 }
 
@@ -313,38 +278,11 @@ func TestSelfHostTupleStrRebindHazardsX86_64(t *testing.T) {
 // FERN_LEAKCHECK is x86-64-only, and the answer (with the underflow count folded
 // in) is what proves the releases claimed no live box.
 func TestSelfHostTupleStrRebindWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping tuple string-position rebind wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range append(tupStrRebindCases(), tupStrRebindHazards()...) {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "tupstr_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
-				t.Errorf("tuple string-position rebind wasm IR %q = %d, want %d", tc.name, got, tc.want)
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
+				t.Errorf("tuple string-position rebind wasm %q = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}
@@ -352,22 +290,11 @@ func TestSelfHostTupleStrRebindWasmIR(t *testing.T) {
 
 // TestSelfHostTupleStrRebindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostTupleStrRebindIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range append(tupStrRebindCases(), tupStrRebindHazards()...) {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "tupstr_"+tc.name+"_arm64", string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
 			}
 		})
