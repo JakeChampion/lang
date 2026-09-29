@@ -1073,7 +1073,18 @@ serializer.
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
   offset instead of copying the buffer forward, with `len` counted from
-  `from`. There is no lenient mode: a request line whose method is not a
+  `from`. The path a handler sees is the request-target (§3.2) as
+  `http_request_target(method, target)` gives it: an origin-form target
+  (`/a/b?q`) or an absolute-form one (`http://host/a/b?q`, accepted from
+  any client, §3.2.2) becomes the path decoded once and with its dot
+  segments removed (RFC 3986 §5.2.4), then the query as it came (its
+  decoding depends on what reads it); `*` is kept for an OPTIONS. The
+  target is refused with 400 when it is none of those, its authority is
+  empty, a byte in the path or the query is outside the URI grammar, a
+  `%` is not followed by two hex digits, a decoded byte is NUL or a slash
+  (`%2F` hides a segment from the path's grammar), or the path climbs above
+  the root (`/../x`: a client resolves that before sending). There is no
+  lenient mode: a request line whose method is not a
   token or whose target or version is empty (§3), a header line without
   a colon or whose name is not a token (so whitespace before the colon,
   §5.1, and obs-fold, §5.2, both refuse), a value holding a control byte

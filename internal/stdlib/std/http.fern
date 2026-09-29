@@ -880,11 +880,16 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     // soon as its CRLF has arrived, before the rest of the block.
     var sp1: i32 = -1;
     var sp2: i32 = -1;
+    var path: string = "";
     if (first_crlf >= 0) {
         sp1 = __find_byte(buf, from, first_crlf, 32 as u8);
         if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed(400); }
         sp2 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
         if (sp2 < 0 || sp2 == sp1 + 1 || sp2 + 1 == first_crlf) { return Malformed(400); }
+        match (http_request_target(__bytes_string(buf, from, sp1), __bytes_string(buf, sp1 + 1, sp2))) {
+            Ok(p) => { path = p; },
+            Err(status) => { return Malformed(status); }
+        }
     }
     if (first_crlf < 0 || headers_end < 0) { return Incomplete; }
     var headers_len: i32 = headers_end + 4 - from;
@@ -918,12 +923,215 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     if (body.0 != 2) { return __unframed(body.0, req_headers); }
     var request: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),
-        path: __bytes_string(buf, sp1 + 1, sp2),
+        path: path,
         body: stream.stream_from_bytes(body.1),
         headers: req_headers,
         trailers: body.3,
     };
     return Framed(HttpFramed { request: request, len: body.2 - from, keep_alive: __persists(version, req_headers) });
+}
+
+// `http_request_target(method, target)` — the request-target (RFC 9112
+// §3.2) as the path a handler sees, or the status refusing it. An
+// origin-form target (`/a/b?q`) and an absolute-form one
+// (`http://host/a/b?q`, which a server accepts from any client, §3.2.2)
+// give the path decoded once and with its dot segments removed
+// (RFC 3986 §5.2.4), then the query as it came; the asterisk-form `*` is
+// only for OPTIONS (§3.2.4). Refused with 400: a target that is none of
+// the three, an authority-form target (nothing here tunnels), an empty
+// authority, a byte outside `pchar` and `/` in the path or `pchar`, `/`
+// and `?` in the query, a `%` not followed by two hex digits, a decoded
+// NUL, a decoded slash (`%2F` would make a segment the sender hid from
+// the path's grammar), and a path that climbs above the root (`/../x`:
+// a client resolves that before sending, so a server only sees it from
+// something else). The query is not decoded: its encoding depends on
+// what reads it (`form_decode` folds `+`, `url_decode` does not).
+pub function http_request_target(method: string, target: string): Result[string, i32] {
+    if (target == "*") {
+        if (method == "OPTIONS") { return Ok("*"); }
+        return Err(400);
+    }
+    var path_from: i32 = 0;
+    if (target.len() == 0 || target[0] != (47 as u8)) {
+        path_from = __absolute_form_path(target);
+        if (path_from < 0) { return Err(400); }
+    }
+    var q: i32 = __find_char(target, path_from, target.len(), 63 as u8);
+    var path_end: i32 = target.len();
+    if (q >= 0) {
+        path_end = q;
+        if (!__query_ok(target, q + 1, target.len())) { return Err(400); }
+    }
+    var path: string = "/";
+    if (path_end > path_from) {
+        match (__decoded_path(target, path_from, path_end)) {
+            Ok(p) => { path = p; },
+            Err(status) => { return Err(status); }
+        }
+    }
+    if (q < 0) { return Ok(path); }
+    return Ok(path + slice_unchecked(target, q, target.len()) + "");
+}
+
+// `__absolute_form_path(target)` — where the path of an absolute-form
+// target starts: past `http://` or `https://` in any case and a
+// non-empty authority, at the `/` or `?` that ends it, or the target's
+// end when it has no path. -1 for any other shape.
+function __absolute_form_path(target: string): i32 {
+    var n: i32 = target.len();
+    var at: i32 = -1;
+    if (__prefix_ci(target, "http://")) { at = 7; }
+    if (__prefix_ci(target, "https://")) { at = 8; }
+    if (at < 0) { return -1; }
+    var authority_end: i32 = at;
+    while (authority_end < n && target[authority_end] != (47 as u8) && target[authority_end] != (63 as u8)) {
+        if (!__is_pchar(target[authority_end])) { return -1; }
+        authority_end = authority_end + 1;
+    }
+    if (authority_end == at) { return -1; }
+    return authority_end;
+}
+
+// `__prefix_ci(s, want)` — whether `s` starts with `want` under an ASCII
+// fold; `want` is written in lower case.
+function __prefix_ci(s: string, want: string): boolean {
+    if (s.len() < want.len()) { return false; }
+    var i: i32 = 0;
+    while (i < want.len()) {
+        if (__ascii_lower(s[i]) != (want[i] as i32)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `__find_char(s, from, end, c)` — the first index of byte `c` in
+// s[from, end), or -1.
+function __find_char(s: string, from: i32, end: i32, c: u8): i32 {
+    var i: i32 = from;
+    while (i < end) {
+        if (s[i] == c) { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// `__is_pchar(b)` — a byte a path segment may carry as itself (RFC 3986
+// §3.3): unreserved, a sub-delim, `:` or `@`; `%` is admitted here and
+// judged with its two digits where it is read.
+function __is_pchar(b: u8): boolean {
+    var v: i32 = b as i32;
+    return __is_unreserved(v) || __is_sub_delim(v) || v == 58 || v == 64 || v == 37;
+}
+
+function __is_unreserved(b: i32): boolean {
+    return (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57)
+        || b == 45 || b == 46 || b == 95 || b == 126;
+}
+
+// `!$&'()*+,;=`
+function __is_sub_delim(b: i32): boolean {
+    return b == 33 || b == 36 || b == 38 || b == 39 || b == 40 || b == 41
+        || b == 42 || b == 43 || b == 44 || b == 59 || b == 61;
+}
+
+// `__query_ok(s, from, end)` — whether s[from, end) is a query (RFC 3986
+// §3.4): `pchar`, `/` and `?`, every `%` followed by two hex digits.
+function __query_ok(s: string, from: i32, end: i32): boolean {
+    var i: i32 = from;
+    while (i < end) {
+        var b: u8 = s[i];
+        if (b == (37 as u8)) {
+            if (__pct_byte(s, i, end) < 0) { return false; }
+            i = i + 3;
+        } else {
+            if (!__is_pchar(b) && b != (47 as u8) && b != (63 as u8)) { return false; }
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// `__pct_byte(s, at, end)` — the byte a `%XX` at `at` encodes, or -1 when
+// the two hex digits are not there.
+function __pct_byte(s: string, at: i32, end: i32): i32 {
+    if (at + 2 >= end) { return -1; }
+    var hi: i32 = __hex_digit(s[at + 1]);
+    var lo: i32 = __hex_digit(s[at + 2]);
+    if (hi < 0 || lo < 0) { return -1; }
+    return hi * 16 + lo;
+}
+
+// `__decoded_path(s, from, end)` — s[from, end), which starts with `/`,
+// decoded once and with its dot segments removed, or the status refusing
+// it.
+function __decoded_path(s: string, from: i32, end: i32): Result[string, i32] {
+    var out: u8[] = [];
+    var i: i32 = from;
+    while (i < end) {
+        var b: i32 = s[i] as i32;
+        if (b == 37) {
+            b = __pct_byte(s, i, end);
+            if (b <= 0 || b == 47) { return Err(400); }
+            i = i + 3;
+        } else {
+            if (!__is_pchar(b as u8) && b != 47) { return Err(400); }
+            i = i + 1;
+        }
+        out = out.append(b as u8);
+    }
+    return __without_dot_segments(out);
+}
+
+// `__without_dot_segments(path)` — RFC 3986 §5.2.4 over a path that
+// starts with `/`: a `.` segment is dropped, a `..` segment takes the
+// one before it with it, and either at the end keeps the trailing
+// slash. A `..` with nothing before it climbs above the root and is
+// refused. Empty segments (`a//b`) are kept: they are the sender's to
+// mean something by.
+function __without_dot_segments(path: u8[]): Result[string, i32] {
+    var segments: string[] = [];
+    var depth: i32 = 0;
+    var n: i32 = path.len();
+    var at: i32 = 1;
+    var trailing: boolean = false;
+    while (at <= n) {
+        var seg_end: i32 = at;
+        while (seg_end < n && path[seg_end] != (47 as u8)) { seg_end = seg_end + 1; }
+        var seg: string = __bytes_string(path, at, seg_end);
+        trailing = seg_end == n;
+        if (seg == "..") {
+            if (depth == 0) { return Err(400); }
+            depth = depth - 1;
+        } else if (seg != ".") {
+            segments = __set_segment(segments, depth, seg);
+            depth = depth + 1;
+            trailing = false;
+        }
+        at = seg_end + 1;
+    }
+    return Ok(__joined_segments(segments, depth, trailing));
+}
+
+// `__set_segment(segments, at, seg)` — `segments` with `seg` at index
+// `at`, which is at most its length: a `..` lowers `depth` without
+// shrinking the array, so a later segment overwrites what it dropped.
+function __set_segment(segments: string[], at: i32, seg: string): string[] {
+    if (at < segments.len()) { return segments.with(at, seg); }
+    return segments.append(seg);
+}
+
+// `__joined_segments(segments, depth, trailing)` — `/` before each of
+// the first `depth` segments, and a `/` after the last when the path
+// ended in a dot segment; the root when there are none.
+function __joined_segments(segments: string[], depth: i32, trailing: boolean): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < depth) {
+        out = out + "/" + segments[i];
+        i = i + 1;
+    }
+    if (out.len() == 0 || trailing) { out = out + "/"; }
+    return out;
 }
 
 // __persists(version, h) — whether the connection outlives this

@@ -466,6 +466,62 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
+// The path a handler sees: the target decoded once, its dot segments
+// removed, the query as it came.
+function target_of(method: string, target: string): string {
+    match (http.http_request_target(method, target)) {
+        Ok(p) => { return p; },
+        Err(status) => { return "refused " + status.to_string(); }
+    }
+    return "";
+}
+
+function test_target_is_normalised(): test.TestOutcome {
+    if (target_of("GET", "/a/./b/../c") != "/a/c") { return test.fail("dot segments: " + target_of("GET", "/a/./b/../c")); }
+    if (target_of("GET", "/a/b/..") != "/a/") { return test.fail("a trailing .. keeps the slash: " + target_of("GET", "/a/b/..")); }
+    if (target_of("GET", "/a/.") != "/a/") { return test.fail("a trailing . keeps the slash: " + target_of("GET", "/a/.")); }
+    if (target_of("GET", "/a/..") != "/") { return test.fail("back to the root: " + target_of("GET", "/a/..")); }
+    if (target_of("GET", "/%2e/a/%2E%2e/b") != "/b") { return test.fail("decoded before the dot segments go: " + target_of("GET", "/%2e/a/%2E%2e/b")); }
+    if (target_of("GET", "/%41../b") != "/A../b") { return test.fail("a segment that only ends in dots stays: " + target_of("GET", "/%41../b")); }
+    if (target_of("GET", "/a%20b/%C3%A4") != "/a b/ä") { return test.fail("decoded once: " + target_of("GET", "/a%20b/%C3%A4")); }
+    if (target_of("GET", "/a%2520b") != "/a%20b") { return test.fail("decoded only once: " + target_of("GET", "/a%2520b")); }
+    if (target_of("GET", "//a/") != "//a/") { return test.fail("empty segments kept: " + target_of("GET", "//a/")); }
+    if (target_of("GET", "/a?b=%2F&c=../d") != "/a?b=%2F&c=../d") { return test.fail("the query is kept as it came: " + target_of("GET", "/a?b=%2F&c=../d")); }
+    if (target_of("GET", "/a/../?x") != "/?x") { return test.fail("the query follows the resolved path: " + target_of("GET", "/a/../?x")); }
+    if (target_of("GET", "http://h:8080/x/./y?z") != "/x/y?z") { return test.fail("absolute-form: " + target_of("GET", "http://h:8080/x/./y?z")); }
+    if (target_of("GET", "HTTPS://h") != "/") { return test.fail("absolute-form with no path: " + target_of("GET", "HTTPS://h")); }
+    if (target_of("GET", "http://h?q") != "/?q") { return test.fail("absolute-form with a query and no path: " + target_of("GET", "http://h?q")); }
+    if (target_of("OPTIONS", "*") != "*") { return test.fail("asterisk-form: " + target_of("OPTIONS", "*")); }
+    match (http.http_parse_request_bytes("GET /a/%2e%2e/b?c=%2F HTTP/1.1\r\nHost: h\r\n\r\n".bytes())) {
+        Some(req) => { return test.assert_eq(req.path, "/b?c=%2F"); },
+        None => { return test.fail("the parse refused a target it normalises"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_target_refusals(): test.TestOutcome {
+    if (target_of("GET", "*") != "refused 400") { return test.fail("* on a GET"); }
+    if (target_of("GET", "a/b") != "refused 400") { return test.fail("a target starting with neither / nor a scheme"); }
+    if (target_of("CONNECT", "h:443") != "refused 400") { return test.fail("authority-form"); }
+    if (target_of("GET", "http://") != "refused 400") { return test.fail("an empty authority"); }
+    if (target_of("GET", "http:/x") != "refused 400") { return test.fail("a scheme without its authority"); }
+    if (target_of("GET", "/../x") != "refused 400") { return test.fail("climbing above the root"); }
+    if (target_of("GET", "/a/%2e%2e/%2e%2e/x") != "refused 400") { return test.fail("climbing above the root, encoded"); }
+    if (target_of("GET", "/a%2Fb") != "refused 400") { return test.fail("an encoded slash"); }
+    if (target_of("GET", "/a%2fb") != "refused 400") { return test.fail("an encoded slash, lower case"); }
+    if (target_of("GET", "/a%00") != "refused 400") { return test.fail("an encoded NUL"); }
+    if (target_of("GET", "/a%zz") != "refused 400") { return test.fail("a % without two hex digits"); }
+    if (target_of("GET", "/a%4") != "refused 400") { return test.fail("a % cut short"); }
+    if (target_of("GET", "/a\"b") != "refused 400") { return test.fail("a byte outside pchar"); }
+    if (target_of("GET", "/a\\b") != "refused 400") { return test.fail("a backslash"); }
+    if (target_of("GET", "/ä") != "refused 400") { return test.fail("a raw non-ASCII byte"); }
+    if (target_of("GET", "/a?b\"c") != "refused 400") { return test.fail("a byte outside the query's grammar"); }
+    if (target_of("GET", "/a?b%zz") != "refused 400") { return test.fail("a bad % in the query"); }
+    if (!refused("GET /a%2Fb HTTP/1.1\r\nHost: h\r\n\r\n")) { return test.fail("the parse accepted an encoded slash"); }
+    if (framing_of("GET /../x HTTP/1.1\r\nHost") != 0) { return test.fail("a bad target is not refused as soon as its line has arrived"); }
+    return test.pass();
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request bytes");
     r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
@@ -479,6 +535,8 @@ function main(): i32 {
     r = r.it("chunked framing tells incomplete from malformed", test_chunked_framing_tells_incomplete_from_malformed);
     r = r.it("refusal statuses", test_refusal_statuses);
     r = r.it("expect continue", test_expect_continue);
+    r = r.it("target is normalised", test_target_is_normalised);
+    r = r.it("target refusals", test_target_refusals);
     r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
     r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
     r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);
