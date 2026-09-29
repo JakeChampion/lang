@@ -4979,6 +4979,9 @@ function main(): i32 {
 	// them at 64: a 32-bit divide or a count masked mod 32 truncates. u64
 	// rides along as the width's reference.
 	{name: "usize-operators-at-register-width", atLeast: 3, nativeOnly: true, noLeak: true, src: semUsizeWideOperatorsSource},
+	// A literal past 32 bits cast to an address wraps on wasm on both
+	// lowerings (#10743).
+	{name: "usize-wide-literal", atLeast: 1, noLeak: true, src: semUsizeWideLiteralSource},
 	// The FFI trampolines, reached behind a test that never holds so no C
 	// pointer is called: the typed path produces each caller and the shims
 	// link (#10736).
@@ -5924,6 +5927,16 @@ function wide(n: i32): i32 {
 function main(): i32 {
     var n: i32 = args().len() + 69;
     return addresses(n) + wide(n) * 32;
+}
+`
+
+// semUsizeWideLiteralSource binds a literal past 32 bits as an address: 70 on
+// the register backends, and 1 on wasm, whose address is 32 bits.
+const semUsizeWideLiteralSource = `
+function main(): i32 {
+    var a: usize = 70000000000 as usize;
+    var b: usize = 1000000000 as usize;
+    return (a / b) as i32;
 }
 `
 

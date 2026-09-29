@@ -11,12 +11,6 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 	c := newStrictCLI(t)
 	arm64gcc, qemu := arm64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
-	issue := `function main(): i32 {
-    var a: usize = 70000000000 as usize;
-    var b: usize = 1000000000 as usize;
-    return (a / b) as i32;
-}
-`
 	native := []struct {
 		name   string
 		src    string
@@ -25,7 +19,7 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 	}{
 		{"usize-operators", semUsizeOperatorsSource, 31, true},
 		{"usize-operators-at-register-width", semUsizeWideOperatorsSource, 127, true},
-		{"usize-divide-literal", issue, 70, true},
+		{"usize-wide-literal", semUsizeWideLiteralSource, 70, true},
 		// The interpreter has no C ABI to call through.
 		{"c-call-trampolines", semCCallSource, 0, false},
 	}
@@ -44,9 +38,23 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 			}
 		})
 	}
-	t.Run("usize-operators/wasm", func(t *testing.T) {
-		if got, _ := runWasm(t, c.emit(t, "wasm32-wasi", semUsizeOperatorsSource)); got != 31 {
-			t.Errorf("wasm: exit %d, want 31", got)
-		}
-	})
+	wasm := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"usize-operators", semUsizeOperatorsSource, 31},
+		// 70000000000 wraps to the 32-bit address 1280523264 (#10743).
+		{"usize-wide-literal", semUsizeWideLiteralSource, 1},
+	}
+	for _, tc := range wasm {
+		t.Run(tc.name+"/wasm", func(t *testing.T) {
+			if got, _ := runWasm(t, c.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
+				t.Errorf("typed lowering: exit %d, want %d", got, tc.want)
+			}
+			if got, _ := runWasm(t, c.emit(t, "wasm32-wasi", tc.src, "FERN_SEM_IR=")); got != tc.want {
+				t.Errorf("AST lowering: exit %d, want %d", got, tc.want)
+			}
+		})
+	}
 }
