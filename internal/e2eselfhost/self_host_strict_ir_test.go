@@ -406,19 +406,24 @@ function main(): i32 {
 `, 22},
 	// A DIRECT, hand-written IIFE — `((): i32 => { return 7; })()` — in
 	// `return` position, and with string, struct and nested-IIFE results flowing
-	// through the value. The capturing forms are refused; see
-	// strictIRBailReasons.
+	// through the value. The capturing forms lower as direct calls that take
+	// their captures as arguments.
 	{"direct-iife", `
 struct P { n: i32 }
+function g(n: i32): i32 { return n * 2; }
 function ret(): i32 { return ((): i32 => { return 7; })(); }
 function main(): i32 {
     var t: i32 = ret();                                              // 7
+    var n: i32 = 5;
+    t = t + ((): i32 => { return n + 2; })();                   // +7
     t = t + ((): string => { return "ab" + "cd"; })().len();    // +4
     t = t + ((): P => { return P { n: 6 }; })().n;              // +6
     t = t + ((): i32 => { return ((): i32 => { return 3; })() + 4; })(); // +7
+    var i: i32 = 0;
+    while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }      // +6
     return t;
 }
-`, 24},
+`, 37},
 	// The if/match-EXPRESSION desugars share the IIFE shape, so they are the
 	// regression side of the case above: a fix that mishandled a StmtIf /
 	// StmtMatch body would change these, not the direct form.
@@ -648,7 +653,8 @@ func TestSelfHostStrictIRX86_64(t *testing.T) {
 // lowering.
 func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	cli := newStrictCLI(t)
-	src := strictIRBailReasons[0].src
+	tc := strictIRBailReasons[0]
+	src := tc.src
 
 	if _, diags, err := cli.tryEmit(t, "x86-64-linux", src, "FERN_SEM_IR_STRICT="); err != nil {
 		t.Fatalf("unset: compile failed, want the AST lowering's compile: %v\n%s", err, diags)
@@ -657,7 +663,7 @@ func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 	if code := strictExit(t, err); code != 3 {
 		t.Fatalf("FERN_SEM_IR_STRICT=1: exited %d, want a refusal (3)\n%s", code, diags)
 	}
-	if !strings.Contains(diags, "FERN_SEM_IR: main: ") || !strings.Contains(diags, "FERN_SEM_IR_STRICT:") {
+	if !strings.Contains(diags, "FERN_SEM_IR: "+tc.fn+": ") || !strings.Contains(diags, "FERN_SEM_IR_STRICT:") {
 		t.Errorf("refusal did not name the refused function:\n%s", diags)
 	}
 }
@@ -680,17 +686,6 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A direct IIFE whose body reads an enclosing local. The non-capturing
-	// forms lower; see strictIRCorpus's direct-iife.
-	{"capturing-iife", `function g(n: i32): i32 { return n * 2; }
-function main(): i32 {
-    var n: i32 = 5;
-    var t: i32 = ((): i32 => { return n + 2; })();
-    var i: i32 = 0;
-    while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }
-    return t;
-}
-`, "main", "unsupported expression"},
 	// An array holding views of two parameters has no one argument to anchor to.
 	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
 function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
