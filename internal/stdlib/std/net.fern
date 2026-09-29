@@ -797,6 +797,13 @@ pub function set_nonblocking(sock: i32, on: boolean): Result[(), NetError] {
     return __socket_ctl(sock, 3, on);
 }
 
+// `send_queue(sock)` — how many bytes handed to the socket the peer has
+// not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
+// `SO_NWRITE` on Darwin): how far a peer has got with what was written.
+pub function send_queue(sock: i32): Result[i32, NetError] {
+    return __socket_count(tcp_socket_ctl(sock, 6, 0));
+}
+
 // `shutdown(sock, how)` — close one or both directions while keeping the
 // descriptor; `tcp_close` still releases it.
 pub function shutdown(sock: i32, how: Shutdown): Result[(), NetError] {

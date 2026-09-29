@@ -2,100 +2,50 @@ package e2eselfhost
 
 import (
 	"bytes"
-	"os/exec"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"path/filepath"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/checker"
-	arm64codegen "github.com/jakechampion/lang/internal/codegen/arm64"
-	"github.com/jakechampion/lang/internal/codegen/x86_64"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// TestSelfHostArm64NativeMmcMatchesCrossHost guards the
-// "arm64 Go backend compiling the arm64 self-host source" path.
-// The differential gate (TestSelfHostStdTestE2EArm64) builds mmc-
-// arm64 as an x86 host binary via the Go x86 backend (cross-
-// compiler-on-host) — convenient but it leaves the arm64-backend-
-// compiles-arm64-self-host path untested. Two real bugs hid here
-// until now and only surfaced when someone manually probed:
+// TestSelfHostArm64NativeMmcMatchesCrossHost guards the "arm64 compiler
+// compiling the arm64 self-host source" path. The differential gate
+// (TestSelfHostStdTestE2EArm64) runs mmc-arm64 as an x86-64 host binary —
+// convenient but it leaves the compiled-for-arm64 self-host source untested
+// as a program in its own right. Two real bugs hid here until someone
+// manually probed:
 //
-//  1. `strbuf_take` was missing from `returnIsString`, so its
-//     two-word return decayed to single-word and the byte length
-//     went through as garbage from the stack — any program using
+//  1. `strbuf_take` was missing from the two-word-return set, so its byte
+//     length went through as garbage from the stack — any program using
 //     strbuf silently mis-rendered its output. (PR #1676.)
 //
-//  2. `"ProcessResult"` wasn't pre-interned in `asm_arm64.fern`'s
-//     `needs_heap` rodata-dump prelude, so a program that used
-//     `subprocess()` without otherwise mentioning `ProcessResult`
-//     by name had an unresolved `.S<idx>` label at the
-//     `__fern_subprocess` helper's shape-pointer store. (PR #1678.)
+//  2. `"ProcessResult"` wasn't pre-interned in the arm64 rodata-dump
+//     prelude, so a program that used `subprocess()` without otherwise
+//     mentioning `ProcessResult` by name had an unresolved `.S<idx>` label
+//     at the `__fern_subprocess` helper's shape-pointer store. (PR #1678.)
 //
-// This test pins the path: build mmc-arm64 with the Go arm64
-// backend, run it under qemu-aarch64 against
-// `arithmetic_test.fern`, then assert the emitted aarch64 asm is
-// byte-identical to what mmc built via the cross-compiler-on-host
-// pattern produces. If they diverge, the arm64 Go backend has a
-// new emit bug on the self-host source (or a new silent runtime
-// helper gap in the strbuf / shape-name family).
+// This test pins the path: build mmc-arm64 with the pinned stage0 compiler
+// for arm64-linux, run it under qemu-aarch64 against `arithmetic_test.fern`,
+// then assert the emitted aarch64 asm is byte-identical to what the same
+// driver built for x86-64-linux produces. If they diverge, the PIN's arm64
+// codegen has an emit bug on the self-host source (or a silent runtime
+// helper gap in the strbuf / shape-name family). The current source's own
+// arm64 compile is gated by the module self-tests (TestSelfHostParserArm64
+// and its siblings), which build the current modules for arm64 with the pin
+// and run them under qemu.
 //
-// SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
-// aren't installed (same shape as the other arm64-gated tests).
+// SKIPs cleanly when the host can run no arm64 binary (no qemu-aarch64);
+// no cross toolchain is needed, the pin emits the binaries.
 func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("test needs a native x86 host for the cross-compiler-on-host driver")
-	}
+	qemu := arm64Runner(t)
+	x86runner := x86_64Runner(t)
 
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	driverSrc := filepath.Join(dir, "asm_load_run.fern")
 
-	// Build mmc via the Go arm64 backend → aarch64 binary running
-	// under qemu.
-	prog, _, err := modload.Load(driverSrc)
-	if err != nil {
-		t.Fatalf("modload arm64: %v", err)
-	}
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold arm64: %v", err)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check arm64: %v", err)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	arm64Asm, err := arm64codegen.Emit(prog, info)
-	if err != nil {
-		t.Fatalf("arm64 emit: %v", err)
-	}
-	mmcNative := buildBinArm64(t, arm64gcc, dir, "mmc_arm64_native", arm64Asm)
-
-	// Build mmc via the Go x86 backend → x86 binary running natively.
-	prog2, _, err := modload.Load(driverSrc)
-	if err != nil {
-		t.Fatalf("modload x86: %v", err)
-	}
-	if err := constfold.Fold(prog2, nil); err != nil {
-		t.Fatalf("constfold x86: %v", err)
-	}
-	info2, err := checker.Check(prog2)
-	if err != nil {
-		t.Fatalf("check x86: %v", err)
-	}
-	if err := monomorph.Run(prog2, info2); err != nil {
-		t.Fatalf("monomorph: %v", err)
-	}
-	x86Asm, err := x86_64.Emit(prog2, info2)
-	if err != nil {
-		t.Fatalf("x86 emit: %v", err)
-	}
-	mmcCross := buildBin(t, x86gcc, dir, "mmc_x86_cross", x86Asm)
+	// The same driver built by the pin for both hosts: an aarch64 binary
+	// running under qemu, and an x86-64 binary running on the host.
+	mmcNative := buildSelfHostBinFor(t, dir, "asm_load_run.fern", "mmc_arm64_native", e2eharness.TargetArm64Linux)
+	mmcCross := buildSelfHostBinFor(t, dir, "asm_load_run.fern", "mmc_x86_cross", e2eharness.TargetX86_64Linux)
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
@@ -131,7 +81,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 			if len(nativeOut) == 0 {
 				t.Fatal("mmc_arm64_native emitted 0 bytes — the bugs the gate guards against (strbuf return shape, ProcessResult rodata, arm64 heap size)")
 			}
-			crossOut, err := exec.Command(mmcCross, testSrc, stdlibRoot, "-target", "arm64-linux").Output()
+			crossOut, err := runX86_64Bin(x86runner, mmcCross, testSrc, stdlibRoot, "-target", "arm64-linux").Output()
 			if err != nil {
 				t.Fatalf("mmc_x86_cross: %v", err)
 			}

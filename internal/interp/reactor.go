@@ -279,6 +279,34 @@ func builtinTcpRecvInto(i *Interp, args []Value) (Value, error) {
 // the descriptor itself, so what is queued comes back and nothing answers
 // EAGAIN; the deadline the net package offers would refuse to read at all
 // once it has passed.
+// writeSocket is readSocket's write side: one write(2) on the descriptor
+// for a non-blocking socket, which answers a short count or EAGAIN
+// rather than waiting for room.
+func writeSocket(conn net.Conn, data []byte, nonblocking bool) (int, error) {
+	if !nonblocking {
+		return conn.Write(data)
+	}
+	sc, ok := conn.(syscall.Conn)
+	if !ok {
+		return 0, syscall.EBADF
+	}
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	n, werr := 0, error(nil)
+	if err := rc.Write(func(fd uintptr) bool {
+		n, werr = syscall.Write(int(fd), data)
+		return true
+	}); err != nil {
+		return 0, err
+	}
+	if werr != nil {
+		return 0, werr
+	}
+	return n, nil
+}
+
 func readSocket(conn net.Conn, buf []byte, nonblocking bool) (int, error) {
 	if !nonblocking {
 		conn.SetReadDeadline(time.Time{})

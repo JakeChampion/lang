@@ -47,6 +47,25 @@ func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 	return gcc, qemu
 }
 
+// Arm64Runner is the runner half of Arm64Tooling alone: "" on a native arm64
+// host, else qemu-aarch64, for a test that runs a pin-built arm64 binary and
+// assembles nothing. It skips (or fails under FERN_REQUIRE_ARM64_TOOLING=1)
+// when the host can run no arm64 binary at all.
+func Arm64Runner(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		return ""
+	}
+	_, qemu, _ := LookupArm64Tooling()
+	if qemu == "" {
+		if os.Getenv("FERN_REQUIRE_ARM64_TOOLING") == "1" {
+			t.Fatal("no qemu-aarch64 on PATH and FERN_REQUIRE_ARM64_TOOLING=1: this lane installs it and is the only one running this test, so a skip here covers nothing")
+		}
+		t.Skip("no qemu-aarch64 on PATH")
+	}
+	return qemu
+}
+
 // LookupArm64Tooling is Arm64Tooling's discovery half without the skip, for a
 // caller that has to decide for itself what a missing toolchain means — a test
 // needing BOTH register backends at once has no lane where a skip is the correct

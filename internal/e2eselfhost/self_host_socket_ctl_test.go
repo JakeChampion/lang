@@ -47,6 +47,7 @@ func checkSelfHostSocketCtl(t *testing.T, targets []string) {
 		src  string
 	}{
 		{"raw", e2eharness.SocketCtlProbe()},
+		{"send_queue", e2eharness.SendQueueProbe()},
 		{"std_net", e2eharness.NetSocketOptsProbe()},
 		{"udp", e2eharness.UdpSocketProbe()},
 		{"std_net_udp", e2eharness.NetUdpProbe()},

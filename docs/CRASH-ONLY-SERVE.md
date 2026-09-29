@@ -137,10 +137,24 @@ the native supervised path and the interp fallback.
 
 ## Deliberately deferred
 
-- fork-per-request / prefork worker pools (SO_REUSEPORT) — needs
-  a real workload to justify.
-- Graceful drain (SIGTERM → stop accepting, finish in-flight) —
-  orthogonal; belongs to a signals design.
+- fork-per-request — needs a real workload to justify. Prefork
+  workers exist (#9854): `tcp_serve_supervised_opts` forks
+  `ServeOptions.workers` workers, one per processing unit by default,
+  over the one inherited listener, each watching it with epoll's
+  `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
+  one worker rather than all (the listener is non-blocking, so a worker
+  a wake-up reaches after another took the connection returns to its
+  wait instead of blocking in accept), and the supervisor reaps whichever dies
+  (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
+  each) and forks its replacement under the same backoff and
+  fast-death count. Per-worker `SO_REUSEPORT` listeners, and the accept
+  distribution the one-listener shape gives under load, are not
+  measured yet.
+- Graceful drain exists (#9854): SIGTERM is a readiness event on the
+  reactor, the supervisor forwards it to its workers and waits for them,
+  and each worker keeps accepting for a grace, fails its readiness path,
+  closes the listener, ends keep-alive and drains what is in flight
+  under a deadline, exiting 1 when it cut a request off.
 - Windows — no native Windows target exists.
 - Self-host compiler support for `proc_fork`/`proc_waitpid` —
   native serve supervision is a native-target runtime feature and
