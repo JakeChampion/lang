@@ -78107,8 +78107,9 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
     return false;
 }
 
-// iife_arms_are_arrays_with_boxed_elem reports whether any arm of a
-// value-position if/match returns a function-array literal, which
+// iife_arms_return_fn_array_literal reports whether any arm of a
+// value-position if/match returns a function-array literal — directly, through
+// a generic passthrough, or one nested if/match in — which
 // box_iife_arm_array_elems then boxes. An arm yielding any other function
 // array (a parameter, a local, a call's result) needs nothing: every function
 // array is built on the env-box ABI (#10076).
@@ -78116,39 +78117,34 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
 // The literal question is array_literal_boxes, the same one the
 // single-literal rule asks, so the two cannot disagree about a literal
 // (#8151, #8795). Captures read against iife_scope_fd, so a name the IIFE itself
-// binds (a match arm's payload) counts.
-function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
-    return iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs) > 0;
-}
-
-// The number of function-array literals the arms return, directly, through a
-// generic passthrough, or one nested if/match in.
-function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: StructTab, mfuncs: MFuncs): i32 {
-    var n: i32 = seen;
+// binds (a match arm's payload) counts; `fd` arrives scoped.
+function iife_arms_return_fn_array_literal(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: StructTab, mfuncs: MFuncs): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
                 var lit: ast.Expr[] = passthrough_array_literal(r.value, mfuncs);
                 if (lit.len() == 0) { continue; }
                 match (lit[0]) {
-                    ast.ExprArray(arr) => { if (array_literal_boxes(arr, fd, structs, mfuncs)) { n = n + 1; } },
+                    ast.ExprArray(arr) => { if (array_literal_boxes(arr, fd, structs, mfuncs)) { return true; } },
                     ast.ExprCall(ic) => {
-                        if let ast.ExprLambda(il) = ic.callee { n = iife_arm_arrays_boxed_elems(il.body, iife_scope_fd(fd, il.body), n, structs, mfuncs); }
+                        if let ast.ExprLambda(il) = ic.callee {
+                            if (iife_arms_return_fn_array_literal(il.body, iife_scope_fd(fd, il.body), structs, mfuncs)) { return true; }
+                        }
                     },
                     _ => {}
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, structs, mfuncs);
-                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, structs, mfuncs);
+                if (iife_arms_return_fn_array_literal(iff.then_body, fd, structs, mfuncs)) { return true; }
+                if (iife_arms_return_fn_array_literal(iff.else_body, fd, structs, mfuncs)) { return true; }
             },
             ast.StmtMatch(mm) => {
-                for arm in mm.arms { n = iife_arm_arrays_boxed_elems(arm.body, fd, n, structs, mfuncs); }
+                for arm in mm.arms { if (iife_arms_return_fn_array_literal(arm.body, fd, structs, mfuncs)) { return true; } }
             },
             _ => {}
         }
     }
-    return n;
+    return false;
 }
 
 // box_iife_arm_array_elems rewrites every element of every arm's array literal
@@ -78176,7 +78172,7 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs:
                     },
                     // A nested value-position if/match arm: box the arrays its own
                     // arms return, matching the gate's recursion through the same
-                    // shape (iife_arm_arrays_boxed_elems).
+                    // shape (iife_arms_return_fn_array_literal).
                     ast.ExprCall(rc) => {
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
@@ -78445,7 +78441,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // stops here. A capturing lambda in an arm's ARRAY literal
                     // would otherwise never get its `__mkclo$<fd>$cloN` marker.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && iife_arms_are_arrays_with_boxed_elem(ielam.body, fd, structs, mfuncs)) {
+                        && iife_arms_return_fn_array_literal(ielam.body, iife_scope_fd(fd, ielam.body), structs, mfuncs)) {
                         var (ibrs, ibra) = box_iife_arm_array_elems(ielam.body, iife_scope_fd(fd, ielam.body), fs, ct, gfns, structs, mfuncs);
                         if (ibra.counter > ct) {
                             fs = ibra.funcs; ct = ibra.counter;
