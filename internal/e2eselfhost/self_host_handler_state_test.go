@@ -27,7 +27,7 @@ function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest
 function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
 function __port_from_env(name: string, def: i32): i32 { return def; }
 `
-	const response = `HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } }`
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] } }`
 	const stateless = `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }`
 	const stateful = `function handle(state: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (state, ` + response + `); }`
 	const missingState = "handler takes a state parameter, but no `init` produces the state to thread through it"

@@ -162,6 +162,15 @@ func fernTypeSpelling(t *testing.T, ty ast.Type) string {
 			args = append(args, fernTypeSpelling(t, a))
 		}
 		return v.Name + "[" + strings.Join(args, ", ") + "]"
+	case ast.EnumType:
+		if len(v.Args) == 0 {
+			return v.Name
+		}
+		args := make([]string, 0, len(v.Args))
+		for _, a := range v.Args {
+			args = append(args, fernTypeSpelling(t, a))
+		}
+		return v.Name + "[" + strings.Join(args, ", ") + "]"
 	}
 	t.Fatalf("no Fern spelling for builtin field type %T — teach fernTypeSpelling about it", ty)
 	return ""

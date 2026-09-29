@@ -1026,6 +1026,15 @@ serializer.
   variants that set `Content-Type` up front:
   `http_response_json` / `http_response_json_status` /
   `http_response_html` / `http_response_plain`
+- **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
+  `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder) or
+  `BodyFile(string)` (a path). `http_response_bytes(status, bytes)`,
+  `http_response_stream(status, stream)` and `http_response_file(path)`
+  build the last three. `(resp).body_string()`, `(resp).body_bytes()` and
+  `(resp).body_len()` read whichever a response carries; a `BodyFile` reads
+  as empty from a handler, since a handler may not reach the file system
+  (E080). The serve loop reads the file when it writes the response, through
+  `http_materialize(resp)`, and answers 404 for a file it cannot read.
 - **Header methods:** `(resp).with_header(name, value)` (set) /
   `(resp).with_appended_header(name, value)` (append) /
   `(resp).with_content_type(ct)`
@@ -1515,7 +1524,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
   serving worker that built the bag, 0 for one built by `platform_new` or
   the wasi-http wrapper. Per-worker mutable state a capability needs lives
   behind it, since a bag's fields are frozen and a cell holds only a scalar
-  or a string. `plat.version` is 2 since it was added.
+  or a string. `plat.version` is 3 since `HttpResponse.body` became a `Body`.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).

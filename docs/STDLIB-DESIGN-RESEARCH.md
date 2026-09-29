@@ -647,7 +647,7 @@ any writer:
 ```
 var buf = MemoryWriter.new();
 json_encode_to(buf, payload);
-return HttpResponse { status: 200, body: buf.bytes() };
+return HttpResponse { status: 200, body: BodyBytes(buf.bytes()) };
 ```
 
 #### Error model

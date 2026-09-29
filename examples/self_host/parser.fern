@@ -8553,6 +8553,10 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     structs = add_builtin_variant(structs, "InvalidUtf8", "string", "IoError");
     structs = add_builtin_variant(structs, "Interrupted", "", "IoError");
     structs = add_builtin_variant(structs, "Unsupported", "", "IoError");
+    structs = add_builtin_variant(structs, "BodyText", "string", "Body");
+    structs = add_builtin_variant(structs, "BodyBytes", "u8[]", "Body");
+    structs = add_builtin_variant(structs, "BodyStream", "Stream", "Body");
+    structs = add_builtin_variant(structs, "BodyFile", "string", "Body");
     // Other carries TWO payloads (path, message) like native's declaration
     // (#4370) — open-coded because add_builtin_variant takes one payload.
     // Field naming matches the user-enum desugar: `__ev`, `__ev1`.
@@ -8668,7 +8672,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     if (!name_declared(structs, "HttpResponse")) {
         var hsf: StructFieldDecl[] = [];
         hsf = hsf.append(StructFieldDecl { name: "status", type_name: "i32", fn_ret: "", fn_param_types: "" });
-        hsf = hsf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "", fn_param_types: "" });
+        hsf = hsf.append(StructFieldDecl { name: "body", type_name: "Body", fn_ret: "", fn_param_types: "" });
         hsf = hsf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true , is_package: false });
     }

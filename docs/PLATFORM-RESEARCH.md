@@ -468,7 +468,7 @@ won't work for streaming responses or for >1 MiB requests.
 
   ```
   function handle(req: HttpRequest): HttpResponse {
-      return HttpResponse { status: 200, body: "ok" };
+      return HttpResponse { status: 200, body: BodyText("ok") };
   }
   ```
 
@@ -877,7 +877,7 @@ Two APIs:
 ```
 // Sugar — current shape. Compiles to streaming form.
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
-    return HttpResponse { status: 200, body: "ok" };
+    return HttpResponse { status: 200, body: BodyText("ok") };
 }
 
 // Explicit streaming.
