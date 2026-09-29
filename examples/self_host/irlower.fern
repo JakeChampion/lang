@@ -2995,6 +2995,16 @@ function closure_init_opt_ret(init: ast.Expr, s: LowerState): string {
                 _ => { return ""; }
             }
         },
+        // A fn-typed struct FIELD read (`var next = producer.next`): the
+        // field's declared return, the sidecar the match lowering reads for
+        // the direct `match (producer.next(i))` form.
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            var fr: string = decl_field_fn_ret(s.frame.structs, oty, fa.field);
+            if (fr.len() >= 8 && (slice_unchecked(fr, 0, 7) == "Option[" || slice_unchecked(fr, 0, 7) == "Result[")) { return fr; }
+            return "";
+        },
         _ => { return ""; }
     }
 }
