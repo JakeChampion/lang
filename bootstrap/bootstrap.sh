@@ -34,9 +34,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# BOOTSTRAP_LOCK / BOOTSTRAP_OUT point a test at a lock and a cache of its own.
-LOCK="${BOOTSTRAP_LOCK:-$ROOT/bootstrap/stage0.lock}"
-OUT="${BOOTSTRAP_OUT:-$ROOT/build/bootstrap}"
+LOCK="$ROOT/bootstrap/stage0.lock"
+OUT="$ROOT/build/bootstrap"
 ENTRY="$ROOT/examples/self_host/fern.fern"
 STDLIB="$ROOT/internal/stdlib"
 
@@ -95,8 +94,8 @@ resolve_stage0() {
     echo "stage0: downloading $asset" >&2
     mkdir -p "$(dirname "$stage0")"
     curl -fsSL --retry 3 --retry-delay 2 -o "$gz" "$asset" \
-      || die "download failed: $asset"
-    gzip -dc "$gz" > "$tmp" || die "$asset is not gzip data"
+      || { rm -f "$gz"; die "download failed: $asset"; }
+    gzip -dc "$gz" > "$tmp" || { rm -f "$gz" "$tmp"; die "$asset is not gzip data"; }
     rm -f "$gz"
     got="$(sha256 "$tmp")"
     if [ "$got" != "$want" ]; then
