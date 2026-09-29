@@ -181,6 +181,13 @@ func TestSelfHostSupervisedServeTrapThenShutdownExitsClean(t *testing.T) {
 	e2eharness.CheckTrapThenShutdownExitsClean(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostServeOptions(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ReusePortServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckReusePortReachesListener(t, port)
+}
+
 func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.MaxConnectionsFloorServerSource(port))
