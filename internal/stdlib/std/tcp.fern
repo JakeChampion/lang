@@ -21,7 +21,12 @@
 //      non-blocking and watch it for reads; its read deadline (default
 //      10 s; `tcp_serve_deadline` / `ServeOptions.recv_deadline`) is the
 //      slow-loris guard: a connection past it is closed without a
-//      response, and the wait's timeout is the earliest one due.
+//      response, and the wait's timeout is the earliest one due. Once
+//      the header block is in, the body extends the deadline by what it
+//      has delivered: after a grace (5 s) it may take as long as its
+//      bytes buy at the minimum rate (240 bytes per second), so a large
+//      upload that keeps flowing outlasts the deadline and a trickle
+//      does not.
 //   2. when it is readable, tcp_recv_into one 4 KiB buffer until -EAGAIN,
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
@@ -83,14 +88,19 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // connection: the accept queue depth, whether other listeners may share
 // the port (`SO_REUSEPORT`, the kernel balancing accepted connections
 // across them; ignored on wasm, where a port is one socket's), the
-// per-request read deadline `tcp_serve_deadline` describes, how long an
-// idle persistent connection is kept waiting for its next request, and
-// how many requests one connection may carry before its response says
-// `Connection: close`.
+// per-request read deadline `tcp_serve_deadline` describes, the least
+// rate at which a request body must keep arriving once its header block
+// is in (bytes per second, judged after the grace: the body may take as
+// long as its bytes buy at that rate, beyond the read deadline), how
+// long an idle persistent connection is kept waiting for its next
+// request, and how many requests one connection may carry before its
+// response says `Connection: close`.
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
     recv_deadline: Duration,
+    body_min_rate: i32,
+    body_rate_grace: Duration,
     keep_alive_idle: Duration,
     keep_alive_requests: i32,
 }
@@ -99,7 +109,7 @@ pub struct ServeOptions {
 // by one listener, the 10 s read deadline, a 130 s keep-alive idle span
 // and 1000 requests per connection.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000 };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), body_min_rate: 240, body_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000 };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -252,8 +262,11 @@ function __recv_scratch(): u8[] {
 // response in flight is sent, how many requests it has answered, and
 // whether a complete request is still buffered because the event's
 // burst ended before it (answered on the next wait, which returns at
-// once), and whether the request being read has had its `100 Continue`.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[] }
+// once), whether the request being read has had its `100 Continue`, and
+// the body's clock: the monotonic time the request's header block was
+// found complete (-1 while it is being read or nothing is) and how many
+// bytes the buffer held then, so the bytes since are the body's.
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], body_since: i64[], body_base: i32[] }
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
@@ -290,7 +303,7 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
     var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false) };
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), body_since: c.body_since.append(0 - (1 as i64)), body_base: c.body_base.append(0) };
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
@@ -303,6 +316,8 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     var served: i32[] = [];
     var backlog: boolean[] = [];
     var continued: boolean[] = [];
+    var body_since: i64[] = [];
+    var body_base: i32[] = [];
     var i: i32 = 0;
     while (i < c.fds.len()) {
         if (i != at) {
@@ -315,10 +330,12 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
             served = served.append(c.served[i]);
             backlog = backlog.append(c.backlog[i]);
             continued = continued.append(c.continued[i]);
+            body_since = body_since.append(c.body_since[i]);
+            body_base = body_base.append(c.body_base[i]);
         }
         i = i + 1;
     }
-    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued };
+    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, body_since: body_since, body_base: body_base };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -366,7 +383,8 @@ function __serve_close[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // peer is finished (EOF, an error, or the size cap) and what it sent is
 // what the buffer holds. The first bytes of a request start its read
 // deadline, replacing the keep-alive idle span an answered connection
-// was waiting under.
+// was waiting under, and the body's clock keeps the deadline no earlier
+// than what the body has delivered buys (`__body_deadline`).
 function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (__Conns, boolean) {
     var buf: u8[] = c.bufs[at];
     var was_idle: boolean = buf.len() == 0;
@@ -375,7 +393,8 @@ function __serve_read(c: __Conns, at: i32, scratch: u8[], opts: ServeOptions): (
         if (n == 0 - __eagain()) {
             var deadline: i64 = c.deadlines[at];
             if (was_idle && buf.len() > 0) { deadline = monotonic_ns() + opts.recv_deadline.as_nanos(); }
-            return (__Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) }, false);
+            c = __Conns { ...c, bufs: c.bufs.with(at, buf), deadlines: c.deadlines.with(at, deadline) };
+            return (__body_deadline(c, at, opts, monotonic_ns()), false);
         }
         if (n <= 0) {
             return (__Conns { ...c, bufs: c.bufs.with(at, buf) }, true);
@@ -457,11 +476,36 @@ function __pipeline_burst(): i32 {
 // buffer is empty, the read deadline while a partial request holds
 // bytes in it. The deadline bounds the wait for the peer, not the
 // handlers run before it, so a partial request's clock starts here
-// rather than at its first byte, which may have arrived a burst ago.
+// rather than at its first byte, which may have arrived a burst ago;
+// the body's clock starts over with it.
 function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
+    var now: i64 = monotonic_ns();
     var span: Duration = opts.keep_alive_idle;
     if (c.bufs[at].len() > c.offs[at]) { span = opts.recv_deadline; }
-    return __Conns { ...c, deadlines: c.deadlines.with(at, monotonic_ns() + span.as_nanos()) };
+    c = __Conns { ...c, deadlines: c.deadlines.with(at, now + span.as_nanos()), body_since: c.body_since.with(at, 0 - (1 as i64)) };
+    return __body_deadline(c, at, opts, now);
+}
+
+// __body_deadline(c, at, opts, now) — the connection's deadline held no
+// earlier than its body has earned: the body's clock starts when the
+// request's header block is found complete, and from then the request
+// may take the grace plus what its bytes since buy at the minimum rate.
+// A body that keeps flowing outlasts the read deadline; one that stalls
+// or trickles does not.
+function __body_deadline(c: __Conns, at: i32, opts: ServeOptions, now: i64): __Conns {
+    var since: i64 = c.body_since[at];
+    var base: i32 = c.body_base[at];
+    var buf: u8[] = c.bufs[at];
+    if (since < (0 as i64)) {
+        if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at])) { return c; }
+        since = now;
+        base = buf.len();
+    }
+    var earned: i64 = since + opts.body_rate_grace.as_nanos();
+    if (opts.body_min_rate > 0) { earned = earned + ((buf.len() - base) as i64) * (1000000000 as i64) / (opts.body_min_rate as i64); }
+    var deadline: i64 = c.deadlines[at];
+    if (earned > deadline) { deadline = earned; }
+    return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), body_since: c.body_since.with(at, since), body_base: c.body_base.with(at, base) };
 }
 
 // __serve_ready(drv, c, at, opts, tail) — a persisting connection whose
@@ -690,7 +734,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], body_since: [], body_base: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -757,7 +801,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], body_since: [], body_base: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {

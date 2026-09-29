@@ -81,14 +81,14 @@ function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     return http.http_response_ok("ok");
 }
 function main(): i32 {
-    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });
+    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), body_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200 });
 }
 `
 }
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 280
+const KeepAliveCycle = 281
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -116,9 +116,13 @@ const KeepAliveCycle = 280
 // with neither; a request whose header block says `Expect: 100-continue`,
 // answered `100 Continue` before its body is sent and then with the
 // body's echo, and one whose expectation the server cannot meet,
-// answered 417; and an HTTP/1.0 keep-alive request followed by an
-// HTTP/1.1 one on the same connection. Every response is checked, its
-// `Date` included, and every close the server owes is read as EOF.
+// answered 417; an HTTP/1.0 keep-alive request followed by an HTTP/1.1
+// one on the same connection; a body delivered in pieces over twice the
+// read deadline but well above the minimum body rate (the loop's grace
+// is 100 ms), answered with its echo, and one trickled below the rate,
+// closed at the read deadline without a response. Every response is
+// checked, its `Date` included, and every close the server owes is read
+// as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -429,6 +433,45 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		write(conn, "GET /m HTTP/1.1\r\nHost: localhost\r\n\r\n")
 		read(conn, r, "after HTTP/1.0 keep-alive", "keep-alive")
 		conn.Close()
+		// A body trickled a byte per 100 ms, 10 B/s: the read deadline
+		// closes the connection, since what the trickle has bought at the
+		// minimum rate never reaches it, and no response is owed. The
+		// trickle stops at the first write the closed connection refuses.
+		// It runs before the flowing body below, the cycle's last answered
+		// request: the bounded loop leaves once that is answered, and a
+		// request it owes no answer must not be the one it leaves on.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /chunked HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000\r\n\r\n")
+		started = time.Now()
+		for i := 0; i < 40; i++ {
+			time.Sleep(100 * time.Millisecond)
+			if _, err := io.WriteString(conn, "t"); err != nil {
+				break
+			}
+		}
+		eof(conn, r, "a body trickled below the minimum rate")
+		if waited := time.Since(started); waited > 4*time.Second {
+			t.Fatalf("the trickled body was closed after %v, not by the 300 ms read deadline", waited)
+		}
+		// A body of 6000 bytes delivered as 20 pieces 35 ms apart: 700 ms,
+		// over twice the 300 ms read deadline, at 8.5 KB/s, well above the
+		// 240 B/s the loop asks once the header block is in, so the
+		// request is answered with the body's echo.
+		conn = dial()
+		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		r = bufio.NewReader(conn)
+		flowing := strings.Repeat("f", 6000)
+		write(conn, "POST /chunked HTTP/1.1\r\nHost: localhost\r\nContent-Length: 6000\r\n\r\n")
+		for i := 0; i < 20; i++ {
+			time.Sleep(35 * time.Millisecond)
+			write(conn, flowing[i*300:(i+1)*300])
+		}
+		readBody(conn, r, "a body flowing above the minimum rate", flowing, "keep-alive")
+		conn.Close()
 	}
 }
 
@@ -529,7 +572,7 @@ func httpHandlerCensusRequests(t *testing.T, addr string, rounds int) {
 func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	t.Helper()
 	src := HTTPHandlerCensusSource(t, root, rounds)
-	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });"
+	const original = "    return __serve_loop(3, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), body_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200 });"
 	if strings.Count(src, original) != 1 {
 		t.Fatal("bounded HTTP entry changed")
 	}
@@ -538,7 +581,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     var port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
     print(int.int_to_string(port));
-    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), keep_alive_requests: 200 });
+    var result: i32 = __serve_loop(listener, (req: HttpRequest, plat: Platform): HttpResponse => census_handle(req, plat), ServeOptions { ...serve_options(), recv_deadline: time.duration_millis(300 as i64), body_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200 });
     if (tcp_close(listener) != 0) { return 92; }
     return result;`
 	return strings.Replace(src, original, entry, 1)
