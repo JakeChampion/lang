@@ -200,6 +200,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"literal-local-index-is-i32", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i = 1; var v = xs[i]; var w: i64 = i; return v; }\n", []string{"E003"}},
 		{"literal-local-float", "function main(): i32 { var x = 5; var f: f64 = x; return 0; }\n", []string{"E003"}},
 		{"literal-local-out-of-range", "function main(): i32 { var x = 300; var b: u8 = x; return 0; }\n", []string{"E047"}},
+		{"struct-match-variant-pattern", "struct Circle { r: i32 }\nfunction main(): i32 { var c = Circle { r: 5 }; match (c) { Circle(x) => { return 1; }, _ => { return 0; } } return 0; }\n", []string{"E035"}},
+		{"struct-match-record-pattern", "struct Circle { r: i32 }\nfunction main(): i32 { var c = Circle { r: 5 }; match (c) { Circle { r } => { return r; } } return 0; }\n", nil},
 		{"literal-cast-out-of-range", "function main(): i32 { var y = 300 as u8; var z = 3000000000 as i32; return 0; }\n", []string{"E047", "E047"}},
 		{"literal-cast-in-range", "function main(): i32 { var a = 255 as u8; var b = -1 as u8; var c = (1 + 300) as u8; return 0; }\n", nil},
 		// An open literal local compared with, or combined with, one that has
