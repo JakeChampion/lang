@@ -28,7 +28,7 @@ signable set is deliberately small:
 | `lint` | host-independent whole-repo gates |
 | `units` | pure-Go packages |
 | `wasm` | wasm executes host-independently, and the signoff refuses unless the wasmtime version matches the pin exactly. **Needs an x86-64 host**: 12 of the tests matching `TestWasm*` drive the x86-64 backend and skip without `qemu-x86_64`, where CI runs them on an x86_64 runner. On a Mac this lane refuses, correctly — signing it off here would claim 88 tests ran when 76 did |
-| `macos-arm64` | this machine IS the CI lane's platform (Apple Silicon macOS); covers both the `internal/e2e` and `internal/e2eselfhost` native-execution steps |
+| `macos-arm64` | this machine IS the CI lane's platform (Apple Silicon macOS); covers both the `internal/e2e` and `internal/e2eselfhost` native-execution steps. It does not cover the lane's Darwin stage-3 step (#8479), which builds the compiler and runs on the runner whether or not the commit is signed off |
 
 Expect a modest saving, and do not oversell it: these lanes are ~19 of the 317
 job-minutes a PR spends running. The reason to bother is the queue, not the

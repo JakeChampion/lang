@@ -131,7 +131,13 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    stage1 is the native candidate's), the one after it none. What is NOT
    closed: arm64-darwin, whose stage2
    exhausts the arena compiling the compiler (#8479), so its pin is still the
-   native-built candidate. `docs/BOOTSTRAP.md`.
+   native-built candidate. `docs/BOOTSTRAP.md`. As of 2026-09-29 the
+   exhaustion no longer reproduces: the `macos-15` lane builds the darwin
+   stage 3 on every round and it holds the fixed point (stage2 == stage3,
+   5.85 GB bumped). What is left is the wiring: `bootstrap.yml` running
+   distcheck on darwin and the pin refreshed as a self-built stage 2.
+   `docs/LOCAL-DEV-LOOP.md`, "The stage-1 / stage-2 self-compile on Apple
+   Silicon", has the measurements.
 2. **Every target self-contained on the self-host side.** ~~As of this
    writing `-target x86-64-linux` stops at GAS text and needs an external
    assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
