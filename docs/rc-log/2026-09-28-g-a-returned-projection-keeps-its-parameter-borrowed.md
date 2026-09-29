@@ -18,8 +18,9 @@ then retained the whole `Par` at the call site and released it in `peek`.
 A return lets out the returned value only. The unit planner already retains a
 projection of a borrowed parameter to hand it back; that is the path an array
 parameter always took, since the counted upgrade never applies to arrays. An
-identity return (`return p;`) still counts `p`, because the returned value is
-`p` itself. The returned-view special case folds into the same rule: a view
+identity return (`return p;`) never reaches this rule: `escapes_in` matches the
+bare name, so `handers` pins the function before the inference runs and `p`
+stays counted. The returned-view special case folds into the same rule: a view
 takes no unit, and it was already the only thing carried.
 
 Constructions, stores and counted call slots still carry anchors. A projection
@@ -29,13 +30,15 @@ instead is a separate question, not asked here.
 ## Witness
 
 `TestSelfHostOwnershipInference`:
-- `returned-projection-keeps-the-parameter-borrowed`: a cursor whose `peek`
-  returns an element of its token array, called in a loop while the cursor
-  stays live. Balanced at 4 allocations and 4 frees with no underflow on
-  x86-64, arm64 and wasm.
-- `modes-in-the-emitted-code`: `Cursor.advance` calls `__sem_release_Cursor`,
-  proving the marker, and `Cursor.peek` must not. With the old
-  `carried_values` the second assertion fails.
+- `modes-in-the-emitted-code` is the witness: `Cursor.advance` calls
+  `__sem_release_Cursor`, proving the marker, and `Cursor.peek` must not. With
+  the old `carried_values` the second assertion fails.
+- `returned-projection-keeps-the-parameter-borrowed` is the soundness net, not
+  a witness: it passes with the old `carried_values` too, since the extra
+  retain and release cancel. It catches a missing retain on the returned
+  element. The program is a cursor whose `peek` returns an element of its
+  token array, called in a loop while the cursor stays live; it balances at 4
+  allocations and 4 frees with no underflow on x86-64, arm64 and wasm.
 
 ## Measured (x86-64)
 
