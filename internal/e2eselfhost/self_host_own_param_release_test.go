@@ -652,13 +652,20 @@ function main(): i32 {
 // at live_bytes 0 with no rc underflow, and clean under the quarantining
 // allocator.
 func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
+	runBalancedRows(t, "ownhb", append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...))
+}
+
+// runBalancedRows runs every case on both lowerings: the exit code is the
+// value check (99 is the rc underflow gate), the leakcheck must balance at
+// live_bytes 0, and the sanitize leg must be clean.
+func runBalancedRows(t *testing.T, prefix string, cases []ownParamReleaseCase) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
 	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		for _, tc := range append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...) {
+		for _, tc := range cases {
 			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
 				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
-				progBin := buildBin(t, cli.gcc, dir, "ownhb_"+lw.name+"_"+tc.name, asm)
+				progBin := buildBin(t, cli.gcc, dir, prefix+"_"+lw.name+"_"+tc.name, asm)
 				stderr, exit := hevRun(t, cli.runner, progBin)
 				if exit != tc.want {
 					t.Fatalf("exited %d, want %d (99 = rc underflow; 77 = a read through a freed buffer)", exit, tc.want)
@@ -679,7 +686,7 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 				}
 
 				sanAsm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_SANITIZE=1")
-				sanBin := buildBin(t, cli.gcc, dir, "ownhb_san_"+lw.name+"_"+tc.name, sanAsm)
+				sanBin := buildBin(t, cli.gcc, dir, prefix+"_san_"+lw.name+"_"+tc.name, sanAsm)
 				sanErr, sanExit := hevRun(t, cli.runner, sanBin)
 				if sanExit != tc.want {
 					t.Fatalf("sanitize leg exited %d, want %d (124 = fatal sanitizer check)", sanExit, tc.want)

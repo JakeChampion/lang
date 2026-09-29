@@ -13696,7 +13696,10 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                     ast.ExprCall(lac) => {
                         match (lac.callee) {
                             ast.ExprIdent(lacid) => {
-                                arrlit_arg = scalar_arr_producer_call(c.args[ai], sc);
+                                // A capturing lambda's env box: a fresh box only this
+                                // argument holds.
+                                arrlit_arg = scalar_arr_producer_call(c.args[ai], sc)
+                                    || (lac.args.len() > 0 && mkclo_funcval(lacid.name).len() > 0);
                                 // A "STRARR:" producer — a POINTER-element array
                                 // — is stashable only at a COUNTED-RETAIN
                                 // position. The release here is a shallow buffer
