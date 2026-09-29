@@ -13294,7 +13294,7 @@ function is_socket_call(name: string, argc: i32): boolean {
 function socket_call_arity(name: string): i32 {
     if (util.has_str(["tcp_close", "tcp_pollable", "tcp_listen", "tcp_accept", "tcp_local_port", "unix_connect"], name)) { return 1; }
     if (util.has_str(["tcp_connect", "tcp_send", "tcp_recv", "udp_bind", "unix_listen", "tcp_recv_into"], name)) { return 2; }
-    if (util.has_str(["udp_send", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait"], name)) { return 3; }
+    if (util.has_str(["udp_send", "tcp_socket_ctl", "udp_connect", "udp_recvfrom", "tcp_connect_with", "reactor_wait", "tcp_sendfile"], name)) { return 3; }
     if (util.has_str(["udp_sendto", "reactor_ctl", "tcp_listen_with"], name)) { return 4; }
     return 0;
 }
@@ -13328,6 +13328,7 @@ function lower_call_socket(c: ast.ExprCall, cid: ast.ExprIdent, s: LowerState): 
     var a2: LowerState = lower_expr(c.args[2], a1);
     if (!a2.ok) { return a2; }
     if (cid.name == "tcp_socket_ctl") { return a2.emit(ir.op_tcp_socket_ctl()); }
+    if (cid.name == "tcp_sendfile") { return a2.emit(ir.op_tcp_sendfile()); }
     if (cid.name == "udp_connect") { return a2.emit(ir.op_udp_connect()); }
     if (cid.name == "udp_recvfrom") { return a2.emit(ir.op_udp_recvfrom()); }
     if (cid.name == "tcp_connect_with") { return a2.emit(ir.op_tcp_connect_with()); }
@@ -17234,6 +17235,12 @@ function lower_expr_field_access(fa: ast.ExprFieldAccess, s: LowerState): LowerS
         // pin — so refusing would reject programs that compile today. The
         // remaining wrong-width reads are all downstream of that erasure.
         return so0.emit(ir.op_tuple_get(tgi));
+    }
+    // `r.fd` on a Reader / Writer: the handle IS its fd (see stdin()), so
+    // the field read is the receiver's own value.
+    if (fa.field == "fd") {
+        var hty: string = expr_struct_type(fa.obj, s);
+        if (hty == "Reader" || hty == "Writer") { return lower_expr(fa.obj, s); }
     }
     // Qualified built-in `Option.None` (no call) — the same value as the
     // bare `None`: the canonical none box (op_opt_none). The native
