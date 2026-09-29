@@ -5524,6 +5524,45 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t; }
 `},
+	// A `?` exit replays the deferred assignment on the failure edge alone; the
+	// success edge keeps the binding's own value (#10694).
+	{name: "a-try-exit-replays-a-deferred-assignment-on-its-edge-alone", atLeast: 3, noLeak: true, src: `
+import "std/i32";
+function get(k: i32): Option[string] { if (k % 3 == 0) { return None; } return Some("v" + k.to_string()); }
+function step(k: i32): Option[i32] {
+    var acc: i32 = 0;
+    var names: string[] = [];
+    defer acc = acc + 1;
+    names = names.append("a" + k.to_string());
+    var x: string = get(k)?;
+    names = names.append(x);
+    acc = acc + x.len() + names.len();
+    return Some(acc);
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0;
+    while (i < 30) { match (step(i)) { Some(v) => { t = t + v; }, None => { t = t + 100; } } i = i + 1; }
+    return t % 256;
+}
+`},
+	// The failure edge runs the deferred cleanup too: a cell bumped by the
+	// defer counts every call, so 81 needs all six (three `?` exits).
+	{name: "a-try-exit-runs-the-deferred-cleanup-on-the-failure-edge", atLeast: 3, noLeak: true, src: `
+function fails(k: i32): Option[i32] { if (k % 2 == 0) { return None; } return Some(k); }
+function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
+function step(k: i32, out: Cell[i32]): Option[i32] {
+    var n: i32 = 0;
+    defer bump(out);
+    var x: i32 = fails(k)?;
+    return Some(n + x);
+}
+function main(): i32 {
+    var out: Cell[i32] = cell_new(0);
+    var t: i32 = 0; var k: i32 = 1;
+    while (k <= 6) { match (step(k, out)) { Some(v) => { t = t + v; }, None => { t = t + 10; } } k = k + 1; }
+    return t + out.get() * 7;
+}
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each

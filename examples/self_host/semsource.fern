@@ -1304,6 +1304,9 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     var test: Value = define(s, ssasem.variant_is(), [v.id], 0, fnames[0], t_bool());
     s = terminate(test.s, t_brif(test.id, good, leave));
 
+    // The cleanup replays deferred assignments on the failure edge only, so
+    // the success edge resumes with the bindings the test saw.
+    var entry: State = s;
     var gone: State = stmts(s.try_cleanup, open(s, leave, [pred]));
     if (!gone.ok) { return Value { s: gone, id: 0 }; }
     var args: i32[] = [];
@@ -1318,6 +1321,7 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     }
     var out: Value = define(gone, ssasem.variant_new(), args, 0, rnames[1], s.result);
     s = terminate(out.s, t_ret(out.id));
+    s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope };
 
     return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
 }
