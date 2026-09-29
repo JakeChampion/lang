@@ -65369,7 +65369,8 @@ function direct_call_callee_name(e: ast.Expr): string {
 
 pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, str_fresh: string[]): string[] {
     var out: string[] = [];
-    var aac: string[] = aac_rows_of(funcs, sig_reg_of(row_producer_rows_of(funcs)));
+    var arc: string[] = row_producer_rows_of(funcs);
+    var aac: string[] = aac_rows_of(funcs, sig_reg_of(arc));
     for fn in funcs {
         var rt: string = fn.ret_type;
         if (rt.len() >= 8 && (slice_unchecked(rt, 0, 7) == "Option[" || slice_unchecked(rt, 0, 7) == "Result[")
@@ -65403,35 +65404,24 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
                 && !body_has_nonqualifying_rcenum_return(fn.body, fn.body, fn.params, structs, rt, str_fresh, [])) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
-        // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
-        // in the SAME list (the no-new-threading trick RCE: uses above);
-        // aac_rows_of proves them. A qualifying return hands the caller a
-        // structure it solely owns (the self-host IR path has no
-        // return-transfer inc). collect_fresh_arrarr_names admits
-        // `var g: T[][] = mk(..)` call inits exactly like literal inits off
-        // these entries. Deeper nesting (`string[][][]`) may register, but the
-        // consuming slot's arrarr_elem is "" for those, so only the lax
-        // shallow-row free applies (sound), mirroring the literal-init path.
-        else if (util.has_str(aac, "AAC:" + fn.name + "|s") || util.has_str(aac, "AAC:" + fn.name + "|p")) {}
-        // #6102: fresh ROW producers, "ARC:<name>|<flag>" — the single-level
-        // sibling of AAC above, consumed by arrarr_self_append_row so an
-        // append-built arr-of-arr can take `g = g.append(make_row())`. Return
-        // type is one level of `[]` and NOT `[][]` (the AAC arm owns that
-        // shape, and this branch is an `else if` behind it anyway).
-        else if (fn.receiver_type.len() == 0
-                && rt.len() >= 2 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]"
-                && row_producer_kind(fn.body) >= 0) {
-            var rflag: string = "p";
-            if (row_producer_kind(fn.body) == 1) { rflag = "s"; }
-            out = out.append("ARC:" + fn.name + "|" + rflag);
-        }
     }
-    out = append_all(out, aac);
+    // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>" in
+    // the SAME list (the no-new-threading trick RCE: uses above); aac_rows_of
+    // proves them. A qualifying return hands the caller a structure it solely
+    // owns (the self-host IR path has no return-transfer inc).
+    // collect_fresh_arrarr_names admits `var g: T[][] = mk(..)` call inits
+    // exactly like literal inits off these entries. Deeper nesting
+    // (`string[][][]`) may register, but the consuming slot's arrarr_elem is ""
+    // for those, so only the lax shallow-row free applies (sound), mirroring the
+    // literal-init path. #6102: the fresh ROW producers, "ARC:<name>|<flag>",
+    // are the single-level sibling, consumed by arrarr_self_append_row so an
+    // append-built arr-of-arr can take `g = g.append(make_row())`.
+    out = append_all(append_all(out, aac), arc);
     return append_all(out, strict_closure_enum_rows(funcs, structs, str_fresh, out));
 }
 
 // row_producer_rows_of: the "ARC:" rows of the free functions returning one
-// level of array, which the "AAC:" proof reads before the arm above writes them.
+// level of array, which the "AAC:" proof reads as its ground facts.
 function row_producer_rows_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     for fn in funcs {
@@ -65822,7 +65812,13 @@ function aac_body_kind(stmts: ast.Stmt[], fn: parser.FuncDecl, rows: string[], a
             ast.StmtWhile(w) => { k = aac_body_kind(w.body, fn, rows, arc); },
             ast.StmtFor(fo) => { k = aac_body_kind(fo.body, fn, rows, arc); },
             ast.StmtMatch(m) => { for arm in m.arms { k = min_i32(k, aac_body_kind(arm.body, fn, rows, arc)); } },
-            _ => {}
+            ast.StmtDefer(d) => { k = aac_body_kind([d.action], fn, rows, arc); },
+            ast.StmtVar(_) => {},
+            ast.StmtAssign(_) => {},
+            ast.StmtExpr(_) => {},
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => { return 0 - 1; }
         }
         if (k < 0) { return 0 - 1; }
         worst = min_i32(worst, k);
