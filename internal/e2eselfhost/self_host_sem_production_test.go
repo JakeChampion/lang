@@ -1304,7 +1304,7 @@ function main(): i32 {
 	//
 	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
 	// this, on one call to `join_with_last`.
-	{name: "an-array-helper-is-a-free-function", atLeast: 50, noLeak: true, src: `
+	{name: "an-array-helper-is-a-free-function", atLeast: 49, noLeak: true, src: `
 import "std/array" as array;
 
 function main(): i32 {

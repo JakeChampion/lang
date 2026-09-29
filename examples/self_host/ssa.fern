@@ -1576,6 +1576,106 @@ function has_pred(ps: i32[], id: i32): boolean {
     return false;
 }
 
+// fuse_rotates rewrites `(x >> n) | (x << (W - n))`, the only spelling Fern
+// has for a rotate, into one `rotr:W:n` unary on x (#10615). A u32 keeps its
+// value zero-extended, so its left half carries a u32_wrap and its right half
+// needs none; a 64-bit rotate has neither. The shifts are left to prune_dead.
+pub function fuse_rotates(f: SFunc): SFunc {
+    var defs: SInst[] = [];
+    var none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    var i: i32 = 0;
+    while (i < f.nvals) { defs = defs.append(none); i = i + 1; }
+    for blk in f.blocks {
+        for ins in blk.insts { if (ins.result >= 0 && ins.result < f.nvals) { defs = defs.with(ins.result, ins); } }
+    }
+    var changed: boolean = false;
+    var nblocks: SBlock[] = [];
+    for blk in f.blocks {
+        var ninsts: SInst[] = [];
+        for ins in blk.insts {
+            var r: SInst = ins;
+            if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
+                var m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
+                if (m.kind_tag == 0) { m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]); }
+                if (m.kind_tag != 0) { r = m; changed = true; }
+            }
+            ninsts = ninsts.append(r);
+        }
+        nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
+    }
+    if (!changed) { return f; }
+    return SFunc { ...f, blocks: nblocks };
+}
+
+// rotate_half_pair is the rotate `or` computes when `rv` is the logical right
+// shift and `lv` the left one, or an instruction of kind 0 when it is not one.
+function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
+    var no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+    var rs: SInst = def_of(defs, rv);
+    var ls: SInst = def_of(defs, lv);
+    var w: i32 = 64;
+    if (zero_extends_u32(ls)) { w = 32; ls = def_of(defs, ls.args[0]); }
+    if (rs.kind_tag != 9 || rs.str != "shr_u" || ls.kind_tag != 9 || ls.str != "shl") { return no; }
+    if (shift_width(rs.imm) != w || shift_width(ls.imm) != w) { return no; }
+    if (copy_root(defs, rs.args[0]) != copy_root(defs, ls.args[0])) { return no; }
+    var n: i64 = const_value(defs, rs.args[1]);
+    var k: i64 = const_value(defs, ls.args[1]);
+    if (n <= 0i64 || k <= 0i64 || n + k != (w as i64)) { return no; }
+    return SInst { kind_tag: 10, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+}
+
+// zero_extends_u32 is a unary the emitters render as a 32-bit zero extension.
+function zero_extends_u32(ins: SInst): boolean {
+    if (ins.kind_tag != 10 || ins.args.len() != 1) { return false; }
+    if (ins.str == "u32_wrap" || ins.str == "int_cast:u32") { return true; }
+    return (ins.str == "int_wrap" || ins.str == "int_extend") && ins.imm == 1;
+}
+
+function def_of(defs: SInst[], v: i32): SInst {
+    if (v < 0 || v >= defs.len()) { return SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" }; }
+    return defs[v];
+}
+
+// A shift's imm is its operand width; anything but 64 is the 32-bit form.
+function shift_width(imm: i32): i32 {
+    if (imm == 64) { return 64; }
+    return 32;
+}
+
+// copy_root follows `copy` instructions back to the value they alias.
+function copy_root(defs: SInst[], v: i32): i32 {
+    var r: i32 = v;
+    var steps: i32 = 0;
+    while (steps < defs.len()) {
+        var d: SInst = def_of(defs, r);
+        if (d.kind_tag != 7 || d.args.len() != 1) { return r; }
+        r = d.args[0];
+        steps = steps + 1;
+    }
+    return r;
+}
+
+// const_value is an integer constant's value, or -1 for anything else (no
+// rotate count is negative).
+function const_value(defs: SInst[], v: i32): i64 {
+    var d: SInst = def_of(defs, copy_root(defs, v));
+    if (d.kind_tag == 1) { return d.imm as i64; }
+    if (d.kind_tag == 3) { return util.lit_to_i64(d.str); }
+    return 0i64 - 1i64;
+}
+
+// rotr_width and rotr_count read a `rotr:W:n` unary's name back.
+pub function rotr_width(what: string): i32 {
+    if (util.str_has_prefix(what, "rotr:64:")) { return 64; }
+    return 32;
+}
+pub function rotr_count(what: string): i32 {
+    var n: i32 = 0;
+    var i: i32 = 8;
+    while (i < what.len()) { n = n * 10 + ((what[i] as i32) - 48); i = i + 1; }
+    return n;
+}
+
 pub function prune_dead(f: SFunc): SFunc {
     var live: i32[] = prune_mark(f, prune_roots(f));
     var nblocks: SBlock[] = [];

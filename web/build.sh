@@ -11,10 +11,10 @@
 # `make bootstrap` (no Go) or `make selfhost-cli` (via bin/fern) both produce
 # it — or the one FERN_SELFHOST names.
 #
-# web/fern.wasm is the Go toolchain under GOOS=js, kept for what the
-# self-host compiler does not do yet: the language server behind the
-# editor's diagnostics, hover and completion, and the wasi:http handler
-# world (docs/PLAYGROUND-SELFHOST-WASM.md). Its runtime shim,
+# web/fern.wasm is the Go toolchain under GOOS=js, kept for the language
+# server behind the editor's diagnostics, hover and completion, which the
+# self-host compiler does not have (docs/PLAYGROUND-SELFHOST-WASM.md). Its
+# runtime shim,
 # web/wasm_exec.js, is copied from the Go distribution ($GOROOT/lib/wasm)
 # so the page's <script src="wasm_exec.js"> works without a bundler.
 #

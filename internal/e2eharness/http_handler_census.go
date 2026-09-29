@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,10 +54,11 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("var completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
 	body = strings.Replace(body, answered, answered+"\n                        completed = completed + 1;", 1)
 	// A handler may not sleep around its Platform bag (E080), so the slow
-	// paths burn pure work: 15M steps is 24 ms on wasm, 52 ms on x86-64
-	// and 69 ms under qemu, so a burst of 32 outlasts the 300 ms read
-	// deadline everywhere; /gone burns five times that, the window in
-	// which the client resets the connection.
+	// paths burn pure work: 12M steps is 19 ms on wasm, 42 ms on x86-64
+	// and 55 ms under qemu, so a burst of 32 outlasts the 300 ms read
+	// deadline everywhere, and 33 of them stay near a second on the
+	// slowest backend; /gone burns five times that, the window in which
+	// the client resets the connection.
 	return src[:start] + body + src[end:] + `
 function census_burn(n: i32): i32 {
     var x: i32 = 12345;
@@ -69,8 +71,8 @@ function census_burn(n: i32): i32 {
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     var work: i32 = 0;
-    if (req.path.starts_with("/slow")) { work = 15000000; }
-    if (req.path.starts_with("/gone")) { work = 75000000; }
+    if (req.path.starts_with("/slow")) { work = 12000000; }
+    if (req.path.starts_with("/gone")) { work = 60000000; }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
     if (census_burn(work) == 0 - 1) { return http.http_response_ok("never"); }
     return http.http_response_ok("ok");
@@ -118,9 +120,8 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	}
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
-	// keep-alive case from the header it leaves in place. An empty
-	// wantConnection accepts either.
-	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection string) {
+	// keep-alive case from the header it leaves in place.
+	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
 		if err != nil {
@@ -137,9 +138,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		if resp.Close {
 			got = "close"
 		}
-		if got != wantConnection && (wantConnection != "" || (got != "keep-alive" && got != "close")) {
+		if !slices.Contains(wantConnection, got) {
 			conn.Close()
-			t.Fatalf("%s: Connection=%q, want %q", label, got, wantConnection)
+			t.Fatalf("%s: Connection=%q, want one of %q", label, got, wantConnection)
 		}
 	}
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
@@ -193,11 +194,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
 		// A pipeline of 33 requests whose peer half-closes behind them. The
-		// 32 of the first burst persist, since a request is buffered behind
-		// each. The 33rd is answered from the backlog on a later wait, which
-		// may run before the half-close is sent, so it says close only if
-		// that wait read the end of stream; either way the server closes
-		// straight after it.
+		// write and the half-close are separate calls, so the server may
+		// answer even the 33rd before the end of stream arrives: that one
+		// may say either, but the connection must end straight after it.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
@@ -209,7 +208,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
 		}
-		read(conn, r, "half-closed pipeline, last", "")
+		read(conn, r, "half-closed pipeline, last", "close", "keep-alive")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
 		// then closed by the 300 ms read deadline the partial request waits
@@ -228,8 +227,14 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		// read deadline their first byte armed, and the 33rd is answered
 		// from the backlog on the next wait, so all 33 answered proves a
 		// connection with a request still to answer is not closed by that
-		// deadline.
+		// deadline. The 33 answers are a second of the server's CPU on the
+		// slowest backend, and a two-CPU runner shares that CPU with a
+		// second worker, so this connection waits longer than the others.
 		conn = dial()
+		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
 		for i := 0; i < 33; i++ {

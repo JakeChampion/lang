@@ -1237,8 +1237,8 @@ shareBtn.addEventListener("click", async () => {
 // stdout, diagnostics on stderr. It is compiled once at boot
 // (window.__fernDriverReady) and instantiated afresh for every call through
 // web/wasi-shim.js. Run, Run (wasm), View assembly and Build component all go
-// through it; the language server and the wasi:http world still come from
-// fern.wasm, the Go toolchain, until the self-host compiler has them.
+// through it, on both worlds; the language server still comes from
+// fern.wasm, the Go toolchain.
 let driverModule = null;
 function runDriver(src, args) {
   return runCoreWasm(driverModule, { stdin: src, args: ["fern"].concat(args) });
@@ -1334,15 +1334,13 @@ function renderHttpResponse(resp) {
 
 // "Run (wasm)" — world-aware. For the cli/run world it compiles a
 // core command module and runs it through web/wasi-shim.js; for the
-// wasi-http world it compiles the handler core module and drives one
-// request (from the request editor) through web/wasi-http-shim.js.
-// Both paths run the real compiled backend in-browser, no jco.
+// wasi-http world it compiles the handler core module (the driver's
+// `-target wasm32-wasi-http -emit core-module`) and drives one request
+// (from the request editor) through web/wasi-http-shim.js. Both paths
+// run the real compiled backend in-browser, no jco.
 function runWasmOnce() {
   const httpWorld = worldSelectEl.value === "wasm32-wasi-http";
-  const ready = httpWorld
-    ? typeof globalThis.fernCompileHttpHandlerCore === "function"
-    : driverModule !== null;
-  if (!ready) {
+  if (!driverModule) {
     outEl.textContent = "(runtime not ready)";
     return;
   }
@@ -1356,22 +1354,12 @@ function runWasmOnce() {
   // the synchronous compile call blocks the UI thread.
   setTimeout(async () => {
     try {
-      let bytes;
-      if (httpWorld) {
-        const result = globalThis.fernCompileHttpHandlerCore(getSrc());
-        if (result.error) {
-          outEl.textContent = "[compile error]\n" + result.error;
-          return;
-        }
-        bytes = b64ToBytes(result.wasm);
-      } else {
-        const compiled = await runDriver(getSrc(), ["-emit", "core-module"]);
-        if (compiled.exit !== 0) {
-          outEl.textContent = "[compile error]\n" + compiled.stderr;
-          return;
-        }
-        bytes = compiled.stdoutBytes;
+      const compiled = await runDriver(getSrc(), driverArgs(["-emit", "core-module"], httpWorld));
+      if (compiled.exit !== 0) {
+        outEl.textContent = "[compile error]\n" + compiled.stderr;
+        return;
       }
+      const bytes = compiled.stdoutBytes;
       if (httpWorld) {
         const resp = await runHttpHandler(bytes, {
           method: httpMethodEl.value,
@@ -1433,22 +1421,20 @@ syncHttpReqVisibility();
 // ---- Build a WebAssembly Component ----
 //
 // The self-host compiler's `-emit component` writes the wasi:cli/run
-// component `fern -target wasm32-wasi` writes; for the wasi:http world
-// `fernCompileHttpComponent(src)` returns the base64 of the
-// incoming-handler component `-target wasm32-wasi-http` writes. Either
-// way we offer the bytes for download plus the exact command to run
-// them locally.
+// component `fern -target wasm32-wasi` writes, or with `-target
+// wasm32-wasi-http` the incoming-handler component that target writes.
+// Either way we offer the bytes for download plus the exact command to
+// run them locally.
 //
 // Note: we intentionally do NOT transpile/run the component in the
 // browser. jco's `transpile` depends on Node's `fs`, which throws
 // (as an unhandled rejection) under a browser CDN shim — running a
 // component client-side needs jco's transpile step done ahead of
 // time (in Node / at build time), which is a follow-up.
-function b64ToBytes(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+// The driver's argv for a form: the wasi-http world names its target,
+// the cli/run world is the driver's default.
+function driverArgs(args, httpWorld) {
+  return httpWorld ? ["-target", "wasm32-wasi-http"].concat(args) : args;
 }
 
 function offerDownload(bytes, world) {
@@ -1469,10 +1455,7 @@ function offerDownload(bytes, world) {
 function buildComponentOnce() {
   const world = worldSelectEl.value || "wasm32-wasi";
   const httpWorld = world === "wasm32-wasi-http";
-  const ready = httpWorld
-    ? typeof globalThis.fernCompileHttpComponent === "function"
-    : driverModule !== null;
-  if (!ready) {
+  if (!driverModule) {
     outEl.textContent = "(runtime not ready)";
     return;
   }
@@ -1484,22 +1467,12 @@ function buildComponentOnce() {
   // before the synchronous wasm call blocks.
   setTimeout(async () => {
     try {
-      let bytes;
-      if (httpWorld) {
-        const result = globalThis.fernCompileHttpComponent(getSrc());
-        if (result.error) {
-          outEl.textContent = "[component error]\n" + result.error;
-          return;
-        }
-        bytes = b64ToBytes(result.wasm);
-      } else {
-        const built = await runDriver(getSrc(), ["-emit", "component"]);
-        if (built.exit !== 0) {
-          outEl.textContent = "[component error]\n" + built.stderr;
-          return;
-        }
-        bytes = built.stdoutBytes;
+      const built = await runDriver(getSrc(), driverArgs(["-emit", "component"], httpWorld));
+      if (built.exit !== 0) {
+        outEl.textContent = "[component error]\n" + built.stderr;
+        return;
       }
+      const bytes = built.stdoutBytes;
       const cmd = offerDownload(bytes, world);
       outEl.textContent =
         "Built a " + world + " component (" + bytes.length + " bytes).\n" +
