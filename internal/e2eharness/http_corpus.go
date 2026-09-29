@@ -152,16 +152,6 @@ function main(): i32 {
 	return b.String()
 }
 
-// HTTPCorpusWant is the output HTTPCorpusSource's program is pinned to,
-// one `name<TAB>verdict` line per case.
-func HTTPCorpusWant(cases []HTTPCorpusCase) string {
-	var b strings.Builder
-	for _, c := range cases {
-		fmt.Fprintf(&b, "%s\t%s\n", c.Name, c.Verdict)
-	}
-	return b.String()
-}
-
 // HTTPCorpusDiff names each case whose measured line differs from its
 // pinned one, with both, or the shape mismatch when the line counts do.
 func HTTPCorpusDiff(cases []HTTPCorpusCase, got string) []string {
