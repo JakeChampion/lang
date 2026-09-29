@@ -15926,28 +15926,22 @@ function e057_var_annot_diags(an: Annot[]): util.Diag[] {
 }
 
 // E044Walk is what every step of the capture walk needs and none of it
-// changes: the enclosing function's genericity and the three name sets that
-// decide whether an annotation is an erased type variable. It is a record
-// rather than four more parameters because the walk now recurses through
-// EXPRESSIONS as well as statements, and the expression side has twenty-five
-// recursive call sites.
-struct E044Walk { is_generic: boolean, tn: TypeNames, void_fns: string[] }
+// changes: the declared free functions returning `void`. It is a record
+// rather than a parameter because the walk recurses through EXPRESSIONS as
+// well as statements, and the expression side has twenty-five recursive call
+// sites.
+struct E044Walk { void_fns: string[] }
 
 // e044_diags ports the Go checker's capture-eligibility rule (E044): a
 // closure may capture scalars and pointer-shaped values, but NOT a value
-// with no runtime representation — natively ast.VoidType (a `void` call
-// result bound to a var) or ast.ParamType (an erased generic type
-// parameter), the only two shapes the native captureSink rejects
-// (checker.go E044). The self-host type model erases both to `unknown`, so
+// with no runtime representation — natively ast.VoidType, a `void` call
+// result bound to a var, the one shape the native captureSink rejects
+// (checker.go E044). The self-host type model erases it to `unknown`, so
 // the suspects are identified SYNTACTICALLY and the rule stays deliberately
-// narrow (it must never false-positive on the bundle):
-//   - void suspect: a body `var x = f();` whose callee is a declared free
-//     function with an explicit `void` return type;
-//   - param-type suspect: in a GENERIC function only, a parameter or body
-//     var whose annotation is a bare unknown identifier — a generic's
-//     `x: T` is exactly the shape the native checker types as ParamType.
-// A lambda that CAPTURES a suspect draws E044 at the enclosing statement,
-// naming the suspect's annotation spelling like native ("T" / "void").
+// narrow (it must never false-positive on the bundle): a body
+// `var x = f();` whose callee is a declared free function with an explicit
+// `void` return type. A lambda that CAPTURES a suspect draws E044 at the
+// enclosing statement, labelled "void" like native.
 // is_written_lambda_origin decides which lambdas this reaches: a bare one, a
 // desugared local `function`, a `use` callback. Nested blocks re-walk with a
 // copy of the suspect set so block-scoped vars don't leak.
@@ -15963,29 +15957,6 @@ function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, wk: E044Wal
       out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
     }
     i = i + 1;
-  }
-  return out;
-}
-
-// A lambda's own parameters seed its scope the way a generic function's do:
-// inside a generic, `(x: T) => …` binds a value with no runtime
-// representation, and a lambda nested in that body capturing `x` is the same
-// E044 native reports for the enclosing function's parameter. Outside a
-// generic there are no such parameters and the scope starts empty.
-function lambda_suspects(lm: ast.ExprLambda, wk: E044Walk): string[] {
-  var out: string[] = [];
-  if (!wk.is_generic) { return out; }
-  for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.name); }
-  }
-  return out;
-}
-
-function lambda_labels(lm: ast.ExprLambda, wk: E044Walk): string[] {
-  var out: string[] = [];
-  if (!wk.is_generic) { return out; }
-  for param in lm.params {
-    if (e064_unknown_bare(param.type_name, wk.tn)) { out = out.append(param.type_name); }
   }
   return out;
 }
@@ -16013,7 +15984,7 @@ function e044_expr(e: ast.Expr, line: i32, col: i32, wk: E044Walk, suspects: str
       // spelling by simply not being in the set (#9777).
       if (parser.is_written_lambda_origin(lm.origin)) {
         out = util.append_diags(out, e044_lambda_check(lm, line, col, wk, suspects, labels));
-        out = util.append_diags(out, e044_stmts(lm.body, wk, lambda_suspects(lm, wk), lambda_labels(lm, wk)));
+        out = util.append_diags(out, e044_stmts(lm.body, wk, [], []));
       }
     },
     ast.ExprBinary(b) => {
@@ -16092,9 +16063,6 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
         if (is_void_init && v.type_name.len() == 0) {
           suspects = suspects.append(v.name);
           labels = labels.append("void");
-        } else if (wk.is_generic && e064_unknown_bare(v.type_name, wk.tn)) {
-          suspects = suspects.append(v.name);
-          labels = labels.append(v.type_name);
         }
       },
       ast.StmtReturn(r) => {
@@ -16135,20 +16103,8 @@ function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels
   return out;
 }
 
-function e044_diags(efn: parser.FuncDecl, tn: TypeNames, void_fns: string[]): util.Diag[] {
-  var suspects: string[] = [];
-  var labels: string[] = [];
-  var is_generic: boolean = efn.type_params.len() > 0 || efn.all_type_params.len() > 0;
-  if (is_generic) {
-    for param in efn.params {
-      if (e064_unknown_bare(param.type_name, tn)) {
-        suspects = suspects.append(param.name);
-        labels = labels.append(param.type_name);
-      }
-    }
-  }
-  var wk: E044Walk = E044Walk { is_generic: is_generic, tn: tn, void_fns: void_fns };
-  return e044_stmts(efn.body, wk, suspects, labels);
+function e044_diags(efn: parser.FuncDecl, void_fns: string[]): util.Diag[] {
+  return e044_stmts(efn.body, E044Walk { void_fns: void_fns }, [], []);
 }
 
 // ---- E053: `fip` fully-in-place verification -------------------------------
@@ -18628,9 +18584,8 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
       body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
     }
   }
-  // E044: a closure capture of a value with no runtime representation —
-  // a `void` call result or an erased generic type parameter. Runs for
-  // EVERY function (generic ones are where the ParamType shape lives).
+  // E044: a closure capture of a value with no runtime representation, a
+  // `void` call result.
   var e044_void_fns: string[] = [];
   for func in mod.funcs {
     if (func.receiver_name.len() == 0 && func.ret_type == "void") {
@@ -18639,7 +18594,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   }
   for func in mod.funcs {
     if (in_focus(focus, func)) {
-      body_diags = util.append_diags(body_diags, e044_diags(func, tn, e044_void_fns));
+      body_diags = util.append_diags(body_diags, e044_diags(func, e044_void_fns));
     }
   }
   // E053 (`fip` no-allocation verification), E065 (`str` view escaping a

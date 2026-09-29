@@ -2153,6 +2153,28 @@ func TestNestedPointerCaptureWriteBackRejected(t *testing.T) {
 	}
 }
 
+// A closure may capture a value whose type is a type parameter of the
+// enclosing function: it is concrete once the function is instantiated,
+// so E044 is for a captured `void` alone.
+func TestClosureCapturesGenericValue(t *testing.T) {
+	if err := checkSource(t, `function apply[S](init: S, f: (S) => i32): i32 {
+    var run: () => i32 = (): i32 => f(init);
+    return run();
+}
+function main(): i32 { return apply(7, (n: i32): i32 => n + 1); }`); err != nil {
+		t.Fatalf("a generic-typed capture should be accepted, got: %v", err)
+	}
+	err := checkSource(t, `function log(): void { print("x"); }
+function main(): i32 {
+    var done = log();
+    var f = () => done;
+    return 0;
+}`)
+	if err == nil || !hasCode(err, "E044") {
+		t.Fatalf("want E044 on a captured void, got: %v", err)
+	}
+}
+
 // The ENCLOSING scope's store into a captured variable is E049 too when the
 // value can reach a closure (#8440). E049 used to guard only the inside of the
 // closure, but the capture is shared by reference — closureconv gives it a heap
