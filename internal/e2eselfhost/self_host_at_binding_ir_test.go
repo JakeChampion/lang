@@ -1,28 +1,11 @@
 package e2eselfhost
 
-import (
-	"os/exec"
-	"testing"
-)
+import "testing"
 
-// `@` bindings on the self-host IR path (#5356): `match (b) { n @ Full(v) => … }`
-// and `match (p) { w @ Point { x, y } => … }` bind the whole matched value
-// alongside the payload / field binds.
-//
-// Variant `@`: the parser records at_binding on PatVariant; lower_stmt_match
-// prepends `var n = <cached scrutinee>;` to the arm body and rewrites any
-// guard reference to `n` to the cached scrutinee (astwalk.subst_ident_expr)
-// so the guard sees the value before the body-prepended bind. The expression
-// form delegates via lower_iife_match, inheriting both.
-//
-// Struct `@`: struct matches desugar at parse time (build_struct_match), so
-// the at-name is emitted as `var w = <cached scrutinee>;` in the arm's bind
-// list — ahead of the guard — no lowering change needed.
-//
-// Tuple `@`: tuple matches also desugar at parse time (build_tuple_match).
-// When any arm binds `@`, the whole tuple is cached in a `_w` temp (single
-// scrutinee eval) that the element destructure reads from, and the at-name
-// aliases it in the arm's bind list.
+// `@` bindings through the self-hosted CLI: `match (b) { n @ Full(v) => … }`,
+// `w @ Point { x, y }` and `w @ (a, b)` bind the whole matched value alongside
+// the payload, field or element binds, and a guard may read the whole-value
+// name. Every answer comes from the interpreter.
 var selfHostAtBindingCases = []struct {
 	name string
 	src  string
@@ -51,13 +34,8 @@ function f(b: Box): i32 {
   };
 }
 function main(): i32 { return f(Full(3)); }`},
-	// The guard reaches `n` through a node the rename used to walk past.
-	// astwalk.subst_ident_expr spelled out eight expression kinds and
-	// wildcarded the rest, so a struct literal, a slice or a lambda in the
-	// guard kept the ORIGINAL name — which is not in scope yet, because the
-	// whole-value bind is prepended to the arm BODY. Lowering then could not
-	// resolve it and the whole module fell off the IR path
-	// ("function value n not defined"), on programs native compiles and runs.
+	// The guard reads `n` inside a struct literal, an immediately invoked
+	// capturing lambda, and a slice.
 	{"guard_at_in_struct_literal", `enum Box { Full(i32), Empty }
 struct H { b: Box }
 function unwrap(h: H): i32 { match (h.b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }
@@ -129,29 +107,12 @@ function main(): i32 { return f((4, 6)); }`},
 }
 
 func TestSelfHostAtBindingX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	cli := newStrictCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "flatten.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
 	for _, tc := range selfHostAtBindingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog := []byte(tc.src + "\n")
-			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, gcc, runner, driverBin, prog, "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			want := interpExit(t, interpBin, tc.src+"\n")
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
@@ -159,25 +120,13 @@ func TestSelfHostAtBindingX86_64(t *testing.T) {
 }
 
 func TestSelfHostAtBindingArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	interpBin := buildLangBinForInterp(t)
-	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "flatten.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
 	for _, tc := range selfHostAtBindingCases {
 		t.Run(tc.name, func(t *testing.T) {
-			prog := []byte(tc.src + "\n")
-			want := interpExit(t, interpBin, string(prog))
-			asm := runCapture(t, x86gcc, x86runner, driverBin, prog, "-target", "arm64-linux", "-ir")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != want {
+			want := interpExit(t, interpBin, tc.src+"\n")
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, code, want)
 			}
 		})
