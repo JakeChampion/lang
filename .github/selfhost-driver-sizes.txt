@@ -365,17 +365,20 @@
 # pin's source commit (ssarc.fern #10670, ssasem.fern #10674) leave this input's
 # output unchanged. One that does not will part the two (docs/BOOTSTRAP.md).
 # Measured with FERN_WARM_DRIVER over every row, FERN_DRIVER_SIZE_REPORT on
-# the branch.
-fern.fern/stage2 12342352
-fern.fern 12342352
-asm_load_run.fern 8097024
-asm_modload_run.fern 7555472
-asm_ir_run.fern 7301672
-asm_run.fern 6764208
-wasm_ir_run.fern 6704800
-wasm_run.fern 6701912
-wasm_runio_run.fern 6671696
-asm_pathprobe_run.fern 5452200
-asm_ir_elig_run.fern 4626760
-irlower_run.fern 5312696
-checker_modload_run.fern 2218872
+# the branch. Re-measured the same day against the refreshed pin
+# stage0-20260929-32d575e, whose hand-back set copies a lent view for a
+# callee that keeps it through a local: every row +0.01-0.05% (fern.fern
+# 12342352 -> 12346904), the copies that fix carries.
+fern.fern/stage2 12346904
+fern.fern 12346904
+asm_load_run.fern 8098096
+asm_modload_run.fern 7556312
+asm_ir_run.fern 7302512
+asm_run.fern 6765056
+wasm_ir_run.fern 6705640
+wasm_run.fern 6702744
+wasm_runio_run.fern 6672536
+asm_pathprobe_run.fern 5453048
+asm_ir_elig_run.fern 4626984
+irlower_run.fern 5313536
+checker_modload_run.fern 2219728
