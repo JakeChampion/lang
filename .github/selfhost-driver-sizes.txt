@@ -358,11 +358,11 @@
 # FERN_WARM_DRIVER=fern.fern FERN_DRIVER_SIZE_REPORT on the branch.
 # 2026-09-29 — every row re-baselined: the drivers are built by the pinned
 # stage0 self-host compiler instead of the Go x86-64 backend (#10680), and
-# its output is 20-27% smaller per driver (fern.fern 14118057 -> 12342352).
+# its output is 12-27% smaller per driver (fern.fern 14118057 -> 12342352).
 # fern.fern/stage2 joins as the tracked artifact — the compiler's own output
 # for itself, the one row a codegen change in the current compiler moves.
-# Equal to fern.fern today because the pin was built from this tree's
-# source; the two part when the codegen changes after the pin's commit.
+# Equal to fern.fern today because no codegen change has landed since the
+# pin's source commit; the two part when one does (docs/BOOTSTRAP.md).
 # Measured with FERN_WARM_DRIVER over every row, FERN_DRIVER_SIZE_REPORT on
 # the branch.
 fern.fern/stage2 12342352
