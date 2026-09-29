@@ -12304,6 +12304,21 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
+        // E035: a match on a declared STRUCT takes `Name { … }` patterns, which
+        // the parser desugars before this sees the match, or `_`; any named arm
+        // left here is a variant pattern over a value that has no variants.
+        if let typeinfo.TypeStruct(msts) = mst {
+          var msig: StructSig = cur.lookup_struct(msts.name);
+          if (m.origin == "" && msig.name == msts.name && msig.enum_owner.len() == 0) {
+            for sarm in m.arms {
+              if let ast.PatVariant(spv) = sarm.pattern {
+                if (spv.type_name.len() > 0) {
+                  out = out.append(dg_at("E035", "match on struct `" + msts.name + "` only accepts struct patterns `" + msts.name + " { … }` or `_`", sarm.line, sarm.col));
+                }
+              }
+            }
+          }
+        }
         if (is_primitive_type(mst) && m.origin == "") {
           for arm in m.arms {
             match (arm.pattern) {
