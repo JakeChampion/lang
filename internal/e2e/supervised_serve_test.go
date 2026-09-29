@@ -155,6 +155,37 @@ func TestSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+// Two workers over one listener, one crash-looping while the other is
+// held in a handler: the give-up stops the worker the count did not
+// come from, so nothing holds the port after the supervisor exits.
+func TestSupervisedServeCrashLoopStopsSurvivor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("crash-loop giveup waits out ~11s of supervisor backoff")
+	}
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.StalledSurvivorServerSource(port))
+	cmd, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckCrashLoopStopsSurvivor(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// A worker's death while serving is not the exit code of the clean
+// shutdown that follows it.
+func TestSupervisedServeTrapThenShutdownExitsClean(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.TrappingServerSource(port))
+	cmd, stderrPath := startSupervisedServer(t, bin, runner)
+	e2eharness.CheckTrapThenShutdownExitsClean(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+// `max_connections: 0` serves as 1 rather than never reading the
+// listener.
+func TestServeMaxConnectionsFloor(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.MaxConnectionsFloorServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckMaxConnectionsFloor(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 // Design-doc "interp parity": the interpreter cannot bare-fork
 // (Go's runtime is threaded), so proc_fork answers -38 (ENOSYS)
 // and tcp_serve_supervised degrades to plain single-process

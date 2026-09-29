@@ -1333,7 +1333,8 @@ loop and `std/fetch` the client.
   off after the grace; 0 turns the rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
-  1), how many connections the loop holds open at once (at the cap the
+  1), how many connections the loop holds open at once (a value below 1
+  behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
@@ -1381,7 +1382,10 @@ loop and `std/fetch` the client.
   the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
   connection wakes one of them, or with `reuse_port` over a listener of
   its own; whichever dies is replaced, and SIGTERM is forwarded to every
-  worker and waited for. `tcp_serve_supervised_with(port, opts, init,
+  worker and waited for, the exit being the worst code a worker answered
+  it with. Eight deaths in a row within 100 ms of a fork are a give-up:
+  the workers still serving are stopped the same way, and the exit is
+  the last death's code. `tcp_serve_supervised_with(port, opts, init,
   handler)` threads a state as `tcp_serve_with` does: built once before
   the first fork, every worker inherits a copy, and a worker forked
   again after a death starts from that copy, not from where the dead one

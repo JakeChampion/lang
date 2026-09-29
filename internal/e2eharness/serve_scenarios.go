@@ -258,12 +258,37 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	}
 }
 
+// StalledSurvivorServerSource is TrappingServerSource over two workers
+// sharing the supervisor's listener, with /stall holding its worker in
+// the handler for a minute: the worker the crash loop never reaches.
+func StalledSurvivorServerSource(port int) string {
+	src := strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2 }", 1)
+	return strings.Replace(src, `    return http.ok("ok");`, `    if (req.path == "/stall") { sleep_ms(60000 as i64); }
+    return http.ok("ok");`, 1)
+}
+
+// CheckCrashLoopStopsSurvivor drives StalledSurvivorServerSource: one
+// worker is held in /stall while the other and its replacements
+// crash-loop on /boom; at the give-up the stalled worker is alive and
+// holding the listener, and the supervisor stops it (SIGTERM, which a
+// handler-held worker cannot act on, then SIGKILL five seconds later)
+// before exiting, so the port refuses connections afterwards.
+func CheckCrashLoopStopsSurvivor(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	stalled := rawRequest(t, addr, "/stall", "")
+	defer stalled.Close()
+	time.Sleep(200 * time.Millisecond)
+	CheckCrashLoopGivesUp(t, cmd, addr, stderrPath)
+}
+
 // CheckCrashLoopGivesUp drives TrappingServerSource with /boom in a
 // reconnect loop: each queued connection is accepted by the next worker
 // as soon as it forks and kills it within the 100 ms fast-death window,
 // and after eight such deaths the supervisor exits with the child's
-// code (134) instead of reforking forever. The doubling backoff sleeps
-// sum to about 11 s before the give-up.
+// code (134) instead of reforking forever, with no worker left holding
+// the port. The doubling backoff waits sum to about 11 s before the
+// give-up.
 func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
@@ -303,6 +328,52 @@ func CheckCrashLoopGivesUp(t *testing.T, cmd *exec.Cmd, addr, stderrPath string)
 	}
 	if n := strings.Count(stderr, "worker died with exit code 134"); n < 8 {
 		t.Errorf("worker-death lines = %d, want at least 8:\n%s", n, stderr)
+	}
+	// The fast deaths are counted over every worker, so another may have
+	// been alive at the give-up: the supervisor stops it before exiting,
+	// and nothing is left to accept.
+	if conn, err := net.DialTimeout("tcp", addr, 2*time.Second); err == nil {
+		conn.Close()
+		t.Errorf("the port still accepts after the supervisor gave up: a worker survived it\n--- stderr ---\n%s", stderr)
+	}
+}
+
+// CheckTrapThenShutdownExitsClean drives TrappingServerSource through a
+// trap and a refork, then SIGTERM: the exit is the shutdown's 0, not
+// the earlier death's 134.
+func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	CheckSurvivesHandlerTrap(t, addr, stderrPath)
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
+		t.Fatalf("supervisor exit code %d after a clean shutdown, want 0: the reforked worker's death leaked into it\n--- stderr ---\n%s", code, readFileString(stderrPath))
+	}
+}
+
+// MaxConnectionsFloorServerSource serves with `max_connections: 0`,
+// which the loop takes as 1: the listener is read whenever no
+// connection is held, so requests one at a time are answered.
+func MaxConnectionsFloorServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), max_connections: 0 }, handle);
+}
+`, port)
+}
+
+// CheckMaxConnectionsFloor drives MaxConnectionsFloorServerSource: three
+// requests in turn are each answered 200.
+func CheckMaxConnectionsFloor(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for i := 0; i < 3; i++ {
+		if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !ContainsStatus200(resp) {
+			t.Fatalf("request %d under max_connections: 0: want 200, got\n%s", i+1, resp)
+		}
 	}
 }
 

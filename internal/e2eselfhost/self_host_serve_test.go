@@ -162,6 +162,32 @@ func TestSelfHostSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostSupervisedServeCrashLoopStopsSurvivor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("crash-loop giveup waits out ~11s of supervisor backoff")
+	}
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StalledSurvivorServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckCrashLoopStopsSurvivor(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+func TestSelfHostSupervisedServeTrapThenShutdownExitsClean(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.TrappingServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckTrapThenShutdownExitsClean(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.MaxConnectionsFloorServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckMaxConnectionsFloor(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
 // The self-host compiler synthesises the serve `main` of a handler
 // program as the native checker does: with `init`'s state threaded, and
 // for a bare `handle`.
