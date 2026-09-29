@@ -1083,7 +1083,10 @@ serializer.
   the next pipelined request can be found behind it) and whether the
   connection outlives it (RFC 9112 §9.3: HTTP/1.1 unless `Connection:
   close`, HTTP/1.0 only with `Connection: keep-alive`; `Connection` is
-  read as a comma-separated token list and only a whole token counts;
+  read as a comma-separated token list and only a whole token counts,
+  so `Connection: upgrade` with an `Upgrade` header is ignored, the
+  request answered as HTTP/1.1 on a connection that persists, as RFC
+  9110 §7.8 allows a server with no protocol to switch to;
   a higher HTTP/1 minor version is read as HTTP/1.1, RFC 9112 §2.3).
   `http_parse_request_framed_from(buf, from)` is the same parse over
   `buf[from, len)`, so a loop answering pipelined requests moves an
