@@ -95,7 +95,7 @@ TestSelfHostArrtupCallBindWasm 2
 TestSelfHostArrtupCallBindX86_64 2
 TestSelfHostAsmArm64Bootstrap 22
 TestSelfHostAsmIRArm64Path 17
-TestSelfHostAsmIRPath 12
+TestSelfHostAsmIRPath 122
 TestSelfHostAsmRunX86_64 4
 TestSelfHostAssertIR 2
 TestSelfHostAssocFnIR 2
