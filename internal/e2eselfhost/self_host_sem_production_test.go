@@ -5782,7 +5782,8 @@ function main(): i32 {
 `
 
 // semUsizeWideOperatorsSource is semUsizeOperatorsSource past 32 bits, beside
-// the same checks on u64; it answers 127 on the register backends.
+// the same checks on u64; it answers 127 on the register backends, as the
+// interpreter does.
 const semUsizeWideOperatorsSource = `
 function scaled(n: i32): usize { return ((n as i64) * 1000000000i64) as usize; }
 function addresses(n: i32): i32 {
