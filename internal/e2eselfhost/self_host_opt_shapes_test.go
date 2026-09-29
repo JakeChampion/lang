@@ -257,6 +257,18 @@ function main(): i32 {
 `,
 		want:   map[string][]string{"x86-64-linux": {`sarq \$7, %\w+\n\s+xorq`}},
 		forbid: map[string][]string{"x86-64-linux": {`(?:sar|shl)q \$\d+, %\w+\n\s+movq %\w+, -\d+\(%rbp\)`}}},
+	// `(x >> n) | (x << (W - n))` is one rotate at either width, and a pair of
+	// shifts that is not one (a signed right shift, counts not summing to the
+	// width) keeps its shifts.
+	{name: "rotate_u32", fn: "rot32", exit: 170, src: rotateShapesSrc,
+		want:   map[string][]string{"x86-64-linux": {`rorl \$7, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bsh[lr]q\b`}, "arm64-linux": {`\bls[lr]\b`}}},
+	{name: "rotate_u64", fn: "rot64", exit: 170, src: rotateShapesSrc,
+		want:   map[string][]string{"x86-64-linux": {`rorq \$51, %r\w+`}, "arm64-linux": {`ror x\d+, x\d+, #51\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bsh[lr]q\b`}, "arm64-linux": {`\bls[lr]\b`}}},
+	{name: "rotate_lookalikes_kept", fn: "notrot", exit: 170, src: rotateShapesSrc,
+		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
 	// Spilled values whose lifetimes do not meet share a frame slot: the
 	// second phase's spills reuse the first phase's slots.
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
@@ -385,3 +397,15 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 		})
 	}
 }
+
+const rotateShapesSrc = `
+@noinline function rot32(x: u32): u32 { return (x >> 7u32) | (x << 25u32); }
+@noinline function rot64(x: u64): u64 { return (x << 13u64) | (x >> 51u64); }
+@noinline function notrot(x: u32, y: i32, z: i64): u32 { return ((x >> 7u32) | (x << 24u32)) ^ (((y >> 3) | (y << 29)) as u32) ^ (((z >> 3i64) | (z << 61i64)) as u32); }
+function main(): i32 {
+    var a: u32 = rot32(2147483905u32);
+    var b: u64 = rot64(81985529216486895u64);
+    var c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
+    return ((a % 97u32) as i32) + ((b % 89u64) as i32) + ((c % 83u32) as i32);
+}
+`

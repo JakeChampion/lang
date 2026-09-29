@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -168,15 +169,56 @@ func TestSelfHostWasiHttpTargetCoreModule(t *testing.T) {
 			t.Errorf("core module lacks %s", want)
 		}
 	}
+	// Every import must be a function the browser host provides: the
+	// shim's two tables are the whole of what web/wasi-http-shim.js links,
+	// and an import outside them is a LinkError in the page.
+	shim := browserHttpShimImports(t)
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "(import ") {
 			continue
 		}
-		if !strings.HasPrefix(line, `(import "wasi:http/types@0.2.0"`) && !strings.HasPrefix(line, `(import "wasi:io/streams@0.2.0"`) {
-			t.Errorf("core module imports outside the browser host's two interfaces: %s", line)
+		fields := strings.SplitN(line, `"`, 5)
+		if len(fields) < 5 {
+			t.Errorf("unreadable import line: %s", line)
+			continue
+		}
+		iface, name := fields[1], fields[3]
+		if !shim[iface][name] {
+			t.Errorf("core module imports %q from %q, which the browser host does not provide", name, iface)
 		}
 	}
+}
+
+// browserHttpShimImports reads the function names web/wasi-http-shim.js
+// provides under each interface, the two tables it instantiates the core
+// against, so the test's notion of the host is the file the page loads.
+func browserHttpShimImports(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "wasi-http-shim.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tables := map[string]string{"wasi:http/types@0.2.0": "httpTypes", "wasi:io/streams@0.2.0": "ioStreams"}
+	out := map[string]map[string]bool{}
+	for iface, object := range tables {
+		start := strings.Index(string(src), "const "+object+" = {")
+		if start < 0 {
+			t.Fatalf("web/wasi-http-shim.js has no %s table", object)
+		}
+		body := string(src[start:])
+		if end := strings.Index(body, "\n  };"); end >= 0 {
+			body = body[:end]
+		}
+		out[iface] = map[string]bool{}
+		for _, m := range regexp.MustCompile(`(?m)^\s{4}"([^"]+)":`).FindAllStringSubmatch(body, -1) {
+			out[iface][m[1]] = true
+		}
+		if len(out[iface]) == 0 {
+			t.Fatalf("web/wasi-http-shim.js's %s table has no entries", object)
+		}
+	}
+	return out
 }
 
 // TestSelfHostWasiHttpTargetNeedsHandle: a program with no `handle` is
