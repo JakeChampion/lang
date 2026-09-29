@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/e2eharness"
@@ -203,6 +204,40 @@ func TestSelfHostServePerIPCap(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.PerIPCapServerSource(port))
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
 	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeAcceptDistribution(t *testing.T) {
+	held := selfHostRaiseNofile(t, 4096+128) - 128
+	if held > 4096 {
+		held = 4096
+	}
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.AcceptDistributionServerSource(port, 4))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckAcceptDistribution(t, fmt.Sprintf("127.0.0.1:%d", port), 4, held)
+}
+
+// selfHostRaiseNofile lifts the soft RLIMIT_NOFILE towards `want`, as far
+// as the hard limit allows, and answers the soft limit in force.
+func selfHostRaiseNofile(t *testing.T, want uint64) int {
+	t.Helper()
+	var lim syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+		t.Fatalf("getrlimit: %v", err)
+	}
+	if lim.Cur < want {
+		lim.Cur = want
+		if lim.Cur > lim.Max {
+			lim.Cur = lim.Max
+		}
+		if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &lim); err != nil {
+			t.Fatalf("setrlimit: %v", err)
+		}
+	}
+	if lim.Cur < 256 {
+		t.Skipf("the descriptor limit is %d; the measurement needs hundreds", lim.Cur)
+	}
+	return int(lim.Cur)
 }
 
 func TestSelfHostSupervisedServeHandlerStallsItsWorker(t *testing.T) {
