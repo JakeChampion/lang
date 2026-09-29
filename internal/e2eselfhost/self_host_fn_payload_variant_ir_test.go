@@ -1,10 +1,7 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,13 +16,8 @@ import (
 // this pins the construction → store → match-bind → indirect-call round-trip
 // across the shapes the issue names.
 //
-// Both the x86-64 and wasm IR paths lower ALL five shapes, including the
-// fully-generic-recursive `Future[T]` (a generic enum whose payload fn RETURNS
-// the generic enum itself). On wasm that shape needs the fn payload's return
-// type preserved through the variant desugar (StructFieldDecl.fn_ret) so the
-// monomorphiser can rewrite the nested `match (cont(tok))`'s mono'd arm
-// patterns — added in #4722 (the x86 path never monomorphizes, so it lowered
-// the generic/recursive shapes all along).
+// The shapes include the generic recursive `Future[T]`, whose payload fn
+// returns the generic enum itself.
 //
 // Each program computes 42 via the payload function; the interp oracle agrees.
 var fnPayloadVariantCases = []struct {
@@ -82,71 +74,30 @@ var fnPayloadVariantCases = []struct {
 		"}\n"},
 }
 
-// TestSelfHostFnPayloadVariantIR pins the round-trip on the x86-64 IR path.
+// TestSelfHostFnPayloadVariantIR pins the round-trip on x86-64.
 func TestSelfHostFnPayloadVariantIR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range fnPayloadVariantCases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := runX86_64Bin(runner, driverBin, "-ir")
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			asm, err := cmd.Output()
-			if err != nil || len(asm) == 0 {
-				t.Fatalf("driver failed: %v", err)
-			}
+			asm := cli.emit(t, "x86-64-linux", tc.src)
 			// Constructors must lower as values, not calls to variant names.
-			if bytes.Contains(asm, []byte("call __fn_Fn")) || bytes.Contains(asm, []byte("call __fn_Wait")) {
+			if strings.Contains(asm, "call __fn_Fn") || strings.Contains(asm, "call __fn_Wait") {
 				t.Fatalf("%s: variant constructor mis-emitted as a direct call (#4364 regression)\n%s", tc.name, asm)
 			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			run := runX86_64Bin(runner, progBin)
-			_ = run.Run()
-			if code := run.ProcessState.ExitCode(); code != 42 {
-				t.Errorf("%s (x86-64 IR) exited %d, want 42", tc.name, code)
+			if code, _ := cli.runX86(t, asm); code != 42 {
+				t.Errorf("%s (x86-64) exited %d, want 42", tc.name, code)
 			}
 		})
 	}
 }
 
-// TestSelfHostFnPayloadVariantIRWasm is the wasm leg — all five shapes lower on
-// wasm IR (the fully-generic-recursive Future[T] shape closed by #4722).
+// TestSelfHostFnPayloadVariantIRWasm is the wasm leg.
 func TestSelfHostFnPayloadVariantIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host fn-payload-variant wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range fnPayloadVariantCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed: %v", err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			run.Dir = dir
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally:\n%s", wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != 42 {
-				t.Errorf("%s (wasm IR) exited %d, want 42\n--- WAT ---\n%s", tc.name, code, wat)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != 42 {
+				t.Errorf("%s (wasm) exited %d, want 42", tc.name, code)
 			}
 		})
 	}
