@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -54,10 +54,11 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("var completed: i32 = 0;\n    while (completed < %d || conns.fds.len() > 0)", rounds), 1)
 	body = strings.Replace(body, answered, answered+"\n                        completed = completed + 1;", 1)
 	// A handler may not sleep around its Platform bag (E080), so the slow
-	// paths burn pure work: 15M steps is 24 ms on wasm, 52 ms on x86-64
-	// and 69 ms under qemu, so a burst of 32 outlasts the 300 ms read
-	// deadline everywhere; /gone burns five times that, the window in
-	// which the client resets the connection.
+	// paths burn pure work: 12M steps is 19 ms on wasm, 42 ms on x86-64
+	// and 55 ms under qemu, so a burst of 32 outlasts the 300 ms read
+	// deadline everywhere, and 33 of them stay near a second on the
+	// slowest backend; /gone burns five times that, the window in which
+	// the client resets the connection.
 	return src[:start] + body + src[end:] + `
 function census_burn(n: i32): i32 {
     var x: i32 = 12345;
@@ -70,8 +71,8 @@ function census_burn(n: i32): i32 {
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
     var work: i32 = 0;
-    if (req.path.starts_with("/slow")) { work = 15000000; }
-    if (req.path.starts_with("/gone")) { work = 75000000; }
+    if (req.path.starts_with("/slow")) { work = 12000000; }
+    if (req.path.starts_with("/gone")) { work = 60000000; }
     if (req.path == "/behind-a-failed-write") { plat.log("answered /behind-a-failed-write"); }
     if (census_burn(work) == 0 - 1) { return http.http_response_ok("never"); }
     return http.http_response_ok("ok");
@@ -84,7 +85,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 273
+const KeepAliveCycle = 274
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -92,15 +93,20 @@ const KeepAliveCycle = 273
 // order across several waits and closed by the cap; HTTP/1.0 and
 // `Connection: close` requests that end theirs; a pipeline of 33 requests
 // whose peer half-closes behind them, one more than the loop's burst so
-// the last is answered from the backlog after the end of stream has been
-// read, and must say close; a complete request followed by the start of
-// another, whose connection the read deadline closes; a pipeline of 33
-// requests whose handlers together outlast that deadline, all of which
-// must be answered; a pipelined request answered to a peer that has
+// the last is answered from the backlog on a later wait, all of which
+// must be answered before the connection closes; a complete request
+// followed by the start of another, whose connection the read deadline
+// closes; a pipeline of 33 requests whose handlers together outlast that
+// deadline, all of which must be answered, and whose peer half-closes
+// behind them, so the last, answered after the end of stream has been
+// read, must say close; a pipelined request answered to a peer that has
 // reset the connection, whose failed write must close it before the
-// request behind it is answered; and an HTTP/1.0 keep-alive request
-// followed by an HTTP/1.1 one on the same connection. Every response is
-// checked, and every close the server owes is read as EOF.
+// request behind it is answered; a request with a malformed one pipelined
+// behind it, answered with close and then closed with no response to the
+// second; a request of 101 header fields, refused before any handler sees
+// it; and an HTTP/1.0 keep-alive request followed by an HTTP/1.1 one on
+// the same connection. Every response is checked, and every close the server owes
+// is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -120,7 +126,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
 	// keep-alive case from the header it leaves in place.
-	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection string) {
+	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
 		if err != nil {
@@ -137,9 +143,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		if resp.Close {
 			got = "close"
 		}
-		if got != wantConnection {
+		if !slices.Contains(wantConnection, got) {
 			conn.Close()
-			t.Fatalf("%s: Connection=%q, want %q", label, got, wantConnection)
+			t.Fatalf("%s: Connection=%q, want one of %q", label, got, wantConnection)
 		}
 	}
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
@@ -153,22 +159,6 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	write := func(conn net.Conn, s string) {
 		t.Helper()
 		if _, err := io.WriteString(conn, s); err != nil {
-			conn.Close()
-			t.Fatal(err)
-		}
-	}
-	cork := func(conn net.Conn) {
-		t.Helper()
-		raw, err := conn.(*net.TCPConn).SyscallConn()
-		if err == nil {
-			ctlErr := raw.Control(func(fd uintptr) {
-				err = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, tcpCorkOpt, 1)
-			})
-			if ctlErr != nil {
-				err = ctlErr
-			}
-		}
-		if err != nil {
 			conn.Close()
 			t.Fatal(err)
 		}
@@ -209,25 +199,22 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		read(conn, r, "Connection: close", "close")
 		eof(conn, r, "after Connection: close")
 		// A pipeline of 33 requests whose peer half-closes behind them. The
-		// socket is corked, so the requests and the end of stream arrive in
-		// one segment: the 33rd is answered from the backlog on a later wait,
-		// after the end of stream, so its response must say close. The 32
-		// before it are answered in the first burst and persist. Uncorked, the
-		// end of stream could arrive after the 33rd's answer, which is then
-		// correctly keep-alive.
+		// write and the half-close are separate calls, so the server may
+		// answer even the 33rd before the end of stream arrives: that one
+		// may say either, but the connection must end straight after it.
+		// The slow pipeline below pins the close, with the race settled.
 		conn = dial()
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
 		for i := 0; i < 33; i++ {
 			fmt.Fprintf(&pipeline, "GET /q%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
-		cork(conn)
 		write(conn, pipeline.String())
 		halfClose(conn)
 		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("half-closed pipeline %d", i), "keep-alive")
 		}
-		read(conn, r, "half-closed pipeline, last", "close")
+		read(conn, r, "half-closed pipeline, last", "close", "keep-alive")
 		eof(conn, r, "after the half-closed pipeline")
 		// A complete request with the start of another behind it: answered,
 		// then closed by the 300 ms read deadline the partial request waits
@@ -246,18 +233,30 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		// read deadline their first byte armed, and the 33rd is answered
 		// from the backlog on the next wait, so all 33 answered proves a
 		// connection with a request still to answer is not closed by that
-		// deadline.
+		// deadline. The 33 answers are a second of the server's CPU on the
+		// slowest backend, and a two-CPU runner shares that CPU with a
+		// second worker, so this connection waits longer than the others.
+		// The peer half-closes behind the pipeline: the 32 slow answers
+		// leave the end of stream long arrived by the time the 33rd is
+		// read from the backlog, so its response must say close, and the
+		// close must follow it.
 		conn = dial()
+		if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
 		r = bufio.NewReader(conn)
 		pipeline.Reset()
 		for i := 0; i < 33; i++ {
 			fmt.Fprintf(&pipeline, "GET /slow%d HTTP/1.1\r\nHost: localhost\r\n\r\n", i)
 		}
 		write(conn, pipeline.String())
-		for i := 0; i < 33; i++ {
+		halfClose(conn)
+		for i := 0; i < 32; i++ {
 			read(conn, r, fmt.Sprintf("slow pipeline %d", i), "keep-alive")
 		}
-		conn.Close()
+		read(conn, r, "slow pipeline, last", "close")
+		eof(conn, r, "after the slow pipeline")
 		// A request, a slow one and a third behind it in one write; the
 		// peer resets the connection once the first is answered, so the
 		// second response is written to a peer that is gone. That write
@@ -273,6 +272,30 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			t.Fatal(err)
 		}
 		conn.Close()
+		// A request with a malformed one pipelined behind it (a bare LF ends
+		// its request line): a parser with no lenient mode refuses the
+		// second (RFC 9112 §2.2) rather than read on, so the first's
+		// response says close, since the close follows it, and no response
+		// follows for the second. The header is what pins that the loop saw
+		// the malformed tail when it answered, rather than leaving it to
+		// the read deadline.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "GET /o HTTP/1.1\r\nHost: localhost\r\n\r\nGET /bare HTTP/1.1\nHost: localhost\r\n\r\n")
+		read(conn, r, "before a malformed request", "close")
+		eof(conn, r, "after a malformed request")
+		// 101 header fields, one past the cap: refused before any handler
+		// sees the request, so the connection closes with no response.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		pipeline.Reset()
+		pipeline.WriteString("GET /many HTTP/1.1\r\nHost: localhost\r\n")
+		for i := 0; i < 100; i++ {
+			fmt.Fprintf(&pipeline, "X-%d: %d\r\n", i, i)
+		}
+		pipeline.WriteString("\r\n")
+		write(conn, pipeline.String())
+		eof(conn, r, "a request with 101 header fields")
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()

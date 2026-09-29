@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +96,50 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// resolved, an independent check of the report's own _ok flags.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
+	}
+}
+
+// TestSelfHostIROpConstructorTags pins each `op_<kind>()` constructor in
+// ir.fern that builds through op0 to the id testdata/ir-kind-ids.txt gives
+// <kind>. The constructors carry their tag as a literal, so a wrong number
+// would type-check and build an op of another kind.
+func TestSelfHostIROpConstructorTags(t *testing.T) {
+	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(table)), "\n") {
+		name, id, _ := strings.Cut(line, "=")
+		ids[name] = id
+	}
+	src, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "ir.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A constructor whose name is not its kind's: str_index_nc is str_index
+	// with the bounds check off.
+	alias := map[string]string{"str_index_nc": "str_index"}
+	ctor := regexp.MustCompile(`(?m)^(?:pub )?function op_(\w+)\([^)]*\): Op \{ return (?:Op \{ \.\.\.)?op0\((\d+)\)`)
+	matches := ctor.FindAllStringSubmatch(string(src), -1)
+	if len(matches) < 200 {
+		t.Fatalf("found %d op0 constructors in ir.fern, want at least 200 — the pattern no longer matches", len(matches))
+	}
+	for _, m := range matches {
+		kind := m[1]
+		if a, ok := alias[kind]; ok {
+			kind = a
+		}
+		want, ok := ids[kind]
+		if !ok {
+			t.Errorf("op_%s: no kind %q in ir-kind-ids.txt", m[1], kind)
+			continue
+		}
+		if m[2] != want {
+			t.Errorf("op_%s builds tag %s, but %s is %s", m[1], m[2], kind, want)
+		}
+	}
+	if n := len(regexp.MustCompile(`\bop0\(`).FindAllString(string(src), -1)); n != len(matches)+1 {
+		t.Errorf("ir.fern has %d op0 uses but %d matched constructors (+ the definition): an unchecked call site", n, len(matches))
 	}
 }

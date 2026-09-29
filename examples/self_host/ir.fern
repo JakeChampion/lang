@@ -130,8 +130,8 @@ pub function width_ptr(): i32 { return 0 - 1; }
 // constants. Every field the opcode does not use is zeroed, so an Op is
 // always fully initialised (the value-semantics discipline ssa.fern uses).
 
-function op0(kind: string): Op {
-    return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+function op0(tag: i32): Op {
+    return Op { decl: 0 - 1, kind_tag: tag, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // constants
@@ -242,7 +242,7 @@ pub function op_funary(kind: string): Op {
 // scvtf / f64.convert_i32_s); f64_to_i32 truncates an f64 toward zero to a
 // signed i32 (cvttsd2si / fcvtzs / i32.trunc_f64_s). The value is held on the stack
 // as bits on the register backends; wasm's typed stack flips i32<->f64 here.
-pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
+pub function op_i32_to_f64(): Op { return op0(11); }
 // int_to_f64 is op_i32_to_f64 carrying the operand's WIDTH and SIGNEDNESS, the
 // pair EVERY backend needs. wasm's typed stack has four distinct opcodes
 // (f64.convert_i{32,64}_{s,u}) and no way to pick between them without this, so
@@ -256,12 +256,12 @@ pub function op_i32_to_f64(): Op { return op0("i32_to_f64"); }
 pub function op_int_to_f64(width: i32, unsigned: boolean): Op {
     return Op { decl: 0 - 1, kind_tag: kind_id("i32_to_f64"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: unsigned, str: "" };
 }
-pub function op_f64_to_i32(): Op { return op0("f64_to_i32"); }
+pub function op_f64_to_i32(): Op { return op0(12); }
 // f64_to_i64 truncates an f64 toward zero to a signed i64 (cvttsd2si to a
 // 64-bit reg / fcvtzs x / i64.trunc_f64_s). Distinct from f64_to_i32 only on
 // wasm, where i32 and i64 are different value types; the register backends
 // emit the same 64-bit-dest instruction for both.
-pub function op_f64_to_i64(): Op { return op0("f64_to_i64"); }
+pub function op_f64_to_i64(): Op { return op0(13); }
 // Unsigned truncation variants (#4332): the same kinds with `unsigned` set,
 // mirroring native's op.Unsigned. Saturation covers the full unsigned range —
 // NaN / negative -> 0, overflow -> u32::MAX / u64::MAX (arm64 fcvtzu, wasm
@@ -280,10 +280,10 @@ pub function op_f64_to_u64(): Op {
 // the 32-bit pair: they additionally narrow (f64->f32) / widen (f32->f64),
 // since the self-host stack carries every float as f64. f64_bits / f32_bits
 // produce an integer (i64 / i32); f64_from_bits / f32_from_bits produce an f64.
-pub function op_f64_bits(): Op { return op0("f64_bits"); }
-pub function op_f64_from_bits(): Op { return op0("f64_from_bits"); }
-pub function op_f32_bits(): Op { return op0("f32_bits"); }
-pub function op_f32_from_bits(): Op { return op0("f32_from_bits"); }
+pub function op_f64_bits(): Op { return op0(16); }
+pub function op_f64_from_bits(): Op { return op0(17); }
+pub function op_f32_bits(): Op { return op0(14); }
+pub function op_f32_from_bits(): Op { return op0(15); }
 
 // op_const_f64_text carries the float literal's SOURCE TEXT (in `str`) so the
 // backends can hand it straight to the assembler (`.double TEXT` in .rodata /
@@ -300,11 +300,11 @@ pub function op_load(width: i32): Op {
 pub function op_store(width: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
-pub function op_alloc(): Op { return op0("alloc"); }
+pub function op_alloc(): Op { return op0(76); }
 // `ptr_width` pushes the target's heap-pointer width in BYTES — 8 on x86-64 /
 // arm64, 4 on wasm32 — a backend-resolved constant (NOT a baked-in literal, which
 // would corrupt wasm32 pointer arithmetic). Backs core/map's `__ptr_width()`.
-pub function op_ptr_width(): Op { return op0("ptr_width"); }
+pub function op_ptr_width(): Op { return op0(79); }
 
 // high-level array ops — layout-agnostic. The IR carries array SEMANTICS
 // (make / index / index-store / length / refcount read), not a byte layout;
@@ -346,12 +346,12 @@ pub function op_arr_get_i64(): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_i
 // Unchecked 8-byte `arr_get` (i64/u64 element) — the i64 sibling of op_arr_get_nc.
 pub function op_arr_get_i64_nc(): Op { return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
 pub function op_arr_set_i64(): Op { return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" }; }
-pub function op_arr_len(): Op { return op0("arr_len"); }
-pub function op_arr_rc(): Op { return op0("arr_rc"); }
+pub function op_arr_len(): Op { return op0(90); }
+pub function op_arr_rc(): Op { return op0(91); }
 // `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
 // __fern_arr_push (the helper the AST `.append` and the map runtime use).
 // Lowered from a reassign-self `a = a.append(v)`; the result re-binds the slot.
-pub function op_arr_push(): Op { return op0("arr_push"); }
+pub function op_arr_push(): Op { return op0(92); }
 
 // `arr_push_owned` is `arr_push` for a self-reassign `a = a.append(v)` where the
 // target `a` is the SOLE owner of its buffer (not in aliased_names). It lowers to
@@ -363,14 +363,14 @@ pub function op_arr_push(): Op { return op0("arr_push"); }
 // the dominant self-host-emitted leak that OOMed the per-module self-compile of
 // the large modules (#3452 / #3425). Register-backend only difference from
 // arr_push is the helper called; element width is unchanged (8-byte slot).
-pub function op_arr_push_owned(): Op { return op0("arr_push_owned"); }
+pub function op_arr_push_owned(): Op { return op0(93); }
 
 // `arr_push_i64` is `arr_push` for an 8-byte-element array (i64[] / u64[]): the
 // value is an i64 (i64.store / 8-byte slot). On the register backends every
 // array slot is already 8 bytes, so this reuses __fern_arr_push; on wasm32,
 // where i32[] packs 4-byte slots, it lowers to the 8-byte-stride
 // $__fern_arr_push_i64. Lowered from `a = a.append(v)` on a u64[] / i64[].
-pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
+pub function op_arr_push_i64(): Op { return op0(94); }
 
 // `arr_push_f64` is `arr_push` for an f64[] (8-byte float element): the value
 // is an f64 (f64.store / 8-byte slot). On the register backends every array
@@ -378,15 +378,15 @@ pub function op_arr_push_i64(): Op { return op0("arr_push_i64"); }
 // bytes, so this reuses __fern_arr_push exactly like arr_push_i64; on wasm32
 // the operand stack is typed, so it lowers to the 8-byte-stride
 // $__fern_arr_push_f64. Lowered from `a = a.append(v)` on an f64[].
-pub function op_arr_push_f64(): Op { return op0("arr_push_f64"); }
+pub function op_arr_push_f64(): Op { return op0(95); }
 // The sole-owner forms of the 8-byte pushes: the grow reclaims the superseded
 // buffer, as arr_push_owned does for a 4-byte-slot array.
-pub function op_arr_push_owned_i64(): Op { return op0("arr_push_owned_i64"); }
-pub function op_arr_push_owned_f64(): Op { return op0("arr_push_owned_f64"); }
+pub function op_arr_push_owned_i64(): Op { return op0(302); }
+pub function op_arr_push_owned_f64(): Op { return op0(303); }
 // `alloc_u8` pops [n] → a fresh n-element array (8-byte slots, len = n) via
 // __fern_alloc_u8 (the `__alloc_u8(n)` byte-buffer builtin), every slot zero;
 // packed (ir.packed), n zero bytes via __fern_alloc_bytes.
-pub function op_alloc_u8(): Op { return op0("alloc_u8"); }
+pub function op_alloc_u8(): Op { return op0(77); }
 // packed marks a byte-array op as reading or producing a u8[] laid out a byte
 // an element, the layout the register backends give an array whose element
 // ops the typed lowering emits (width 8). Only that lowering marks an op; the
@@ -396,22 +396,22 @@ pub function packed(o: Op): Op { return Op { ...o, width: 8 }; }
 pub function is_packed(o: Op): boolean { return o.width == 8; }
 // `str_from_bytes` pops [arr] → a fresh string box packing each slot's low byte
 // via __fern_string_from_bytes (the `string_from_bytes_unchecked(arr)` builtin).
-pub function op_str_from_bytes(): Op { return op0("str_from_bytes"); }
+pub function op_str_from_bytes(): Op { return op0(103); }
 // `memcpy` pops [dst, src, n] (raw usize pointers + a byte count) → copies n
 // bytes src→dst and pushes a dummy 0 (the `__memcpy(dst, src, n)` builtin is
 // used statement-position, its value discarded). x86-64 emits `rep movsb`,
 // arm64 a byte-copy loop, wasm `memory.copy` — matching the AST emitters. This
 // is what lets core/int's int_to_string / __int_to_string_u64 (and everything
 // transitively calling them) lower on the IR path instead of BAIL call.
-pub function op_memcpy(): Op { return op0("memcpy"); }
+pub function op_memcpy(): Op { return op0(74); }
 // `memset` pops a byte-count n, a fill byte, and a usize dest (push order
 // dest,byte,n) and fills n bytes at dest with the low byte of `byte`, pushing a
 // dummy 0 (statement-position, discarded). Backs core/map's __memset; the IR
 // backends select rep stosb / a byte loop / memory.fill.
-pub function op_memset(): Op { return op0("memset"); }
+pub function op_memset(): Op { return op0(75); }
 // `free` pops a usize ptr and an i32 size (core/map's __free) and does nothing
 // under the bump/leak heap, pushing a dummy 0. A stack-balancing no-op.
-pub function op_free(): Op { return op0("free"); }
+pub function op_free(): Op { return op0(78); }
 // Raw-memory load/store intrinsics — the `__load_i32` / `__load_i64` /
 // `__load_ptr` / `__store_i32` / `__store_ptr` builtins the core/map runtime
 // uses to read/write its packed entry buffer. The AST backends emit these as
@@ -424,16 +424,16 @@ pub function op_free(): Op { return op0("free"); }
 // __map_dec_value (and the wider Map subsystem) on the IR path.
 // `__load_u8(addr)` is the byte member of the family and has no op of its
 // own: irlower emits `raw_load8` with a constant zero offset.
-pub function op_load_i32(): Op { return op0("load_i32"); }
-pub function op_load_i64(): Op { return op0("load_i64"); }
-pub function op_load_ptr(): Op { return op0("load_ptr"); }
-pub function op_store_i32(): Op { return op0("store_i32"); }
+pub function op_load_i32(): Op { return op0(69); }
+pub function op_load_i64(): Op { return op0(70); }
+pub function op_load_ptr(): Op { return op0(71); }
+pub function op_store_i32(): Op { return op0(72); }
 // op_store_i64 writes an 8-byte i64 to a raw usize address (the store sibling
 // of op_load_i64). Pops [addr, val] and pushes a dummy 0 (statement-position,
 // discarded), like store_i32/store_ptr — but stores the full 64-bit width.
 // Backs __store_i64, which was asymmetric with __load_i64 (#4375 item 2).
-pub function op_store_i64(): Op { return op0("store_i64"); }
-pub function op_store_ptr(): Op { return op0("store_ptr"); }
+pub function op_store_i64(): Op { return op0(199); }
+pub function op_store_ptr(): Op { return op0(73); }
 // `int_cast` masks / extends a 32-bit integer to a narrower int type's range:
 // `as u8` (and 255), `as i32` (sign-extend low 32 — movslq), `as u32`
 // (zero-extend low 32 — movl).
@@ -444,7 +444,7 @@ pub function op_int_cast(ty: string): Op { return Op { decl: 0 - 1, kind_tag: 9,
 // 64-bit REGISTER backends so u32 semantics wrap at 2^32 like native (and like
 // wasm's native 32-bit i32 ops); on wasm it is a no-op (the value is already a
 // 32-bit i32). This is what makes u32-heavy code (std/crypto's SHA-256) correct.
-pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
+pub function op_u32_wrap(): Op { return op0(10); }
 
 // high-level string ops — layout-agnostic, like the array ops. The IR carries
 // string SEMANTICS (length read, concat, equality); each backend selects its
@@ -454,30 +454,30 @@ pub function op_u32_wrap(): Op { return op0("u32_wrap"); }
 // concatenated string (a fresh box); `str_eq` pops [a, b] → 1 if byte-equal
 // else 0. Strings are NOT reference-counted (they leak, matching asm.fern's AST
 // path — fine for short-lived CLI / edge programs), so no RC ops accompany them.
-pub function op_str_len(): Op { return op0("str_len"); }
+pub function op_str_len(): Op { return op0(97); }
 // `str_data` pops [str] → the address of its bytes: slot 0 of the register
 // backends' box, and the block plus 4 on wasm.
-pub function op_str_data(): Op { return op0("str_data"); }
-pub function op_str_concat(): Op { return op0("str_concat"); }
-pub function op_str_eq(): Op { return op0("str_eq"); }
+pub function op_str_data(): Op { return op0(345); }
+pub function op_str_concat(): Op { return op0(98); }
+pub function op_str_eq(): Op { return op0(99); }
 // `str_cmp` pops [a, b] → a signed i32: <0 if a<b, 0 if equal, >0 if a>b
 // (lexicographic byte compare, length tiebreak). Ordering compares (< <= > >=)
 // lower to str_cmp followed by the relational op against 0.
-pub function op_str_cmp(): Op { return op0("str_cmp"); }
+pub function op_str_cmp(): Op { return op0(100); }
 // `str_index` pops [str, i] → the i32 byte value at index i (`s[i]`). Each
 // backend reads the byte from its own string layout (x86/arm64 16-byte box
 // [data@0,len@8] → byte at [data+i]; wasm data-section [len@0,bytes@4] → byte at
 // [s+4+i]). No bounds check (matches the AST path).
-pub function op_str_index(): Op { return op0("str_index"); }
+pub function op_str_index(): Op { return op0(101); }
 // op_str_index_nc is the byte read with its bounds check elided (i32_imm 1), for
 // an index the lowering proved below the length, as op_arr_get_nc is.
-pub function op_str_index_nc(): Op { return Op { ...op0("str_index"), i32_imm: 1 }; }
+pub function op_str_index_nc(): Op { return Op { ...op0(101), i32_imm: 1 }; }
 // `str_slice` pops [str, start, end] → a fresh string for `s[start:end]`. On
 // x86/arm64 this is a zero-copy VIEW: a new 16-byte box [data = src.data+start,
 // len = end-start] sharing the source bytes. On wasm, strings are inline blocks
 // (no separate data pointer), so it COPIES via $__fern_substr. Bounds-checked at
 // construction (#5419): traps unless 0 <= start <= end <= len.
-pub function op_str_slice(): Op { return op0("str_slice"); }
+pub function op_str_slice(): Op { return op0(102); }
 // op_str_slice_frame is `str_slice` with its 24-byte view box taken from the
 // FRAME instead of the heap (#6713): `i32_imm` is `base + 1`, where base is the
 // first of three consecutive local slots reserved for the box, so 0 keeps the
@@ -513,46 +513,46 @@ pub function op_arr_slice(width: i32): Op { return Op { decl: 0 - 1, kind_tag: 9
 //   raw_string  pops [data, len]    → a fresh 16-byte string box {data, len}
 // The stores push v back (a value, not void) so the operand stack stays balanced
 // with the "every expr pushes one value" invariant; statement position drops it.
-pub function op_raw_alloc(): Op { return op0("raw_alloc"); }
-pub function op_raw_store8(): Op { return op0("raw_store8"); }
-pub function op_raw_load8(): Op { return op0("raw_load8"); }
-pub function op_raw_store_ptr(): Op { return op0("raw_store_ptr"); }
-pub function op_raw_load_ptr(): Op { return op0("raw_load_ptr"); }
-pub function op_raw_string(): Op { return op0("raw_string"); }
+pub function op_raw_alloc(): Op { return op0(81); }
+pub function op_raw_store8(): Op { return op0(82); }
+pub function op_raw_load8(): Op { return op0(83); }
+pub function op_raw_store_ptr(): Op { return op0(84); }
+pub function op_raw_load_ptr(): Op { return op0(85); }
+pub function op_raw_string(): Op { return op0(86); }
 // syscall3 (#2649 syscall sub-floor): the raw-memory floor's I/O sibling.
 //   syscall3 pops [nr, a1, a2, a3] → the syscall return value.
 // Lowers to a single `syscall`/`svc` (nr→%rax/x8, a1..a3→argregs), no runtime
 // symbol — the primitive the syscall-leaf helpers (random_bytes, the clocks,
 // read_file) are written against so they can move off hand-asm into Fern.
 // Unsafe / unchecked / `__`-prefixed, like the `__raw_*` intrinsics.
-pub function op_syscall3(): Op { return op0("syscall3"); }
+pub function op_syscall3(): Op { return op0(204); }
 // raw_scratch (#2649 syscall sub-floor, clocks slice): pops [n] → a fixed
 // static (.bss) scratch buffer ptr — the buffer the syscall leaves hand the
 // kernel to write into (timespec, stat), reused/never-freed so no per-call leak
 // (the hand-asm used a stack buffer). `n` is a size hint; the buffer is fixed.
 // Non-reentrant: a leaf helper must finish reading it before another runs.
 // (The i64 read-back of tv_sec/tv_nsec reuses the existing __load_i64/op_load_i64.)
-pub function op_raw_scratch(): Op { return op0("raw_scratch"); }
+pub function op_raw_scratch(): Op { return op0(205); }
 // syscall4 (#2649 syscall sub-floor): the 4-arg sibling of syscall3, for the
 // syscalls whose 4th arg is meaningful (openat's mode with O_CREAT, newfstatat's
 // flags). pops [nr, a1, a2, a3, a4] → the syscall return value; a4 → %r10.
-pub function op_syscall4(): Op { return op0("syscall4"); }
+pub function op_syscall4(): Op { return op0(206); }
 // raw_environ (#2649 syscall sub-floor, env slice): pops nothing → the process
 // envp pointer (the `char **` the kernel handed _start, saved in __fern_envp).
 // A single `movq __fern_envp(%rip), %rax`. The env leaf walks the array from it.
-pub function op_raw_environ(): Op { return op0("raw_environ"); }
+pub function op_raw_environ(): Op { return op0(207); }
 // raw_splice_pipe: pops nothing → the address of __fern_splice_pipe, where
 // the splice helper keeps its pipe's two descriptors between calls (zero
 // before the first) and, in the third word, the writer it last grew.
-pub function op_raw_splice_pipe(): Op { return op0("raw_splice_pipe"); }
+pub function op_raw_splice_pipe(): Op { return op0(331); }
 // syscall5 (#2649 syscall sub-floor): the 5-arg sibling. Three helpers need it
 // and none can be reached without it — arm64 Linux has no `poll` or `fork`, only
 // `ppoll` and `clone`, and XNU has no `nanosleep`, only `select`. All three take
 // five arguments. pops [nr, a1..a5] → the syscall return value; a5 → %r8 / x4.
-pub function op_syscall5(): Op { return op0("syscall5"); }
+pub function op_syscall5(): Op { return op0(228); }
 // Six-argument syscall floor for networking (#9853, #4451): recvfrom,
 // sendto and Darwin kevent. Pops [nr, a1..a6]; a6 reaches %r9 / x5.
-pub function op_syscall6(): Op { return op0("syscall6"); }
+pub function op_syscall6(): Op { return op0(323); }
 // raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
 // the machine's FULL pointer width. It exists because `p + off` written in the
 // helper source does not survive: the surface type of a raw pointer is i32, so
@@ -564,7 +564,7 @@ pub function op_syscall6(): Op { return op0("syscall6"); }
 // into — the ONE-argument loads, `__load_i32(a)` / `__load_i64(a)` /
 // `__load_ptr(a)`, which have no offset operand to fold, so their caller must
 // not reach for a bare `a + off`.
-pub function op_raw_addr(): Op { return op0("raw_addr"); }
+pub function op_raw_addr(): Op { return op0(223); }
 // raw_arr_box (#2649 raw-memory floor): pops [n] → the DATA pointer of a fresh
 // n-element array box, with the rc header, length and capacity already written
 // (a `call __fern_arr_box`, the one array primitive that stays asm — the same
@@ -572,7 +572,7 @@ pub function op_raw_addr(): Op { return op0("raw_addr"); }
 // is exactly what __raw_store_ptr / __raw_load_ptr address, so a Fern helper can
 // fill it without naming the layout. Its sibling __raw_array(ptr) is type-only
 // — the pointer already IS the array value — so it emits no op at all.
-pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
+pub function op_raw_arr_box(): Op { return op0(224); }
 
 // memchr (docs/ATLAS-PLATFORM-PLAN.md §3): pops [str, byte, from] → the i32
 // index of the first occurrence of `byte` at or after `from`, or -1. Allocates
@@ -586,7 +586,7 @@ pub function op_raw_arr_box(): Op { return op0("raw_arr_box"); }
 //
 // `from` clamps (negative behaves as 0, past-the-end finds nothing) and a
 // byte outside 0..255 never matches, matching the interpreter reference.
-pub function op_memchr(): Op { return op0("memchr"); }
+pub function op_memchr(): Op { return op0(225); }
 
 // rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3, memchr's nominated sibling):
 // pops [str, byte, from] → the i32 index of the LAST `byte` at or before
@@ -598,7 +598,7 @@ pub function op_memchr(): Op { return op0("memchr"); }
 // walks forward, this clamps it DOWN to len-1 because it walks back. A
 // negative `from` therefore finds nothing here, where in memchr it means "the
 // whole string".
-pub function op_rmemchr(): Op { return op0("rmemchr"); }
+pub function op_rmemchr(): Op { return op0(234); }
 
 // count_byte (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel): pops
 // [str, byte] → the i32 number of bytes equal to `byte`. Allocates nothing
@@ -612,7 +612,7 @@ pub function op_rmemchr(): Op { return op0("rmemchr"); }
 // a different way is simply absent here. Both degenerate answers are real
 // counts rather than sentinels: a byte outside 0..255 counts 0 because
 // nothing can equal it, and an empty string counts 0 because it has no bytes.
-pub function op_count_byte(): Op { return op0("count_byte"); }
+pub function op_count_byte(): Op { return op0(235); }
 
 // sum_bytes (docs/ATLAS-PLATFORM-PLAN.md §3.3, sixth kernel): pops [str] →
 // the i32 sum of every byte, wrapped to 32 bits. Allocates nothing and reads
@@ -627,7 +627,7 @@ pub function op_count_byte(): Op { return op0("count_byte"); }
 // that way (std/hash's SysvSum) and because that is what a 32-bit accumulator
 // produces on every target. No cursor and no byte operand, so there is
 // nothing to clamp and no range guard: an empty string sums to 0.
-pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
+pub function op_sum_bytes(): Op { return op0(253); }
 
 // scan_set: pops [str, from, set] → the i32 index of the first byte at or
 // after `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
@@ -635,18 +635,18 @@ pub function op_sum_bytes(): Op { return op0("sum_bytes"); }
 // nothing and reads only the string and the set. The byte-set scan behind
 // cat -A's spelling; the miss value is the LENGTH,
 // as ascii_run's is, so a caller's run walk needs no branch.
-pub function op_scan_set(): Op { return op0("scan_set"); }
+pub function op_scan_set(): Op { return op0(324); }
 
 // count_runs: pops [str, inside, set] → the i32 count of runs of bytes whose
 // entry in `set`, a u8[] indexed by byte value, is nonzero that begin in the
 // string; `inside` nonzero means the byte before it was a member. A byte past
 // the end of `set` is not a member. Allocates nothing. wc's word count.
-pub function op_count_runs(): Op { return op0("count_runs"); }
+pub function op_count_runs(): Op { return op0(327); }
 
 // bsd_sum: pops [str, sum] → the i32 BSD checksum (`sum -r`) continued over
 // the string from `sum`: per byte, rotate the 16 bits right by one and add the
 // byte, modulo 2^16. Allocates nothing.
-pub function op_bsd_sum(): Op { return op0("bsd_sum"); }
+pub function op_bsd_sum(): Op { return op0(329); }
 
 // scale_f64 (docs/ATLAS-PLATFORM-PLAN.md §3.3, eighth kernel): pops [xs, k]
 // → the data pointer of a FRESH f64 array of xs's length whose element i is
@@ -655,7 +655,7 @@ pub function op_bsd_sum(): Op { return op0("bsd_sum"); }
 // one thing a port gets wrong is the header, not the arithmetic. `k` is on
 // the operand stack as its f64 bit pattern, which is how every backend
 // carries a float there.
-pub function op_scale_f64(): Op { return op0("scale_f64"); }
+pub function op_scale_f64(): Op { return op0(322); }
 
 // crc32_cksum (#9128): pops [crc, str] → the i32 CRC-32 that cksum(1) prints,
 // with the string's bytes folded into the incoming `crc`. Poly 0x04C11DB7,
@@ -670,7 +670,7 @@ pub function op_scale_f64(): Op { return op0("scale_f64"); }
 // which is the whole reason it can hash a stream in chunks. An empty string
 // returns the incoming crc unchanged, and that identity is what makes the
 // chunking associative.
-pub function op_crc32_cksum(): Op { return op0("crc32_cksum"); }
+pub function op_crc32_cksum(): Op { return op0(309); }
 
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
@@ -688,7 +688,7 @@ pub function op_crc32_cksum(): Op { return op0("crc32_cksum"); }
 // Note the miss value is the LENGTH, not -1. That breaks with memchr's
 // convention deliberately — the caller is a validator advancing a cursor, so
 // `i = __ascii_run(s, i)` has to be a branch-free skip.
-pub function op_ascii_run(): Op { return op0("ascii_run"); }
+pub function op_ascii_run(): Op { return op0(227); }
 
 // mismatch (#8791, fifth kernel): pops [a, ao, b, bo, n] -> the i32 offset of
 // the first byte where a[ao..ao+n) and b[bo..bo+n) differ, or n when the two
@@ -708,7 +708,7 @@ pub function op_ascii_run(): Op { return op0("ascii_run"); }
 // The value returned on equality is therefore the CLAMPED n, so a caller
 // asking to compare more than exists gets the shorter answer and its `== n`
 // test correctly fails.
-pub function op_mismatch(): Op { return op0("mismatch"); }
+pub function op_mismatch(): Op { return op0(245); }
 
 // Random / byte-source builtins (issue #2747) — the cross-backend byte source
 // uuid (#2682) and a future std/crypto build on. Each lowers to a runtime
@@ -718,78 +718,78 @@ pub function op_mismatch(): Op { return op0("mismatch"); }
 // `random_bytes` pops [n] → a fresh `u8[]` of n cryptographic-quality random
 // bytes (Linux getrandom / WASI random_get). Result is an array box; element
 // i is a 0..255 value (arr_get).
-pub function op_random_bytes(): Op { return op0("random_bytes"); }
+pub function op_random_bytes(): Op { return op0(185); }
 // `random_i32` takes no operands → a single CSPRNG i32. A 4-byte random read
 // reinterpreted as an i32 (cheaper than random_bytes for one small value).
-pub function op_random_i32(): Op { return op0("random_i32"); }
+pub function op_random_i32(): Op { return op0(186); }
 // `monotonic_ns` / `now_unix_ms` take no operands → an i64 clock reading.
 // monotonic_ns is a monotonically non-decreasing nanosecond counter (elapsed
 // timing); now_unix_ms is wall-clock milliseconds since the Unix epoch. Both
 // reinterpret a `clock_gettime` timespec; the IR backends emit the
 // __fern_monotonic_ns / __fern_now_unix_ms helpers (no allocation).
-pub function op_monotonic_ns(): Op { return op0("monotonic_ns"); }
-pub function op_now_unix_ms(): Op { return op0("now_unix_ms"); }
+pub function op_monotonic_ns(): Op { return op0(182); }
+pub function op_now_unix_ms(): Op { return op0(184); }
 // `now_ns` — wall-clock nanoseconds since the Unix epoch (the i64 nanosecond
 // twin of now_unix_ms); 0-arg, allocation-free. Lowers to __fern_now_ns.
-pub function op_now_ns(): Op { return op0("now_ns"); }
+pub function op_now_ns(): Op { return op0(183); }
 // `poll` takes two operands [fds, timeout_ms] (fds an i32[] box pointer, timeout
 // an i32) and pushes the i32 index of the first ready fd, or -1. Lowers to the
 // __fern_poll runtime helper (poll(2) over the fd set) — the self-host twin of
 // the native `poll` builtin. See docs/ASYNC-SELFHOST-IR.md.
-pub function op_poll(): Op { return op0("poll"); }
+pub function op_poll(): Op { return op0(187); }
 // `timer_fd` takes one operand [ms] and pushes an i32: a CLOCK_MONOTONIC
 // one-shot timerfd readable after `ms` ms (or -errno). Lowers to __fern_timer_fd.
-pub function op_timer_fd(): Op { return op0("timer_fd"); }
+pub function op_timer_fd(): Op { return op0(188); }
 // `isatty` takes one operand [fd] and pushes 0/1: is the descriptor a terminal?
 // Lowers to __fern_isatty, one terminal-attribute ioctl. std/cli's colour gate
 // is the caller — no terminal means plain text.
-pub function op_isatty(): Op { return op0("isatty"); }
+pub function op_isatty(): Op { return op0(232); }
 // `window_size` takes one operand [fd] and pushes Result[WinSize, IoError]:
 // one TIOCGWINSZ ioctl, the terminal's row and column counts. Refused on wasm,
 // where no world has a terminal to measure (capability `tty`) — unlike
 // `isatty`, whose question a target with no terminal can still answer.
-pub function op_window_size(): Op { return op0("window_size"); }
+pub function op_window_size(): Op { return op0(276); }
 // `termios_get` pops [fd] and pushes Result[i64[], IoError]: the terminal's
 // line settings as the KERNEL's own words — four flag words, the line
 // discipline, then each control character. `termios_set` pops [fd, when,
 // words] and pushes Result[void, IoError], packing the same array back into
 // the struct. `stty -g` prints these words and reads them back, which is why
 // they are not normalised (#9356).
-pub function op_termios_get(): Op { return op0("termios_get"); }
-pub function op_termios_set(): Op { return op0("termios_set"); }
+pub function op_termios_get(): Op { return op0(312); }
+pub function op_termios_set(): Op { return op0(313); }
 // `set_window_size` pops [fd, rows, cols] and pushes Result[void, IoError]:
 // one TIOCGWINSZ to keep the pixel pair the kernel stores beside the two cell
 // counts, then TIOCSWINSZ with those two replaced. `stty rows N` is the
 // caller (#9360). Refused on wasm beside `window_size` and the termios pair.
-pub function op_set_window_size(): Op { return op0("set_window_size"); }
+pub function op_set_window_size(): Op { return op0(314); }
 
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
 // Lowers to __fern_access, one faccessat with AT_EACCESS set.
-pub function op_access(): Op { return op0("access"); }
+pub function op_access(): Op { return op0(237); }
 
 // `geteuid` / `getegid` take no operands and push the process's effective user
 // and group id. One argument-free syscall each; neither can fail.
-pub function op_geteuid(): Op { return op0("geteuid"); }
-pub function op_getegid(): Op { return op0("getegid"); }
+pub function op_geteuid(): Op { return op0(238); }
+pub function op_getegid(): Op { return op0(239); }
 
 // `getuid` / `getgid` are the same shape for the REAL ids — the identity the
 // process started under, which a set-uid binary keeps while its effective ids
 // change. `id -r` is the caller that needs the distinction.
-pub function op_getuid(): Op { return op0("getuid"); }
-pub function op_getgid(): Op { return op0("getgid"); }
+pub function op_getuid(): Op { return op0(246); }
+pub function op_getgid(): Op { return op0(247); }
 
 // `getgroups` takes no operands and pushes ONE fresh i64[] holding the
 // supplementary group set in the kernel's order. Not derivable from
 // /etc/group: a process can be in groups no file names and out of ones that
 // do. The egid is not in it — getgroups(2) does not put it there.
-pub function op_getgroups(): Op { return op0("getgroups"); }
+pub function op_getgroups(): Op { return op0(248); }
 
 // `environ` takes no operands and pushes ONE fresh string[] of the whole
 // environment as raw `NAME=VALUE` entries, in the order the process received
 // them. `env` answers one lookup; a duplicate name is visible here and
 // invisible to a lookup.
-pub function op_environ(): Op { return op0("environ"); }
+pub function op_environ(): Op { return op0(249); }
 // The single-step directory and link primitives (#8883). Each is ONE syscall
 // with nothing folded away, which is what separates them from the `_all`
 // family beside them: an existing directory is EEXIST here rather than a
@@ -799,20 +799,20 @@ pub function op_environ(): Op { return op0("environ"); }
 // `remove_dir` takes [path]; `create_link`, `create_symlink` and `rename`
 // take two paths; `read_link` takes [path] and pushes Result[string,
 // IoError]. Each lowers to the backend's helper of the same name.
-pub function op_create_dir(): Op { return op0("create_dir"); }
-pub function op_remove_dir(): Op { return op0("remove_dir"); }
-pub function op_create_link(): Op { return op0("create_link"); }
-pub function op_create_symlink(): Op { return op0("create_symlink"); }
-pub function op_read_link(): Op { return op0("read_link"); }
+pub function op_create_dir(): Op { return op0(260); }
+pub function op_remove_dir(): Op { return op0(261); }
+pub function op_create_link(): Op { return op0(262); }
+pub function op_create_symlink(): Op { return op0(263); }
+pub function op_read_link(): Op { return op0(264); }
 // `rename` takes [old, new] and pushes Result[void, IoError] — rename(2),
 // which moves a directory entry and REPLACES an existing destination of a
 // compatible kind in one step. Neither final component is followed.
-pub function op_rename(): Op { return op0("rename"); }
+pub function op_rename(): Op { return op0(267); }
 
 // `umask` takes one operand [mask] and pushes the mask it replaced —
 // umask(2), which sets and reads in one uninterruptible step. It cannot
 // fail. Native only: neither WASI preview has a file-mode creation mask.
-pub function op_umask(): Op { return op0("umask"); }
+pub function op_umask(): Op { return op0(265); }
 // `priority` takes no operands and pushes an i32: this process's NICE value,
 // getpriority(PRIO_PROCESS, 0). The number runs the other way round to what
 // the name suggests — -20 is the most favourable and 19 the least. It cannot
@@ -820,21 +820,21 @@ pub function op_umask(): Op { return op0("umask"); }
 // valid `which` and pid 0 always exists, and -1 is a legal nice value that a
 // Result-less caller could not otherwise tell from an error return. Native
 // only: neither WASI preview has a scheduler knob.
-pub function op_priority(): Op { return op0("priority"); }
+pub function op_priority(): Op { return op0(282); }
 // `set_priority` takes one operand [nice] and pushes Result[void, IoError]:
 // setpriority(PRIO_PROCESS, 0, nice), the write of what `priority` reads.
 // LOWERING the value needs privilege, so an unprivileged caller asking for -5
 // gets EACCES as Other("", strerror) — which is the whole point of the Result
 // rather than an edge of it. The kernel clamps what it stores to its own
 // range rather than refusing a value outside it. Native only, as above.
-pub function op_set_priority(): Op { return op0("set_priority"); }
+pub function op_set_priority(): Op { return op0(283); }
 // The metadata writes on an entry that already exists (#9059). `chmod` takes
 // [path, mode] and pushes Result[void, IoError] — fchmodat(2), which sets the
 // low twelve permission bits verbatim: a umask filters a CREATION, and this is
 // not one. A final symlink is followed, which is what chmod(1) does.
 // Refused on wasm, whose filesystem has no permission bits (capability
 // `fsmode`).
-pub function op_chmod(): Op { return op0("chmod"); }
+pub function op_chmod(): Op { return op0(268); }
 // `truncate` takes [path, length] — the length an i64 — and pushes
 // Result[void, IoError]: truncate(2), which shrinks a file or extends it with
 // a hole. PATH-based rather than fd-based: no Fern open mode yields a writable
@@ -842,7 +842,7 @@ pub function op_chmod(): Op { return op0("chmod"); }
 // ftruncate form could not express an extend. Provided on wasm, where neither
 // preview has a path form and the helper opens without CREATE or TRUNCATE,
 // sets the size, and releases the descriptor.
-pub function op_truncate(): Op { return op0("truncate"); }
+pub function op_truncate(): Op { return op0(273); }
 // `mknod` takes [path, mode, major, minor] and pushes Result[void, IoError]:
 // mknodat(2), which creates a FIFO (S_IFIFO in the mode, no device pair) or a
 // character / block device node. One op, not two — mkfifo(3) is this call with
@@ -852,7 +852,7 @@ pub function op_truncate(): Op { return op0("truncate"); }
 // kernel's dev_t: Linux SPLITS the minor around the major (minor[7:0], then
 // major[11:0], then minor[19:8] from bit 20), and XNU does not. Refused on
 // wasm, where neither preview can create a special file (capability `fsnode`).
-pub function op_mknod(): Op { return op0("mknod"); }
+pub function op_mknod(): Op { return op0(274); }
 // `chown_at` takes [path, uid, gid, follow] and pushes Result[void, IoError]:
 // fchownat(2). -1 for either id leaves that half alone, which is the kernel's
 // own convention and why there is one op here rather than a chown and a chgrp
@@ -862,14 +862,14 @@ pub function op_mknod(): Op { return op0("mknod"); }
 // does not, which is what `chown -h` and every -R walk that meets a symlink
 // need. Refused on wasm, where neither preview records an owner on an entry
 // at all (capability `fsowner`).
-pub function op_chown_at(): Op { return op0("chown_at"); }
+pub function op_chown_at(): Op { return op0(275); }
 // `chmod_at` takes [path, mode, follow] and pushes Result[void, IoError]:
 // `chmod` with `chown_at`'s follow flag. `follow` false asks for the LINK's
 // own mode bits — fchmodat2(AT_SYMLINK_NOFOLLOW) on Linux, where a symlink
 // has no mode and the kernel's EOPNOTSUPP (ENOSYS below fchmodat2) is the
 // Err; fchmodat with the flag on Darwin, where the link's bits change.
 // Refused on wasm exactly as `chmod` is (capability `fsmode`).
-pub function op_chmod_at(): Op { return op0("chmod_at"); }
+pub function op_chmod_at(): Op { return op0(321); }
 // `set_file_times` takes [path, atime_sec, atime_nsec, mtime_sec, mtime_nsec,
 // flags] — six operands, the widest op here — and pushes Result[void,
 // IoError]. Each timestamp is a whole second since the epoch plus a
@@ -879,28 +879,28 @@ pub function op_chmod_at(): Op { return op0("chmod_at"); }
 // modification time to the clock. The omit and now bits are UTIME_OMIT and
 // UTIME_NOW sentinels in the timespec on Linux, absent or clock-read attributes
 // on Darwin and fstflags bits on wasm.
-pub function op_set_file_times(): Op { return op0("set_file_times"); }
+pub function op_set_file_times(): Op { return op0(269); }
 // `open_reader_with` / `open_writer_with` take [path, flags] — Fern's flags
 // word, 1 create and 2 non-blocking, translated per target by the runtime
 // rather than baked into an immediate — and push the same
 // Result[Reader|Writer, IoError] box op_open_file does.
-pub function op_open_reader_with(): Op { return op0("open_reader_with"); }
-pub function op_open_writer_with(): Op { return op0("open_writer_with"); }
+pub function op_open_reader_with(): Op { return op0(304); }
+pub function op_open_writer_with(): Op { return op0(305); }
 // `hostname` takes no operands and pushes ONE fresh string box holding the
 // kernel's node name (uname(2) on Linux, kern.hostname on Darwin); the empty
 // string on wasm, which has no host identity.
-pub function op_hostname(): Op { return op0("hostname"); }
+pub function op_hostname(): Op { return op0(240); }
 // `uname_field` takes one operand [index] and pushes ONE fresh string box
 // holding that field of the kernel's utsname record — 0 sysname, 1 nodename,
 // 2 release, 3 version, 4 machine. Native only: neither WASI preview has a
 // utsname to read, so `sysinfo` is refused there before lowering.
-pub function op_uname_field(): Op { return op0("uname_field"); }
+pub function op_uname_field(): Op { return op0(250); }
 // `getcwd` takes no operands and pushes ONE fresh string box holding the
 // process's working directory; the empty string when the kernel refuses.
-pub function op_getcwd(): Op { return op0("getcwd"); }
+pub function op_getcwd(): Op { return op0(251); }
 // `cpu_count` takes no operands and pushes an i32: how many processing units
 // the process may run on, or 0 where the kernel will not say.
-pub function op_cpu_count(): Op { return op0("cpu_count"); }
+pub function op_cpu_count(): Op { return op0(252); }
 // `process_alive` takes one operand [pid] and pushes 0/1: does a process with
 // that pid exist? kill(pid, 0) underneath — the zero signal runs every check
 // kill(2) makes and delivers nothing, so the errno only ever refines "yes":
@@ -908,7 +908,7 @@ pub function op_cpu_count(): Op { return op0("cpu_count"); }
 // is still a process) and ESRCH means it is gone. A pid of 0 or below is 0
 // without a syscall, since kill(2) reads those as process GROUPS. Native only:
 // neither WASI preview has a process table (#8767).
-pub function op_process_alive(): Op { return op0("process_alive"); }
+pub function op_process_alive(): Op { return op0(271); }
 // `signal_send` takes two operands [pid, sig] and pushes Result[void, IoError]:
 // kill(2), of which `process_alive` is the signal-0 corner. The pid reaches the
 // kernel as written - negatives and zero name process GROUPS, which is what a
@@ -916,7 +916,7 @@ pub function op_process_alive(): Op { return op0("process_alive"); }
 // first. ESRCH, EPERM and EINVAL each arrive as Other("", strerror), the empty
 // path being accurate: the op never saw the text its caller parsed the pid from.
 // Native only: neither WASI preview has a process table to name a target in.
-pub function op_signal_send(): Op { return op0("signal_send"); }
+pub function op_signal_send(): Op { return op0(285); }
 // `set_process_group` takes two operands [pid, pgid] and pushes
 // Result[void, IoError]: setpgid(2). Both arguments reach the kernel as
 // written, so the syscall's zero conventions survive - pid 0 names the caller
@@ -925,32 +925,32 @@ pub function op_signal_send(): Op { return op0("signal_send"); }
 // EACCES, EINVAL, EPERM and ESRCH each arrive as Other("", strerror), the
 // empty path being accurate: the op took two integers and never saw a file.
 // Native only: neither WASI preview has process groups.
-pub function op_set_process_group(): Op { return op0("set_process_group"); }
+pub function op_set_process_group(): Op { return op0(284); }
 // `rlimit_nofile` takes no operands and pushes an i64: the SOFT RLIMIT_NOFILE
 // the kernel is enforcing on this process, what `ulimit -n` prints. An
 // unlimited resource reports i64 max — Linux spells RLIM_INFINITY as all ones
 // and Darwin as i64 max, and neither spelling is a count. Native only: neither
 // WASI preview has resource limits (#8819).
-pub function op_rlimit_nofile(): Op { return op0("rlimit_nofile"); }
+pub function op_rlimit_nofile(): Op { return op0(272); }
 // `wasm_timer_pollable` takes one operand [ns] and pushes an i32. On native it
 // is -1 (no pollable; deadlines use poll(2)'s timeout arg); on wasm it is a
 // real wasi timer pollable. Portability shim for std/async's with_deadline.
-pub function op_wasm_timer_pollable(): Op { return op0("wasm_timer_pollable"); }
+pub function op_wasm_timer_pollable(): Op { return op0(189); }
 // `wasm_pollable_drop` takes one operand [p] and pushes an i32 (0 on native — a
 // pollable is just an fd, nothing to drop). Portability shim for fetch_future.
-pub function op_wasm_pollable_drop(): Op { return op0("wasm_pollable_drop"); }
+pub function op_wasm_pollable_drop(): Op { return op0(161); }
 // `wasm_block` takes one operand [p] and pushes an i32 (always 0). On wasm it
 // synchronously waits until the pollable is ready (wasi:io/poll
 // [method]pollable.block), the primitive that makes wasm_timer_pollable
 // observably block; on native there is no pollable (deadlines use poll(2)), so
 // it is a 0 no-op. Portability shim for the wasm reactor's with_deadline.
-pub function op_wasm_block(): Op { return op0("wasm_block"); }
+pub function op_wasm_block(): Op { return op0(162); }
 // `wasm_poll` takes one operand [pollables array ptr] and pushes an i32: the
 // index of the first ready pollable, or -1 if none. On native there are no real
 // pollables (readiness uses poll(2) directly), so it is -1; on wasm it is the
 // real wasi:io/poll.poll(list<pollable>) readiness multiplexer. The wasm
 // reactor's poll — the pollable-array analog of the native poll(fds).
-pub function op_wasm_poll(): Op { return op0("wasm_poll"); }
+pub function op_wasm_poll(): Op { return op0(167); }
 // tcp_* client primitives (the self-host twins of the native socket builtins).
 // `tcp_connect` [host_be, port] -> i32 connected fd (or -errno); host_be is the
 // IPv4 in network byte order packed into an i32. `tcp_send` [fd, str box] -> i32
@@ -959,50 +959,50 @@ pub function op_wasm_poll(): Op { return op0("wasm_poll"); }
 // `read_file_bytes`; allocates. `tcp_close` [fd] -> i32 0/-errno. `tcp_pollable`
 // [fd] -> i32: the readiness token (the fd itself on native). All lower to the
 // matching __fern_tcp_* runtime helper. See docs/ASYNC-SELFHOST-IR.md.
-pub function op_tcp_connect(): Op { return op0("tcp_connect"); }
-pub function op_tcp_send(): Op { return op0("tcp_send"); }
-pub function op_tcp_recv(): Op { return op0("tcp_recv"); }
-pub function op_tcp_close(): Op { return op0("tcp_close"); }
-pub function op_udp_send(): Op { return op0("udp_send"); }
-pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
+pub function op_tcp_connect(): Op { return op0(110); }
+pub function op_tcp_send(): Op { return op0(114); }
+pub function op_tcp_recv(): Op { return op0(115); }
+pub function op_tcp_close(): Op { return op0(116); }
+pub function op_udp_send(): Op { return op0(208); }
+pub function op_tcp_pollable(): Op { return op0(112); }
 // `tcp_listen` [port] -> i32 listener fd (or -errno): socket + bind to
 // 0.0.0.0:port + listen. `tcp_accept` [fd] -> i32 connection fd (or -errno):
 // accept(2) on a listener. The server half of the edge-handler use case
 // (#4371); the client ops above are the outbound-fetch half.
-pub function op_tcp_listen(): Op { return op0("tcp_listen"); }
-pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
+pub function op_tcp_listen(): Op { return op0(200); }
+pub function op_tcp_accept(): Op { return op0(201); }
 // `tcp_local_port` [fd] -> i32 port (or -errno): getsockname(2) on a socket,
 // answering the port it is bound to. The only way to learn the port the kernel
 // picked for a `tcp_listen(0)`.
-pub function op_tcp_local_port(): Op { return op0("tcp_local_port"); }
+pub function op_tcp_local_port(): Op { return op0(320); }
 // `tcp_listen_with` [addr, port, backlog, reuse_port] -> i32 listener (or
 // -errno): a listener on addr:port (the address's 4 or 16 network-order
 // bytes) with the accept queue and SO_REUSEPORT chosen by the caller.
-pub function op_tcp_listen_with(): Op { return op0("tcp_listen_with"); }
+pub function op_tcp_listen_with(): Op { return op0(332); }
 // `tcp_socket_ctl` [fd, op, arg] -> i32 0 (or -errno): one control call on a
 // socket — no-delay, keep-alive, non-blocking or shutdown (#9853).
-pub function op_tcp_socket_ctl(): Op { return op0("tcp_socket_ctl"); }
+pub function op_tcp_socket_ctl(): Op { return op0(333); }
 // The datagram sockets (#9853), the address as its 4 or 16 network-order
 // bytes. `udp_bind` [addr, port] -> i32 socket (or -errno); `udp_connect`
 // [fd, addr, port] -> i32 0 (or -errno); `udp_sendto` [fd, addr, port,
 // data] -> i32 bytes (or -errno; an empty addr sends to the peer);
 // `udp_recvfrom` [fd, buf, from] -> i32 bytes read into `buf`, the sender
 // into `from` (or -errno).
-pub function op_udp_bind(): Op { return op0("udp_bind"); }
-pub function op_udp_connect(): Op { return op0("udp_connect"); }
-pub function op_udp_sendto(): Op { return op0("udp_sendto"); }
-pub function op_udp_recvfrom(): Op { return op0("udp_recvfrom"); }
+pub function op_udp_bind(): Op { return op0(334); }
+pub function op_udp_connect(): Op { return op0(335); }
+pub function op_udp_sendto(): Op { return op0(336); }
+pub function op_udp_recvfrom(): Op { return op0(337); }
 // `tcp_connect_with` [addr, port, nonblocking] -> i32 connected fd, or one
 // whose connect is under way (or -errno) (#9853).
-pub function op_tcp_connect_with(): Op { return op0("tcp_connect_with"); }
+pub function op_tcp_connect_with(): Op { return op0(338); }
 // The Unix-domain sockets (#9853). `unix_listen` [path, backlog] -> i32
 // listener (or -errno); `unix_connect` [path] -> i32 connection (or -errno).
-pub function op_unix_listen(): Op { return op0("unix_listen"); }
-pub function op_unix_connect(): Op { return op0("unix_connect"); }
-pub function op_reactor_new(): Op { return op0("reactor_new"); }
-pub function op_reactor_ctl(): Op { return op0("reactor_ctl"); }
-pub function op_reactor_wait(): Op { return op0("reactor_wait"); }
-pub function op_tcp_recv_into(): Op { return op0("tcp_recv_into"); }
+pub function op_unix_listen(): Op { return op0(339); }
+pub function op_unix_connect(): Op { return op0(340); }
+pub function op_reactor_new(): Op { return op0(341); }
+pub function op_reactor_ctl(): Op { return op0(342); }
+pub function op_reactor_wait(): Op { return op0(343); }
+pub function op_tcp_recv_into(): Op { return op0(344); }
 // `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
 // box's bytes to the fd, looping until they are all out — None once they are,
 // Some(io_error(errno, "")) on a failing write. The write-half streaming
@@ -1010,13 +1010,13 @@ pub function op_tcp_recv_into(): Op { return op0("tcp_recv_into"); }
 // `stdout()`/`stderr()` lower to the i32 constants 1/2 directly (no op);
 // `Writer.close()` reuses op_reader_close. The byte count is not reported:
 // native's signature has no channel for it (#7926).
-pub function op_writer_write(): Op { return op0("writer_write"); }
+pub function op_writer_write(): Op { return op0(202); }
 // `write_some` [fd, str box] -> a fresh `Result[i64, IoError]` box: ONE
 // write(2) and the count it returned, where `writer_write` above loops until
 // the whole string is out and so can only report whether it all landed.
 // Backs `w.write_some(s)`; the count is what GNU shred's failing-write offset
 // and dd's record tally are made of (#9231).
-pub function op_write_some(): Op { return op0("write_some"); }
+pub function op_write_some(): Op { return op0(308); }
 // `open_file` [path box] -> a fresh `Result[Reader|Writer, IoError]` box:
 // NUL-terminate the path, openat(AT_FDCWD, path, flags, 0644), then Ok(fd) or
 // Err(io_error(errno, path)). `flags` is baked into the immediate so one op
@@ -1036,7 +1036,7 @@ pub function op_open_file(flags: i32): Op {
 // __fern_heap_end − heap_size on both x86 and arm64, since each mmap's its
 // arena and records the end); wasm reads `$heap − heap_base` and zero-extends
 // it to the declared i64. Mirrors native's __fern_heap_bump_bytes.
-pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
+pub function op_heap_bump_bytes(): Op { return op0(80); }
 // `__heap_alloc_count` takes no operands → an i64: the number of blocks the
 // allocator has handed out, the freelist-pop path and the bump path alike
 // (#9596). It is the half heap_bump_bytes cannot see — a pop leaves the cursor
@@ -1045,7 +1045,7 @@ pub function op_heap_bump_bytes(): Op { return op0("heap_bump_bytes"); }
 // needs the heap runtime emitted (op_allocates admits it for the gate); the
 // counter itself is ticked at the allocator's entry, and only in a module that
 // reads it. Mirrors native's __fern_heap_alloc_count.
-pub function op_heap_alloc_count(): Op { return op0("heap_alloc_count"); }
+pub function op_heap_alloc_count(): Op { return op0(315); }
 // `__heap_mark` takes no operands -> an i64 arena checkpoint; `__heap_release_to`
 // pops that i64 and rewinds the cursor to it (#6728). A one-level checkpoint on a
 // bump arena that otherwise never gives memory back — the pair exists for the
@@ -1054,8 +1054,8 @@ pub function op_heap_alloc_count(): Op { return op0("heap_alloc_count"); }
 // and write the arena globals directly, so a call would only add an ABI. wasm
 // lowers neither — its linear-memory allocator has no room for the freelist
 // shadow, and the capability layer refuses `arena` there (E066) before lowering.
-pub function op_heap_mark(): Op { return op0("heap_mark"); }
-pub function op_heap_release_to(): Op { return op0("heap_release_to"); }
+pub function op_heap_mark(): Op { return op0(229); }
+pub function op_heap_release_to(): Op { return op0(230); }
 // Bit counting (#6197): one integer operand of `width` (32 or 64) → an i32
 // count. clz/ctz of ZERO are defined as the width, matching wasm's semantics
 // and the SWAR sequences these replace — that definition is why the x86-64
@@ -1080,7 +1080,7 @@ pub function op_popcount(width: i32): Op {
 // admits it so an introspection-only module still emits the heap runtime): the
 // register backends read the `__fern_arr_push_shared` word, wasm a fixed
 // low-memory slot. Mirrors native's __fern_arr_push_shared_count.
-pub function op_arr_push_shared_count(): Op { return op0("arr_push_shared_count"); }
+pub function op_arr_push_shared_count(): Op { return op0(216); }
 // `__arr_push_shared_bytes` takes no operands → an i64: the same cliff the
 // counter above counts, WEIGHTED by the bytes each crossing copied (oldLen *
 // stride, summed). The count says whether anything crossed; only the weight
@@ -1092,7 +1092,7 @@ pub function op_arr_push_shared_count(): Op { return op0("arr_push_shared_count"
 // admits it for the heap-runtime gate): the register backends read the
 // `__fern_arr_push_copied` word, wasm a fixed low-memory slot. Mirrors
 // native's __fern_arr_push_shared_bytes.
-pub function op_arr_push_shared_bytes(): Op { return op0("arr_push_shared_bytes"); }
+pub function op_arr_push_shared_bytes(): Op { return op0(217); }
 // `__map_hash_seed` takes no operands → an i32: core/map's per-process
 // string-hash seed, mixed into its FNV basis so attacker-supplied key strings
 // cannot be precomputed into a colliding set offline (#6194). Drawn once from
@@ -1106,38 +1106,38 @@ pub function op_arr_push_shared_bytes(): Op { return op0("arr_push_shared_bytes"
 // COMPILE and LINK (see the `core/map` note in each backend's intrinsic
 // section) — the seed it returns is not what a self-host-compiled program's
 // maps hash with. Seeding the self-host map runtime is separate work.
-pub function op_map_hash_seed(): Op { return op0("map_hash_seed"); }
+pub function op_map_hash_seed(): Op { return op0(222); }
 // `str_bytes` pops [str] → a fresh u8[] (one slot per byte, or packed under
 // ir.packed). Backs both
 // `s.bytes()` (copying) and `s.as_bytes()` — the self-host's slot-array model
 // has no separate zero-copy slice view, so as_bytes returns the same fresh
 // array (correct, just not zero-copy; mirrors the AST path).
-pub function op_str_bytes(): Op { return op0("str_bytes"); }
+pub function op_str_bytes(): Op { return op0(104); }
 // `str_to_upper` / `str_to_lower` pop [s] → a fresh string box that is `s` with
 // each ASCII letter cased up / down (non-letters copied verbatim). They allocate
 // the new char buffer + box, so they pull in the heap runtime; leak-only (no RC).
-pub function op_str_to_upper(): Op { return op0("str_to_upper"); }
-pub function op_str_to_lower(): Op { return op0("str_to_lower"); }
+pub function op_str_to_upper(): Op { return op0(106); }
+pub function op_str_to_lower(): Op { return op0(107); }
 // `str_repeat` pops [s, n] → a fresh string box holding `s` concatenated `n`
 // times (n <= 0 → empty). Allocates the n*len buffer + box; leak-only.
-pub function op_str_repeat(): Op { return op0("str_repeat"); }
+pub function op_str_repeat(): Op { return op0(108); }
 // `str_trim` pops [s] → a fresh string box with leading/trailing ASCII
 // whitespace (space / tab / '\n' / '\r') removed. Leak-only.
-pub function op_str_trim(): Op { return op0("str_trim"); }
+pub function op_str_trim(): Op { return op0(109); }
 // `str_replace` pops [haystack, old, new] → a fresh string box with every
 // (non-overlapping) occurrence of `old` in `haystack` replaced by `new`. An
 // empty `old`, or no match, returns `haystack` unchanged. Leak-only.
-pub function op_str_replace(): Op { return op0("str_replace"); }
+pub function op_str_replace(): Op { return op0(111); }
 // `str_lines` pops [s] → a fresh string[] of s split on newline, with a
 // trailing empty segment dropped when s is empty or ends with a newline (so
 // "a\nb\n" is 2 lines, not 3 — matching Rust/Python). is_arr + is_strarr.
-pub function op_str_lines(): Op { return op0("str_lines"); }
+pub function op_str_lines(): Op { return op0(113); }
 // `str_split` pops [haystack, sep] → a fresh string[] of the segments of
 // `haystack` split on `sep`. An empty separator yields a single-element
 // `[haystack]`. Backs both the `s.split(sep)` method and the `str_split(s, sep)`
 // free call. The result array is RC-tracked; the segment string boxes leak
 // (mirrors the AST path's __fern_str_split).
-pub function op_str_split(): Op { return op0("str_split"); }
+pub function op_str_split(): Op { return op0(105); }
 
 // Built-in Option / Result ops. The value is a heap box [tag@0, payload@8]
 // (Some/Ok = tag 0, None/Err = tag 1) — distinct from user enums/structs, which
@@ -1150,11 +1150,11 @@ pub function op_opt_make(tag: i32): Op { return Op { decl: 0 - 1, kind_tag: 120,
 // `unsigned` picks i64.store (set) vs f64.store (clear). The wasm box widens its
 // payload slot to 8 bytes (matching the register backends, which already do).
 pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op { return Op { decl: 0 - 1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
-pub function op_opt_none(): Op { return op0("opt_none"); }
-pub function op_opt_tag(): Op { return op0("opt_tag"); }
+pub function op_opt_none(): Op { return op0(121); }
+pub function op_opt_tag(): Op { return op0(122); }
 // `opt_payload` pops [box] → the payload at offset 8 (x86/arm64) / 4 (wasm);
 // used to bind a Some/Ok/Err pattern's payload.
-pub function op_opt_payload(): Op { return op0("opt_payload"); }
+pub function op_opt_payload(): Op { return op0(123); }
 // 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op { return Op { decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" }; }
 // keykind 2 = struct/enum key: `fns` packs the derived "K.hash|K.eq" so the
@@ -1281,55 +1281,55 @@ pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsu
     if (widekind == 2) { vw = 2; }
     return Op { decl: 0 - 1, kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
 }
-pub function op_map_len(): Op { return op0("map_len"); }
+pub function op_map_len(): Op { return op0(126); }
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
 // pushing a dummy result so a statement-level drop balances. `write(s)` is a bare
 // print_str; `print(s)` is two of them, the payload then a "\n" literal.
 // Lowers to each backend's __fern_print_str helper.
-pub function op_print_str(): Op { return op0("print_str"); }
+pub function op_print_str(): Op { return op0(163); }
 // `read_all_stdin` reads fd 0 to EOF and pushes ONE string box holding the whole
 // input (a VALUE op — no args). Unlike `read_line`'s single 256-byte read it
 // loops until the read syscall returns 0, so it can pull in a whole multi-line
 // source. Lowers to each register backend's __fern_read_all_stdin helper and to
 // wasm's $__fern_read_all_stdin (an fd_read loop over the same preview1 scratch
 // idiom read_line uses), so every IR backend covers it.
-pub function op_read_all_stdin(): Op { return op0("read_all_stdin"); }
+pub function op_read_all_stdin(): Op { return op0(209); }
 // `eprint_str` pops a string value and writes its bytes to STDERR (fd 2, no
 // newline), pushing a dummy result so a statement-level drop balances. `eprint(s)`
 // is a bare eprint_str.
 // Lowers to each backend's __fern_eprint_str helper.
-pub function op_eprint_str(): Op { return op0("eprint_str"); }
+pub function op_eprint_str(): Op { return op0(164); }
 // `exit` pops an i32 and terminates the process with it as the exit code (an
 // inline sys_exit / proc_exit per backend — no runtime helper). It never returns;
 // the pushed dummy keeps the operand-stack shape for a surrounding statement drop.
-pub function op_exit(): Op { return op0("exit"); }
+pub function op_exit(): Op { return op0(166); }
 // `read_line` pops an fd and reads up to 256 bytes (one line) from it, pushing
 // `Option[string]` — Some(line, newline included) or None at EOF before any byte.
 // The fd is an operand, not fd 0, because `r.read_line()` on a file Reader has to
 // read THAT reader (a Reader is its fd); the bare `read_line()` builtin lowers a
 // const 0 for it. Lowers to each backend's __fern_read_line helper.
-pub function op_read_line(): Op { return op0("read_line"); }
+pub function op_read_line(): Op { return op0(168); }
 // `read_file` pops a path string value and reads the whole named file, pushing a
 // fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
 // error (a VALUE op — one arg consumed, the box left on the stack). Lowers to
 // each backend's __fern_read_file helper. No wasm file I/O here, so a read_file
 // module is wasm-ineligible (wasm_eligible) and is refused there.
-pub function op_read_file(): Op { return op0("read_file"); }
+pub function op_read_file(): Op { return op0(169); }
 // `read_file_bytes` pops a path string value and reads the whole named file,
 // pushing a fresh Result[u8[], IoError] box: Ok(contents) on success, Err(_) on
 // any I/O error (a VALUE op — one arg consumed, the box left on the stack).
 // Lowers to each backend's __fern_read_file_bytes helper.
-pub function op_read_file_bytes(): Op { return op0("read_file_bytes"); }
+pub function op_read_file_bytes(): Op { return op0(233); }
 // `write_file` pops a content string value and a path string value and writes the
 // content to the named file, pushing a fresh Result[(), IoError]: Ok(()) on success,
 // Some(_) on any I/O error (a VALUE op — two args consumed, the box left on the
 // stack). Lowers to each backend's __fern_write_file helper (the same one the AST
 // path calls). No wasm file I/O here, so a write_file module is wasm-ineligible
 // (wasm_eligible) and is refused there.
-pub function op_write_file(): Op { return op0("write_file"); }
+pub function op_write_file(): Op { return op0(170); }
 // op_write_file_exec is op_write_file with the executable bit — see
 // asmcore.rt_src_write_file_exec for why it is a separate op (#6133).
-pub function op_write_file_exec(): Op { return op0("write_file_exec"); }
+pub function op_write_file_exec(): Op { return op0(226); }
 // `remove_dir_all` pops a path string value and recursively removes the named
 // directory tree (rm -rf), pushing a fresh Result[(), IoError]: Ok(()) on success
 // (including an already-missing path), Some(_) on an open error other than
@@ -1337,13 +1337,13 @@ pub function op_write_file_exec(): Op { return op0("write_file_exec"); }
 // Lowers to each backend's __fern_remove_dir_all helper (the same one the AST
 // path calls). No wasm file I/O here, so a remove_dir_all module is wasm-
 // ineligible (wasm_eligible) and is refused there.
-pub function op_remove_dir_all(): Op { return op0("remove_dir_all"); }
+pub function op_remove_dir_all(): Op { return op0(172); }
 // `remove_file` pops a path string value and unlinks the named file, pushing a
 // fresh Result[(), IoError]: Ok(()) on success, Err(_) on error (a VALUE op — one arg
 // consumed, the box left on the stack). Lowers to each backend's
 // __fern_remove_file helper (the same one the AST path calls). No wasm file I/O
 // here, so a remove_file module is wasm-ineligible and is refused.
-pub function op_remove_file(): Op { return op0("remove_file"); }
+pub function op_remove_file(): Op { return op0(173); }
 // `temp_dir` pops a prefix string value and creates a uniquely-named directory
 // under /tmp (prefix + a monotonic-ns suffix, via mkdirat), pushing a fresh
 // Result[string, IoError]: Ok(path) on success, Err(_) on mkdir failure (a
@@ -1351,13 +1351,13 @@ pub function op_remove_file(): Op { return op0("remove_file"); }
 // backend's __fern_temp_dir helper (the same one the AST path calls; it also
 // calls __fern_monotonic_ns). No wasm file I/O here, so a temp_dir module is
 // wasm-ineligible (wasm_eligible) and is refused there.
-pub function op_temp_dir(): Op { return op0("temp_dir"); }
+pub function op_temp_dir(): Op { return op0(174); }
 // `create_dir_all` pops a path string value and creates that directory and
 // every missing parent (POSIX `mkdir -p`), pushing a fresh Result[(), IoError]:
 // Ok(()) on success — including when the path was already there — and Err(_)
 // otherwise (a VALUE op — one arg consumed, the box left on the stack). Lowers
 // to each backend's __fern_create_dir_all helper.
-pub function op_create_dir_all(): Op { return op0("create_dir_all"); }
+pub function op_create_dir_all(): Op { return op0(231); }
 // `read_dir` pops a path string value and lists the directory's base-name
 // children (excluding `.`/`..`, via openat+getdents64), pushing a fresh
 // Result[string[], IoError]: Ok(names) on success, Err(_) on an open error (a
@@ -1365,19 +1365,19 @@ pub function op_create_dir_all(): Op { return op0("create_dir_all"); }
 // backend's __fern_read_dir helper (the same one the AST path calls; it boxes a
 // string[] via __fern_arr_box). No wasm file I/O here, so a read_dir module is
 // wasm-ineligible (wasm_eligible) and is refused there.
-pub function op_read_dir(): Op { return op0("read_dir"); }
+pub function op_read_dir(): Op { return op0(171); }
 // `read_dir_all` is `read_dir` without the `.`/`..` filter: every name the
 // directory holds, in getdents64 order (a VALUE op — one arg consumed, the box
 // left on the stack). Lowers to each backend's __fern_read_dir_all helper. A
 // listing tool needs that order; `ls -f` prints entries in it.
-pub function op_read_dir_all(): Op { return op0("read_dir_all"); }
+pub function op_read_dir_all(): Op { return op0(310); }
 // `env` pops a name string value and looks up that environment variable,
 // pushing a fresh Option[string]: Some(value) when set, None when unset (a
 // VALUE op — one arg consumed, the box left on the stack). Lowers to each
 // backend's __fern_env helper (the same one the AST path calls; it boxes the
 // value into a fresh string block). No wasm env access here, so an env module
 // is wasm-ineligible (wasm_eligible) and is refused there.
-pub function op_env(): Op { return op0("env"); }
+pub function op_env(): Op { return op0(176); }
 // `stat` pops a path string value and stat()s the named file (newfstatat),
 // pushing a fresh Result[FileStat, IoError]: Ok(FileStat{is_file, is_dir, size})
 // on success, Err(_) on a stat error (a VALUE op — one arg consumed, the box
@@ -1385,13 +1385,13 @@ pub function op_env(): Op { return op0("env"); }
 // the AST path calls; it boxes a FileStat struct whose shape pointer is the
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
 // ineligible (wasm_eligible) and is refused there.
-pub function op_stat(): Op { return op0("stat"); }
+pub function op_stat(): Op { return op0(175); }
 // `lstat` is `stat` with AT_SYMLINK_NOFOLLOW: it describes the path itself
 // rather than what it points at, so a symlink comes back neither is_file nor
 // is_dir. Same one-arg VALUE shape, same Result[FileStat, IoError], same
 // FileStat shape pointer — only the flags word each backend passes to
 // fstatat / path_filestat_get differs (#7982).
-pub function op_lstat(): Op { return op0("lstat"); }
+pub function op_lstat(): Op { return op0(236); }
 // `statfs` pops a path string value and describes the FILESYSTEM that path
 // resolves on, where `stat` describes the entry: a fresh
 // Result[FsStat, IoError] holding the six `statfs(2)` counts plus the two
@@ -1409,7 +1409,7 @@ pub function op_lstat(): Op { return op0("lstat"); }
 // measure, and a zero-filled record would claim a filesystem with no blocks
 // and no name length — a measurement nobody took. wasm_unsupported_builtin
 // names it, and `platforms.fern`'s `fsinfo` gate refuses it as E066.
-pub function op_statfs(): Op { return op0("statfs"); }
+pub function op_statfs(): Op { return op0(270); }
 // `subprocess` pops a stdin string, an args string[], and a cmd string (TOS
 // order stdin/args/cmd), spawns the child, pipes its streams, and pushes a fresh
 // ProcessResult struct {stdout, stderr, exit_code} (a VALUE op — three args
@@ -1418,7 +1418,7 @@ pub function op_statfs(): Op { return op0("statfs"); }
 // ProcessResult whose shape pointer is the interned "ProcessResult" name). No
 // wasm process spawn here, so a subprocess module is wasm-ineligible
 // (wasm_eligible) and is refused there.
-pub function op_subprocess(): Op { return op0("subprocess"); }
+pub function op_subprocess(): Op { return op0(177); }
 // `read_chunk` pops an i32 byte-count `n` and an i32 Reader fd (a stdin/file
 // handle from `stdin()`/`open_reader`), reads up to n bytes via `read(fd, …, n)`,
 // and pushes a fresh Option[string]: Some(chunk) on a non-empty read, None at EOF
@@ -1426,63 +1426,63 @@ pub function op_subprocess(): Op { return op0("subprocess"); }
 // backend's __fern_reader_read_chunk helper (the same one the AST path calls). No
 // wasm stdin here, so a read_chunk module is wasm-ineligible (wasm_eligible) and
 // is refused there.
-pub function op_read_chunk(): Op { return op0("read_chunk"); }
+pub function op_read_chunk(): Op { return op0(178); }
 // `fd_stat` pops [fd] and pushes Result[FileStat, IoError]: fstat(2) of the
 // handle, the same record `stat` builds. Backs `r.stat()` / `w.stat()`.
-pub function op_fd_stat(): Op { return op0("fd_stat"); }
+pub function op_fd_stat(): Op { return op0(241); }
 // `fd_fsync` / `fd_fdatasync` pop [fd] and push Option[IoError]: fsync(2) /
 // fdatasync(2) of the handle, None once the write-back is scheduled. Back
 // `r.fsync()` / `w.fsync()` and their fdatasync twins. `fd_syncfs` is the same
 // shape for syncfs(2), the whole filesystem the handle lives on rather than the
 // handle's own file; neither WASI preview has it, so the wasm backends answer
 // Unsupported there.
-pub function op_fd_fsync(): Op { return op0("fd_fsync"); }
-pub function op_fd_fdatasync(): Op { return op0("fd_fdatasync"); }
-pub function op_fd_syncfs(): Op { return op0("fd_syncfs"); }
+pub function op_fd_fsync(): Op { return op0(299); }
+pub function op_fd_fdatasync(): Op { return op0(300); }
+pub function op_fd_syncfs(): Op { return op0(301); }
 // `fd_dup_onto` pops [fd, newfd] and pushes Option[IoError]: dup3(2) of the
 // handle's descriptor onto `newfd`, so the handle is reachable as that number
 // too and whatever it named is closed. Backs `r.dup_onto(fd)` /
 // `w.dup_onto(fd)`. Neither WASI preview can install a descriptor at a chosen
 // number, so the wasm backends answer Unsupported.
-pub function op_fd_dup_onto(): Op { return op0("fd_dup_onto"); }
+pub function op_fd_dup_onto(): Op { return op0(311); }
 // `sync` pops nothing and pushes nothing: sync(2), write-back of every dirty
 // buffer on the machine. It cannot fail, which is why it answers no Result.
-pub function op_sync(): Op { return op0("sync"); }
+pub function op_sync(): Op { return op0(298); }
 // `reader_seek` pops [fd, offset, whence] and pushes Result[i64, IoError]:
 // lseek(2), the new offset back. Backs `r.seek(offset, whence)`.
-pub function op_reader_seek(): Op { return op0("reader_seek"); }
+pub function op_reader_seek(): Op { return op0(242); }
 // `reader_splice` pops [fd, out_fd, max] and pushes Result[i64, IoError]: up
 // to max bytes moved from fd to out_fd by splice(2), through the pipe
 // __fern_splice_pipe caches when neither side is one. Unsupported means
 // nothing moved. Backs `r.splice_to(w, max)`.
-pub function op_reader_splice(): Op { return op0("reader_splice"); }
+pub function op_reader_splice(): Op { return op0(330); }
 // `fd_flags` pops [fd] and pushes Result[i64, IoError]: the handle's open
 // flags as Fern's own three bits (1 readable, 2 writable, 4 appending).
 // One op for both `r.flags()` and `w.flags()`, like reader_seek: a handle
 // is its fd on every target this lowers for.
-pub function op_fd_flags(): Op { return op0("fd_flags"); }
+pub function op_fd_flags(): Op { return op0(307); }
 // `writer_truncate` pops [fd, length] and pushes Option[IoError]: ftruncate(2)
 // on the handle. Backs `w.truncate(length)`. Distinct from `truncate` (273),
 // which resolves a PATH and checks write permission again — the descriptor's
 // check happened at the open, so the two disagree on a file whose mode would
 // refuse a fresh one.
-pub function op_writer_truncate(): Op { return op0("writer_truncate"); }
+pub function op_writer_truncate(): Op { return op0(281); }
 // `reader_close` pops an i32 Reader fd and closes it (`close(fd)`), pushing a
 // fresh Option[IoError] (None on success). A VALUE op — one arg consumed. Lowers
 // to each backend's __fern_reader_close helper. wasm-ineligible like read_chunk.
-pub function op_reader_close(): Op { return op0("reader_close"); }
+pub function op_reader_close(): Op { return op0(179); }
 // `args` reads the process command-line arguments, pushing a fresh string[]
 // (argv[0] first) — a VALUE op with no args, leaving the array box on the stack.
 // Lowers to each backend's __fern_args helper (which reads the __fern_argc /
 // __fern_argv globals the entry's _start saves from the initial stack). No wasm
 // argv in this runtime, so an args module is wasm-ineligible (wasm_eligible) and
 // is refused there.
-pub function op_args(): Op { return op0("args"); }
+pub function op_args(): Op { return op0(180); }
 // `putchar` pops an i32 and writes its low byte to stdout (write(1, &byte, 1)),
 // pushing a dummy result (the syscall return) so a statement-level drop balances.
 // Lowers to each backend's __fern_putchar helper — the byte-level twin of
 // print_str. Mirrors the native compiler's `putchar` builtin (issue #2839).
-pub function op_putchar(): Op { return op0("putchar"); }
+pub function op_putchar(): Op { return op0(165); }
 // `signal_ignore` / `signal_default` each pop an i32 signal number and set that
 // signal's disposition to SIG_IGN or SIG_DFL, pushing the syscall return as a
 // dummy so a statement-level drop balances — the same shape as putchar. Lower
@@ -1492,28 +1492,28 @@ pub function op_putchar(): Op { return op0("putchar"); }
 // Result[void, IoError] — getcwd's counterpart, and what `env -C` needs.
 // No wasm: WASI resolves every path against a preopen, so there is no cwd
 // to move and E066 withholds it on the `cwd` capability, as for getcwd.
-pub function op_chdir(): Op { return op0("chdir"); }
+pub function op_chdir(): Op { return op0(277); }
 // `chroot` pops a path and moves the process ROOT, pushing
 // Result[void, IoError] — the same move one level up from chdir, and
 // what chroot(1) needs. No wasm, for the same reason and on the same
 // `cwd` capability: a component has no process root either (#9678).
-pub function op_chroot(): Op { return op0("chroot"); }
+pub function op_chroot(): Op { return op0(316); }
 // `setgroups` pops an i64[] and `setgid` / `setuid` each pop one i64,
 // all three pushing Result[void, IoError]. The write side of
 // getgroups / getgid / getuid, and the order written here is the order
 // they must be CALLED in: each drops the privilege the next needs.
-pub function op_setgroups(): Op { return op0("setgroups"); }
-pub function op_setgid(): Op { return op0("setgid"); }
-pub function op_setuid(): Op { return op0("setuid"); }
+pub function op_setgroups(): Op { return op0(319); }
+pub function op_setgid(): Op { return op0(318); }
+pub function op_setuid(): Op { return op0(317); }
 // `signal_mask` pops [how, mask] and pushes the mask that was blocked
 // BEFORE the call, so one op both reads and writes; `signal_disposition`
 // pops a signal number and pushes 0 default / 1 ignore / 2 a handler is
 // installed. The READ side the two setters below have always lacked, which
 // `env --list-signal-handling` reports and `env --block-signal` moves.
-pub function op_signal_mask(): Op { return op0("signal_mask"); }
-pub function op_signal_disposition(): Op { return op0("signal_disposition"); }
-pub function op_signal_ignore(): Op { return op0("signal_ignore"); }
-pub function op_signal_default(): Op { return op0("signal_default"); }
+pub function op_signal_mask(): Op { return op0(278); }
+pub function op_signal_disposition(): Op { return op0(279); }
+pub function op_signal_ignore(): Op { return op0(243); }
+pub function op_signal_default(): Op { return op0(244); }
 // The global string-builder primitives — the amortised-O(1) output accumulator
 // the self-host emitters write through (asmcore.EmitState.write → strbuf_append;
 // emit_module_ir → strbuf_reset / strbuf_take). A single .bss buffer + length:
@@ -1525,9 +1525,9 @@ pub function op_signal_default(): Op { return op0("signal_default"); }
 // Lower to each register backend's __fern_strbuf_* helpers (byte-for-byte the
 // AST path's, so the IR + AST emitters agree). No wasm IR support yet, so a
 // strbuf module is wasm-ineligible (wasm_eligible) and is refused there.
-pub function op_strbuf_reset(): Op { return op0("strbuf_reset"); }
-pub function op_strbuf_append(): Op { return op0("strbuf_append"); }
-pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
+pub function op_strbuf_reset(): Op { return op0(117); }
+pub function op_strbuf_append(): Op { return op0(118); }
+pub function op_strbuf_take(): Op { return op0(119); }
 // The capacity-carrying string builder (#8773) — the same accumulator without
 // the singleton. A handle is the ADDRESS of a 32-byte control block (data ptr,
 // len, cap, reserve), so any number of builders are live at once and they nest.
@@ -1538,31 +1538,31 @@ pub function op_strbuf_take(): Op { return op0("strbuf_take"); }
 // `buf_push_byte` / `buf_push_u64` / `buf_free` are statement ops (pushing a dummy so a
 // statement-level drop balances); `buf_len` and `buf_take` are value ops. All
 // lower to each backend's __fern_buf_* helpers.
-pub function op_buf_new(): Op { return op0("buf_new"); }
-pub function op_buf_push(): Op { return op0("buf_push"); }
-pub function op_buf_push_range(): Op { return op0("buf_push_range"); }
+pub function op_buf_new(): Op { return op0(291); }
+pub function op_buf_push(): Op { return op0(292); }
+pub function op_buf_push_range(): Op { return op0(293); }
 // `buf_push_mapped` pops [handle, str, table]: each byte c of the string is
 // appended as table[c], a u8[] indexed by byte value, or unchanged when c is
 // past the table's end.
-pub function op_buf_push_mapped(): Op { return op0("buf_push_mapped"); }
+pub function op_buf_push_mapped(): Op { return op0(325); }
 // `buf_push_filtered` pops [handle, str, drop]: each byte c of the string is
 // appended unless drop[c] is nonzero; a byte past the table's end is kept.
-pub function op_buf_push_filtered(): Op { return op0("buf_push_filtered"); }
+pub function op_buf_push_filtered(): Op { return op0(326); }
 // `buf_push_expanded` pops [handle, str, table]: each byte c of the string is
 // appended as the record at table[c*8], a length (above 7 counts as 7) and
 // then the bytes; a byte whose record is not wholly in the table is kept.
-pub function op_buf_push_expanded(): Op { return op0("buf_push_expanded"); }
-pub function op_buf_push_byte(): Op { return op0("buf_push_byte"); }
-pub function op_buf_push_u64(): Op { return op0("buf_push_u64"); }
-pub function op_buf_len(): Op { return op0("buf_len"); }
-pub function op_buf_take(): Op { return op0("buf_take"); }
-pub function op_buf_free(): Op { return op0("buf_free"); }
+pub function op_buf_push_expanded(): Op { return op0(328); }
+pub function op_buf_push_byte(): Op { return op0(294); }
+pub function op_buf_push_u64(): Op { return op0(306); }
+pub function op_buf_len(): Op { return op0(295); }
+pub function op_buf_take(): Op { return op0(296); }
+pub function op_buf_free(): Op { return op0(297); }
 // `sleep_ms` pops an i32 (milliseconds) and pauses via nanosleep (ms <= 0 is a
 // no-op), pushing a dummy result (the syscall return) so a statement-level drop
 // balances — the same void-with-drop shape as putchar. Lowers to the x86-64 /
 // arm64 __fern_sleep_ms helper the native compiler uses, and on wasm to a
 // single-clock poll_oneoff block. Mirrors the native builtin.
-pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
+pub function op_sleep_ms(): Op { return op0(181); }
 // `sleep_ns` is the same pause at the resolution the underlying primitive
 // actually has: it pops an i64 (nanoseconds) and pushes the same dummy result
 // for the statement-level drop. Only the split differs — the timespec divisor
@@ -1571,7 +1571,7 @@ pub function op_sleep_ms(): Op { return op0("sleep_ms"); }
 // and rounds the remainder UP into select's microsecond timeval; both WASI
 // previews take nanoseconds already, so wasm is exact. Mirrors the native
 // builtin (#8528).
-pub function op_sleep_ns(): Op { return op0("sleep_ns"); }
+pub function op_sleep_ns(): Op { return op0(266); }
 // `proc_fork` takes no operands and pushes the fork(2) return verbatim — 0 in
 // the child, the child's pid in the parent, -errno on failure. `proc_waitpid`
 // pops a pid and pushes the reaped child's status decoded to the shell
@@ -1580,8 +1580,8 @@ pub function op_sleep_ns(): Op { return op0("sleep_ns"); }
 // helpers the native backends emit; no wasm (a component has no fork — see
 // wasm_unsupported_builtin). The crash-only supervision primitives
 // (docs/CRASH-ONLY-SERVE.md D2'), mirroring the native builtins (#5686).
-pub function op_proc_fork(): Op { return op0("proc_fork"); }
-pub function op_proc_waitpid(): Op { return op0("proc_waitpid"); }
+pub function op_proc_fork(): Op { return op0(211); }
+pub function op_proc_waitpid(): Op { return op0(212); }
 // `proc_waitpid_nohang` takes one operand [pid] and pushes an i32: the same
 // reap with wait4's WNOHANG, so it answers immediately. The decoded status when
 // the child has exited, -1 when it has not, -errno on failure. -1 rather than
@@ -1590,20 +1590,20 @@ pub function op_proc_waitpid(): Op { return op0("proc_waitpid"); }
 // `proc_waitpid(-1)` loses: that call reaps whichever child exits first and
 // reports only the status, so one nohang probe per candidate says which pid it
 // was (a child already reaped answers -ECHILD).
-pub function op_proc_waitpid_nohang(): Op { return op0("proc_waitpid_nohang"); }
+pub function op_proc_waitpid_nohang(): Op { return op0(286); }
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
 // is what lets a forked child become another program — the batched per-module
 // orchestrator in asm_modload_run needs exactly this. No wasm (a component has
 // no processes — see wasm_unsupported_builtin).
-pub function op_proc_exec(): Op { return op0("proc_exec"); }
+pub function op_proc_exec(): Op { return op0(213); }
 // `proc_exec_as` pops [path, argv, envp] and execve's with both vectors
 // VERBATIM: argv[0] is whatever the caller put there rather than the path,
 // and the environment is the caller's rather than __raw_environ()'s. Same
 // failure-only result as op_proc_exec, and no wasm for the same reason.
 // `env sh -c …` is the caller that needs both halves at once (#9090).
-pub function op_proc_exec_as(): Op { return op0("proc_exec_as"); }
+pub function op_proc_exec_as(): Op { return op0(280); }
 // `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
 // hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
 // built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
@@ -1696,8 +1696,8 @@ pub function op_map_iter(widekind: i32): Op {
     if (widekind == 2) { vw = 2; }
     return Op { decl: 0 - 1, kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
-pub function op_mapiter_has_next(): Op { return op0("mapiter_has_next"); }
-pub function op_mapiter_key(): Op { return op0("mapiter_key"); }
+pub function op_mapiter_has_next(): Op { return op0(134); }
+pub function op_mapiter_key(): Op { return op0(135); }
 // `widekind` (i64_imm) is 1 for an i64/u64 VALUE column and 2 for an f64 one: on
 // wasm the accessor reads the 8-byte element via $__fern_mapiter_value_w64, and
 // reinterprets it for f64. The register backends ignore it. #5253.
@@ -1705,7 +1705,7 @@ pub function op_mapiter_value(widekind: i32): Op {
     var vw: i64 = widekind as i64;
     return Op { decl: 0 - 1, kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
-pub function op_mapiter_advance(): Op { return op0("mapiter_advance"); }
+pub function op_mapiter_advance(): Op { return op0(137); }
 
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
@@ -2044,8 +2044,8 @@ pub function op_loop(blocktype: i32): Op {
 pub function op_if(blocktype: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
-pub function op_else(): Op { return op0("else"); }
-pub function op_end(): Op { return op0("end"); }
+pub function op_else(): Op { return op0(155); }
+pub function op_end(): Op { return op0(156); }
 pub function op_br(depth: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -2053,8 +2053,8 @@ pub function op_brif(depth: i32): Op {
     return Op { decl: 0 - 1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
-pub function op_drop(): Op { return op0("drop"); }
-pub function op_return(): Op { return op0("return"); }
+pub function op_drop(): Op { return op0(159); }
+pub function op_return(): Op { return op0(160); }
 
 // ---- integer op-kind registry (issue #4394 lever 2) --------------------
 //
