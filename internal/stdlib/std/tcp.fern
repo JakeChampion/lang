@@ -356,7 +356,7 @@ function __recv_scratch(): u8[] {
 // write and how many bytes were pending then; and the peer's address key
 // (`tcp_socket_ctl` op 7; 0 when the host will not say), by which the
 // per-client cap counts.
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], peers: i32[], tails: __Tail[] }
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], tails: __Tail[] }
 
 // __Tail — what of a response is still to be produced once its head and
 // the bytes pending have gone: nothing; a file the loop reads as the
@@ -523,7 +523,7 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32): __Conns {
     var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - (1 as i64)), rate_base: c.rate_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false), rate_since: c.rate_since.append(0 - (1 as i64)), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - (1 as i64)), send_base: c.send_base.append(0), peers: c.peers.append(peer), tails: c.tails.append(NoTail) };
 }
 
 // __conns_from_peer(c, peer) — how many open connections the peer holds.
@@ -547,6 +547,8 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     var continued: boolean[] = [];
     var rate_since: i64[] = [];
     var rate_base: i32[] = [];
+    var send_since: i64[] = [];
+    var send_base: i32[] = [];
     var peers: i32[] = [];
     var tails: __Tail[] = [];
     var i: i32 = 0;
@@ -563,12 +565,14 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
             continued = continued.append(c.continued[i]);
             rate_since = rate_since.append(c.rate_since[i]);
             rate_base = rate_base.append(c.rate_base[i]);
+            send_since = send_since.append(c.send_since[i]);
+            send_base = send_base.append(c.send_base[i]);
             peers = peers.append(c.peers[i]);
             tails = tails.append(c.tails[i]);
         }
         i = i + 1;
     }
-    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, peers: peers, tails: tails };
+    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued, rate_since: rate_since, rate_base: rate_base, send_since: send_since, send_base: send_base, peers: peers, tails: tails };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -1016,8 +1020,8 @@ function __file_tail_send[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Se
 // bytes the loop has handed it are the progress.
 function __drain_deadline(c: __Conns, at: i32, opts: ServeOptions, first: boolean): __Conns {
     var now: i64 = monotonic_ns();
-    var since: i64 = c.rate_since[at];
-    var base: i32 = c.rate_base[at];
+    var since: i64 = c.send_since[at];
+    var base: i32 = c.send_base[at];
     var queued: i32 = tcp_socket_ctl(c.fds[at], 6, 0);
     if (queued < 0) { queued = 0; }
     var outstanding: i32 = c.pending[at].len() + queued + __tail_left(c, at);
@@ -1029,7 +1033,7 @@ function __drain_deadline(c: __Conns, at: i32, opts: ServeOptions, first: boolea
     if (opts.min_data_rate > 0) {
         deadline = since + opts.data_rate_grace.as_nanos() + ((base - outstanding) as i64) * (1000000000 as i64) / (opts.min_data_rate as i64);
     }
-    return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
+    return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), send_since: c.send_since.with(at, since), send_base: c.send_base.with(at, base) };
 }
 
 // __listener_interest(opts) — how a loop watches its listener: for reads,
@@ -1153,7 +1157,9 @@ function __serve_not_ready(f: http.HttpFramed, opts: ServeOptions, stop: __Stop)
 // closed. A watch the reactor refuses leaves the listener unwatched
 // until the next pass tries again.
 function __serve_gate[D: async.Driver](drv: D, listener: i32, c: __Conns, opts: ServeOptions, accepting: boolean): boolean {
-    var full: boolean = c.fds.len() >= opts.max_connections;
+    var cap: i32 = opts.max_connections;
+    if (cap < 1) { cap = 1; }
+    var full: boolean = c.fds.len() >= cap;
     if (accepting && full) {
         drv.unwatch(listener);
         return false;
@@ -1219,7 +1225,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], peers: [], tails: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -1302,7 +1308,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var stop: __Stop = __stop_none();
     drv.watch_signal(15);
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], peers: [], tails: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -1444,34 +1450,51 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
     if (workers < 1) { workers = cpu_count(); }
     if (workers < 1) { workers = 1; }
     var resolved: ServeOptions = ServeOptions { ...opts, workers: workers };
-    var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fast_deaths: 0, stopping: false, worst: 0 };
+    var sup: __Supervisor = __Supervisor { pids: [], spawned: [], backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
     var drv: async.RealDriver = async.real_driver();
     var chld: i32 = drv.watch_signal(17);
     if (chld < 0) { return chld; }
     drv.watch_signal(15);
     while (true) {
-        while (!sup.stopping && sup.pids.len() < workers) {
-            var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
-            sup = forked.0;
-            if (forked.1 != 0 - 1) { return forked.1; }
+        var refork_ms: i32 = -1;
+        if (!sup.stopping && sup.pids.len() < workers) {
+            var wait_ms: i64 = sup.fork_after - now_unix_ms();
+            if (wait_ms <= (0 as i64)) {
+                var forked: (__Supervisor, i32) = __supervisor_fork(drv, port, listener, run, resolved, sup);
+                sup = forked.0;
+                if (forked.1 != 0 - 1) { return forked.1; }
+                continue;
+            }
+            refork_ms = wait_ms as i32;
         }
         if (sup.stopping && sup.pids.len() == 0) {
             drv.close();
             return sup.worst;
         }
         // Parent: supervise. A child's death and SIGTERM both arrive as
-        // readiness events; a death is reaped by probing every worker.
-        var events: i32[] = drv.wait(8, -1);
-        var k: i32 = 0;
-        while (k + 1 < events.len()) {
-            var fd: i32 = events[k];
-            k = k + 2;
-            if (fd == 0 - 15) { sup = __supervisor_stop(sup); }
-            if (fd == 0 - 17) { sup = __supervisor_reap(sup); }
+        // readiness events; a death is reaped by probing every worker. A
+        // refork the backoff holds back is what the wait's deadline is.
+        sup = __supervisor_events(sup, drv.wait(8, refork_ms));
+        if (sup.gave_up()) {
+            __supervisor_abandon(drv, sup);
+            drv.close();
+            return sup.crashed;
         }
-        if (sup.gave_up()) { return sup.worst; }
     }
     return 0;
+}
+
+// __supervisor_events(sup, events) — the wait's events acted on: SIGTERM
+// (-15) forwarded, SIGCHLD (-17) reaped.
+function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
+    var k: i32 = 0;
+    while (k + 1 < events.len()) {
+        var fd: i32 = events[k];
+        k = k + 2;
+        if (fd == 0 - 15) { sup = __supervisor_stop(sup); }
+        if (fd == 0 - 17) { sup = __supervisor_reap(sup); }
+    }
+    return sup;
 }
 
 // __supervisor_fork(drv, port, listener, run, opts, sup) — one more
@@ -1541,15 +1564,40 @@ function __worker_listener(port: i32, listener: i32, opts: ServeOptions): i32 {
 }
 
 // __Supervisor — the supervisor's workers (pids, and when each was
-// forked), its refork backoff and consecutive fast-death count, whether
-// SIGTERM has been forwarded, and the worst exit code a worker has
-// answered since.
-struct __Supervisor { pids: i32[], spawned: i64[], backoff_ms: i64, fast_deaths: i32, stopping: boolean, worst: i32 }
+// forked), its refork backoff and the time before which nothing is
+// forked again, its consecutive fast-death count, whether SIGTERM has
+// been forwarded, the worst exit code a worker answered while stopping
+// (the clean shutdown's exit) and the last code a worker died with while
+// serving (a give-up's exit).
+struct __Supervisor { pids: i32[], spawned: i64[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
 
 // `.gave_up()` — eight consecutive fast deaths: the supervisor exits with
 // the last one's code rather than spinning.
 function (s: __Supervisor) gave_up(): boolean {
     return s.fast_deaths >= 8;
+}
+
+// __supervisor_abandon(drv, sup) — the pool stopped after a give-up: the
+// fast deaths were counted over every worker, so others may be alive,
+// holding the listener with nothing left to refork them. SIGTERM to each,
+// up to five seconds for them to drain, then SIGKILL for the rest, every
+// one reaped before the supervisor returns.
+function __supervisor_abandon(drv: async.RealDriver, sup: __Supervisor): void {
+    var s: __Supervisor = __supervisor_stop(sup);
+    var until: i64 = now_unix_ms() + (5000 as i64);
+    while (s.pids.len() > 0) {
+        var left: i64 = until - now_unix_ms();
+        if (left <= (0 as i64)) { break; }
+        drv.wait(8, left as i32);
+        s = __supervisor_reap(s);
+    }
+    for pid in s.pids {
+        match (signal_send(pid, 9)) { Ok(_) => { }, Err(_) => { } }
+    }
+    while (s.pids.len() > 0) {
+        drv.wait(8, 50);
+        s = __supervisor_reap(s);
+    }
 }
 
 // __supervisor_stop(sup) — SIGTERM forwarded to every worker, each of
@@ -1564,9 +1612,10 @@ function __supervisor_stop(sup: __Supervisor): __Supervisor {
 
 // __supervisor_reap(sup) — every worker that has exited reaped: a death
 // while serving is logged with the raw exit code (134 = trap, 137 =
-// arena exhaustion, 101 = todo, 1 = assert) and counted against the
-// backoff, which is slept here before the loop forks its replacement; a
-// death after SIGTERM is the worker's shutdown, and its code is kept.
+// arena exhaustion, 101 = todo, 1 = assert), kept as the last crash and
+// counted against the backoff, which sets the time before which the loop
+// forks no replacement; a death after SIGTERM is the worker's shutdown,
+// and its code is the worst the shutdown answers.
 function __supervisor_reap(sup: __Supervisor): __Supervisor {
     var i: i32 = 0;
     while (i < sup.pids.len()) {
@@ -1583,7 +1632,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
             continue;
         }
         eprint("tcp_serve_supervised: worker died with exit code " + int.int_to_string(code) + "; restarting");
-        sup = __Supervisor { ...sup, worst: code };
+        sup = __Supervisor { ...sup, crashed: code };
         if (lived_ms < (100 as i64)) {
             sup = __Supervisor { ...sup, fast_deaths: sup.fast_deaths + 1 };
             if (sup.gave_up()) {
@@ -1593,10 +1642,9 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
         } else {
             sup = __Supervisor { ...sup, fast_deaths: 0, backoff_ms: 100 as i64 };
         }
-        sleep_ms(sup.backoff_ms);
         var next: i64 = sup.backoff_ms * (2 as i64);
         if (next > (5000 as i64)) { next = 5000 as i64; }
-        sup = __Supervisor { ...sup, backoff_ms: next };
+        sup = __Supervisor { ...sup, fork_after: now_unix_ms() + sup.backoff_ms, backoff_ms: next };
     }
     return sup;
 }
