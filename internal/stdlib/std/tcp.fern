@@ -31,9 +31,11 @@
 //      malformed request behind an answered one gets no answer, since
 //      that answer already said close (RFC 9112 §9.6).
 //   4. handler(req) returns the HttpResponse.
-//   5. http_serialize_response_conn → tcp_send; what the kernel does not
-//      take stays with the connection, watched for writability until it
-//      drains.
+//   5. http_serialize_response_to → tcp_send, with a `Date` the loop
+//      formats once per second (RFC 9110 §6.6.1) unless the handler set
+//      one, and no body on a response to HEAD or a 1xx, 204 or 304;
+//      what the kernel does not take stays with the connection, watched
+//      for writability until it drains.
 //   6. a connection persists across requests (RFC 9112 §9.3: HTTP/1.1
 //      unless `Connection: close`, HTTP/1.0 only with `Connection:
 //      keep-alive`) until the keep-alive idle span passes with no request
@@ -252,6 +254,30 @@ function __recv_scratch(): u8[] {
 // once).
 struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[] }
 
+// __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
+// formatted once per second: the wall-clock second it was formatted for,
+// and the IMF-fixdate text.
+struct __Clock { sec: i64, date: string }
+
+// __clock_tick(clk) — the clock brought to the current second, the date
+// reformatted only when the second has changed. Read once per wait, so
+// the responses of one event share it.
+function __clock_tick(clk: __Clock): __Clock {
+    var sec: i64 = now_unix_ms() / 1000;
+    if (sec == clk.sec && clk.date.len() > 0) { return clk; }
+    return __Clock { sec: sec, date: time.instant_from_unix(sec).format_http_date() };
+}
+
+// __serve_wire(method, resp, keep_alive, clk) — the response bytes the
+// loop sends: the handler's `Date` when it set one, the clock's
+// otherwise, and no body where the request's method or the status says
+// none (`http_serialize_response_to`).
+function __serve_wire(method: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): string {
+    if (resp.headers.get_all("date").len() > 0) { return http.http_serialize_response_to(method, resp, keep_alive); }
+    var dated: HttpResponse = resp.with_header("Date", clk.date);
+    return http.http_serialize_response_to(method, dated, keep_alive);
+}
+
 function __conns_index(c: __Conns, fd: i32): i32 {
     var i: i32 = 0;
     while (i < c.fds.len()) {
@@ -441,11 +467,11 @@ function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
 // waiting on the peer, so its deadline is left alone. Less than a request
 // waits under `__serve_next`'s deadline, and a malformed one is refused
 // now: no bytes could complete it.
-function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, tail: http.HttpFraming): (__Conns, boolean) {
+function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
     match (tail) {
         http.Framed(_) => { return (c, true); },
         http.Incomplete => { return (__serve_next(c, at, opts), false); },
-        http.Malformed(status) => { return (__serve_refuse(drv, c, at, status, opts), false); }
+        http.Malformed(status) => { return (__serve_refuse(drv, c, at, status, opts, clk), false); }
     }
     return (c, false);
 }
@@ -455,8 +481,8 @@ function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
 // close`, then the close. A short write leaves the rest pending, to be
 // finished by a later wait, which closes the connection once it has gone
 // out; a refused write closes it now.
-function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions): __Conns {
-    var wire: string = http.http_serialize_response_conn(http.http_response_text(status, ""), false);
+function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions, clk: __Clock): __Conns {
+    var wire: string = __serve_wire("GET", http.http_response_text(status, ""), false, clk);
     var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire, opts.recv_deadline);
     match (sent.1) {
         Partial => { return sent.0; },
@@ -476,7 +502,7 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
 // not persist; and the `answered`th response of one event ends the
 // event's burst, leaving a request still buffered as the connection's
 // backlog.
-function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: string, opts: ServeOptions, answered: i32, tail: http.HttpFraming): (__Conns, boolean) {
+function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: string, opts: ServeOptions, answered: i32, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
     var sent: (__Conns, __Sent) = __serve_send(drv, c, at, wire, opts.recv_deadline);
     c = sent.0;
     match (sent.1) {
@@ -485,7 +511,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: str
         Whole => { }
     }
     if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
-    var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail);
+    var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
     c = ready.0;
     if (!ready.1) { return (c, false); }
     if (answered >= __pipeline_burst()) {
@@ -501,7 +527,7 @@ function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: str
 // still draining, when the connection waits for its next request, or
 // when it is closed (the write failed, the connection does not persist,
 // or the reactor refused to watch it again).
-function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): (__Conns, i32, boolean) {
+function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
     var sent: (__Conns, __Sent) = __serve_send(drv, c, at, c.pending[at], opts.recv_deadline);
     c = sent.0;
     match (sent.1) {
@@ -512,7 +538,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
     if (!c.keep[at]) { return (__serve_close(drv, c, at), -1, false); }
     if (drv.watch(c.fds[at], 1) < 0) { return (__serve_close(drv, c, at), -1, false); }
     var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at]);
-    var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail);
+    var ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, "") }, at, opts, tail, clk);
     if (!ready.1) { return (ready.0, -1, false); }
     return (ready.0, at, false);
 }
@@ -531,10 +557,10 @@ function __serve_eof[D: async.Driver](drv: D, c: __Conns, at: i32): __Conns {
 // event ends with nothing to answer (an unknown descriptor, a response still
 // draining, a connection closed once it drained), and `eof` when the peer
 // has finished sending.
-function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions): (__Conns, i32, boolean) {
+function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: ServeOptions, clk: __Clock): (__Conns, i32, boolean) {
     var at: i32 = __conns_index(c, fd);
     if (at < 0) { return (c, -1, false); }
-    if (c.pending[at].len() > 0) { return __serve_drain(drv, c, at, opts); }
+    if (c.pending[at].len() > 0) { return __serve_drain(drv, c, at, opts, clk); }
     var read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
     return (read.0, at, read.1);
 }
@@ -643,8 +669,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
     var scratch: u8[] = __recv_scratch();
+    var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
         var events: i32[] = __with_backlog(conns, drv.wait(64, __conns_timeout(conns, monotonic_ns())));
+        clk = __clock_tick(clk);
         var k: i32 = 0;
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
@@ -653,7 +681,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                 conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
                 continue;
             }
-            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts);
+            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
             conns = ev.0;
             var at: i32 = ev.1;
             if (at < 0) { continue; }
@@ -668,14 +696,14 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         conns = took.0;
                         count = count + 1;
                         var resp: HttpResponse = handler(f.request, plat);
-                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, http.http_serialize_response_conn(resp, took.1), opts, count, took.2);
+                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, resp, took.1, clk), opts, count, took.2, clk);
                         conns = answered.0;
                         more = answered.1;
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
                     http.Malformed(status) => {
-                        conns = __serve_refuse(drv, conns, at, status, opts);
+                        conns = __serve_refuse(drv, conns, at, status, opts, clk);
                         more = false;
                     }
                 }
@@ -704,8 +732,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
     var scratch: u8[] = __recv_scratch();
+    var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
         var events: i32[] = __with_backlog(conns, drv.wait(64, __conns_timeout(conns, monotonic_ns())));
+        clk = __clock_tick(clk);
         var k: i32 = 0;
         while (k + 1 < events.len()) {
             var fd: i32 = events[k];
@@ -714,7 +744,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                 conns = __serve_accept(drv, listener, conns, opts.recv_deadline);
                 continue;
             }
-            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts);
+            var ev: (__Conns, i32, boolean) = __serve_event(drv, conns, fd, scratch, opts, clk);
             conns = ev.0;
             var at: i32 = ev.1;
             if (at < 0) { continue; }
@@ -730,14 +760,14 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         count = count + 1;
                         var stepped: (S, HttpResponse) = handler(st, f.request, plat);
                         st = stepped.0;
-                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, http.http_serialize_response_conn(stepped.1, took.1), opts, count, took.2);
+                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, stepped.1, took.1, clk), opts, count, took.2, clk);
                         conns = answered.0;
                         more = answered.1;
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
                     http.Malformed(status) => {
-                        conns = __serve_refuse(drv, conns, at, status, opts);
+                        conns = __serve_refuse(drv, conns, at, status, opts, clk);
                         more = false;
                     }
                 }

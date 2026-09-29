@@ -311,8 +311,11 @@ a request of 101 header fields, answered 431 by the loop itself and
 closed; an HTTP/1.1 request without a Host, answered 400 and closed; a
 body past the cap, answered 413 before it arrives and closed; a chunked request
 with a request pipelined behind it, whose decoded body the handler echoes
-and whose framing must leave exactly the second request to answer; and an
-HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+and whose framing must leave exactly the second request to answer; a HEAD
+with a GET pipelined behind it, answered with the Content-Length and none
+of the body, then a 204, answered with neither; and an HTTP/1.0 keep-alive
+request followed by an HTTP/1.1 one. Every response's `Connection` and
+`Date` are
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is
@@ -333,6 +336,11 @@ handed to a callee that only borrows it (`HeaderMap.append`, which retains
 the value it keeps) must still be released by the arm (#10669); the lowering
 side is `TestPairFormPayloadHandedToBorrowingCalleeIsReleased` in
 `internal/ir`.
+`TestWasmClockCensus` runs each clock builtin, and the date formatter
+over the wall clock, a hundred times under the same census: the wall-clock
+helpers read the host's datetime record through a scratch block they
+allocate, and one not given back was a block per read (#10666), which
+the serve loop's once-per-wait `Date` turned into a block per wait.
 `TestSelfHostWasmSemanticTCPPollable` separately checks semantic lowering and
 live socket subscription/drop on WASI. `TestSelfHostWasmHTTPHandlerCensus`
 runs the bounded handler against real WASI sockets, with a guest-selected

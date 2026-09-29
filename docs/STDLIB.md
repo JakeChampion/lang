@@ -1101,7 +1101,11 @@ serializer.
   rules, so a block the parser would refuse names no header.
   `http_serialize_response(resp): string` writes `Connection: close`;
   `http_serialize_response_conn(resp, keep_alive)` writes `keep-alive` or
-  `close` as the serve loop decided.
+  `close` as the serve loop decided; `http_serialize_response_to(method,
+  resp, keep_alive)` is what the loop sends, with no body on a response
+  to HEAD (its `Content-Length` kept) or a 1xx, 204 or 304 (neither),
+  whatever the handler put in the body (RFC 9112 §6.3). The loop adds a
+  `Date`, formatted once per second, unless the handler set one.
 
 ### `std/net`
 

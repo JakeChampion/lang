@@ -107,6 +107,26 @@ function test_status_reason_unknown_falls_back(): test.TestOutcome {
     return test.assert_contains(wire, "599 Status");
 }
 
+// A response to HEAD carries the Content-Length its body would have and
+// none of the body; a 1xx, 204 or 304 carries neither, whatever the
+// handler put in the body (RFC 9112 §6.3).
+function test_head_response_has_no_body(): test.TestOutcome {
+    var wire: string = http.http_serialize_response_to("HEAD", http.http_response_ok("hello"), true);
+    return test.assert_eq(wire, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\n");
+}
+
+function test_no_content_has_no_length_or_body(): test.TestOutcome {
+    var wire: string = http.http_serialize_response_to("GET", http.http_response_text(204, "ignored"), true);
+    return test.assert_eq(wire, "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n");
+}
+
+function test_not_modified_and_informational_have_no_body(): test.TestOutcome {
+    var wire: string = http.http_serialize_response(http.http_response_text(304, "ignored"));
+    if (wire != "HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n") { return test.fail("304: " + wire); }
+    wire = http.http_serialize_response(http.http_response_text(100, ""));
+    return test.assert_eq(wire, "HTTP/1.1 100 Continue\r\nConnection: close\r\n\r\n");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP response headers (migrated)");
     r = r.it("user-set headers before auto block",
@@ -125,5 +145,8 @@ function main(): i32 {
              test_status_reason_for_extended_codes);
     r = r.it("unknown status falls back to Status",
              test_status_reason_unknown_falls_back);
+    r = r.it("HEAD response has no body", test_head_response_has_no_body);
+    r = r.it("204 has no Content-Length or body", test_no_content_has_no_length_or_body);
+    r = r.it("304 and 1xx have no body", test_not_modified_and_informational_have_no_body);
     return r.finish();
 }

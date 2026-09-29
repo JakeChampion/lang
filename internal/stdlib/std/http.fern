@@ -40,6 +40,14 @@ import "std/stream";
 // unknown codes — callers should fall back to a generic
 // phrase rather than emitting nothing.
 pub function http_status_text(code: i32): string {
+    if (code < 400) { return __status_text_below_400(code); }
+    if (code < 500) { return __status_text_4xx(code); }
+    return __status_text_5xx(code);
+}
+
+function __status_text_below_400(code: i32): string {
+    if (code == 100) { return "Continue"; }
+    if (code == 101) { return "Switching Protocols"; }
     if (code == 200) { return "OK"; }
     if (code == 201) { return "Created"; }
     if (code == 204) { return "No Content"; }
@@ -48,6 +56,10 @@ pub function http_status_text(code: i32): string {
     if (code == 304) { return "Not Modified"; }
     if (code == 307) { return "Temporary Redirect"; }
     if (code == 308) { return "Permanent Redirect"; }
+    return "";
+}
+
+function __status_text_4xx(code: i32): string {
     if (code == 400) { return "Bad Request"; }
     if (code == 401) { return "Unauthorized"; }
     if (code == 403) { return "Forbidden"; }
@@ -57,10 +69,16 @@ pub function http_status_text(code: i32): string {
     if (code == 409) { return "Conflict"; }
     if (code == 410) { return "Gone"; }
     if (code == 413) { return "Payload Too Large"; }
+    if (code == 414) { return "URI Too Long"; }
     if (code == 415) { return "Unsupported Media Type"; }
     if (code == 418) { return "I'm a teapot"; }
     if (code == 422) { return "Unprocessable Entity"; }
     if (code == 429) { return "Too Many Requests"; }
+    if (code == 431) { return "Request Header Fields Too Large"; }
+    return "";
+}
+
+function __status_text_5xx(code: i32): string {
     if (code == 500) { return "Internal Server Error"; }
     if (code == 501) { return "Not Implemented"; }
     if (code == 502) { return "Bad Gateway"; }
@@ -925,11 +943,22 @@ pub function http_serialize_response(resp: HttpResponse): string {
 }
 
 // `http_serialize_response_conn(resp, keep_alive)` — the response as
-// a serve loop sends it: `Connection: keep-alive` when the connection
-// persists for the next request, `Connection: close` when this
-// response ends it. Every response carries the header, so an HTTP/1.0
-// client that asked to keep the connection learns that it was kept.
+// a serve loop sends it to a GET: `Connection: keep-alive` when the
+// connection persists for the next request, `Connection: close` when
+// this response ends it. Every response carries the header, so an
+// HTTP/1.0 client that asked to keep the connection learns that it was
+// kept.
 pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
+    return http_serialize_response_to("GET", resp, keep_alive);
+}
+
+// `http_serialize_response_to(method, resp, keep_alive)` — the response
+// as a serve loop sends it to a request made with `method` (RFC 9112
+// §6.3): a response to HEAD carries the `Content-Length` its body would
+// have and none of the body, and a 1xx, 204 or 304 response carries
+// neither, whatever the handler put in the body. Every other response
+// carries `Content-Length` and the body.
+pub function http_serialize_response_to(method: string, resp: HttpResponse, keep_alive: boolean): string {
     var connection: string = "Connection: close\r\n";
     if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
@@ -947,9 +976,12 @@ pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolea
         }
         i = i + 1;
     }
-    hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"
-        + connection
-        + "\r\n";
+    var bodiless: boolean = resp.status < 200 || resp.status == 204 || resp.status == 304;
+    if (!bodiless) {
+        hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
+    }
+    hdr_block = hdr_block + connection + "\r\n";
+    if (bodiless || method == "HEAD") { return status_line + hdr_block; }
     return status_line + hdr_block + resp.body_string();
 }
 
