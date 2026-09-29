@@ -4128,7 +4128,7 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
     // `index_of_str(...return_fresh_struct_ret_fns, "<prefix>" + name)` sites
     // in irlower; grep that shape when adding one.
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, row_keys(names,
-        ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
+        ["", "ARR:", "ARROWN:", "SARRC:", "SARRH:", "STRARR:", "ENUM:", "STRFLDF:",
          "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]), false);
     // The counted-return class ("CNTRET:") is read through two more fields of
     // its own, so erasing the prefixed row alone would leave the caller still
