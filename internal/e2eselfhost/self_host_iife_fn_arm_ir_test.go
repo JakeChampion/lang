@@ -162,7 +162,7 @@ var iifeFnArmCases = []struct {
 	// their elements like any other function array, so the binding they yield
 	// dispatches env-first.
 	{"arm-array-nocapture", "function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + 3i32))] } else { [((y: i32) => y)] }); return xs[0i32](1i32) & 63i32; }", 4},
-	{"arm-array-bare-fnnames-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
+	{"arm-array-bare-fnnames", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var xs: ((i32) => i32)[] = (if (true) { [inc] } else { [dbl] }); return xs[0i32](41i32) & 63i32; }", 42},
 	// The IIFE is not the whole value but sits INSIDE one — an array element, a
 	// struct field, a call argument. try_fn_field_value owns every such position
 	// and had no case for an IIFE, so its arm lambdas were never boxed: the two
@@ -224,6 +224,13 @@ var iifeFnArmCases = []struct {
 	// clo_init marking, and nested bare fn-name arms stay plain fn pointers.
 	{"nested-iife-closure-local-arms-unchanged", "function main(): i32 { var v0: (i32) => i32 = ((a: i32) => 41i32); var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { v0 } else { v0 }) } else { (if (c) { v0 } else { v0 }) }); return f(3i32) & 63i32; }", 41},
 	{"nested-iife-bare-fnname-arms-unchanged", "function inc(x: i32): i32 { return x + 1i32; } function dbl(x: i32): i32 { return x * 2i32; } function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { (if (c) { inc } else { dbl }) } else { (if (c) { dbl } else { inc }) }); return f(40i32) & 63i32; }", 41},
+
+	// An arm literal of bare function names is a function array like any
+	// other, so it boxes beside a boxed sibling or a call's result; left raw,
+	// the binding dispatched a code address env-first and SIGSEGVed (#8795).
+	{"arm-array-fnname-beside-call-result", "function dbl(x: i32): i32 { return x * 2i32; } function mk(): ((i32) => i32)[] { return [((z: i32) => (z + 7i32))]; } function run(xs: ((i32) => i32)[]): i32 { return xs[0i32](4i32); } function pick(c: boolean): i32 { var xs: ((i32) => i32)[] = (if (c) { [dbl] } else { mk() }); return (xs[0i32](1i32) + run(xs)) & 63i32; } function main(): i32 { return pick(true) + pick(false) * 2i32; }", 48},
+	{"arm-array-fnnames-only", "function dbl(x: i32): i32 { return x * 2i32; } function inc(x: i32): i32 { return x + 1i32; } function run(xs: ((i32) => i32)[]): i32 { return xs[0i32](4i32); } function pick(c: boolean): i32 { var xs: ((i32) => i32)[] = (if (c) { [dbl] } else { [inc] }); return (xs[0i32](1i32) + run(xs)) & 63i32; } function main(): i32 { return pick(true) + pick(false) * 10i32; }", 80},
+	{"arm-array-nocapture-lambda-beside-param", "function run(xs: ((i32) => i32)[]): i32 { return xs[0i32](4i32); } function pick(ys: ((i32) => i32)[], c: boolean): i32 { var xs: ((i32) => i32)[] = (if (c) { [((x: i32) => (x + 1i32))] } else { ys }); return (xs[0i32](1i32) + run(xs)) & 63i32; } function main(): i32 { var zs: ((i32) => i32)[] = [((z: i32) => z)]; return pick(zs, true) + pick(zs, false) * 10i32; }", 57},
 }
 
 func TestSelfHostIIFEFnArmIRX86_64(t *testing.T) {
