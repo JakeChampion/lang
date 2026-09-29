@@ -1043,6 +1043,19 @@ serializer.
   `MockPlatform`'s bag and `std/test`'s `assert_status` /
   `assert_header` / `assert_no_header` / `assert_body`, a handler is
   tested without a socket (`examples/tests/http_request_builder_test.fern`).
+- **Errors a handler answers with:** a handler's helpers fail with `?`
+  over `Result[T, E]` and `respond(result)` turns a
+  `Result[HttpResponse, E]` into the reply: `Ok(r)` is `r`, `Err(e)` is
+  `e.to_response()`, for any `E` implementing `ToResponse`
+  (`function to_response(self): HttpResponse`). `problem(status, title,
+  detail)` is the RFC 9457 problem-details response
+  (`application/problem+json`; a title of `""` reads as the status text,
+  a detail of `""` is left out); `HttpError { status, title, detail }`
+  carries one as an error value and `fail(status, detail)` builds it
+  titled with the status text. `json.JsonError` answers 400 titled
+  "Malformed JSON" with where the text broke, and a `string` error
+  answers 500 with the status text alone, since an internal message is
+  for the log rather than the peer (`examples/tests/http_respond_test.fern`).
 - **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
   `SetCookie` built via `cookie_new(name, value)` (hardened
   defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
