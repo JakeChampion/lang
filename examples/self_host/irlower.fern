@@ -21680,8 +21680,13 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
         // on top strands the buffer, since the caller's dec then lands on
         // the extra claim instead of on zero. Such a return falls through
         // to the move-on-return path below.
-        if (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
-            && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0)) {
+        //
+        // A hoisted closure's capture extract (`var <cap> = __env[1+i]`,
+        // "ENVCAP:") is the same borrow: the env box keeps the reference.
+        var rpenv: boolean = rps >= s.frame.n_params && s.is_arr_slot(rps)
+            && reclaim_has(s.frame.reclaimable_names, "ENVCAP:", s.reclaim_site_key(rps));
+        if (rpenv || (rps >= s.frame.n_params && s.is_borrowed_arr_slot(rps)
+            && (!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0))) {
             var rbl: LowerState = lower_expr(r.value, s);
             if (!rbl.ok) { return rbl; }
             if ((!s.is_moved_claim_slot(rps) || s.ownflag_slot_of(rps) >= 0) && !s.locals[rps].own_handback) {

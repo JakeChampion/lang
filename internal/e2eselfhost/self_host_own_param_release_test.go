@@ -538,6 +538,63 @@ function build(i: i32): i32[][] {
 	}
 }
 
+// A closure handing back a value it captured (#10740). The lifted body reads
+// the capture out of the env box, which keeps the reference, so returning it
+// retains: the caller binds a closure call's array result as a count it owns.
+// Without the retain the caller's release took the env box's count, and the
+// owner's own release underflowed.
+func closureCaptureReturnCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			name: "closure_returns_captured_arrarr",
+			src: `@noinline
+function usr(f: (i32) => i32[][], i: i32): i32 {
+    var g: i32[][] = f(i);
+    return g.len() + 1;
+}
+@noinline
+function round(keep: i32[][], i: i32): i32 {
+    var f = (j: i32): i32[][] => keep;
+    return usr(f, i);
+}
+function main(): i32 {
+    var keep: i32[][] = [];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(keep, i); i = i + 1; }
+    if (keep.len() != 0) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 17,
+		},
+		{
+			name: "closure_hands_back_captured_strarr",
+			src: `@noinline
+function usr(hb: (string[]) => string[], i: i32): i32 {
+    var xs: string[] = ["ab", "cd"];
+    xs = hb(xs);
+    return xs.len() + xs[1].len();
+}
+@noinline
+function round(keep: string[], i: i32): i32 {
+    var hb = (a: string[]): string[] => keep;
+    return usr(hb, i);
+}
+function main(): i32 {
+    var keep: string[] = ["s-a-wide-payload-past-any-inline-threshold-1", "s-a-wide-payload-past-any-inline-threshold-2"];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(keep, i); i = i + 1; }
+    if (keep[1].len() != 44) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 35,
+		},
+	}
+}
+
 // TestSelfHostOwnHandbackReturnX86_64 — every row on both lowerings, balanced
 // at live_bytes 0 with no rc underflow, and clean under the quarantining
 // allocator.
@@ -545,7 +602,7 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
 	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		for _, tc := range append(ownHandbackReturnCases(), ownHandbackHeapCases()...) {
+		for _, tc := range append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...) {
 			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
 				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
 				progBin := buildBin(t, cli.gcc, dir, "ownhb_"+lw.name+"_"+tc.name, asm)
