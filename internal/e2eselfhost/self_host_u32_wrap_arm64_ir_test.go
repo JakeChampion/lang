@@ -9,9 +9,9 @@ import (
 // TestSelfHostU32WrapArm64IR is the arm64 sibling of TestSelfHostU32WrapIR:
 // it proves the arm64 stack-IR backend (asm_arm64_ir.fern) wraps u32 arithmetic
 // at 2^32 (mask via `mov w0, w0`, logical `>>` via `lsr`), so std/crypto's
-// SHA-256 is correct — the bug #2861 tracked. The oracle is the NATIVE arm64
-// compiler (compileAndRunArm64), not the legacy arm64 AST path (which shares
-// the u32-overflow bug); for an overflow program IR == native therefore also
+// SHA-256 is correct — the bug #2861 tracked. The oracle is the interpreter
+// (runInterpExit), not the legacy arm64 AST path (which shares the
+// u32-overflow bug); for an overflow program IR == interpreter therefore also
 // proves the program took the IR path. CI-gated arm64 (qemu).
 //
 // Reuses shaCoreSrc from self_host_u32_wrap_ir_test.go.

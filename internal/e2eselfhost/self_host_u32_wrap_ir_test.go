@@ -120,11 +120,11 @@ function __str_to_bytes(s: string): u8[] {
 // mul / shl, plus __rotr's `x << (32-n)`) must mask back to 32 bits and a u32
 // `>>` must be a LOGICAL shift; this is what local_is_u32 / op_u32_wrap drive.
 //
-// The oracle is the NATIVE compiler (compileAndRunX86_64), NOT the AST path:
-// the legacy self-host AST backend has the SAME u32-overflow bug, so the IR
-// path now intentionally diverges from (is more correct than) it. For an
-// overflow program the AST path's answer differs, so IR == native also proves
-// the program took the IR path.
+// The oracle is the interpreter (runInterpExit), NOT the AST path: the legacy
+// self-host AST backend has the SAME u32-overflow bug, so the IR path now
+// intentionally diverges from (is more correct than) it. For an overflow
+// program the AST path's answer differs, so IR == interpreter also proves the
+// program took the IR path.
 func TestSelfHostU32WrapIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

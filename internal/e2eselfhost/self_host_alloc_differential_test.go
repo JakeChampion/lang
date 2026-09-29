@@ -30,12 +30,16 @@ import (
 //     events, not bytes, so it is layout-free; how many times a shape crosses
 //     the cliff moves with the capacity schedule, whether it crosses at all
 //     is the part that means something.
-//  2. the per-churn bump delta staying within a RATIO of the recorded figure,
-//     in both directions. The regressions this exists to catch were three and
-//     four orders of magnitude; a ratio bound catches those while tolerating
-//     layout. Both directions, because a row that records a leak has to fail
-//     the moment the leak is fixed — an expectation nobody re-records is how
-//     the next regression hides behind the last fix.
+//  2. the per-churn bump delta staying within a RATIO of the recorded figure
+//     upward. The regressions this exists to catch were three and four orders
+//     of magnitude; a ratio bound catches those while tolerating layout.
+//  3. a row that records a LEAK failing once the leak shrinks to less than
+//     half the recorded figure (leakShrinkFactor). A fix, whole or partial,
+//     has to be re-recorded on the row — an expectation nobody re-records is
+//     how the next regression hides behind the last fix. The bound is tighter
+//     than the regression side's on purpose: within 8x of 15 KB is 2 KB, and
+//     an 87% cut to a known leak is exactly the change that must not land
+//     silently.
 //
 // Until 2026-09-29 the second side of every comparison was the Go x86-64
 // backend, and divergences between the two compilers were listed in a
@@ -62,13 +66,18 @@ type allocDiffCase struct {
 	// them on x86-64 when the row was written or last re-recorded.
 	cliff  bool
 	bumpKB int
-	// maxRatio bounds max(recorded, measured) / max(min(recorded, measured), 1)
-	// on per-churn KB. 1 in the denominator so a shape that reclaims fully
-	// (0 KB) does not produce a division by zero — it makes a 0-vs-K split
-	// read as ratio K, which is the right severity for small K and correctly
-	// severe for large K.
+	// maxRatio bounds measured / max(recorded, 1) on per-churn KB: the
+	// regression side. 1 in the denominator so a row that records 0 KB does
+	// not divide by zero — it makes a 0-vs-K growth read as ratio K, which is
+	// the right severity for small K and correctly severe for large K. The
+	// other direction is leakShrinkFactor's.
 	maxRatio int
 }
+
+// leakShrinkFactor is the improvement bound on a row that records a leak: a
+// measured figure below recorded / leakShrinkFactor fails the row until the
+// figure is re-recorded, so a fix cannot land with the row still green.
+const leakShrinkFactor = 2
 
 var allocDiffCases = []allocDiffCase{
 	{
@@ -199,8 +208,8 @@ function churn(n: i32): i32 {
 		// per-round verdict asks); volume is the half only this gate measures
 		// (#7259 tuple wave). Recorded rather than fixed because the composed
 		// path spans two mechanisms landed by different sessions — the counted
-		// struct-field store and the "TCNT:" tier. The row fails the moment
-		// it is fixed, so it cannot rot.
+		// struct-field store and the "TCNT:" tier. The row fails once the
+		// leak shrinks below half of this figure, so it cannot rot.
 		name: "tuple-in-struct-field",
 		decls: `struct Hold { t: (i32, i32[]), n: i32 }
 function churn(n: i32): i32 {
@@ -336,16 +345,15 @@ function main(): i32 {
 }
 
 // allocRatio is the severity measure: how many times the measured per-churn
-// figure differs from the recorded one, in either direction.
+// figure exceeds the recorded one (0 when it does not).
 func allocRatio(recorded, measured int) int {
-	hi, lo := recorded, measured
-	if lo > hi {
-		hi, lo = lo, hi
+	if measured <= recorded {
+		return 0
 	}
-	if lo < 1 {
-		lo = 1
+	if recorded < 1 {
+		recorded = 1
 	}
-	return hi / lo
+	return measured / recorded
 }
 
 // TestSelfHostAllocDifferentialX86_64 is the gate. Each shape is compiled by
@@ -407,9 +415,15 @@ func TestSelfHostAllocDifferentialX86_64(t *testing.T) {
 			t.Logf("n=%d  bump: %d KB per churn (recorded %d KB, %dx, bound %dx)  cliff: %d (recorded %v)",
 				tc.n, kb, tc.bumpKB, ratio, tc.maxRatio, cliff, tc.cliff)
 			if ratio > tc.maxRatio {
-				t.Errorf("per-churn allocation moved %dx from the recorded figure: %d KB now, %d KB "+
-					"recorded (bound %dx). Either a regression or a fix; if the change is intended, "+
-					"re-record `bumpKB` from the line above", ratio, kb, tc.bumpKB, tc.maxRatio)
+				t.Errorf("per-churn allocation grew %dx past the recorded figure: %d KB now, %d KB "+
+					"recorded (bound %dx). A regression, unless the growth is intended, in which "+
+					"case re-record `bumpKB` from the line above", ratio, kb, tc.bumpKB, tc.maxRatio)
+			}
+			if tc.bumpKB > 0 && kb*leakShrinkFactor < tc.bumpKB {
+				t.Errorf("the recorded leak shrank from %d KB to %d KB per churn (below a %dth of the "+
+					"figure): a fix has landed, whole or partial. Re-record `bumpKB` from the line "+
+					"above, and if the leak is gone, retire the leak note on the row",
+					tc.bumpKB, kb, leakShrinkFactor)
 			}
 		})
 	}

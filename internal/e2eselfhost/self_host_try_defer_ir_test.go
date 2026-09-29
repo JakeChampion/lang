@@ -4,8 +4,8 @@ import "testing"
 
 // tryDeferIRCases pin defer/errdefer firing on the `?` (try) FAILURE path
 // (#4334): plain defers first, then errdefers, then the reclaim of owned
-// locals, in native's order. Every case is cross-checked against the native
-// x86-64 backend before asserting the self-hosted CLI's result.
+// locals, in that order. Every case is cross-checked against the interpreter
+// before asserting the self-hosted CLI's result.
 var tryDeferIRCases = []struct {
 	name    string
 	main    string

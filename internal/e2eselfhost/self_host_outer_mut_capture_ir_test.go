@@ -250,9 +250,9 @@ function main(): i32 {
 }`, 41},
 }
 
-// TestSelfHostOuterMutCaptureIRX86_64 cross-checks native (now oracle-
-// matching), pins the "ir" routing (these shapes all bailed to AST before),
-// then runs the self-host-compiled binary.
+// TestSelfHostOuterMutCaptureIRX86_64 cross-checks the interpreter, pins the
+// "ir" routing (these shapes all bailed to AST before), then runs the
+// self-host-compiled binary.
 func TestSelfHostOuterMutCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
