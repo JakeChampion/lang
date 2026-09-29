@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -45,12 +41,8 @@ import (
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
 //
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against the commit
-// before it, and every live_bytes is unchanged — the clean rows stayed clean
-// and each refusal-leak row leaks the same bytes — so what moved is block
-// volume, not behaviour. A pre-fusion number in a row note below is the older
-// one.
+// Counts are one block per heap string (#7351 fused the box into the
+// buffer's reserved header), and every row balances.
 
 type containerAliasCase struct {
 	name   string
@@ -107,7 +99,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 57, allocs: 200, frees: 200,
 		},
 		{
-			// A box-only tuple: no element release either side. Base 100/0, 4000.
+			// A scalar tuple is not boxed, so there is nothing to retain or release.
 			name: "tuple_alias_scalar",
 			src: `function round(i: i32): i32 {
     var t: (i32, i32) = (i, i + 1);
@@ -115,7 +107,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     return v.0 + v.1;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 100, frees: 100,
+			want: 40, allocs: 0, frees: 0,
 		},
 		{
 			// The struct limb, and the one class whose release is NOT the box dec:
@@ -206,27 +198,25 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 23, allocs: 200, frees: 200,
 		},
 		{
-			// A RECEIVER source, which is a parameter by another spelling and is
-			// refused by the same first line. Distinct row because the origin axis
-			// (#7253) names it separately and the builder-threaded
-			// `s = s.method(..)` shape is the dominant one in this compiler.
+			// A RECEIVER source, a parameter by another spelling: the alias inside the
+			// method neither retains nor releases, and the caller's sweep frees `t`.
 			name: "struct_alias_of_a_receiver_refused",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 pub function (p: P) first(): i32 { var v: P = p; return v.xs[0]; }
 function round(i: i32): i32 { var t: P = mk(i); return t.first() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 200, frees: 100,
+			want: 23, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: a reassigned alias does not hold the box the credit
-			// describes at exit (alias_bind_sites_of's body_assign_targets check).
+			// A reassigned alias: the value it held before the rebind and the one after
+			// are both freed.
 			name: "struct_alias_reassigned_refused",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 function round(i: i32): i32 { var t: P = mk(i); var v: P = t; v = mk(i + 1); return v.xs[0] + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 400, frees: 0,
+			want: 40, allocs: 400, frees: 400,
 		},
 		{
 			// REFUSED, conservatively: in a chain `var v = t; var u = v;` the middle
@@ -279,27 +269,24 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 5, allocs: 100, frees: 100,
 		},
 		{
-			// REFUSED: the LAST link is returned, so the box outlives the frame.
-			// All-or-nothing is what this row is for — the escape is on `u`, and
-			// it has to cost `t` and `v` their credit too, because all three name
-			// the box the caller now holds.
+			// The LAST link is returned, so the box outlives the frame and the caller
+			// frees it.
 			name: "string_alias_chain_link_returned_refused",
 			src: `function w(a: string): string { return a + "!"; }
 function esc(i: i32): string { var t: string = w("ab"); var v: string = t; var u: string = v; return u; }
 function round(i: i32): i32 { return esc(i).len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 100, frees: 0,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
-			// REFUSED: a MIDDLE link is stored into a container that outlives it,
-			// so the escape is not at either end of the chain. Freeing the box at
-			// the ends would strand `held`'s element pointer.
+			// A MIDDLE link is stored into a container that outlives it; the box stays
+			// live until `held` is released, and everything balances.
 			name: "string_alias_chain_middle_link_held_refused",
 			src: `function w(a: string): string { return a + "!"; }
 function sink(xs: string[]): i32 { return xs.len(); }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; var held: string[] = [v]; return u.len() + sink(held) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 38, allocs: 200, frees: 100,
+			want: 38, allocs: 200, frees: 200,
 		},
 		{
 			// The rc-TUPLE CHAIN, credited as one set (#7750). It was the last
@@ -370,102 +357,84 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: the LAST link is returned. All-or-nothing — the escape on
-			// `u` costs `t` and `v` their credit too, since all three name the
-			// box the caller now holds.
+			// The LAST link is returned; the caller frees the box and its element.
 			name: "tuple_alias_chain_link_returned_refused",
 			src: `function esc(i: i32): (i32, i32[]) { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u; }
 function round(i: i32): i32 { var r: (i32, i32[]) = esc(i); return r.1.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 4, allocs: 200, frees: 0,
+			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: a MIDDLE link is stored into a container that outlives
-			// it. The 100 frees are `held`'s own buffer; the tuple's box and
-			// element stay put.
+			// A MIDDLE link is stored into a container that outlives it; the box,
+			// its element and `held`'s buffer are all freed.
 			name: "tuple_alias_chain_middle_link_held_refused",
 			src: `function sink(xs: (i32, i32[])[]): i32 { return xs.len(); }
 function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; var held: (i32, i32[])[] = [v]; return u.1.len() + sink(held) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 300, frees: 100,
+			want: 21, allocs: 300, frees: 300,
 		},
 		{
-			// The SCALAR tuple chain: no deep class, so a move performs no
-			// rewrite and each hop reads a "TUP:" source. This pair leaked
-			// under the per-site rule (100/0) and was never at risk of the
-			// over-release; it is here so the two limbs stand or fall together.
+			// The SCALAR tuple chain: the tuple is not boxed, so each hop is a copy.
 			name: "tuple_alias_scalar_chain",
 			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u.0 + u.1; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 100, frees: 100,
+			want: 40, allocs: 0, frees: 0,
 		},
 		{
 			name: "tuple_alias_scalar_chain_middle_read",
 			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u.0 + v.1; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 100, frees: 100,
+			want: 40, allocs: 0, frees: 0,
 		},
 		{
 			name: "tuple_alias_scalar_chain_three_links",
 			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; var z: (i32, i32) = u; return z.0 + z.1; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 100, frees: 100,
+			want: 40, allocs: 0, frees: 0,
 		},
 		{
 			name: "tuple_alias_scalar_chain_conditional",
 			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var n: i32 = 0; if (i % 2 == 0) { var v: (i32, i32) = t; var u: (i32, i32) = v; n = u.1; } return n + t.0 + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 33, allocs: 100, frees: 100,
+			want: 33, allocs: 0, frees: 0,
 		},
 		{
-			// REFUSED: the last link returned, scalar limb.
+			// The last link returned, scalar limb.
 			name: "tuple_alias_scalar_chain_link_returned_refused",
 			src: `function esc(i: i32): (i32, i32) { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u; }
 function round(i: i32): i32 { var r: (i32, i32) = esc(i); return r.0 + r.1; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 100, frees: 0,
+			want: 40, allocs: 0, frees: 0,
 		},
 		{
-			// REFUSED: a middle link held by a container, scalar limb. The 100
-			// frees are `held`'s buffer.
+			// A middle link held by a container, scalar limb. The allocations are
+			// `held`'s buffer.
 			name: "tuple_alias_scalar_chain_middle_link_held_refused",
 			src: `function sink(xs: (i32, i32)[]): i32 { return xs.len(); }
 function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; var held: (i32, i32)[] = [v]; return u.0 + sink(held) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 40, allocs: 200, frees: 100,
+			want: 40, allocs: 200, frees: 200,
 		},
 		{
-			// AN ENUM with an rc payload, aliased. This row pins the #7368
-			// discrimination from the credit side: enum locals carry their enum
-			// NAME in the same struct_type field a type test would have read, but
-			// they earn "RCENUM:" / "SCENUMS:" rather than the struct credit, so
-			// slot_is_reclaimable_struct refuses them.
-			//
-			// It used to be named "unchanged" and pin frees: 0 — the enum flavour
-			// of the escape scan had never grown the #7282 alias forgiveness, so a
-			// bind alone (even a DEAD one) denied the source its whole credit.
-			// #7687 gives it that forgiveness, vetted through the enum gate and
-			// refused when the alias hands its payload out, so the shape now
-			// balances. Native is 100/100 here; the remaining alloc-count gap is a
-			// volume divergence, not a reclaim one.
+			// AN ENUM with an rc payload, aliased. Enum locals carry their enum name in
+			// the same struct_type field a type test would read, but take the enum
+			// release rather than the struct credit; the shape balances.
 			name: "enum_alias_reclaimed",
 			src: `enum E { A(i32[]), B }
 function mke(i: i32): E { if (i % 2 == 0) { return E.A([i, i + 1]); } return E.B; }
 function round(i: i32): i32 { var e: E = mke(i); var f: E = e; var n: i32 = 0; match (f) { E.A(k) => { n = k[0]; }, E.B => { n = 1; } } return n; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 10, allocs: 150, frees: 150,
+			want: 10, allocs: 100, frees: 100,
 		},
 		{
-			// A STRUCT ARRAY, aliased. Unchanged, and the second half of the same
-			// discrimination: mark_struct_type doubles as the ELEMENT-type slot for
-			// struct and enum arrays, so this slot carries "P" while holding a
-			// BUFFER. It earns "ARRSTRUCT:", never the bare struct credit.
+			// A STRUCT ARRAY, aliased: the slot carries the element type "P" while
+			// holding a buffer, and takes the array release, never the struct credit.
 			name: "struct_array_alias_unchanged",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 function round(i: i32): i32 { var ps: P[] = [mk(i)]; var qs: P[] = ps; return qs[0].xs[0] + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 300, frees: 100,
+			want: 23, allocs: 300, frees: 300,
 		},
 		{
 			// A STRUCT-PATTERN `if let`, which is an alias site because its
@@ -511,16 +480,9 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 59, allocs: 100, frees: 100,
 		},
 		{
-			// THE #7368 REGRESSION GUARD, and it is verified to fire rather than
-			// assumed to: recompiled under the reverted `struct_type_of_slot` clause
-			// this program SEGFAULTS (exit 139), where main and this change both
-			// return 74.
-			//
-			// It contains no struct at all. __fern_i32_to_string binds the negated
-			// input, and that scalar slot carries a struct_type name — so on
-			// INT_MIN the slot holds 0x80000000, which is non-zero, even, and above
-			// 0x10000, passing every __fern_rc_inc guard before dereferencing
-			// 0x7FFFFFF8. A type test cannot gate a retain; only the credit can.
+			// THE #7368 REGRESSION GUARD. It contains no struct: the INT_MIN input is a
+			// scalar slot a type test once mistook for a struct box and retained,
+			// dereferencing 0x7FFFFFF8. A type test cannot gate a retain; only the credit can.
 			name: "integer_slot_not_retained",
 			src: `import "std/i32";
 function round(i: i32): i32 {
@@ -529,7 +491,7 @@ function round(i: i32): i32 {
     return s.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 74, allocs: 100, frees: 100,
+			want: 74, allocs: 198, frees: 198,
 		},
 		{
 			// The source read AFTER the alias, so both are live across the
@@ -635,8 +597,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 43, allocs: 100, frees: 100,
 		},
 		{
-			// REFUSED — the alias is RETURNED, so a third reference leaves the
-			// frame and nothing downstream accounts for it. Unchanged at 8000.
+			// The alias is RETURNED, so the caller frees the box and its element.
 			name: "refused_alias_escapes",
 			src: `function sink(q: (i32, i32[])): i32 { return q.1[0]; }
 function mk(i: i32): (i32, i32[]) {
@@ -647,11 +608,11 @@ function mk(i: i32): (i32, i32[]) {
 }
 function round(i: i32): i32 { var r: (i32, i32[]) = mk(i); return r.1[0]; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 53, allocs: 200, frees: 0,
+			want: 53, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED — the alias is REASSIGNED, so its final value is not the
-			// box the credit describes. Unchanged at 12000.
+			// The alias is REASSIGNED; the tuple it held and the one it holds after the
+			// rebind are both freed.
 			name: "refused_alias_reassigned",
 			src: `function round(i: i32): i32 {
     var xs: i32[] = [i, i + 1];
@@ -661,7 +622,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
     return v.1[0];
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 53, allocs: 300, frees: 0,
+			want: 53, allocs: 300, frees: 300,
 		},
 		{
 			// The string limb. A string box is rc-headered on every backend —
@@ -748,15 +709,14 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 100, frees: 100,
 		},
 		{
-			// `<scalar>.to_string()` — the "STR:" class has TEN producer families and
-			// each grants the credit at its own site, so wiring one says nothing about
-			// the others. These rows walk the families that allocate observably.
-			// Base: allocs=200 frees=0, 3200 live.
+			// `<scalar>.to_string()`: the "STR:" class has TEN producer families and each
+			// grants the credit at its own site, so these rows walk the families that
+			// allocate observably.
 			name: "string_alias_to_string_producer",
 			src: `import "std/i32";
 function round(i: i32): i32 { var t: string = i.to_string(); var v: string = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 77, allocs: 100, frees: 100,
+			want: 77, allocs: 200, frees: 200,
 		},
 		{
 			// `xs.join(sep)`. Base: allocs=700 frees=500, 3200 live.
@@ -810,47 +770,38 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 100, frees: 100,
 		},
 		{
-			// REFUSED: a REASSIGNED alias does not hold the box the credit describes
-			// at exit, so alias_bind_sites_of excludes it (body_assign_targets).
+			// A REASSIGNED alias: both strings it held are freed.
 			name: "string_alias_reassigned_refused",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 0,
+			want: 21, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED, as a property of the class: a string-builder ACCUMULATOR is
-			// reassigned by definition and each rebind frees the box it supersedes, so
-			// an alias bound before a rebind would point at freed memory. Every wired
-			// family carries `index_of_str(reassigned, …) < 0`, so no route grants one.
+			// A string-builder ACCUMULATOR aliased after its last rebind; each rebind
+			// frees the box it supersedes and the alias shares only the final one.
 			name: "string_accumulator_alias_refused",
 			src: `function round(i: i32): i32 { var s: string = ""; var k: i32 = 0; while (k < 3) { s = s + "x"; k = k + 1; } var v: string = s; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 300, frees: 0,
+			want: 21, allocs: 300, frees: 300,
 		},
 		{
-			// A FOR-IN ELEMENT source. Unchanged by this change — a loop element is
-			// borrowed from the array rather than being a credited string local, so no
-			// family grants it a credit to share. Pinned as an origin the axis names
-			// and this change does not reach.
+			// A FOR-IN ELEMENT source, borrowed from the array rather than owned.
 			name: "string_alias_of_a_for_in_element",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var xs: string[] = [w("ab")]; var n: i32 = 0; for e in xs { var v: string = e; n = n + v.len(); } return n + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 100,
+			want: 21, allocs: 200, frees: 200,
 		},
 		{
-			// A TUPLE-DESTRUCTURE BINDER source (`var (a, b) = mk(); var v = a;`) —
-			// the origin the #7253 axis gained when it was applied to this shape, and
-			// the one no earlier corpus count could have surfaced. Four instances live
-			// in the compiler's own parser.fern. Unchanged here: a destructure binder
-			// is not a credited string local either.
+			// A TUPLE-DESTRUCTURE BINDER source (`var (a, b) = mk(); var v = a;`), the
+			// shape parser.fern uses four times.
 			name: "string_alias_of_a_destructure_binder",
 			src: `function w(a: string): string { return a + "!"; }
 function mk(): (string, i32) { return (w("ab"), 7); }
 function round(i: i32): i32 { var (a, b) = mk(); var v: string = a; return v.len() + b + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 57, allocs: 200, frees: 0,
+			want: 57, allocs: 200, frees: 200,
 		},
 		{
 			// The string[] limb (#7391), and the one whose alias takes the SAME
@@ -927,10 +878,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 68, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: an ELEMENT escapes from a MIDDLE link. A string[]'s
-			// release walks the elements, so this is what the strarr gate is
-			// substituted for — the plain walker cannot see it, and the deep
-			// free would dangle `e`.
+			// An ELEMENT escapes from a MIDDLE link. A string[]'s release walks the
+			// elements, so a free that ignored `e` would leave it dangling.
 			name: "strarr_alias_chain_elem_escape_refused",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -941,7 +890,7 @@ function round(i: i32): i32 {
     return (y.len() + e.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, allocs: 200, frees: 100,
+			want: 68, allocs: 200, frees: 200,
 		},
 		{
 			// The rc-ENUM chain (#7750). Its limb uses the alias sites for ESCAPE
@@ -963,10 +912,8 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: a link hands the PAYLOAD out. The enum release deep-drops
-			// it, so this is a use-after-free rather than a leak if admitted —
-			// the condition rcenum_alias_bind_sites_of already applied per site,
-			// now applied to every link.
+			// A link hands the PAYLOAD out. The enum release deep-drops it, so freeing
+			// it while `out` holds it would be a use-after-free.
 			name: "enum_alias_chain_payload_out_refused",
 			src: `enum E { A(i32[]), B }
 function round(i: i32): i32 {
@@ -978,14 +925,11 @@ function round(i: i32): i32 {
     return out.len() + i;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 4, allocs: 300, frees: 100,
+			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED: an ELEMENT BIND from the alias (`var e = x[0]`) is a
-			// lasting element pointer the deep free would dangle — exactly the
-			// hazard that makes the alias vet through the strarr gate rather
-			// than body_unsafe_for. Sound leak; MORE frees here means the vet
-			// weakened.
+			// An ELEMENT BIND from the alias (`var e = x[0]`) is a lasting element
+			// pointer; the deep free must not run while `e` holds it.
 			name: "strarr_alias_elem_bind_refused",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -995,7 +939,7 @@ function round(i: i32): i32 {
     return (e.len() + src.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 67, allocs: 300, frees: 100,
+			want: 67, allocs: 300, frees: 300,
 		},
 		{
 			// The string[] sibling of the row above, and it moved with it: a
@@ -1018,18 +962,13 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 }
 
 // TestSelfHostContainerAliasBindX86_64 — a plain alias of an rc container shares
-// its credit, and the shapes that must stay refused still are.
+// its credit, and every row frees what it allocates.
 func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range containerAliasCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
-			progBin := buildBin(t, gcc, dir, "alias_"+tc.name, asm)
-			stderr, exit := hevRun(t, runner, progBin)
+			asm := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
+			stderr, exit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "alias", asm))
 			if exit != tc.want {
 				t.Fatalf("%s exited %d, want %d (99 = rc underflow: the alias took a "+
 					"DEEP release it did not earn — only the box is retained at the bind)",
@@ -1043,17 +982,13 @@ func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("%s: parse %q: %v", tc.name, summary, err)
 			}
-			if allocs == 0 {
-				t.Fatalf("%s allocated nothing — the probe is not exercising the path", tc.name)
-			}
 			if allocs != tc.allocs {
 				t.Errorf("%s: %s — want allocs=%d", tc.name, summary, tc.allocs)
 			}
 			if frees != tc.frees {
 				t.Errorf("%s: %s — want frees=%d. FEWER means the alias forgiveness "+
 					"stopped reaching this shape (a partial thread shows up as a "+
-					"scope-dependent result); MORE on a refused row means it reached "+
-					"one it must decline", tc.name, summary, tc.frees)
+					"scope-dependent result)", tc.name, summary, tc.frees)
 			}
 
 			// Every over-release in this family balances the census, and the
@@ -1061,10 +996,8 @@ func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
 			// that reads through a box the shallow dec already returned is a
 			// use-after-free the counter reports late or not at all (the tuple
 			// chain, #7750). The quarantining allocator reports both directly.
-			// A refused row's leak is reported here too and is not a failure.
-			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
-			sanBin := buildBin(t, gcc, dir, "alias_san_"+tc.name, sanAsm)
-			sanErr, sanExit := hevRun(t, runner, sanBin)
+			sanAsm := cli.emit(t, "x86-64-linux", tc.src, "FERN_SANITIZE=1")
+			sanErr, sanExit := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "alias_san", sanAsm))
 			if sanExit != tc.want {
 				t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
 			}
@@ -1079,37 +1012,10 @@ func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
 // which is the whole signal for the two deep-release rows: an over-release moves
 // no byte count on any backend.
 func TestSelfHostContainerAliasBindWasmIR(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping container alias-bind wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range containerAliasCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "alias_"+tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
-			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if got := rcmd.ProcessState.ExitCode(); got != tc.want {
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); got != tc.want {
 				t.Errorf("container alias-bind wasm IR %q = %d, want %d", tc.name, got, tc.want)
 			}
 		})
@@ -1118,22 +1024,11 @@ func TestSelfHostContainerAliasBindWasmIR(t *testing.T) {
 
 // TestSelfHostContainerAliasBindIRArm64 — the arm64 sibling under qemu.
 func TestSelfHostContainerAliasBindIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range containerAliasCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "alias_"+tc.name+"_arm64", string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
 				t.Errorf("%s exited %d, want %d", tc.name, code, tc.want)
 			}
 		})
