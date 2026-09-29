@@ -24,6 +24,7 @@
 // program's module (it names `handle`) while the externs live here, and a
 // resource type is module-local.
 
+import "std/http";
 import "std/platform";
 
 // The wasi:http method variant, in the WIT's case order: the discriminant
@@ -85,10 +86,21 @@ const WRITE_CHUNK: i32 = 4096;
 // the component's incoming-handler export, with the program's `handle`.
 pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platform) => HttpResponse): void {
     var method: string = method_name(req_method(request));
-    var path: string = "";
+    var target: string = "/";
     match (req_path(request)) {
-        Some(p) => { path = p; },
-        None => { path = ""; }
+        Some(p) => { target = p; },
+        None => { target = "/"; }
+    }
+    // The path a handler sees is the same on every target: decoded once,
+    // its dot segments removed, or refused.
+    var path: string = "";
+    match (http.http_request_target(method, target)) {
+        Ok(p) => { path = p; },
+        Err(status) => {
+            req_drop(request);
+            send(response_out, http.http_response_text(status, ""));
+            return;
+        }
     }
     // The header snapshot is taken before the body is consumed; its entries
     // are read after, and the request is dropped last, once its children —
