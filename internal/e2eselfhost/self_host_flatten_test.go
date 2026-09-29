@@ -22,7 +22,7 @@ import (
 // (which imports ./lexer), so all three are copied into the temp
 // dir for modload to resolve.
 func TestSelfHostFlattenX86_64(t *testing.T) {
-	_, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "flatten.fern")
 	binPath := buildSelfHostBinFor(t, dir, "flatten.fern", "prog", e2eharness.TargetX86_64Linux)

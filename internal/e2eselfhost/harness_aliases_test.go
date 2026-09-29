@@ -12,6 +12,7 @@ import (
 )
 
 var arm64Tooling = e2eharness.Arm64Tooling
+var arm64Runner = e2eharness.Arm64Runner
 var buildBin = e2eharness.BuildBin
 var buildLangBinForInterp = e2eharness.BuildLangBinForInterp
 var buildModloadArm64DriverX86 = e2eharness.BuildModloadArm64DriverX86
@@ -58,6 +59,7 @@ var withPrintInt = e2eharness.WithPrintInt
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
 var writeSelfHostModloadProject = e2eharness.WriteSelfHostModloadProject
 var x86_64Tooling = e2eharness.X86_64Tooling
+var x86_64Runner = e2eharness.X86_64Runner
 
 // selfHostImportClosureFiles is the self-host import closure of one driver,
 // as absolute-ish paths under examples/self_host.

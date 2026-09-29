@@ -26,15 +26,18 @@ import (
 // This test pins the path: build mmc-arm64 with the pinned stage0 compiler
 // for arm64-linux, run it under qemu-aarch64 against `arithmetic_test.fern`,
 // then assert the emitted aarch64 asm is byte-identical to what the same
-// driver built for x86-64-linux produces. If they diverge, the pin's arm64
+// driver built for x86-64-linux produces. If they diverge, the PIN's arm64
 // codegen has an emit bug on the self-host source (or a silent runtime
-// helper gap in the strbuf / shape-name family).
+// helper gap in the strbuf / shape-name family). The current source's own
+// arm64 compile is gated by the module self-tests (TestSelfHostParserArm64
+// and its siblings), which build the current modules for arm64 with the pin
+// and run them under qemu.
 //
-// SKIPs cleanly when the aarch64 cross-toolchain / qemu-aarch64
-// aren't installed (same shape as the other arm64-gated tests).
+// SKIPs cleanly when the host can run no arm64 binary (no qemu-aarch64);
+// no cross toolchain is needed, the pin emits the binaries.
 func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
-	_, qemu := arm64Tooling(t)
-	_, x86runner := x86_64Tooling(t)
+	qemu := arm64Runner(t)
+	x86runner := x86_64Runner(t)
 
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_load_run.fern")

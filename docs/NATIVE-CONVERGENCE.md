@@ -161,8 +161,12 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    deleting the x86-64 backend leaves the harness standing, and the suite's
    own direct calls into the Go emitters went the same day: the hand-built
    drivers, the module self-tests (both Linux targets), the wasm consumer
-   cores, the Mach-O and the cross-host mmc gates all go through the pin, so
-   `internal/e2eselfhost` imports no `internal/codegen` package.
+   cores, the Mach-O and the cross-host mmc gates all go through the pin.
+   What the suite still reaches the Go backends for is the oracle role above:
+   the 31 `compileAndRunX86_64` / `compileAndRunArm64` /
+   `compileAndRunWasmbinMain` sites that compare self-host output against
+   native output go with the backends or are re-anchored on the interpreter,
+   in the deletion PRs.
 4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
    need the self-host compiler compiled to wasm instead.~~ **Moved

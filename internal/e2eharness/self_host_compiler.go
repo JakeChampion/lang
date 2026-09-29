@@ -141,7 +141,9 @@ func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, we
 }
 
 // EmitAsmWithSelfHost runs `compiler -target target -emit asm` on src and
-// returns the assembly text, under the RAM reservation a driver build takes.
+// returns the assembly text. It reserves what a driver build of that name
+// takes: the compiler's own footprint dominates, and over-reserving only
+// delays another build.
 func EmitAsmWithSelfHost(t testing.TB, compiler, target, src string) string {
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)

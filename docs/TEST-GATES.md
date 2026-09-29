@@ -580,8 +580,12 @@ fixture, differential and `cli` lanes run. The pin also builds a driver for
 `-target arm64-linux` (`BuildSelfHostBinFor`), which is how the module
 self-tests (`TestSelfHostParserArm64` and its siblings) and the cross-host
 mmc gate run the self-host sources as aarch64 programs under qemu, and it
-emits the arm64-darwin assembly the Mach-O gate assembles; the suite calls no
-Go emitter directly.
+emits the arm64-darwin assembly the Mach-O gate assembles. The suite builds
+nothing it runs with a Go emitter; where it still calls one is as the oracle
+a self-host result is compared against (`compileAndRunX86_64` and its arm64
+and wasm siblings, 31 sites), which is the comparison
+`docs/NATIVE-CONVERGENCE.md` §3a item 3 says goes with the backends or moves
+to the interpreter.
 
 ### An answer is not proof the IR path produced it
 

@@ -12741,12 +12741,15 @@ pub function tuple_type_elem_count(t: string): i32 {
 }
 
 // extern_tuple_param_supported is true for an `@import` tuple parameter the
-// wrapper can flatten to its elements. A self-host tuple is a heap block of N
-// consecutive 4-byte slots (element i @ i*4, no header) — every element is
-// i32-class — and the canonical tuple flattens to one i32 per element, in
-// order. Scoped to 2..16 i32/u32 elements (a 1-element parenthesised type isn't
-// a tuple in Fern; the canonical wider/byte elements wouldn't fit a 4-byte
-// slot). No alignment wall: like records, it flattens to values.
+// wrapper can flatten to its elements, and for a tuple result the wrapper can
+// read back from a return area. A self-host tuple is a heap block of N
+// consecutive slots with no id word — element i @ i*slot, where slot is the
+// consumer's width (4 under xslot_ast, 8 under xslot_ir) — every element is
+// i32-class, and the canonical tuple flattens to one i32 per element, in
+// order (i*4 in a return area). Scoped to 2..16 i32/u32 elements (a 1-element
+// parenthesised type isn't a tuple in Fern; the canonical wider/byte elements
+// wouldn't fit a 4-byte slot). No alignment wall: like records, it flattens
+// to values.
 pub function extern_tuple_param_supported(t: string): boolean {
     var n: i32 = tuple_type_elem_count(t);
     if (n < 2 || n > 16) { return false; }

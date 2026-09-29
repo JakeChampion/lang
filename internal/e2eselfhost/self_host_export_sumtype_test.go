@@ -113,7 +113,7 @@ func runSelfHostSumTypeExportCase(t *testing.T, iface, short, fqn, dep, expFern,
 	if err != nil {
 		t.Fatalf("DecodeWorldBytes (user): %v", err)
 	}
-	userCore := selfHostRunIOCore(t, gcc, runner, driverBin, wasmtools, dir, []byte(userFern))
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userFern))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

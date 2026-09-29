@@ -45,6 +45,25 @@ func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 	return gcc, exec_
 }
 
+// X86_64Runner is the runner half of X86_64Tooling alone: nil on a native
+// x86-64 host, else qemu-x86_64, for a test that runs a pin-built x86-64
+// binary and assembles nothing. It skips (or fails under
+// FERN_REQUIRE_X86_64_TOOLING=1) when the host can run no x86-64 binary at all.
+func X86_64Runner(t testing.TB) []string {
+	t.Helper()
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		return nil
+	}
+	if p, err := exec.LookPath("qemu-x86_64"); err == nil {
+		return []string{p}
+	}
+	if os.Getenv("FERN_REQUIRE_X86_64_TOOLING") == "1" {
+		t.Fatal("non-x86_64 host and no qemu-x86_64 on PATH, and FERN_REQUIRE_X86_64_TOOLING=1: this lane has the toolchain and is the only one running this test, so a skip here covers nothing")
+	}
+	t.Skip("non-x86_64 host and no qemu-x86_64 on PATH; skipping x86-64 e2e")
+	return nil
+}
+
 // LookupX86_64Tooling is X86_64Tooling's discovery half without the skip. See
 // LookupArm64Tooling for why a caller would want it.
 func LookupX86_64Tooling() (gcc string, exec_ []string, ok bool) {
