@@ -238,6 +238,26 @@ function main(): i32 {
     return t;
 }`
 	checkBalancedOnEveryBackend(t, "conditional-consumers", src, 130)
+	// A match over a fresh Option whose arm yields the payload binding: the
+	// binding is out of exprType's scope when the analysis asks, so the
+	// counted yield read as a borrow and neither the bound result nor the
+	// argument temp was released (#10552).
+	checkBalancedOnEveryBackend(t, "match-payload-yield", `function sum(xs: i32[]): i32 { var t: i32 = 0; for x in xs { t = t + x; } return t; }
+function opt(j: i32): Option[i32[]] { if (j > 0) { return Some([j, 1]); } return None; }
+function main(): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < 4) {
+        var a = [j, 5];
+        a = a.append(1);
+        var v = match (opt(j)) { Some(xs) => xs, None => a };
+        var o = opt(j);
+        var w = match (o) { Some(xs) => xs, None => [9] };
+        t = t + sum(v) + sum(w) + sum(match (opt(j)) { Some(xs) => xs, None => [2] });
+        j = j + 1;
+    }
+    return t;
+}`, 44)
 	checkBalancedOnEveryBackend(t, "dyn-conditional-args", dynShapesPrelude+`function mkd(j: i32): dyn Shape { return Rect { w: j, h: 2, tag: "q" + "r" }; }
 function main(): i32 {
     var t: i32 = 0;

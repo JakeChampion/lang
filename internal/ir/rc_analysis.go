@@ -4024,18 +4024,18 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return false
 	case *ast.IfExpr:
-		return b.rhsTainted(x.Then, tainted) || b.rhsTainted(x.Else, tainted)
+		// An arm emitCountedYield retains yields a reference of its own
+		// whatever its source, so only the other arms can taint the result.
+		return (!needsRcIncOnAlias(x.Then, b) && b.rhsTainted(x.Then, tainted)) ||
+			(!needsRcIncOnAlias(x.Else, b) && b.rhsTainted(x.Else, tainted))
 	case *ast.MatchExpr:
 		// A match-expression is owned iff every arm body is — the exact
 		// mirror of IfExpr. Without this case it fell through to the tainted
 		// default, leaving `var s = match (k) { 0 => a + b, _ => b + a }` (all
 		// arms fresh concats) permanently ineligible and unreclaimed (leaked
-		// 240000 → 2400000 in a loop). A bare-local arm is still caught: the
-		// escape(arm.Body) in computeFreeEligible taints that local, so
-		// rhsTainted reads it back as tainted here and the match stays
-		// protected — same redundant check as IfExpr.
+		// 240000 → 2400000 in a loop).
 		for _, arm := range x.Arms {
-			if b.rhsTainted(arm.Body, tainted) {
+			if !b.matchArmYieldCounted(arm) && b.rhsTainted(arm.Body, tainted) {
 				return true
 			}
 		}
@@ -6304,6 +6304,21 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 		return false
 	}
 	return b.retainsOnAlias(b.exprType(e))
+}
+
+// matchArmYieldCounted: emitCountedYield retains the arm's value, so the
+// match-expression's result holds a reference of its own whichever source the
+// arm reads. An arm binding is not in scope for exprType, so its type comes
+// from the arm's BindingTypes.
+func (b *builder) matchArmYieldCounted(arm *ast.MatchExprArm) bool {
+	if id, ok := blockValue(arm.Body).(*ast.Ident); ok {
+		for i, name := range arm.Bindings {
+			if name == id.Name && i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
+				return b.retainsOnAlias(arm.BindingTypes[i])
+			}
+		}
+	}
+	return needsRcIncOnAlias(arm.Body, b)
 }
 
 // blockValue is the expression whose value a value block `{ stmts; tail }`
