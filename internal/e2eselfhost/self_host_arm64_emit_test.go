@@ -1,10 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -19,38 +15,7 @@ import (
 // statements, which the CLI wraps into `main`.
 func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, x86gcc, dir, "fern.fern", "fern")
-
-	// emit compiles src for arm64 and returns the assembly, or the CLI's
-	// stderr and error when it refuses.
-	emit := func(t *testing.T, src string) ([]byte, string, error) {
-		t.Helper()
-		proj := t.TempDir()
-		mainPath := filepath.Join(proj, "main.fern")
-		if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		asmPath := filepath.Join(proj, "main.s")
-		cmd := runX86_64Bin(x86runner, fernBin, "-target", "arm64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
-		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return nil, stderr.String(), err
-		}
-		asm, err := os.ReadFile(asmPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return asm, stderr.String(), nil
-	}
+	cli := newStrictCLI(t)
 
 	cases := []struct {
 		name     string
@@ -1443,27 +1408,12 @@ function main(): i32 { var s = "hi"; var t = s.to_string(); write(t); return t.l
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			emittedAsm, stderr, err := emit(t, withPrintInt(tc.source))
-			if err != nil {
-				t.Fatalf("compile: %v\n%s\n--- source ---\n%s", err, stderr, tc.source)
+			code, stdout := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", withPrintInt(tc.source)))
+			if code != tc.expected {
+				t.Errorf("exit code = %d, want %d\n--- source ---\n%s", code, tc.expected, tc.source)
 			}
-			caseDir := t.TempDir()
-			innerAsm := filepath.Join(caseDir, "inner.s")
-			innerBin := filepath.Join(caseDir, "inner")
-			if err := os.WriteFile(innerAsm, emittedAsm, 0o644); err != nil {
-				t.Fatalf("write inner asm: %v", err)
-			}
-			// Assemble + link as an arm64 binary.
-			if out, err := exec.Command(gcc, "-static", "-nostdlib", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-				t.Fatalf("inner gcc: %v\n%s\n--- asm ---\n%s", err, out, emittedAsm)
-			}
-			inner := runArm64Bin(qemu, innerBin)
-			innerStdout, _ := inner.Output()
-			if code := inner.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("inner exit code = %d, want %d\n--- source ---\n%s\n--- asm ---\n%s", code, tc.expected, tc.source, emittedAsm)
-			}
-			if tc.stdout != "" && string(innerStdout) != tc.stdout {
-				t.Errorf("inner stdout = %q, want %q\n--- source ---\n%s\n--- asm ---\n%s", string(innerStdout), tc.stdout, tc.source, emittedAsm)
+			if tc.stdout != "" && stdout != tc.stdout {
+				t.Errorf("stdout = %q, want %q\n--- source ---\n%s", stdout, tc.stdout, tc.source)
 			}
 		})
 	}
@@ -1472,7 +1422,7 @@ function main(): i32 { var s = "hi"; var t = s.to_string(); write(t); return t.l
 	// (`.max()`) where an i32 is declared, rather than emitting a box pointer.
 	t.Run("rejects-option-as-i32", func(t *testing.T) {
 		bad := "import \"std/array\";\nfunction main(): i32 { var xs: i32[] = [1, 2, 3]; return xs.max(); }"
-		out, stderr, err := emit(t, bad)
+		out, stderr, err := cli.tryEmit(t, "arm64-linux", bad)
 		if err == nil {
 			t.Fatalf("expected the CLI to reject Option-as-i32, but it compiled\n--- asm ---\n%s", out)
 		}

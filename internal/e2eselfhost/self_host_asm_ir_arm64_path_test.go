@@ -1,8 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -14,41 +12,11 @@ import (
 // answer, or 134 for the two slice traps it reports as an error instead.
 func TestSelfHostAsmIRArm64Path(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, x86gcc, dir, "fern.fern", "fern")
-
-	// emitAndRun compiles src for arm64, assembles and runs it, and returns
-	// its exit code.
+	cli := newStrictCLI(t)
 	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
-		proj := t.TempDir()
-		mainPath := filepath.Join(proj, "main.fern")
-		if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		asmPath := filepath.Join(proj, "main.s")
-		cmd := runX86_64Bin(x86runner, fernBin, "-target", "arm64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
-		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("compile: %v\n%s\n--- source ---\n%s", err, out, src)
-		}
-		asm, err := os.ReadFile(asmPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bin := buildBinArm64(t, arm64gcc, proj, "main", string(asm))
-		inner := runArm64Bin(qemu, bin)
-		_ = inner.Run()
-		if inner.ProcessState == nil {
-			t.Fatalf("did not run: %s", bin)
-		}
-		return inner.ProcessState.ExitCode()
+		code, _ := runArm64(t, arm64gcc, qemu, cli.emit(t, "arm64-linux", src))
+		return code
 	}
 
 	cases := []struct {
