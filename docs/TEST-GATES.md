@@ -317,10 +317,12 @@ and a client-side check, so `TestServeWithThreadedStateX86_64`,
 `TestSupervisedServeSurvivesHandlerTrap` and
 `TestSupervisedServeCrashLoopGivesUp` each have a `TestSelfHost` twin
 driving the same server compiled by the self-host compiler
-(`internal/e2eselfhost/self_host_serve_test.go`). The one server test
-without a twin is `TestServeInitProvidedStateX86_64`: its program has no
-`main`, and the self-host compiler does not synthesise one from `init`
-and `handle` yet.
+(`internal/e2eselfhost/self_host_serve_test.go`).
+`TestServeInitProvidedStateX86_64` and its twin
+`TestSelfHostServeInitProvidedState`, with `TestSelfHostServeHandleOnly`,
+pin the `main` both compilers synthesise for a handler program that
+writes none (`flatten.with_handler_main` in the self-host, the checker
+in native): it serves on `PORT` and threads `init`'s state.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

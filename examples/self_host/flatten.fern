@@ -307,6 +307,80 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
     return parser.Module { ...mod, imports: out };
 }
 
+// with_handler_main gives a handler-shaped entry (a top-level `handle`, no
+// `main`) the `main` the native checker synthesises for one:
+//
+//     function main(): i32 { return tcp.tcp_serve(tcp.__port_from_env("PORT", 8080), handle); }
+//
+// or, when `init` returns the state a three-parameter `handle` threads,
+// `tcp.tcp_serve_with(port, init(), handle)`; a void `init` runs before the
+// loop. `tcp` is whatever the entry imports std/tcp as; without the import
+// the names stay bare, so the checker reports them undefined as native does.
+// A mispaired `init` and `handle` is left alone: E075 is the checker's, and
+// a main calling the wrong serve would only add a second error.
+pub function with_handler_main(entry: parser.Module): parser.Module {
+    if (top_fn_index(entry, "main") >= 0) { return entry; }
+    var hi: i32 = top_fn_index(entry, "handle");
+    if (hi < 0) { return entry; }
+    var ii: i32 = top_fn_index(entry, "init");
+    var returns_state: boolean = false;
+    if (ii >= 0) {
+        var rt: string = entry.funcs[ii].ret_type;
+        returns_state = rt.len() > 0 && rt != "void";
+    }
+    var takes_state: boolean = entry.funcs[hi].params.len() == 3;
+    if (returns_state != takes_state) { return entry; }
+    var qual: string = tcp_qualifier(entry);
+    var port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
+    var handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
+    var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+    var body: ast.Stmt[] = [];
+    var serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve"), args: [port, handle], line: 0, col: 0, type_args: [], ty: "" };
+    if (takes_state) {
+        serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_with"), args: [port, init_call, handle], line: 0, col: 0, type_args: [], ty: "" };
+    } else if (ii >= 0) {
+        body = body.append(ast.StmtExpr { value: init_call, line: 0 });
+    }
+    body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
+    var main: parser.FuncDecl = parser.FuncDecl { no_inline: false,
+        name: "main", receiver_name: "", receiver_type: "", type_params: [],
+        params: [], ret_type: "i32", body: body, line: 0, col: 0,
+        import_iface: "", import_wit: "", all_type_params: [],
+        bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
+        is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "" };
+    return parser.Module { ...entry, funcs: entry.funcs.append(main) };
+}
+
+// top_fn_index is the position of the top-level function `name` (a method
+// of that name is not one), or -1.
+function top_fn_index(mod: parser.Module, name: string): i32 {
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        if (mod.funcs[i].name == name && mod.funcs[i].receiver_type.len() == 0) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// tcp_qualifier is the name the entry refers to std/tcp by, or "" when it
+// does not import it.
+function tcp_qualifier(mod: parser.Module): string {
+    for imp in mod.imports {
+        var p: string = imp.path;
+        if (p == "std/tcp" || (p.len() > 8 && slice_unchecked(p, p.len() - 8, p.len()) + "" == "/std/tcp")) {
+            if (imp.alias.len() > 0) { return imp.alias; }
+            return "tcp";
+        }
+    }
+    return "";
+}
+
+// tcp_ref names std/tcp's `name`: qualified through `qual`, or bare.
+function tcp_ref(qual: string, name: string): ast.Expr {
+    if (qual.len() == 0) { return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" }; }
+    return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "" };
+}
+
 // index_of_str returns the position of `want` in `list`, or -1.
 function index_of_str(want: string, list: string[]): i32 {
     var i: i32 = 0;
@@ -1182,7 +1256,8 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
 // the compiler's module layout). This is the final brick: after it,
 // a multi-module program — the compiler itself — lowers to a single
 // namespace and self-compiles.
-pub function bundle(entry: parser.Module, imports: LoadedModule[]): parser.Module {
+pub function bundle(entry0: parser.Module, imports: LoadedModule[]): parser.Module {
+    var entry: parser.Module = with_handler_main(entry0);
     var funcs: parser.FuncDecl[] = [];
     var structs: parser.StructDecl[] = [];
     var aliases: parser.TypeAlias[] = [];
@@ -1393,7 +1468,8 @@ pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
 // emitted as its own translation unit (entry → `_start` + the shared runtime;
 // imports → library units exposing their `.globl __fn_*`), and the units link
 // into one binary. The entry is the LAST element.
-pub function bundle_per_module(entry: parser.Module, imports: LoadedModule[]): PerModule[] {
+pub function bundle_per_module(entry0: parser.Module, imports: LoadedModule[]): PerModule[] {
+    var entry: parser.Module = with_handler_main(entry0);
     // One prefix authority for the whole bundle. Everything below -- the
     // enum-variant map, the re-export table, each module's own decls, and
     // every importer's references -- reads these rather than deriving a

@@ -385,3 +385,65 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 		t.Fatalf("post-crash /ok: want 200 (the other worker should have answered), got\n%s", resp)
 	}
 }
+
+// InitStateServerSource is ThreadedStateServerSource with no `main`: an
+// `init(): S` and a state-taking `handle` are the two-phase lifecycle the
+// compilers synthesise a main for, which serves on `PORT` and hands
+// init()'s value to the loop rather than building the state per request
+// or dropping it.
+func InitStateServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n),
+            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+}
+`
+}
+
+// HandleOnlyServerSource is a handler program with neither `init` nor
+// `main`: the synthesised main serves `handle` on `PORT`.
+func HandleOnlyServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("path=" + req.path);
+}
+`
+}
+
+// CheckInitState is CheckThreadedState's first half: one path's count
+// climbs and a second path starts at one.
+func CheckInitState(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for want := 1; want <= 3; want++ {
+		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != fmt.Sprintf("/a=%d", want) {
+			t.Fatalf("request %d to /a: body %q, want %q (init's state did not reach the next request)", want, got, fmt.Sprintf("/a=%d", want))
+		}
+	}
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/b", 5*time.Second)); got != "/b=1" {
+		t.Fatalf("first request to /b: body %q, want \"/b=1\"", got)
+	}
+}
+
+// CheckHandleOnly asks the handle-only server for one path.
+func CheckHandleOnly(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/hello", 5*time.Second)); got != "path=/hello" {
+		t.Fatalf("/hello: body %q, want \"path=/hello\"", got)
+	}
+}
