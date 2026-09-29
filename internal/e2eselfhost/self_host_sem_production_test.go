@@ -4558,6 +4558,19 @@ function main(): i32 {
     return xs.len() + junk.len();
 }
 `},
+	// #10738's program: an anonymous slice kept through `keep` in a loop. It
+	// failed verification the same way as #10724 and is produced by that fix.
+	// The AST lowering answers the same and leaks the views.
+	{name: "a-loop-keeping-an-anonymous-slice-through-a-call-is-produced", atLeast: 3, noLeak: true, src: `
+function keep(v: str, xs: str[]): str[] { return xs.append(v); }
+function build(s: string, n: i32): str[] {
+    var xs: str[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = keep(slice_unchecked(s, i, i + 2), xs); i = i + 1; }
+    return xs;
+}
+function main(): i32 { return build("abcdefgh", 5).len(); }
+`},
 	// An array of views of one parameter is anchored to it as a single view
 	// result is, whether it is built by append, in a loop, or by a literal and
 	// .with. The AST lowering leaked the view boxes (#10215).
