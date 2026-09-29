@@ -1041,6 +1041,7 @@ function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 
     if (p.constants[ins.result] != "") { return 0 - 1; }
     if (ins.kind_tag == ssasem.tuple_new()) { return tuple_elements(f.values[ins.result]).len(); }
     if (ins.kind_tag == ssasem.record_new()) { return reuse_slots(f.values[ins.result], f); }
+    if (ins.kind_tag == ssasem.variant_new()) { return union_slots(f.values[ins.result], f); }
     return 0 - 1;
 }
 
@@ -1332,7 +1333,17 @@ function drop_fields_except(own r: irlower.LowerResult, slot: i32, fields: semre
 
 function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst): irlower.LowerResult {
     if (ins.kind_tag == ssasem.tuple_new()) { return reuse_tuple(r, f, ins); }
-    var fields: semrecords.Field[] = record_fields(f.values[ins.result], f);
+    // A declared variant's box is laid out as a record's: the shape word
+    // `struct_make` writes, naming the variant, then the variant's fields.
+    var fields: semrecords.Field[] = [];
+    var shape: string = ins.str;
+    if (ins.kind_tag == ssasem.variant_new()) {
+        var owner: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, f.values[ins.result])];
+        fields = owner.variants[variant_tag(f, f.values[ins.result], ins.str)].fields;
+    } else {
+        fields = record_fields(f.values[ins.result], f);
+        shape = record_name(f.values[ins.result]);
+    }
     r = emit(r, ir.op_load_local(token_slot(f)));
     r = emit(r, ir.op_const_i32(fields.len() + 1));
     r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
@@ -1344,7 +1355,7 @@ function reuse_construct(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SI
     // wrote. So the recipient writes its own, which is also what lets a donor of
     // another type serve it.
     r = emit(r, ir.op_load_local(ins.result));
-    r = emit(r, ir.op_struct_set_shape(record_name(f.values[ins.result])));
+    r = emit(r, ir.op_struct_set_shape(shape));
     r = emit(r, ir.op_drop());
     var i: i32 = 0;
     while (i < ins.args.len() && i < fields.len()) {
