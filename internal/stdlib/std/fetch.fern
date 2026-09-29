@@ -337,11 +337,19 @@ pub function parse_ipv4(s: string): i32 {
 // `fetch_future` through `async.gather` / `async.race`. Blocking.
 //
 // A recording bag reaches no socket: the call is logged as `fetch` with a
-// `host:port path` summary and answered -1, the same value a real fetch gives
-// for a host it could not reach (std/mock_platform).
+// `host:port path` summary and answered with the status the test canned
+// for that summary (std/mock_platform's `fetch_set`), else -1, the same
+// value a real fetch gives for a host it could not reach.
 pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 {
     if (plat.is_mock()) {
-        plat.record("fetch", host + ":" + int.int_to_string(port) + " " + path);
+        var summary: string = host + ":" + int.int_to_string(port) + " " + path;
+        plat.record("fetch", summary);
+        match (plat.canned("fetch " + summary)) {
+            Some(v) => {
+                match (int.parse_int_radix(v, 10)) { Some(status) => { return status; }, None => { return -1; } }
+            },
+            None => { return -1; }
+        }
         return -1;
     }
     var h: i32 = parse_ipv4(host);

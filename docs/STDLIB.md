@@ -1530,10 +1530,20 @@ var resp: HttpResponse = handle(req, m.as_platform());
 assert_eq(m.calls()[0].name, "log");
 ```
 
-Mocked capabilities answer a fixed value — 0 for `now_ms` / `elapsed_ns` /
-`random_i32`, `None` for `env`, -1 for `fetch`, and `log` swallows the line.
+Mocked capabilities answer what the test canned, else a fixed value — 0
+for `now_ms` / `elapsed_ns` / `random_i32`, `None` for `env`, -1 for
+`fetch`, and `log` swallows the line.
 
 - `mock_platform_new()`; `(m).as_platform()`.
+- `(m).env_set(name, value)`, `(m).now_set(ms)`, `(m).elapsed_set(ns)`,
+  `(m).random_set(v)`, `(m).fetch_set(host, port, path, status)` — the
+  answer the bag gives from then on (the last one canned wins; a fetch of
+  another host, port or path still answers -1). A canned answer is a row
+  of the same cell the log lives in (`canned`, tab, key, tab, value, the
+  value escaped), which `calls()` skips and `reset()` keeps; the bag's
+  own `(plat).can(key, value)` / `(plat).canned(key)` are what the
+  setters and the capability methods use
+  (`examples/tests/mock_platform_canned_test.fern`).
 - `(m).record(name, args)`, `(m).reset()` — mutate through the shared cell,
   so a bag already handed to a handler writes to the same log.
 - `(m).calls()`, `(m).call_count()`, `(m).has_call(name)`,
