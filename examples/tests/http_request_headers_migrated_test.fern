@@ -112,11 +112,11 @@ function test_duplicate_content_length_rejected(): test.TestOutcome {
     return test.fail("unreachable");
 }
 
-// Transfer-Encoding (chunked unsupported; TE+CL is the desync vector) → reject.
+// Transfer-Encoding beside Content-Length (the desync vector) → reject.
 function test_transfer_encoding_rejected(): test.TestOutcome {
     var wire: string = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\nhello";
     match (http.http_parse_request(wire)) {
-        Some(req) => { return test.fail("Transfer-Encoding must be rejected"); },
+        Some(req) => { return test.fail("Transfer-Encoding beside Content-Length must be rejected"); },
         None => { return test.pass(); }
     }
     return test.fail("unreachable");
@@ -182,7 +182,7 @@ function main(): i32 {
              test_x_prefixed_cl_not_content_length);
     r = r.it("duplicate Content-Length rejected",
              test_duplicate_content_length_rejected);
-    r = r.it("Transfer-Encoding rejected",
+    r = r.it("Transfer-Encoding beside Content-Length rejected",
              test_transfer_encoding_rejected);
     r = r.it("http_header_value via HeaderMap",
              test_http_header_value_via_headermap);

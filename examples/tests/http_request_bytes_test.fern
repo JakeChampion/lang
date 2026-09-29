@@ -119,7 +119,7 @@ function test_caps_admit_what_fits(): test.TestOutcome {
     if (accepted(block_of(32769))) { return test.fail("a header block of 32769 bytes accepted"); }
     if (!accepted("POST / HTTP/1.1\r\nContent-Length: 1048576\r\n\r\n" + repeat("b", 1048576))) { return test.fail("a body of 1 MiB refused"); }
     if (accepted("POST / HTTP/1.1\r\nContent-Length: 1048577\r\n\r\n" + repeat("b", 1048577))) { return test.fail("a body a byte over 1 MiB accepted"); }
-    if (http.http_request_bytes_cap() != 32768 + 4 + 1048576) { return test.fail("request cap: " + http.http_request_bytes_cap().to_string()); }
+    if (http.http_request_bytes_cap() != 32768 + 4 + 1048576 + 32768) { return test.fail("request cap: " + http.http_request_bytes_cap().to_string()); }
     return test.pass();
 }
 
@@ -141,7 +141,7 @@ function refused(wire: string): boolean {
 function test_refusals_agree(): test.TestOutcome {
     if (!refused("GET/HTTP/1.1\r\n\r\n")) { return test.fail("request line without a space accepted"); }
     if (!refused("GET /\r\n\r\n")) { return test.fail("request line without a version accepted"); }
-    if (!refused("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n")) { return test.fail("Transfer-Encoding accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n")) { return test.fail("Transfer-Encoding beside Content-Length accepted"); }
     if (!refused("GET / HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")) { return test.fail("duplicate Content-Length accepted"); }
     if (!refused("GET / HTTP/1.1\r\nContent-Length: 12a\r\n\r\n")) { return test.fail("non-numeric Content-Length accepted"); }
     if (!refused("POST / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhello")) { return test.fail("a body shorter than declared accepted"); }
@@ -153,6 +153,9 @@ function test_refusals_agree(): test.TestOutcome {
     if (!refused("GET / HTTP/1.1\r\n\tX: a\r\n\r\n")) { return test.fail("a header line starting with HTAB accepted"); }
     if (!refused("GET / HTTP/1.1\r\nX Y: a\r\n\r\n")) { return test.fail("a space inside a header name accepted"); }
     if (!refused("GET / HTTP/1.1\r\nX\"Y: a\r\n\r\n")) { return test.fail("a quote inside a header name accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX: a\x00b\r\n\r\n")) { return test.fail("a NUL in a header value accepted"); }
+    if (!refused("GET / HTTP/1.1\r\nX: a\x7F\r\n\r\n")) { return test.fail("a DEL in a header value accepted"); }
+    if (!accepted("GET / HTTP/1.1\r\nX: a\tb\r\n\r\n")) { return test.fail("an HTAB inside a header value refused"); }
     if (!refused(" / HTTP/1.1\r\n\r\n")) { return test.fail("an empty method accepted"); }
     if (!refused("   \r\n\r\n")) { return test.fail("a request line of spaces accepted"); }
     if (!refused("GET  / HTTP/1.1\r\n\r\n")) { return test.fail("an empty request target accepted"); }
@@ -194,6 +197,100 @@ function test_framing_tells_incomplete_from_malformed(): test.TestOutcome {
     if (framing_of("GET / HTTP/1.1\r\nX: " + repeat("v", 32768)) != 0) { return test.fail("a header block past the cap is not malformed before its end"); }
     if (framing_of("GET / HTTP/1.1\r\n" + fields(101)) != 1) { return test.fail("101 unterminated fields are not incomplete"); }
     if (framing_of("GET / HTTP/1.1\r\n" + fields(101) + "\r\n") != 0) { return test.fail("101 fields are not malformed"); }
+    return test.pass();
+}
+
+// A chunked body (RFC 9112 §7.1) is decoded, chunk extensions skipped,
+// trailers read under the header rules and then discarded, and the
+// framed length covers the whole wire, so the request behind it is
+// found.
+function wire_chunked(): string {
+    return "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n";
+}
+
+function chunked(body: string): string {
+    return "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n" + body;
+}
+
+// body_of(wire) — the decoded body, or "<refused>".
+function body_of(wire: string): string {
+    match (http.http_parse_request_bytes(wire.bytes())) {
+        Some(req) => { return req.body_string(); },
+        None => { return "<refused>"; }
+    }
+    return "<refused>";
+}
+
+function test_chunked_body_is_decoded(): test.TestOutcome {
+    match (http.http_parse_request_bytes(wire_chunked().bytes())) {
+        Some(req) => {
+            if (req.body_string() != "hello world") { return test.fail("body: " + req.body_string()); }
+            if (req.headers.len() != 2) { return test.fail("the trailer reached the headers: " + req.headers.len().to_string()); }
+        },
+        None => { return test.fail("a chunked request refused"); }
+    }
+    var wire: string = wire_chunked() + "GET /next HTTP/1.1\r\n\r\n";
+    match (framed(wire)) {
+        Some(f) => { if (f.len != wire_chunked().len()) { return test.fail("framed len: " + f.len.to_string()); } },
+        None => { return test.fail("the chunked request was not framed"); }
+    }
+    match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len())) {
+        http.Framed(f) => { if (f.request.path != "/next") { return test.fail("behind the chunked request: " + f.request.path); } },
+        http.Incomplete => { return test.fail("the request behind is incomplete"); },
+        http.Malformed => { return test.fail("the request behind is malformed"); }
+    }
+    if (body_of("POST / HTTP/1.1\r\nTransfer-Encoding: Chunked\r\n\r\n0A\r\n0123456789\r\n000\r\n\r\n") != "0123456789") { return test.fail("an uppercase coding, hex digit and leading zeros refused"); }
+    if (body_of(chunked("0\r\n\r\n")) != "") { return test.fail("an empty chunked body refused"); }
+    if (body_of(chunked("5 ;a=b\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("whitespace before a chunk extension refused"); }
+    if (body_of(chunked("1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n")) != "abc") { return test.fail("three chunks not joined"); }
+    return test.pass();
+}
+
+function test_chunked_refusals(): test.TestOutcome {
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) { return test.fail("Transfer-Encoding beside Content-Length accepted"); }
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n")) { return test.fail("a coding other than chunked accepted"); }
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")) { return test.fail("chunked twice accepted"); }
+    // The coding is compared byte-wise: a Unicode fold would read the
+    // Kelvin sign (U+212A, three bytes) as `k`, and a whitespace trim
+    // wider than SP and HTAB would let VT or FF ride in the token.
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: chun\xE2\x84\xAAed\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) { return test.fail("a Kelvin sign in the coding accepted"); }
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: \x0Bchunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) { return test.fail("a VT before the coding accepted"); }
+    if (!refused("POST / HTTP/1.1\r\nTransfer-Encoding: chunked\x0C\r\n\r\n5\r\nhello\r\n0\r\n\r\n")) { return test.fail("a FF after the coding accepted"); }
+    if (!accepted("POST / HTTP/1.1\r\nTransfer-Encoding:\t chunked \t\r\n\r\n0\r\n\r\n")) { return test.fail("SP and HTAB around the coding refused"); }
+    if (!refused("POST / HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n")) { return test.fail("chunked on HTTP/1.0 accepted"); }
+    if (!refused(chunked("\r\nhello\r\n0\r\n\r\n"))) { return test.fail("an empty chunk-size line accepted"); }
+    if (!refused(chunked("g\r\n0\r\n\r\n"))) { return test.fail("a chunk size that is not hex accepted"); }
+    if (!refused(chunked("5 x\r\nhello\r\n0\r\n\r\n"))) { return test.fail("junk after a chunk size accepted"); }
+    if (!refused(chunked("5\r\nhelloXX0\r\n\r\n"))) { return test.fail("chunk data not ended by CRLF accepted"); }
+    if (!refused(chunked("5\nhello\r\n0\r\n\r\n"))) { return test.fail("a bare LF ending a chunk-size line accepted"); }
+    if (!refused(chunked("5\r\nhello\r\n0\r\nnocolon\r\n\r\n"))) { return test.fail("a trailer line without a colon accepted"); }
+    if (!refused(chunked("5\r\nhello\r\n0\r\nX Y: 1\r\n\r\n"))) { return test.fail("a trailer name that is not a token accepted"); }
+    if (!refused(chunked("0\r\n" + fields(101) + "\r\n"))) { return test.fail("101 trailer fields accepted"); }
+    if (!refused(chunked("100000\r\n" + repeat("b", 1048576) + "\r\n1\r\nx\r\n0\r\n\r\n"))) { return test.fail("a chunked body a byte over 1 MiB accepted"); }
+    return test.pass();
+}
+
+// The three-way answer over a chunked body, and each of its caps at the
+// edge: the body cap is on the decoded bytes, the framing budget on the
+// rest.
+function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcome {
+    if (framing_of(chunked("5")) != 1) { return test.fail("an unterminated chunk-size line is not incomplete"); }
+    if (framing_of(chunked("5\r\nhel")) != 1) { return test.fail("short chunk data is not incomplete"); }
+    if (framing_of(chunked("5\r\nhello\r")) != 1) { return test.fail("a CR ending the buffer is not incomplete"); }
+    if (framing_of(chunked("5\r\nhello\r\n")) != 1) { return test.fail("a body without its last chunk is not incomplete"); }
+    if (framing_of(chunked("0\r\n")) != 1) { return test.fail("a last chunk without its trailer section is not incomplete"); }
+    if (framing_of(chunked("0\r\nX: 1")) != 1) { return test.fail("an unterminated trailer is not incomplete"); }
+    if (framing_of(chunked("5\r\nhelloX")) != 0) { return test.fail("a byte where a chunk's CR must be is not malformed before the LF"); }
+    if (framing_of(chunked("5\r\nhello\rX")) != 0) { return test.fail("a byte where a chunk's LF must be is not malformed"); }
+    if (framing_of(chunked("100001\r\n")) != 0) { return test.fail("a chunk past the body cap is not malformed before its data"); }
+    if (framing_of(chunked("5;" + repeat("e", 32768))) != 0) { return test.fail("chunk framing past its budget is not malformed before its end"); }
+    if (framing_of(chunked("0\r\n" + fields(101))) != 1) { return test.fail("101 unterminated trailers are not incomplete"); }
+    if (!accepted(chunked("100000\r\n" + repeat("b", 1048576) + "\r\n0\r\n\r\n"))) { return test.fail("a chunked body of 1 MiB refused"); }
+    if (accepted(chunked("100001\r\n" + repeat("b", 1048577) + "\r\n0\r\n\r\n"))) { return test.fail("a chunk of 1 MiB and a byte accepted"); }
+    // The framing of `5;<ext>\r\nhello\r\n0\r\n\r\n` is 11 bytes plus the
+    // extension.
+    if (!accepted(chunked("5;" + repeat("e", 32757) + "\r\nhello\r\n0\r\n\r\n"))) { return test.fail("chunk framing of 32768 bytes refused"); }
+    if (accepted(chunked("5;" + repeat("e", 32758) + "\r\nhello\r\n0\r\n\r\n"))) { return test.fail("chunk framing of 32769 bytes accepted"); }
     return test.pass();
 }
 
@@ -306,6 +403,9 @@ function main(): i32 {
     r = r.it("caps admit what fits", test_caps_admit_what_fits);
     r = r.it("refusals agree", test_refusals_agree);
     r = r.it("framing tells incomplete from malformed", test_framing_tells_incomplete_from_malformed);
+    r = r.it("chunked body is decoded", test_chunked_body_is_decoded);
+    r = r.it("chunked refusals", test_chunked_refusals);
+    r = r.it("chunked framing tells incomplete from malformed", test_chunked_framing_tells_incomplete_from_malformed);
     r = r.it("framed length covers headers and body", test_framed_length_covers_headers_and_body);
     r = r.it("framed from reads the request behind", test_framed_from_reads_the_request_behind);
     r = r.it("framed persistence follows the version and connection", test_framed_persistence_follows_the_version_and_connection);

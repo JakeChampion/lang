@@ -70,6 +70,7 @@ function census_burn(n: i32): i32 {
     return x;
 }
 function census_handle(req: HttpRequest, plat: Platform): HttpResponse {
+    if (req.path == "/chunked") { return http.http_response_ok(req.body_string()); }
     var work: i32 = 0;
     if (req.path.starts_with("/slow")) { work = 12000000; }
     if (req.path.starts_with("/gone")) { work = 60000000; }
@@ -85,7 +86,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 274
+const KeepAliveCycle = 276
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200 and whose request read deadline is
@@ -104,9 +105,11 @@ const KeepAliveCycle = 274
 // request behind it is answered; a request with a malformed one pipelined
 // behind it, answered with close and then closed with no response to the
 // second; a request of 101 header fields, refused before any handler sees
-// it; and an HTTP/1.0 keep-alive request followed by an HTTP/1.1 one on
-// the same connection. Every response is checked, and every close the server owes
-// is read as EOF.
+// it; a chunked request with a request pipelined behind it, whose decoded
+// body the handler echoes and whose framing must leave exactly the second
+// request to answer; and an HTTP/1.0 keep-alive request followed by an
+// HTTP/1.1 one on the same connection. Every response is checked, and
+// every close the server owes is read as EOF.
 func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	t.Helper()
 	if rounds%KeepAliveCycle != 0 {
@@ -126,7 +129,7 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 	// Go's reader folds a `Connection: close` header into resp.Close and
 	// removes it, so the close case is read from the flag and the
 	// keep-alive case from the header it leaves in place.
-	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
+	readBody := func(conn net.Conn, r *bufio.Reader, label string, wantBody string, wantConnection ...string) {
 		t.Helper()
 		resp, err := http.ReadResponse(r, nil)
 		if err != nil {
@@ -135,9 +138,9 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		if err != nil || resp.StatusCode != 200 || resp.ContentLength != 2 || string(body) != "ok" {
+		if err != nil || resp.StatusCode != 200 || resp.ContentLength != int64(len(wantBody)) || string(body) != wantBody {
 			conn.Close()
-			t.Fatalf("%s: status=%d length=%d body=%q error=%v", label, resp.StatusCode, resp.ContentLength, body, err)
+			t.Fatalf("%s: status=%d length=%d body=%q error=%v, want %q", label, resp.StatusCode, resp.ContentLength, body, err, wantBody)
 		}
 		got := resp.Header.Get("Connection")
 		if resp.Close {
@@ -147,6 +150,10 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 			conn.Close()
 			t.Fatalf("%s: Connection=%q, want one of %q", label, got, wantConnection)
 		}
+	}
+	read := func(conn net.Conn, r *bufio.Reader, label string, wantConnection ...string) {
+		t.Helper()
+		readBody(conn, r, label, "ok", wantConnection...)
 	}
 	eof := func(conn net.Conn, r *bufio.Reader, label string) {
 		t.Helper()
@@ -296,6 +303,16 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		pipeline.WriteString("\r\n")
 		write(conn, pipeline.String())
 		eof(conn, r, "a request with 101 header fields")
+		// A chunked request (two chunks, an extension, a trailer) with a
+		// request pipelined behind it in one write: the handler echoes the
+		// decoded body, and the framing must leave exactly the second
+		// request to answer. The client ends this one.
+		conn = dial()
+		r = bufio.NewReader(conn)
+		write(conn, "POST /chunked HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5;x=y\r\nhello\r\n6\r\n world\r\n0\r\nX-Sum: 11\r\n\r\nGET /after-chunked HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		readBody(conn, r, "chunked", "hello world", "keep-alive")
+		read(conn, r, "behind the chunked request", "keep-alive")
+		conn.Close()
 		// An HTTP/1.0 request asking to keep the connection, then an
 		// HTTP/1.1 request on it; the client ends this one.
 		conn = dial()

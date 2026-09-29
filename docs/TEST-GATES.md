@@ -307,8 +307,10 @@ whose failed write must close it before the request behind it is answered
 request with a malformed one pipelined behind it (a bare LF ends its
 request line), whose first response must say `close` and which is then
 closed with no response to the second;
-a request of 101 header fields, closed with no response; and an HTTP/1.0
-keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
+a request of 101 header fields, closed with no response; a chunked request
+with a request pipelined behind it, whose decoded body the handler echoes
+and whose framing must leave exactly the second request to answer; and an
+HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded
 loop these and the census twins run stops only once every connection is
