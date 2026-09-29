@@ -1,53 +1,50 @@
 package e2eselfhost
 
 import (
-	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 )
 
-// Nothing compares how MUCH the two compilers allocate. That is how they
-// developed opposite cliffs undetected — a shape that leaks megabytes under
-// one and nothing under the other stays green everywhere, because every
-// existing gate asks "is the answer right?" and this class of bug never
-// changes the answer. docs/TEST-GATES.md lists allocation volume under "what
-// nothing gates at all"; this is that gate.
+// Nothing else measures how MUCH the compiler allocates. That is how the
+// native and self-host compilers once developed opposite cliffs undetected — a
+// shape that leaks megabytes stays green everywhere, because every other gate
+// asks "is the answer right?" and this class of bug never changes the answer.
+// docs/TEST-GATES.md lists allocation volume under "what nothing gates at
+// all"; this is that gate.
 //
-// It compares two probes, both now supported by both compilers:
+// It reads two probes and holds each shape to the figures this gate recorded
+// for it (the t.Logf line is where a recorded figure comes from; a hand-run
+// CLI measures a different pipeline):
 //
 //   - __heap_bump_bytes()        bytes handed out fresh (what the freelist
-//                                could not recycle)
+//                                could not recycle), per churn
 //   - __arr_push_shared_count()  appends that copied a buffer which still had
 //                                spare capacity — the rc==1 cliff
 //
-// WHAT IT DOES NOT ASSERT: byte equality. The two runtimes lay their boxes out
-// differently (header sizes, capacity schedules, string representation), so
-// identical allocation behaviour legitimately produces different totals. An
-// exact-match gate here would be noise, and noise gets muted. Two comparisons
-// survive that objection:
+// WHAT IT DOES NOT ASSERT: byte equality. Box layout, capacity schedules and
+// the string representation all move the totals, so an exact-match gate would
+// be noise, and noise gets muted. Two comparisons survive that objection:
 //
-//  1. the cliff counter agreeing on ZERO vs NON-ZERO. It counts events, not
-//     bytes, so it is layout-free. Not exact equality either — the two
-//     runtimes grow capacity on different schedules, so the same program can
-//     legitimately cross the cliff a different NUMBER of times. Whether it
-//     crosses at all is the part that means something.
-//  2. the per-churn bump delta staying within a RATIO. The divergences this
-//     exists to catch were three and four orders of magnitude; a ratio bound
-//     catches those while tolerating layout.
+//  1. the cliff counter staying ZERO or NON-ZERO as recorded. It counts
+//     events, not bytes, so it is layout-free; how many times a shape crosses
+//     the cliff moves with the capacity schedule, whether it crosses at all
+//     is the part that means something.
+//  2. the per-churn bump delta staying within a RATIO of the recorded figure,
+//     in both directions. The regressions this exists to catch were three and
+//     four orders of magnitude; a ratio bound catches those while tolerating
+//     layout. Both directions, because a row that records a leak has to fail
+//     the moment the leak is fixed — an expectation nobody re-records is how
+//     the next regression hides behind the last fix.
 //
-// Divergences are LISTED, not skipped — see the testdata file, and
-// selfhost-wasm-known-divergences.txt for the convention. A new divergence
-// fails, and a listed shape that comes back WITHIN bound also fails, because
-// an allowlist nobody prunes is how bugs stay unnoticed.
+// Until 2026-09-29 the second side of every comparison was the Go x86-64
+// backend, and divergences between the two compilers were listed in a
+// testdata allowlist; the backends are retiring (docs/NATIVE-CONVERGENCE.md
+// §3a), so the recorded figures took the native side's place and the listed
+// shapes carry their reason on the case.
 //
-// x86-64 only. The comparison is between COMPILERS, not between targets, so
-// running the same pair again under qemu-aarch64 costs minutes to re-answer a
-// question the x86-64 pair already answered.
+// x86-64 only. Running the same probes again under qemu-aarch64 costs minutes
+// to re-answer a question the x86-64 build already answered.
 
 // allocDiffCase is one shape, measured twice per compiler: once for bump
 // growth, once for the cliff counter.
@@ -60,11 +57,16 @@ type allocDiffCase struct {
 	name  string
 	decls string
 	n     int
-	// maxRatio bounds max(native, selfhost) / max(min(native, selfhost), 1)
-	// on per-churn KB. 1 in the denominator so a shape that reclaims fully on
-	// one side (0 KB) does not produce a division by zero — it makes a 0-vs-K
-	// split read as ratio K, which is the right severity for small K and
-	// correctly severe for large K.
+	// cliff records whether the shape crosses the rc==1 append cliff at all,
+	// and bumpKB its per-churn bump growth in KB; both as this gate measured
+	// them on x86-64 when the row was written or last re-recorded.
+	cliff  bool
+	bumpKB int
+	// maxRatio bounds max(recorded, measured) / max(min(recorded, measured), 1)
+	// on per-churn KB. 1 in the denominator so a shape that reclaims fully
+	// (0 KB) does not produce a division by zero — it makes a 0-vs-K split
+	// read as ratio K, which is the right severity for small K and correctly
+	// severe for large K.
 	maxRatio int
 }
 
@@ -82,6 +84,8 @@ function churn(n: i32): i32 {
     return a.len();
 }`,
 		n:        400,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -106,6 +110,8 @@ function churn(n: i32): i32 {
 		// figure has to stay inside the byte the exit code can carry. At
 		// n=200 it overflowed and the guard reported 252.
 		n:        80,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -124,6 +130,8 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        400,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -144,6 +152,8 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        400,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -168,6 +178,8 @@ function churn(n: i32): i32 {
     return total;
 }`,
 		n:        200,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
@@ -177,6 +189,18 @@ function churn(n: i32): i32 {
 		// nothing measures how MUCH either compiler allocates for it — a
 		// credit that fires but releases only the box would leak the element
 		// buffer every round while every leak cell still reads clean.
+		//
+		// Recorded LEAKING: ~77 B/round (15 KB at n=200) that the Go backend
+		// gave back entirely. Isolated to the combination: a tuple local alone
+		// and a struct with a plain array field alone are both 0 KB; only the
+		// tuple-inside-a-struct-field shape leaks, so the composed path
+		// releases the box but not everything in it. The leak matrix cannot
+		// see it (the credit fires and the box comes back, which is all a
+		// per-round verdict asks); volume is the half only this gate measures
+		// (#7259 tuple wave). Recorded rather than fixed because the composed
+		// path spans two mechanisms landed by different sessions — the counted
+		// struct-field store and the "TCNT:" tier. The row fails the moment
+		// it is fixed, so it cannot rot.
 		name: "tuple-in-struct-field",
 		decls: `struct Hold { t: (i32, i32[]), n: i32 }
 function churn(n: i32): i32 {
@@ -191,6 +215,8 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        200,
+		cliff:    false,
+		bumpKB:   15,
 		maxRatio: 8,
 	},
 	{
@@ -213,13 +239,24 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        200,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 	{
 		// An Option carrying an ARRAY, as a struct field. This shape did not
 		// COMPILE at all until #7745 — the self-host refused the module the
-		// moment such a struct was constructed — so its allocation behaviour
-		// has never been measured against native.
+		// moment such a struct was constructed — so a compile failure, not a
+		// regression, is what this row replaced.
+		//
+		// Recorded LEAKING: ~80 B/round (15 KB at n=200), the same family and
+		// root cause as tuple-in-struct-field (#7259): the store sits in a
+		// LOOP BODY, so it is never classified a move — lower_func seeds
+		// moved_names and move_sites from the top-level-only sets — the
+		// construction therefore takes the retain, the source is never swept,
+		// and the reclaim's __fern_rc_is_unique gate reads "shared" and
+		// declines the child walk. moved_locals_toplevel_of documents why the
+		// loop half is deferred: the rebind site has to agree first.
 		name: "option-array-struct-field",
 		decls: `struct H { o: Option[i32[]], n: i32 }
 function churn(n: i32): i32 {
@@ -233,6 +270,8 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        200,
+		cliff:    false,
+		bumpKB:   15,
 		maxRatio: 8,
 	},
 	{
@@ -254,6 +293,8 @@ function churn(n: i32): i32 {
     return s;
 }`,
 		n:        200,
+		cliff:    false,
+		bumpKB:   0,
 		maxRatio: 8,
 	},
 }
@@ -294,56 +335,10 @@ function main(): i32 {
 `, c.decls, c.n)
 }
 
-// knownAllocDivergence is one entry of the testdata allowlist.
-type knownAllocDivergence struct {
-	name     string
-	native   int
-	selfhost int
-}
-
-// loadKnownAllocDivergences parses the testdata allowlist. Format per line:
-//
-//	<case-name> <native-kb> <selfhost-kb> <reason...>
-//
-// `#` comments and blank lines are ignored. The recorded KB figures are what
-// was measured when the entry was written; they are reported alongside the
-// live numbers on failure so a drift is visible without digging through git.
-func loadKnownAllocDivergences(t *testing.T) map[string]knownAllocDivergence {
-	t.Helper()
-	path := filepath.Join("testdata", "alloc-differential-known-divergences.txt")
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open %s: %v", path, err)
-	}
-	defer f.Close()
-	out := map[string]knownAllocDivergence{}
-	sc := bufio.NewScanner(f)
-	for ln := 1; sc.Scan(); ln++ {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			t.Fatalf("%s:%d: want `<name> <native-kb> <selfhost-kb> <reason>`, got %q", path, ln, line)
-		}
-		nat, err1 := strconv.Atoi(fields[1])
-		sh, err2 := strconv.Atoi(fields[2])
-		if err1 != nil || err2 != nil {
-			t.Fatalf("%s:%d: non-numeric KB figures in %q", path, ln, line)
-		}
-		out[fields[0]] = knownAllocDivergence{name: fields[0], native: nat, selfhost: sh}
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return out
-}
-
-// allocRatio is the severity measure: how many times more one compiler
-// allocated than the other, in either direction.
-func allocRatio(native, selfhost int) int {
-	hi, lo := native, selfhost
+// allocRatio is the severity measure: how many times the measured per-churn
+// figure differs from the recorded one, in either direction.
+func allocRatio(recorded, measured int) int {
+	hi, lo := recorded, measured
 	if lo > hi {
 		hi, lo = lo, hi
 	}
@@ -353,10 +348,10 @@ func allocRatio(native, selfhost int) int {
 	return hi / lo
 }
 
-// TestSelfHostAllocDifferentialX86_64 is the gate. Each shape is compiled and
-// run by BOTH compilers and their allocation behaviour compared.
+// TestSelfHostAllocDifferentialX86_64 is the gate. Each shape is compiled by
+// the self-host driver, run, and its allocation behaviour held to the row's
+// recorded figures.
 func TestSelfHostAllocDifferentialX86_64(t *testing.T) {
-	known := loadKnownAllocDivergences(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "asm_run.fern")
@@ -381,76 +376,41 @@ func TestSelfHostAllocDifferentialX86_64(t *testing.T) {
 		return cmd.ProcessState.ExitCode()
 	}
 
-	seen := map[string]bool{}
 	for _, tc := range allocDiffCases {
-		seen[tc.name] = true
 		t.Run(tc.name, func(t *testing.T) {
-			// --- the cliff counter: zero vs non-zero must agree ---
-			_, natCliff := compileAndRunX86_64(t, tc.cliffSrc())
-			shCliff := selfHostExit(t, tc.name+"-cliff", tc.cliffSrc())
-			if natCliff >= 250 || shCliff >= 250 {
-				t.Fatalf("cliff probe self-check failed (native=%d self-host=%d); "+
-					"251 means the two churns disagreed", natCliff, shCliff)
+			// --- the cliff counter: zero vs non-zero as recorded ---
+			cliff := selfHostExit(t, tc.name+"-cliff", tc.cliffSrc())
+			if cliff >= 250 {
+				t.Fatalf("cliff probe self-check failed (%d); 251 means the churn returned a negative value", cliff)
 			}
-			if (natCliff == 0) != (shCliff == 0) {
-				t.Errorf("rc==1 append cliff disagrees: native crossed it %d time(s), "+
-					"self-host %d — one compiler is copying a buffer the other mutates "+
-					"in place, which is the O(n) vs O(n²) split", natCliff, shCliff)
+			if (cliff != 0) != tc.cliff {
+				t.Errorf("rc==1 append cliff: crossed it %d time(s), recorded %v — the compiler now "+
+					"copies a buffer it used to mutate in place, or the reverse, which is the O(n) vs "+
+					"O(n²) split; re-record `cliff` only if the change is intended", cliff, tc.cliff)
 			}
 
-			// --- bump growth: within a ratio, or listed ---
-			_, natKB := compileAndRunX86_64(t, tc.bumpSrc())
-			shKB := selfHostExit(t, tc.name+"-bump", tc.bumpSrc())
-			for who, got := range map[string]int{"native": natKB, "self-host": shKB} {
-				if got == 251 {
-					t.Fatalf("%s: the two churns returned different values — the probe "+
-						"is not measuring identical work", who)
-				}
-				if got == 252 {
-					t.Fatalf("%s: per-churn growth exceeded the 240 KB the exit code can "+
-						"carry; lower this case's n", who)
-				}
+			// --- bump growth: within a ratio of the recorded figure ---
+			kb := selfHostExit(t, tc.name+"-bump", tc.bumpSrc())
+			if kb == 251 {
+				t.Fatal("the two churns returned different values — the probe is not measuring identical work")
 			}
+			if kb == 252 {
+				t.Fatal("per-churn growth exceeded the 240 KB the exit code can carry; lower this case's n")
+			}
+			ratio := allocRatio(tc.bumpKB, kb)
 
-			ratio := allocRatio(natKB, shKB)
-			entry, listed := known[tc.name]
-
-			// Report the measurement on every case, not just the failing or
-			// listed ones. These four numbers are the whole point of the gate;
+			// Report the measurement on every case, not just the failing ones:
 			// a run that prints only PASS tells a human nothing about whether
-			// the two compilers are drifting toward the bound, and the figures
-			// written into the testdata allowlist have to come from HERE rather
-			// than from a hand-run CLI, which measures a different pipeline.
-			t.Logf("n=%d  bump: native=%d KB self-host=%d KB (%dx, bound %dx)  "+
-				"cliff: native=%d self-host=%d",
-				tc.n, natKB, shKB, ratio, tc.maxRatio, natCliff, shCliff)
-			switch {
-			case listed && ratio <= tc.maxRatio:
-				t.Errorf("%s is listed as a known divergence (recorded native=%d KB "+
-					"self-host=%d KB) but now measures native=%d KB self-host=%d KB, "+
-					"ratio %dx — within the %dx bound. If this was fixed, delete the "+
-					"entry; a stale allowlist hides the next regression",
-					tc.name, entry.native, entry.selfhost, natKB, shKB, ratio, tc.maxRatio)
-			case listed:
-				t.Logf("known divergence: native=%d KB self-host=%d KB (%dx); "+
-					"recorded as native=%d KB self-host=%d KB",
-					natKB, shKB, ratio, entry.native, entry.selfhost)
-			case ratio > tc.maxRatio:
-				t.Errorf("allocation differs %dx between compilers: native=%d KB "+
-					"self-host=%d KB per churn (bound %dx). Either a real regression, "+
-					"or — if intended — add it to "+
-					"testdata/alloc-differential-known-divergences.txt with the reason",
-					ratio, natKB, shKB, tc.maxRatio)
+			// the figure is drifting toward the bound, and a re-recorded
+			// `bumpKB` has to come from HERE rather than from a hand-run CLI,
+			// which measures a different pipeline.
+			t.Logf("n=%d  bump: %d KB per churn (recorded %d KB, %dx, bound %dx)  cliff: %d (recorded %v)",
+				tc.n, kb, tc.bumpKB, ratio, tc.maxRatio, cliff, tc.cliff)
+			if ratio > tc.maxRatio {
+				t.Errorf("per-churn allocation moved %dx from the recorded figure: %d KB now, %d KB "+
+					"recorded (bound %dx). Either a regression or a fix; if the change is intended, "+
+					"re-record `bumpKB` from the line above", ratio, kb, tc.bumpKB, tc.maxRatio)
 			}
 		})
-	}
-
-	// An entry naming a shape the corpus no longer contains is dead weight
-	// that reads as coverage.
-	for name := range known {
-		if !seen[name] {
-			t.Errorf("testdata lists %q but no case by that name exists — "+
-				"rename or remove the entry", name)
-		}
 	}
 }

@@ -146,8 +146,8 @@ func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 	for _, tc := range loopVarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := loopVarSrc(tc.decl, tc.body)
-			if _, code := compileAndRunX86_64(t, src); code != 7 {
-				t.Fatalf("native exited %d, want 7 — the shape this case pins is not native's behaviour any more", code)
+			if code := runInterpExit(t, src); code != 7 {
+				t.Fatalf("interpreter exited %d, want 7 — the shape this case pins is not the language's behaviour any more", code)
 			}
 			asm := runCapture(t, gcc, runner, driverBin, []byte(src))
 			if len(asm) == 0 {

@@ -42,17 +42,14 @@ var heapBumpBytesIRCases = []struct {
 }
 
 // TestSelfHostHeapBumpBytesIR runs each case through the self-host CLI on
-// x86-64 and wasm (the `$heap − heap_base` lowering) and checks the exit code
-// against the native backend's. Native is the oracle here, since the
-// interpreter has no bump-allocator model.
+// x86-64 and wasm (the `$heap − heap_base` lowering) against each row's
+// expected exit code; the rows are the oracle, since the interpreter has no
+// bump-allocator model.
 func TestSelfHostHeapBumpBytesIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range heapBumpBytesIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
-			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
-			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
 					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
@@ -168,15 +165,6 @@ func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
 	const small, large = "50", "5000"
 	for _, tc := range heapBumpFixpointCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Native oracle: the behavior must be real and bounded there.
-			_, nS := compileAndRunX86_64(t, tc.src(small)+"\n")
-			_, nL := compileAndRunX86_64(t, tc.src(large)+"\n")
-			if nS != nL {
-				t.Fatalf("%s: native not bounded (N=50 -> %d, N=5000 -> %d) — probe is not a reclaim fixpoint", tc.name, nS, nL)
-			}
-			if nS == 0 {
-				t.Fatalf("%s: native growth is 0 — probe does not allocate", tc.name)
-			}
 			// Self-host IR path must reproduce the fixpoint.
 			shS := shGrowth(t, tc.name+"-50", tc.src(small))
 			shL := shGrowth(t, tc.name+"-5000", tc.src(large))
