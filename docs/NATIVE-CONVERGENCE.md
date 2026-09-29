@@ -213,8 +213,8 @@ UNVERIFIABLE rather than guessing.
    also §3a's precondition 1 for retiring the backends, so the two stop being
    argued separately. **GREEN as of 2026-09-28**: the self-built compiler
    recompiles the compiler at 5.7 GB peak on a 16 GB host and reproduces
-   itself byte for byte (stage2 == stage3), and the check runs in CI on both
-   Linux hosts (`docs/BOOTSTRAP.md`). On 2026-09-02 the same step was
+   itself byte for byte (stage2 == stage3), and the check runs in CI on all
+   three hosts (`docs/BOOTSTRAP.md`). On 2026-09-02 the same step was
    OOM-killed at 13.9 GB, which was the RECLAIM gap goal 2 was about.
 
    The generated leak matrix is necessary but not sufficient: it reached
