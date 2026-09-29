@@ -1,9 +1,6 @@
 package e2eselfhost
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,40 +16,11 @@ import (
 // checker cannot infer (#4451). There it is the answer the compiled program
 // gave when the case was pinned, checked by hand.
 func TestSelfHostAsmIRPath(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-
-	// emitAndRun compiles src with the CLI, links the assembly, runs it and
-	// returns its exit code.
+	cli := newStrictCLI(t)
 	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
-		proj := t.TempDir()
-		mainPath := filepath.Join(proj, "main.fern")
-		if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		asmPath := filepath.Join(proj, "main.s")
-		cmd := runX86_64Bin(runner, fernBin, "-target", "x86-64-linux", "-emit", "asm", mainPath, stdlibRoot, "-o", asmPath)
-		cmd.Env = childEnv("FERN_SEM_IR_STRICT=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("compile: %v\n%s\n--- source ---\n%s", err, out, src)
-		}
-		binPath := filepath.Join(proj, "main")
-		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", binPath).CombinedOutput(); err != nil {
-			t.Fatalf("link: %v\n%s", err, out)
-		}
-		run := runX86_64Bin(runner, binPath)
-		_ = run.Run()
-		if run.ProcessState == nil {
-			t.Fatalf("did not run: %s", binPath)
-		}
-		return run.ProcessState.ExitCode()
+		code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", src))
+		return code
 	}
 
 	cases := []struct {
