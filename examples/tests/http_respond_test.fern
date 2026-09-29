@@ -64,8 +64,9 @@ function test_json_error_answers_400(): test.TestOutcome {
     var resp: HttpResponse = http.respond(decode("{\"n\": "));
     match (test.assert_status(resp, 400)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
     match (test.assert_header(resp, "content-type", "application/problem+json")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
-    if (!resp.body.contains("\"title\":\"Malformed JSON\"")) { return test.fail("body: " + resp.body); }
-    if (!resp.body.contains(" at line 1, column ")) { return test.fail("body: " + resp.body); }
+    var body: string = resp.body_string();
+    if (!body.contains("\"title\":\"Malformed JSON\"")) { return test.fail("body: " + body); }
+    if (!body.contains(" at line 1, column ")) { return test.fail("body: " + body); }
     return test.assert_status(http.respond(decode("{\"n\": 1}")), 200);
 }
 

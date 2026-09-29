@@ -1731,7 +1731,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
     var h: HeaderMap = headers.header_map_new();
     h = h.set("x-served-by", "fern");
     h = h.set("content-type", "text/plain");
-    return HttpResponse { status: 201, body: "ok", headers: h };
+    return HttpResponse { status: 201, body: BodyText("ok"), headers: h };
 }
 `
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {

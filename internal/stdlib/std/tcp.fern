@@ -365,11 +365,13 @@ function __clock_tick(clk: __Clock): __Clock {
     return __Clock { sec: sec, date: time.instant_from_unix(sec).format_http_date() };
 }
 
-// __serve_wire(method, resp, keep_alive, clk) — the response bytes the
-// loop sends: the handler's `Date` when it set one, the clock's
-// otherwise, and no body where the request's method or the status says
-// none (`http_serialize_response_to`).
-function __serve_wire(method: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): string {
+// __serve_wire(method, answer, keep_alive, clk) — the response bytes
+// the loop sends: a file body read here (`http_materialize`), the
+// handler's `Date` when it set one, the clock's otherwise, and no body
+// where the request's method or the status says none
+// (`http_serialize_response_to`).
+function __serve_wire(method: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): string {
+    var resp: HttpResponse = http.http_materialize(answer);
     if (resp.headers.get_all("date").len() > 0) { return http.http_serialize_response_to(method, resp, keep_alive); }
     var dated: HttpResponse = resp.with_header("Date", clk.date);
     return http.http_serialize_response_to(method, dated, keep_alive);

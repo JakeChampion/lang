@@ -1979,7 +1979,7 @@ function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
     var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
     var resp: HttpResponse = handle(req, m.as_platform());
-    print(resp.body);
+    print(resp.body_string());
     var cs: MockCall[] = m.calls();
     var i: i32 = 0;
     while (i < cs.len()) {

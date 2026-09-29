@@ -3,6 +3,8 @@ package e2eselfhost
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -204,6 +206,17 @@ func TestSelfHostServePerIPCap(t *testing.T) {
 	bin, runner := selfHostServer(t, e2eharness.PerIPCapServerSource(port))
 	e2eharness.StartServerProcess(t, binCmd(runner, bin))
 	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeFileBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "served.txt")
+	if err := os.WriteFile(path, []byte(e2eharness.FileBodyContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.FileBodyServerSource(port, path))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckFileBody(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
 func TestSelfHostServeAcceptDistribution(t *testing.T) {

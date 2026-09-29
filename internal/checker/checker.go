@@ -468,6 +468,22 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
 			},
 		},
+		{
+			// Body — what an HttpResponse carries (std/http): text or
+			// bytes held whole, a Stream drained to the wire, or a
+			// file the serve loop reads. Constructed through std/http's
+			// `http_response_*` functions in ordinary code. The
+			// variants carry the enum's name, as JsonValue's do, since
+			// a builtin variant is in every module's scope and a bare
+			// `Text` would ambiguate any user enum's.
+			Name: "Body",
+			Variants: []ast.EnumVariant{
+				{Name: "BodyText", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyBytes", Payloads: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
+				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
+			},
+		},
 		// JsonValue — recursive AST representation for JSON
 		// documents. Numbers carry their textual representation
 		// (the JSON spec doesn't fix precision); callers that
@@ -565,15 +581,19 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name: "HttpResponse",
 			Fields: []ast.Param{
 				{Name: "status", Type: ast.NumberType{}},
-				{Name: "body", Type: ast.StringType{}},
-				// `headers` lands at the END so the wasi-http
-				// wrapper's hardcoded reads (status@+0,
-				// body@+8/+12) stay stable. http_serialize_response
-				// walks this map to emit the wire header block;
-				// Content-Length and Connection are auto-emitted
-				// after user headers (and de-duped against names
-				// the user already set so a manual
-				// `resp.headers.set("Connection", ...)` wins).
+				// `body` is a Body: text or bytes held whole, a
+				// Stream, or a file the serve loop reads
+				// (std/http's `http_response_*` build each).
+				{Name: "body", Type: ast.EnumType{Name: "Body"}},
+				// The wasi-http wrapper hardcodes these byte offsets
+				// (status@+0, body@+4, headers@+8) and reads the body
+				// through std/http's `body_string`; a new field goes
+				// at the END. http_serialize_response walks the map
+				// to emit the wire header block; Content-Length and
+				// Connection are auto-emitted after user headers
+				// (and de-duped against names the user already set
+				// so a manual `resp.headers.set("Connection", ...)`
+				// wins).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
@@ -20969,7 +20989,7 @@ const platformCtorName = "__fern_platform_new"
 // synthesisePlatformCtor builds:
 //
 //	function __fern_platform_new(): Platform {
-//	    return Platform { version: 2, mode: 0, sink: cell_new(""), handle: 0 };
+//	    return Platform { version: 3, mode: 0, sink: cell_new(""), handle: 0 };
 //	}
 //
 // The capability bag built in Fern, where the struct's layout is the
