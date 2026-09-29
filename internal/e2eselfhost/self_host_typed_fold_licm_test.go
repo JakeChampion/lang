@@ -75,3 +75,29 @@ func TestSelfHostTypedFoldShape(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostTypedLICM runs licmPrograms through the CLI: the typed lowering
+// opens scopes between `loop` and the condition, and the length reads must
+// still come out of the header exactly as they do on the AST lowering.
+func TestSelfHostTypedLICM(t *testing.T) {
+	cli := newStrictCLI(t)
+	arm64gcc, qemu := arm64Tooling(t)
+	for _, tc := range licmPrograms {
+		t.Run(tc.name, func(t *testing.T) {
+			src := tc.src + "\n"
+			asm := cli.emit(t, "x86-64-linux", src)
+			if out, in := selfHostLenShape(asm); out != tc.outside || in != tc.inside {
+				t.Errorf("x86-64: %d length reads outside loops and %d inside, want %d / %d:\n%s", out, in, tc.outside, tc.inside, asm)
+			}
+			if got, _ := cli.runX86(t, asm); got != tc.want {
+				t.Errorf("x86-64 exited %d, want %d", got, tc.want)
+			}
+			if got, _ := runArm64(t, arm64gcc, qemu, cli.emit(t, "arm64-linux", src)); got != tc.want {
+				t.Errorf("arm64 exited %d, want %d", got, tc.want)
+			}
+			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != tc.want {
+				t.Errorf("wasm exited %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
