@@ -5655,7 +5655,7 @@ pub function build_io_error_func(slot: i32, sv: string[]): string {
 // imports/heap/AST).
 //
 // The self-host cannot import Go, so the coefficients below are literals
-// rather than a shared table. internal/codegen/fdlibm's selfhost_parity_test
+// rather than a shared table. internal/fdlibm's selfhost_parity_test
 // pins every one of them, and the 2/pi limbs in trig_limbs_func, to the table
 // the native backends emit — edit one side alone and that test fails.
 //

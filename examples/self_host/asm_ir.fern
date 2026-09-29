@@ -1665,7 +1665,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // `roundsd $0` as internal/codegen/x86_64's emitFloatTranscendentalsRuntime
 // (ties-to-EVEN, matching arm64's `frintn`; the reductions pick a different k
 // otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry, so editing one side alone fails a test rather than
 // diverging quietly. They replace the x87 sequences this backend inlined
 // (`fsin` / `fcos`, `fyl2x` for log, `f2xm1` + `fscale` for exp), which were

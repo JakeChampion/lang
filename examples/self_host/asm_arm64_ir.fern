@@ -9339,7 +9339,7 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 // emitFloatTranscendentalsRuntime (ties-to-EVEN, matching x86's
 // `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
 // disagree). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// literal copy of internal/fdlibm's — whose selfhost_parity_test pins
 // it entry for entry. internal/e2e/f64_ulp_test.go is the gate for the native
 // pair.
 //
