@@ -27,9 +27,9 @@ import (
 // exit-code probe cannot report 255 on wasm — WASI refuses anything at or above
 // 126. Row 0 is agreement.
 //
-// Native runs the same rows here rather than the pins being taken on trust: if
-// native's rule ever moves, its own leg fails and names the row, instead of the
-// self-host being quietly held to a stale contract.
+// The interpreter runs the same rows here rather than the pins being taken on
+// trust: if its rule ever moves, its own leg fails and names the row, instead
+// of the self-host being quietly held to a stale contract.
 const floatToU8SaturateSrc = `
 function u8_of(x: f64): i32 { return (x as u8) as i32; }
 function u8_of32(x: f32): i32 { return (x as u8) as i32; }

@@ -7,9 +7,8 @@ import (
 )
 
 // procExecAsPrograms pin `proc_exec_as(path, argv, envp)` on the self-host IR
-// path (#9090). Differential against the NATIVE backend rather than the interp
-// oracle: the interpreter's exec answers -ENOSYS, so it cannot judge a real
-// execve.
+// path (#9090). Each row carries its expected exit code rather than asking the
+// interpreter: its exec answers -ENOSYS, so it cannot judge a real execve.
 //
 //   - argv0-and-envp: `sh -c SCRIPT` with no command_name operand takes $0 from
 //     the shell's own argv[0], so the script reads back slot 0 exactly as the

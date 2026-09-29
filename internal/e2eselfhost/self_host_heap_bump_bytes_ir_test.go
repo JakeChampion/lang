@@ -16,8 +16,7 @@ import (
 //
 // The interpreter has no bump-allocator model (it always returns 0), so it
 // cannot be the oracle here — these assert the relational contract directly with
-// exact exit codes (cross-checked against the native backend, which lowers the
-// builtin via __fern_heap_bump_bytes), mirroring the native rc_heap_bump_* style.
+// exact exit codes, in the rc_heap_bump_* style the native suite established.
 // Every result stays ≤ 120 (wasmtime exit-code clamp #2908). Each allocating
 // literal takes a runtime element, since a literal of constants is a static box.
 var heapBumpBytesIRCases = []struct {
@@ -126,11 +125,9 @@ var heapBumpFixpointCases = []struct {
 
 // TestSelfHostHeapBumpFixpointX86_64 asserts the bounded-high-water fixpoint on
 // the self-host x86-64 IR path: each shape's growth at N=50 must equal its
-// growth at N=5000 (reclaimed loops don't grow with the trip count). Native is
-// the oracle for "the behavior is real + bounded" (small==large, non-zero); the
-// self-host must reproduce the fixpoint. Absolute growth differs between the two
-// (box layouts differ), so this checks the RELATION per backend, not equality
-// across them.
+// growth at N=5000 (reclaimed loops don't grow with the trip count), and the
+// growth must be non-zero, so a probe that allocates nothing cannot pass
+// vacuously. The RELATION is the contract; no absolute figure is.
 func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

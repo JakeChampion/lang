@@ -17,10 +17,10 @@ import (
 // the fixpoint is structurally blind to a stable over-allocation (a compiler
 // that leaks identically in both generations still reproduces itself).
 //
-// Each row is measured against the compiler's own reclaim, not against native's
-// number: the two allocate different amounts for the same program (different
-// box sizes and temp strategies), so the contract is FLATNESS, with native
-// asserted flat alongside as the oracle that the shape is reclaimable at all.
+// Each row is measured against the compiler's own reclaim, never against an
+// absolute number: box sizes and temp strategies move the totals, so the
+// contract is FLATNESS, and the retained control below is what proves a flat
+// row still allocates.
 //
 // Rows deliberately absent:
 //

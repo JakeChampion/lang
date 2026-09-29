@@ -7,10 +7,10 @@ import (
 )
 
 // procForkPrograms are the two shapes that pin `proc_fork()` / `proc_waitpid(pid)`
-// on the self-host IR path (#5686). Both are differential against the NATIVE
-// backend rather than the interp oracle: the interpreter's `proc_fork` never
-// forks (it answers -ENOSYS so `tcp_serve_supervised` degrades to single-process
-// serving), so it cannot judge a real fork.
+// on the self-host IR path (#5686). Both carry their expected exit code rather
+// than asking the interpreter: its `proc_fork` never forks (it answers -ENOSYS
+// so `tcp_serve_supervised` degrades to single-process serving), so it cannot
+// judge a real fork.
 //
 //   - normal-exit: the child exits 17, the parent reaps it and checks the
 //     decoded status — the `(status >> 8) & 0xff` arm of the wait4 decode.

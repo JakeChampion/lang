@@ -17,9 +17,9 @@ import (
 // missing instrumentation. The shared case is what proves the
 // counter can fire.
 //
-// The native backend is the oracle (interp has no refcounts and copies
-// nothing, so it reports 0 for both). Exit codes stay well under the
-// wasmtime clamp.
+// The rows are the oracle: the interpreter has no refcounts and copies
+// nothing, so it reports 0 for both and cannot judge the counter. Exit codes
+// stay well under the wasmtime clamp.
 var arrPushCliffIRCases = []struct {
 	name string
 	main string

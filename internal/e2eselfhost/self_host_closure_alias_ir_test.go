@@ -69,8 +69,8 @@ function main(): i32 { var k: i32 = 5; var c = (x: i32) => x * k; return apply1(
 }`, 77},
 }
 
-// TestSelfHostClosureAliasIRX86_64 cross-checks native, pins the "ir"
-// routing, then runs the self-host-compiled binary.
+// TestSelfHostClosureAliasIRX86_64 cross-checks the interpreter, pins the
+// "ir" routing, then runs the self-host-compiled binary.
 func TestSelfHostClosureAliasIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -133,10 +133,10 @@ function main(): i32 {
 }
 
 // TestSelfHostLoopVarReclaimIRX86_64 runs each case through the self-hosted
-// x86-64 IR driver, and cross-checks every case against the NATIVE backend
+// x86-64 IR driver, and cross-checks every case against the interpreter
 // first. That cross-check is what makes a `want: 3` row accurate: it asserts
-// native still answers 7 on the same source, so the row records a self-host
-// gap rather than quietly ratifying a shape neither compiler reclaims.
+// the language still answers 7 on the same source, so the row records a
+// self-host gap rather than quietly ratifying a shape nothing reclaims.
 func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
