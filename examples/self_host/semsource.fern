@@ -4758,16 +4758,36 @@ function string_method_contracts(): ssasem.Contract[] {
 // nothing of it. `__alloc_u8` is the one result the caller owns: a fresh
 // zeroed buffer, counted like any other array.
 //
-// `__alloc_reuse` and the `__c_callN` trampolines are absent because the
-// self-host IR does not lower them at all — that is a lowering gap behind the
-// name, not a contract gap here.
+// `__alloc_reuse` is absent because the self-host IR does not lower it at all
+// — that is a lowering gap behind the name, not a contract gap here.
 function intrinsic_contracts(): ssasem.Contract[] {
     var out: ssasem.Contract[] = float_primitive_contracts();
+    for c in c_call_contracts() { out = out.append(c); }
     for c in bit_count_contracts() { out = out.append(c); }
     for c in memory_contracts() { out = out.append(c); }
     for c in byte_scan_contracts() { out = out.append(c); }
     for c in rc_contracts() { out = out.append(c); }
     for c in raw_floor_contracts() { out = out.append(c); }
+    return out;
+}
+
+// The `__c_callN` trampolines, typed by the checker's table: a C function
+// pointer and up to four integer arguments, all values, and a scalar result.
+// Each is a direct call of the shim the native backends emit for the name.
+function c_call_contracts(): ssasem.Contract[] {
+    var out: ssasem.Contract[] = [];
+    var arity: i32 = 0;
+    while (arity <= 4) {
+        for suffix in ["", "_f32", "_f64"] {
+            var name: string = "__c_call" + util.i32_to_string(arity) + suffix;
+            if let typeinfo.TypeFunc(sig) = checker.builtin_sig(name) {
+                var modes: i32[] = [];
+                for _ in sig.param_types { modes = modes.append(ssaunits.value_mode()); }
+                out = out.append(ssasem.Contract { name: name, params: sig.param_types, modes: modes, result: sig.ret_type });
+            }
+        }
+        arity = arity + 1;
+    }
     return out;
 }
 

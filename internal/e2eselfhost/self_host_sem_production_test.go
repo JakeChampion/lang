@@ -4860,6 +4860,10 @@ function main(): i32 {
     return 0;
 }
 `},
+	// The FFI trampolines, reached behind a test that never holds so no C
+	// pointer is called: the typed path produces each caller and the shims
+	// link (#10736).
+	{name: "c-call-trampolines", atLeast: 7, nativeOnly: true, noLeak: true, src: semCCallSource},
 	// The floor's three static words, taken with no runtime helper to mark
 	// the need that defines them: each address pulls in its own definition.
 	{name: "raw-floor-symbols-link-without-a-helper", atLeast: 1, nativeOnly: true, noLeak: true, src: `
@@ -5748,6 +5752,25 @@ function make(i: i32): dyn Show {
     if (i % 3 == 0) { return i; }
     if (i % 3 == 1) { return "s" + i.to_string(); }
     return Sq { side: i, tag: "t" + i.to_string() };
+}
+`
+
+// semCCallSource reaches every __c_call arity and both float results behind a
+// test that never holds, so it answers 0 without calling a C pointer.
+const semCCallSource = `
+function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
+function run1(cb: usize, a: usize): i32 { return __c_call1(cb, a) as i32; }
+function run2(cb: usize, a: usize, b: usize): i32 { return __c_call2(cb, a, b) as i32; }
+function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(cb, a, b, c) as i32; }
+function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
+function runf(cb: usize, a: usize): f64 { return __c_call1_f64(cb, a) + (__c_call2_f32(cb, a, a) as f64); }
+function main(): i32 {
+    var n: i32 = args().len();
+    if (n > 100) {
+        var cb: usize = n as usize;
+        return run0(cb) + run1(cb, cb) + run2(cb, cb, cb) + run3(cb, cb, cb, cb) + run4(cb, cb, cb, cb, cb) + (runf(cb, cb) as i32);
+    }
+    return 0;
 }
 `
 
