@@ -26,8 +26,10 @@
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
 //   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, close);
-//      Malformed ⇒ close the socket without a response (HTTP/1.1 §10
-//      explicitly allows server-side reset on malformed input).
+//      Malformed(status) ⇒ answer with that status (400, 413, 414, 431 or
+//      501), an empty body and `Connection: close`, then close; a
+//      malformed request behind an answered one gets no answer, since
+//      that answer already said close (RFC 9112 §9.6).
 //   4. handler(req) returns the HttpResponse.
 //   5. http_serialize_response_conn → tcp_send; what the kernel does not
 //      take stays with the connection, watched for writability until it
@@ -384,7 +386,7 @@ function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
     match (tail) {
         http.Framed(_) => { return true; },
         http.Incomplete => { return !eof; },
-        http.Malformed => { return false; }
+        http.Malformed(_) => { return false; }
     }
     return false;
 }
@@ -437,15 +439,31 @@ function __serve_next(c: __Conns, at: i32, opts: ServeOptions): __Conns {
 // `(conns, more)`, `more` when a complete request is buffered, for the
 // loop to answer now; a connection with a request to answer is not
 // waiting on the peer, so its deadline is left alone. Less than a request
-// waits under `__serve_next`'s deadline, and a malformed one closes the
-// connection now: no bytes could complete it.
+// waits under `__serve_next`'s deadline, and a malformed one is refused
+// now: no bytes could complete it.
 function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions, tail: http.HttpFraming): (__Conns, boolean) {
     match (tail) {
         http.Framed(_) => { return (c, true); },
         http.Incomplete => { return (__serve_next(c, at, opts), false); },
-        http.Malformed => { return (__serve_close(drv, c, at), false); }
+        http.Malformed(status) => { return (__serve_refuse(drv, c, at, status, opts), false); }
     }
     return (c, false);
+}
+
+// __serve_refuse(drv, c, at, status, opts) — the loop's own answer to a
+// malformed request: `status` with an empty body and `Connection:
+// close`, then the close. A short write leaves the rest pending, to be
+// finished by a later wait, which closes the connection once it has gone
+// out; a refused write closes it now.
+function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i32, opts: ServeOptions): __Conns {
+    var wire: string = http.http_serialize_response_conn(http.http_response_text(status, ""), false);
+    var sent: (__Conns, __Sent) = __serve_send(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, wire, opts.recv_deadline);
+    match (sent.1) {
+        Partial => { return sent.0; },
+        Failed => { return __serve_close(drv, sent.0, at); },
+        Whole => { return __serve_close(drv, sent.0, at); }
+    }
+    return sent.0;
 }
 
 // __serve_respond(drv, c, at, wire, opts, answered, tail) — the response
@@ -656,8 +674,8 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
-                    http.Malformed => {
-                        conns = __serve_close(drv, conns, at);
+                    http.Malformed(status) => {
+                        conns = __serve_refuse(drv, conns, at, status, opts);
                         more = false;
                     }
                 }
@@ -718,8 +736,8 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
-                    http.Malformed => {
-                        conns = __serve_close(drv, conns, at);
+                    http.Malformed(status) => {
+                        conns = __serve_refuse(drv, conns, at, status, opts);
                         more = false;
                     }
                 }

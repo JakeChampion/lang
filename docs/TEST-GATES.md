@@ -307,7 +307,9 @@ whose failed write must close it before the request behind it is answered
 request with a malformed one pipelined behind it (a bare LF ends its
 request line), whose first response must say `close` and which is then
 closed with no response to the second;
-a request of 101 header fields, closed with no response; a chunked request
+a request of 101 header fields, answered 431 by the loop itself and
+closed; an HTTP/1.1 request without a Host, answered 400 and closed; a
+body past the cap, answered 413 before it arrives and closed; a chunked request
 with a request pipelined behind it, whose decoded body the handler echoes
 and whose framing must leave exactly the second request to answer; and an
 HTTP/1.0 keep-alive request followed by an HTTP/1.1 one. Every response's `Connection` is
