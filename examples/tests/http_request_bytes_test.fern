@@ -67,12 +67,21 @@ function fields(n: i32): string {
     return block;
 }
 
+// repeat(s, n) — s concatenated n times, built by doubling so the bytes
+// copied are linear in the result: the self-host compiler's string
+// concatenation has no in-place append, and the 1 MiB bodies below would
+// otherwise copy a terabyte.
 function repeat(s: string, n: i32): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < n) {
+    if (n <= 0) { return ""; }
+    var out: string = s;
+    var len: i32 = 1;
+    while (len * 2 <= n) {
+        out = out + out;
+        len = len * 2;
+    }
+    while (len < n) {
         out = out + s;
-        i = i + 1;
+        len = len + 1;
     }
     return out;
 }
@@ -178,6 +187,9 @@ function test_framing_tells_incomplete_from_malformed(): test.TestOutcome {
     if (framing_of("GET / HTTP/1.1\nHost: h") != 0) { return test.fail("a bare LF is not malformed before the block ends"); }
     if (framing_of("GET / HTTP/1.1\r\nX: a\rb") != 0) { return test.fail("a bare CR is not malformed before the block ends"); }
     if (framing_of("GET / HTTP/1.1\r") != 1) { return test.fail("a CR at the end of the buffer is not incomplete"); }
+    if (framing_of("GET  / HTTP/1.1\r\nContent-Length: 9\r\n\r\nhello") != 0) { return test.fail("a bad request line with a short body is not malformed"); }
+    if (framing_of("GET  / HTTP/1.1\r\nHost: h") != 0) { return test.fail("a bad request line is not malformed before the block ends"); }
+    if (framing_of("GET  / HTTP/1.1") != 1) { return test.fail("an unterminated request line is not incomplete"); }
     if (framing_of("GET /" + repeat("a", 8192)) != 0) { return test.fail("a request line past the cap is not malformed before its end"); }
     if (framing_of("GET / HTTP/1.1\r\nX: " + repeat("v", 32768)) != 0) { return test.fail("a header block past the cap is not malformed before its end"); }
     if (framing_of("GET / HTTP/1.1\r\n" + fields(101)) != 1) { return test.fail("101 unterminated fields are not incomplete"); }

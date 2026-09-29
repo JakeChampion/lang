@@ -527,6 +527,17 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         if (n < scanned) { scanned = n; }
     }
     if (!__crlf_terminated(buf, from, scanned)) { return Malformed; }
+    // The request line (RFC 9112 §3): a method token, a space, a
+    // non-empty target, a space, a non-empty version. It is refused as
+    // soon as its CRLF has arrived, before the rest of the block.
+    var sp1: i32 = -1;
+    var sp2: i32 = -1;
+    if (first_crlf >= 0) {
+        sp1 = __find_byte(buf, from, first_crlf, 32 as u8);
+        if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed; }
+        sp2 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
+        if (sp2 < 0 || sp2 == sp1 + 1 || sp2 + 1 == first_crlf) { return Malformed; }
+    }
     if (first_crlf < 0 || headers_end < 0) { return Incomplete; }
     var headers_len: i32 = headers_end + 4 - from;
     // Parse the header block into a HeaderMap *first*, then derive
@@ -554,12 +565,6 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
     }
     if (content_length > http_body_cap()) { return Malformed; }
     if (from + headers_len + content_length > n) { return Incomplete; }
-    // The request line (RFC 9112 §3): a method token, a space, a
-    // non-empty target, a space, a non-empty version.
-    var sp1: i32 = __find_byte(buf, from, first_crlf, 32 as u8);
-    if (sp1 < 0 || !__is_token(buf, from, sp1)) { return Malformed; }
-    var sp2: i32 = __find_byte(buf, sp1 + 1, first_crlf, 32 as u8);
-    if (sp2 < 0 || sp2 == sp1 + 1 || sp2 + 1 == first_crlf) { return Malformed; }
     var keep_alive: boolean = __persists(buf, sp2 + 1, first_crlf, req_headers);
     var request: HttpRequest = HttpRequest {
         method: __bytes_string(buf, from, sp1),

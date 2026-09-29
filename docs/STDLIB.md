@@ -1073,9 +1073,10 @@ serializer.
   §5.1, and obs-fold, §5.2, both refuse), a bare CR or LF (§2.2),
   `Transfer-Encoding`, a duplicate, non-numeric or overflowing
   `Content-Length` (§6.3), a request line over 8 KiB, a header block over
-  32 KiB or 100 fields, or a body over 1 MiB is malformed, and a request
-  past a cap is malformed as soon as the cap is passed, before its end has
-  arrived; `http_header_bytes_cap()`, `http_body_cap()` and
+  32 KiB or 100 fields, or a body over 1 MiB is malformed, and a
+  violation is refused as soon as it is known: a request past a cap once
+  the cap is passed, a bad request line once its CRLF has arrived, before
+  the rest of the request; `http_header_bytes_cap()`, `http_body_cap()` and
   `http_request_bytes_cap()` (the two plus the blank line between them)
   name the caps for the serve loop's buffer. `http_header_value(block,
   key)` reads a raw header block by the same rules, so a block the parser
