@@ -134,6 +134,14 @@ func TestSelfHostSupervisedServeWorkersServeSideBySide(t *testing.T) {
 	e2eharness.CheckWorkersServeSideBySide(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
 
+func TestSelfHostSupervisedServeReusePortWorkers(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ReusePortWorkersServerSource(port))
+	cmd := binCmd(runner, bin)
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckSurvivesHandlerTrap(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 func TestSelfHostSupervisedServeSurvivesHandlerTrap(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.TrappingServerSource(port))

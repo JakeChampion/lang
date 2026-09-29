@@ -2905,7 +2905,8 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
 // $__fern_tcp_socket_ctl(conn, op, arg) -> 0, or -errno. Keep-alive (op 2)
 // shutdown (op 4) and the peer's address (op 7, through remote-address)
 // are the controls wasi:sockets 0.2 has; no-delay (op 1), non-blocking
-// (op 3) and the send queue (op 6) have none and answer -ENOTSUP (58), so
+// (op 3), the send queue (op 6) and the reuseport steering (op 8) have
+// none and answer -ENOTSUP (58), so
 // a caller learns the host owns Nagle, the blocking mode and the queue
 // rather than believing it set or read them. Any other op is -EINVAL (28).
 //
@@ -2923,7 +2924,7 @@ pub function tcp_socket_ctl_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
     o = o + "    (local $ret i32) (local $e i32)\n";
-    o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.eq (local.get $op) (i32.const 6))) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.eq (local.get $op) (i32.const 3))) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
     o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
     o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";

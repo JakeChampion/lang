@@ -1588,6 +1588,10 @@ func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("tcp_listen_with: expected boolean reuse_port arg, got %T", args[3])
 	}
 	lc := net.ListenConfig{}
+	// A plain TCP socket, as the native runtimes open: Go listens with
+	// MPTCP by default, which the kernel refuses socket controls on
+	// (the reuseport filter of op 8 among them).
+	lc.SetMultipathTCP(false)
 	if reuse {
 		lc.Control = func(_, _ string, c syscall.RawConn) error {
 			var serr error
@@ -1693,8 +1697,9 @@ func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
 // builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
 // over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
 // the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both,
-// 6 the host's send queue, 7 the peer's address key (peerKey). 0, -1 for
-// a handle that is not a connection, -22 for an unknown op.
+// 6 the host's send queue, 7 the peer's address key (peerKey), 8 the
+// listener's SO_REUSEPORT group steered by CPU (hostSteerByCPU). 0, -1
+// for a handle that is not a connection, -22 for an unknown op.
 func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected 3 args, got %d", len(args))
@@ -1711,8 +1716,18 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 7 {
+	if op < 1 || op > 8 {
 		return Number(-22), nil
+	}
+	if op == 8 {
+		fd, ok := i.rawFd(int64(id))
+		if !ok {
+			return Number(-1), nil
+		}
+		if err := hostSteerByCPU(fd); err != nil {
+			return Number(errnoOf(err)), nil
+		}
+		return Number(0), nil
 	}
 	if op == 7 {
 		if _, isDatagram := i.udpSocks[int64(id)]; isDatagram {

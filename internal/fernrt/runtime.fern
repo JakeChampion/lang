@@ -378,13 +378,15 @@ function __fern_tcp_listen(port: i32): i32 {
 // through SO_ERROR, which clears it); op 6 is how many bytes handed to
 // the socket the peer has not acknowledged yet (unsent and in flight:
 // SIOCOUTQ on Linux, SO_NWRITE on Darwin); op 7 is the peer's address as
-// one 32-bit key (__peer_key). 0 or the count, -errno, or -EINVAL for an
-// op that names no control.
+// one 32-bit key (__peer_key); op 8 steers the listener's SO_REUSEPORT
+// group by CPU (__steer_by_cpu). 0 or the count, -errno, or -EINVAL for
+// an op that names no control.
 function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     var f: i64 = fd as i64;
     if (op == 5) { return __connect_result(f); }
     if (op == 6) { return __send_queue(f); }
     if (op == 7) { return __peer_key(f); }
+    if (op == 8) { return __steer_by_cpu(f); }
     if (op == 1) { return __setsockopt_i32(f, 6, 1, arg) as i32; }
     if (op == 2) { return __setsockopt_i32(f, __sol_socket(), __so_keepalive(), arg) as i32; }
     if (op == 3) {
@@ -409,6 +411,29 @@ function __sock_type(f: i64): i32 {
     __free(v, 8);
     if (r < 0) { return r as i32; }
     return ty;
+}
+
+// The listener's SO_REUSEPORT group steered by CPU: the classic filter
+// `ld cpu; ret a` attached with SO_ATTACH_REUSEPORT_CBPF, so a connection
+// goes to the group's socket whose index is the CPU it arrived on (the
+// kernel's hash where no socket has that index). Every socket of the
+// group shares the one program. Linux only: -ENOTSUP on Darwin.
+function __steer_by_cpu(f: i64): i32 {
+    if (target_os() == "darwin") { return 0 - 45; }
+    var p: usize = __alloc(32);
+    // Two sock_filter { u16 code; u8 jt; u8 jf; u32 k }: BPF_LD|BPF_W|BPF_ABS
+    // of SKF_AD_OFF + SKF_AD_CPU (-4096 + 36), then BPF_RET|BPF_A.
+    __store_i32(p, 32);
+    __store_i32(p + 4, 0 - 4060);
+    __store_i32(p + 8, 22);
+    __store_i32(p + 12, 0);
+    // sock_fprog { u16 len; struct sock_filter *filter } at p + 16.
+    __store_i32(p + 16, 2);
+    __store_i32(p + 20, 0);
+    __store_i64(p + 24, p as i64);
+    var r: i64 = __syscall5(__sys_setsockopt(), f, __sol_socket(), 51, (p + 16) as i64, 16);
+    __free(p, 32);
+    return r as i32;
 }
 
 // The bytes queued to send on the socket: a four-byte count the kernel

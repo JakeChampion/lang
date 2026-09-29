@@ -146,7 +146,9 @@ started connect:
 `tcp_socket_ctl` builtins (a chosen backlog, `SO_REUSEPORT` with a second
 listener on Linux, no-delay and keep-alive, a non-blocking read that
 answers empty, a write-side shutdown the peer reads as EOF, the `-EINVAL`
-of an unknown op, and the wasm `-ENOTSUP` answers), and
+of an unknown op, the wasm `-ENOTSUP` answers, and op 8's CPU steering of
+a `SO_REUSEPORT` group: attached on Linux, `-ENOPROTOOPT` where the host
+lacks the option, as qemu-user does, `-ENOTSUP` on Darwin and wasm), and
 `e2eharness.NetSocketOptsProbe` through std/net's `listen_with`,
 `set_nodelay`, `set_keepalive`, `set_nonblocking` and `shutdown`, plus the
 `AddrInUse` a second plain listener and the `ConnectionRefused` a dial of
@@ -211,6 +213,9 @@ driver for x86-64, arm64 and wasm under strict IR with complete semantic
 lowering required (it is what caught the self-host `tcp_recv` body
 adopting its buffer before the copy loop, #10486; the rest of that idiom
 in asmcore is `TestSelfHostRawOwnerAfterLastRead`'s, below);
+`TestSupervisedServeReusePortWorkers` and its self-host twin serve
+through two workers binding their own `SO_REUSEPORT` listeners and prove
+a replacement worker binds anew after a trap.
 `TestSelfHostArm64DarwinSocketCtl` and `TestArm64DarwinSocketCtl` run them
 on Apple Silicon (the Darwin socket leg of #9853, which `macos.yml` selects
 by the `TestArm64Darwin` prefix). `TestServeOptionsX86_64` and
