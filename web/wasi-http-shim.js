@@ -4,7 +4,7 @@
 // browser with no jco / Component Model transpile.
 //
 // Browsers can only instantiate *core* modules, and our handler core
-// (fernCompileHttpHandlerCore) exports
+// (the self-host driver's `-target wasm32-wasi-http -emit core-module`) exports
 // `wasi:http/incoming-handler@0.2.0#handle(incoming-request,
 // response-outparam)` plus `memory` + `cabi_realloc`, and imports 22
 // Canonical-ABI functions across wasi:http/types and wasi:io/streams.
