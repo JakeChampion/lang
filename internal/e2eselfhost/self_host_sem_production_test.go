@@ -545,6 +545,25 @@ function run(k: i32): i32 {
 }
 function main(): i32 { return run(3) - run(1); }
 `},
+	// A consuming match that builds a variant of the enum it matched builds it
+	// in the matched box when that box is unique, releasing only the payload
+	// it does not carry over; a box still shared elsewhere is left alone.
+	{name: "a-match-arm-rebuilds-its-variant-in-place", atLeast: 3, noLeak: true, src: `
+enum E { V(i32, string), W(i32, string) }
+function flip(own x: E): E {
+    return match (x) { V(a, s) => W(a + 1, s + "-w"), W(a, s) => V(a * 2, s) };
+}
+function weight(e: E): i32 {
+    return match (e) { V(a, s) => a + s.len(), W(a, s) => a * 100 + s.len() };
+}
+function main(): i32 {
+    var y = flip(flip(V(3, "abc")));
+    var z = W(5, "k" + "-past-the-sso-inline-threshold");
+    var keep = z;
+    z = flip(z);
+    return weight(y) + weight(z) + weight(keep) % 7;
+}
+`},
 	{name: "owned-array-handback", atLeast: 3, src: `
 function grown(own xs: i32[]): i32[] { return xs.append(9); }
 function span(xs: i32[]): i32 { return xs.len(); }
