@@ -1,13 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-)
+import "testing"
 
 // mapCompositeKeyLitCases pin #7001: a `Map { k: v, … }` literal whose key is a
 // struct or enum deriving Eq + Hash.
@@ -121,35 +114,13 @@ function main(): i32 {
 }
 
 // TestSelfHostMapCompositeKeyLitIRX86_64 runs each case through the self-hosted
-// x86-64 IR driver, pinned to the "ir" path.
+// CLI for x86-64.
 func TestSelfHostMapCompositeKeyLitIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern", "asm_pathprobe_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapCompositeKeyLitCases {
 		t.Run(tc.name, func(t *testing.T) {
-			src := []byte(tc.src)
-			path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-			if path != "ir" {
-				t.Fatalf("%s routed through %q path, want \"ir\"", tc.name, path)
-			}
-			asm := runCapture(t, gcc, runner, driverBin, src)
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, "mck_"+tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 — the composite key column read back wrong", tc.name, code)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the composite key column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
@@ -157,23 +128,12 @@ func TestSelfHostMapCompositeKeyLitIRX86_64(t *testing.T) {
 
 // TestSelfHostMapCompositeKeyLitIRArm64 is the arm64 leg, run under qemu.
 func TestSelfHostMapCompositeKeyLitIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range mapCompositeKeyLitCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatalf("%s: self-host arm64 compiler emitted 0 bytes", tc.name)
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, "mck_"+tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("%s exited %d, want 0 — the composite key column read back wrong", tc.name, code)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the composite key column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
@@ -181,38 +141,11 @@ func TestSelfHostMapCompositeKeyLitIRArm64(t *testing.T) {
 
 // TestSelfHostMapCompositeKeyLitIRWasm is the wasm leg.
 func TestSelfHostMapCompositeKeyLitIRWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host map-composite-key wasm IR e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range mapCompositeKeyLitCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, "mapcompositekey_prog.wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			out, runErr := run.CombinedOutput()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q: %v\n%s", tc.name, runErr, out)
-			}
-			if code := run.ProcessState.ExitCode(); code != 0 {
-				t.Errorf("map-composite-key wasm IR %q = %d, want 0\n%s", tc.name, code, out)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != 0 {
+				t.Errorf("%s exited %d, want %d — the composite key column read back wrong", tc.name, code, 0)
 			}
 		})
 	}
