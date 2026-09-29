@@ -11805,10 +11805,10 @@ pub function wat_extern_valtype(t: string): string {
 // preview-2 component imports — the world-driven composer wires them.
 // is_extern_composite_ret is true for the `@import` extern result types that
 // use the canonical return-area lowering (P4c): a string, a u8[] (list<u8>),
-// a numeric array (list<T> with T's slot == canonical size), or a record
-// (materialized into a self-host struct).
+// a numeric array (list<T> with T's slot == canonical size), a record
+// (materialized into a self-host struct), a sum, a variant or a tuple.
 pub function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
-    return t == "string" || t == "u8[]" || t == "boolean[]" || extern_array_param_supported(t) || extern_record_result_supported(mod, t) || extern_sum_result_supported(t) || extern_variant_result_supported(mod, t) || extern_string_tuple_array_result(t);
+    return t == "string" || t == "u8[]" || t == "boolean[]" || extern_array_param_supported(t) || extern_record_result_supported(mod, t) || extern_sum_result_supported(t) || extern_variant_result_supported(mod, t) || extern_string_tuple_array_result(t) || extern_tuple_param_supported(t);
 }
 
 // extern_array_param_supported is true for an `@import` array parameter whose
@@ -13327,6 +13327,37 @@ function extern_sum_result_tail(fname: string, ret: string, slot: i32, callargs:
     return o;
 }
 
+// extern_tuple_result_wrapper is the wrapper for an `@import` whose result is
+// a tuple: the canonical tuple returns indirectly, element i at i*4 in the
+// return area (all i32 — extern_tuple_param_supported admits i32/u32 elements
+// only). The wrapper allocates the area, calls the raw import with it, and
+// materializes the self-host tuple box the caller expects (element i @ i*slot,
+// no header, rc-boxed like tuple_make's).
+function extern_tuple_result_wrapper(f: parser.FuncDecl, slot: i32): string {
+    var n: i32 = tuple_type_elem_count(f.ret_type);
+    var parts: string[] = [];
+    parts = parts.append("  (func $" + f.name);
+    var args: string = "";
+    var p: i32 = 0;
+    while (p < f.params.len()) {
+        parts = parts.append(" (param $ep" + util.i32_to_string(p) + " " + wat_extern_valtype(f.params[p].type_name) + ")");
+        args = args + " (local.get $ep" + util.i32_to_string(p) + ")";
+        p = p + 1;
+    }
+    parts = parts.append(" (result i32)\n");
+    parts = parts.append("    (local $rb i32) (local $s i32)\n");
+    parts = parts.append("    (local.set $rb (i32.and (i32.add (call $__fern_alloc (i32.const " + util.i32_to_string(n * 4 + 7) + ")) (i32.const 7)) (i32.const -8)))\n");
+    parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
+    parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(n * slot) + ")))\n");
+    var e: i32 = 0;
+    while (e < n) {
+        parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(e * slot) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + util.i32_to_string(e * 4) + "))))\n");
+        e = e + 1;
+    }
+    parts = parts.append("    (local.get $s))\n");
+    return util.str_join_chunks(parts);
+}
+
 pub function extern_wrappers(mod: parser.Module, slot: i32): string {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
@@ -13565,6 +13596,8 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
             parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot));
             parts = parts.append("    (local.get $s))\n");
+        } else if (f.import_iface.len() > 0 && extern_tuple_param_supported(f.ret_type)) {
+            parts = parts.append(extern_tuple_result_wrapper(f, slot));
         } else if (f.import_iface.len() > 0 && extern_sum_result_supported(f.ret_type)) {
             // option/result result (P4c): flattens to (disc, payload), returned
             // indirectly; the wrapper materializes the self-host enum box — see

@@ -99,6 +99,23 @@ function main(): i32 { return sum3((1, 2, 3)); }`,
 			},
 		},
 		{
+			// A tuple result: the canonical tuple returns indirectly (a trailing
+			// return-area pointer, no result), element i at i*4; the wrapper
+			// materializes the IR consumer's tuple box (2*8 = 16 bytes, no id
+			// word) with element i at i*8.
+			name: "tuple-result-retptr",
+			src: `@import("local:test/src@0.1.0", "make-pair")
+function make_pair(a: i32, b: i32): (i32, i32);
+function main(): i32 { var p: (i32, i32) = make_pair(1, 2); return p.0 + p.1; }`,
+			want: []string{
+				`(import "local:test/src@0.1.0" "make-pair" (func $make_pair__import (param i32) (param i32) (param i32)))`,
+				"(call $make_pair__import (local.get $ep0) (local.get $ep1) (local.get $rb))",
+				"(local.set $s (call $__fern_str_box (i32.const 16)))",
+				"(i32.const 0)) (i32.load (i32.add (local.get $rb) (i32.const 0))))",
+				"(i32.const 8)) (i32.load (i32.add (local.get $rb) (i32.const 4))))",
+			},
+		},
+		{
 			// A VOID extern: the IR path emits every Fern-callable with
 			// `(result i32)` and drops a discarded call, so the bridge shims the
 			// import to push the promised 0. Without it the core fails to
