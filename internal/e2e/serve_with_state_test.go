@@ -35,3 +35,20 @@ func TestServeInitProvidedStateX86_64(t *testing.T) {
 	startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
 	e2eharness.CheckInitState(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+// A handler answering a Result (#9854): the checker wraps it so `?`
+// works in the handler and the failure is answered as a problem, with
+// and without state.
+func TestServeResultHandlerX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ResultHandlerServerSource())
+	startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestServeStatefulResultHandlerX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.StatefulResultHandlerServerSource())
+	startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckStatefulResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

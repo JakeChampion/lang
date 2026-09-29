@@ -1323,7 +1323,13 @@ loop and `std/fetch` the client.
   `tcp_serve_with` over `tcp_serve` when the program defines
   `init(): S` alongside a state-taking `handle`
   (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075.
+  E075. A `handle` declared as `Result[HttpResponse, E]` (or
+  `(S, Result[HttpResponse, E])` with state), so its body fails with
+  `?`, is accepted by both compilers: they rename it
+  `__fern_handle_result` and synthesise the plain `handle` calling
+  `http.respond` (or `respond_with`) over it, so every consumer, the
+  synthesised main and the wasi-http entry included, keeps the
+  HttpResponse-shaped entry.
 
 The raw socket primitives `tcp_listen` / `tcp_accept` /
 `tcp_local_port` / `tcp_recv` / `tcp_send` / `tcp_close` are

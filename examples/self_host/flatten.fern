@@ -318,7 +318,8 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 // the names stay bare, so the checker reports them undefined as native does.
 // A mispaired `init` and `handle` is left alone: E075 is the checker's, and
 // a main calling the wrong serve would only add a second error.
-pub function with_handler_main(entry: parser.Module): parser.Module {
+pub function with_handler_main(entry0: parser.Module): parser.Module {
+    var entry: parser.Module = with_result_handler(entry0);
     if (top_fn_index(entry, "main") >= 0) { return entry; }
     var hi: i32 = top_fn_index(entry, "handle");
     if (hi < 0) { return entry; }
@@ -330,7 +331,7 @@ pub function with_handler_main(entry: parser.Module): parser.Module {
     }
     var takes_state: boolean = entry.funcs[hi].params.len() == 3;
     if (returns_state != takes_state) { return entry; }
-    var qual: string = tcp_qualifier(entry);
+    var qual: string = std_qualifier(entry, "tcp");
     var port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
     var handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
     var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
@@ -362,20 +363,95 @@ function top_fn_index(mod: parser.Module, name: string): i32 {
     return 0 - 1;
 }
 
-// tcp_qualifier is the name the entry refers to std/tcp by, or "" when it
-// does not import it.
-function tcp_qualifier(mod: parser.Module): string {
+// with_result_handler lets a handler fail with `?`, as the native checker
+// does: a `handle` answering `Result[HttpResponse, E]` (or
+// `(S, Result[HttpResponse, E])` with state) is renamed to
+// `__fern_handle_result` and a `handle` of the plain shape is synthesised
+// over it, `return http.respond(__fern_handle_result(req, plat));`, or
+// `http.respond_with` for the stateful pair; `http` is whatever the entry
+// imports std/http as.
+pub function with_result_handler(entry: parser.Module): parser.Module {
+    var hi: i32 = top_fn_index(entry, "handle");
+    if (hi < 0) { return entry; }
+    var handle: parser.FuncDecl = entry.funcs[hi];
+    var ret: string = "";
+    var adapter: string = "";
+    if (handle.params.len() == 2 && result_of_response(handle.ret_type)) {
+        ret = "HttpResponse";
+        adapter = "respond";
+    } else if (handle.params.len() == 3) {
+        var (state, second) = tuple_halves(handle.ret_type);
+        if (state.len() > 0 && result_of_response(second)) {
+            ret = "(" + state + ", HttpResponse)";
+            adapter = "respond_with";
+        }
+    }
+    if (adapter.len() == 0) { return entry; }
+    var args: ast.Expr[] = [];
+    for p in handle.params { args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "" }); }
+    var inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+    var call: ast.Expr = ast.ExprCall { callee: tcp_ref(std_qualifier(entry, "http"), adapter), args: [inner], line: 0, col: 0, type_args: [], ty: "" };
+    var wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
+    var funcs: parser.FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < entry.funcs.len()) {
+        if (i == hi) { funcs = funcs.append(parser.FuncDecl { ...handle, name: "__fern_handle_result" }); }
+        else { funcs = funcs.append(entry.funcs[i]); }
+        i = i + 1;
+    }
+    return parser.Module { ...entry, funcs: funcs.append(wrapper) };
+}
+
+// result_of_response reports whether the type text is `Result[HttpResponse, E]`.
+function result_of_response(t: string): boolean {
+    var s: string = strip_spaces(t);
+    return s.len() > 20 && slice_unchecked(s, 0, 20) + "" == "Result[HttpResponse,";
+}
+
+// tuple_halves splits `(A, B)` at its top-level comma into A and B, or
+// answers ("", "") for another shape.
+function tuple_halves(t: string): (string, string) {
+    var s: string = strip_spaces(t);
+    if (s.len() < 4 || s[0] != b'(' || s[s.len() - 1] != b')') { return ("", ""); }
+    var depth: i32 = 0;
+    var i: i32 = 1;
+    while (i < s.len() - 1) {
+        var ch: u8 = s[i];
+        if (ch == b'[' || ch == b'(') { depth = depth + 1; }
+        if (ch == b']' || ch == b')') { depth = depth - 1; }
+        if (ch == b',' && depth == 0) {
+            return (slice_unchecked(s, 1, i) + "", slice_unchecked(s, i + 1, s.len() - 1) + "");
+        }
+        i = i + 1;
+    }
+    return ("", "");
+}
+
+function strip_spaces(t: string): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < t.len()) {
+        if (t[i] != b' ') { out = out + slice_unchecked(t, i, i + 1); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// std_qualifier is the name the entry refers to `std/<name>` by, or ""
+// when it does not import it.
+function std_qualifier(mod: parser.Module, name: string): string {
+    var want: string = "std/" + name;
     for imp in mod.imports {
         var p: string = imp.path;
-        if (p == "std/tcp" || (p.len() > 8 && slice_unchecked(p, p.len() - 8, p.len()) + "" == "/std/tcp")) {
+        if (p == want || (p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want)) {
             if (imp.alias.len() > 0) { return imp.alias; }
-            return "tcp";
+            return name;
         }
     }
     return "";
 }
 
-// tcp_ref names std/tcp's `name`: qualified through `qual`, or bare.
+// tcp_ref names a module's `name`: qualified through `qual`, or bare.
 function tcp_ref(qual: string, name: string): ast.Expr {
     if (qual.len() == 0) { return ast.ExprIdent { name: name, line: 0, col: 0, ty: "" }; }
     return ast.ExprFieldAccess { obj: ast.ExprIdent { name: qual, line: 0, col: 0, ty: "" }, field: name, line: 0, col: 0, ty: "" };

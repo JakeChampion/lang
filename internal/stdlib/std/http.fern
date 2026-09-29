@@ -182,7 +182,11 @@ pub function http_response_plain(body: string): HttpResponse {
 // `ToResponse` is the error side of a handler written as a
 // `Result[HttpResponse, E]`: `respond(result)` answers `Ok(r)` with `r`
 // and `Err(e)` with `e.to_response()`, so a handler's helpers fail with
-// `?` and one `respond` at the end turns the failure into the reply.
+// `?` and one `respond` at the end turns the failure into the reply. A
+// `handle` declared with that return type needs no `respond` of its
+// own: both compilers rename it `__fern_handle_result` and synthesise
+// the plain `handle` calling `respond` (or `respond_with` for the
+// state-threading pair) over it.
 // `problem(status, title, detail)` is the RFC 9457 problem-details
 // answer (`application/problem+json`, a title of "" reading as the
 // status text, a detail of "" left out), `HttpError` the error value
@@ -201,6 +205,12 @@ pub function respond[E: ToResponse](result: Result[HttpResponse, E]): HttpRespon
         Err(e) => { return e.to_response(); }
     }
     return problem(500, "", "");
+}
+
+// `respond_with(pair)` — `respond` for a state-threading handler: the
+// state passes through beside the answer.
+pub function respond_with[S, E: ToResponse](pair: (S, Result[HttpResponse, E])): (S, HttpResponse) {
+    return (pair.0, respond(pair.1));
 }
 
 pub function problem(status: i32, title: string, detail: string): HttpResponse {

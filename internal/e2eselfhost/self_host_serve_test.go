@@ -170,3 +170,21 @@ func TestSelfHostServeHandleOnly(t *testing.T) {
 	e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckHandleOnly(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+func TestSelfHostServeResultHandler(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ResultHandlerServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeStatefulResultHandler(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StatefulResultHandlerServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckStatefulResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

@@ -998,6 +998,11 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	// Before any signature is collected: the adapted handler is a renamed
+	// declaration and a new one, and both have to be registered by name.
+	if hasHandleDecl(prog) {
+		adaptResultHandler(prog)
+	}
 	return checkImpl(ctx, prog)
 }
 
@@ -20859,6 +20864,84 @@ func initProvidesState(prog *ast.Program) bool {
 		return false
 	}
 	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
+}
+
+// resultHandlerName is what a handler written as a `Result[HttpResponse, E]`
+// is renamed to, so that `handle` stays the HttpResponse-shaped entry every
+// consumer (the synthesised main, the wasi-http wrapper) calls.
+const resultHandlerName = "__fern_handle_result"
+
+// resultHandlerShape reports whether `handle` answers a Result: a
+// two-parameter handler returning `Result[HttpResponse, E]`, or a
+// three-parameter one returning `(S, Result[HttpResponse, E])`.
+func resultHandlerShape(handle *ast.FuncDecl) bool {
+	isResult := func(t ast.Type) bool {
+		e, ok := t.(ast.EnumType)
+		if !ok || e.Name != "Result" || len(e.Args) != 2 {
+			return false
+		}
+		st, ok := e.Args[0].(ast.StructType)
+		return ok && st.Name == "HttpResponse" && len(st.Args) == 0
+	}
+	switch len(handle.Params) {
+	case 2:
+		return isResult(handle.ReturnType)
+	case 3:
+		tt, ok := handle.ReturnType.(ast.TupleType)
+		return ok && len(tt.Elems) == 2 && isResult(tt.Elems[1])
+	}
+	return false
+}
+
+// adaptResultHandler lets a handler fail with `?`: a `handle` answering
+// `Result[HttpResponse, E]` (or `(S, Result[HttpResponse, E])` with state)
+// is renamed to resultHandlerName and a `handle` of the plain shape is
+// synthesised over it,
+//
+//	function handle(req: HttpRequest, plat: Platform): HttpResponse {
+//	    return respond(__fern_handle_result(req, plat));
+//	}
+//
+// or `respond_with` for the stateful pair, std/http's answers to a Result
+// (`E: ToResponse`). The names resolve bare or under std/http's mangling
+// as synthesiseHandleMain's do.
+func adaptResultHandler(prog *ast.Program) {
+	handle := findDecl(prog, "handle")
+	if handle == nil || !resultHandlerShape(handle) {
+		return
+	}
+	handle.Name = resultHandlerName
+	pos := handle.P
+	resolve := func(bare, mangled string) string {
+		if findDecl(prog, bare) != nil {
+			return bare
+		}
+		if findDecl(prog, mangled) != nil {
+			return mangled
+		}
+		return bare
+	}
+	adapter := "respond"
+	var ret ast.Type = ast.StructType{Name: "HttpResponse"}
+	if len(handle.Params) == 3 {
+		adapter = "respond_with"
+		ret = ast.TupleType{Elems: []ast.Type{handle.Params[0].Type, ast.StructType{Name: "HttpResponse"}}}
+	}
+	params := make([]ast.Param, len(handle.Params))
+	args := make([]ast.Expr, len(handle.Params))
+	for i, p := range handle.Params {
+		params[i] = ast.Param{Name: p.Name, Type: p.Type}
+		args[i] = &ast.Ident{P: pos, Name: p.Name}
+	}
+	inner := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resultHandlerName}, Args: args}
+	call := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(adapter, "http__"+adapter)}, Args: []ast.Expr{inner}}
+	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+		P:          pos,
+		Name:       "handle",
+		Params:     params,
+		ReturnType: ret,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
+	})
 }
 
 // platformCtorName is the compiler-owned Platform constructor. The `__fern_`

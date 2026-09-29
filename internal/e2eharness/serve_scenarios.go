@@ -447,3 +447,81 @@ func CheckHandleOnly(t *testing.T, addr string) {
 		t.Fatalf("/hello: body %q, want \"path=/hello\"", got)
 	}
 }
+
+// ResultHandlerServerSource is a handler program whose `handle` answers
+// `Result[HttpResponse, http.HttpError]` and fails with `?`: the
+// compilers wrap it so the failure is answered as a problem.
+func ResultHandlerServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+
+function lookup(path: string): Result[string, http.HttpError] {
+    if (path == "/items/1") { return Ok("first"); }
+    return Err(http.fail(404, "no item at " + path));
+}
+
+function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
+    var name: string = lookup(req.path)?;
+    return Ok(http.http_response_ok(name));
+}
+`
+}
+
+// StatefulResultHandlerServerSource threads a count through a handler
+// answering `(Map[string, i32], Result[HttpResponse, http.HttpError])`:
+// a failure is answered as a problem and the state survives it.
+func StatefulResultHandlerServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
+    if (req.path == "/boom") { return (hits, Err(http.fail(404, "nothing here"))); }
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n), Ok(http.http_response_ok(req.path + "=" + int.int_to_string(n))));
+}
+`
+}
+
+// CheckResultHandler drives ResultHandlerServerSource: /items/1 answers
+// 200 with its name, and another path the 404 problem the lookup failed
+// with.
+func CheckResultHandler(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/items/1", 5*time.Second)); got != "first" {
+		t.Fatalf("/items/1: body %q, want \"first\"", got)
+	}
+	resp := HTTPRoundTrip(t, addr, "/items/9", 5*time.Second)
+	if !strings.HasPrefix(resp, "HTTP/1.1 404") || !strings.Contains(resp, "application/problem+json") {
+		t.Fatalf("/items/9: want a 404 problem, got\n%s", resp)
+	}
+	if got := ResponseBodyTail(resp); got != `{"type":"about:blank","title":"Not Found","status":404,"detail":"no item at /items/9"}` {
+		t.Fatalf("/items/9: body %q", got)
+	}
+}
+
+// CheckStatefulResultHandler drives StatefulResultHandlerServerSource:
+// the count climbs, /boom answers a 404 problem, and the count climbs on
+// from where it was.
+func CheckStatefulResultHandler(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != "/a=1" {
+		t.Fatalf("first /a: body %q, want \"/a=1\"", got)
+	}
+	if resp := HTTPRoundTrip(t, addr, "/boom", 5*time.Second); !strings.HasPrefix(resp, "HTTP/1.1 404") || !strings.Contains(resp, `"detail":"nothing here"`) {
+		t.Fatalf("/boom: want a 404 problem, got\n%s", resp)
+	}
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != "/a=2" {
+		t.Fatalf("second /a: body %q, want \"/a=2\" (the state did not survive the failure)", got)
+	}
+}

@@ -323,6 +323,11 @@ driving the same server compiled by the self-host compiler
 pin the `main` both compilers synthesise for a handler program that
 writes none (`flatten.with_handler_main` in the self-host, the checker
 in native): it serves on `PORT` and threads `init`'s state.
+`TestServeResultHandlerX86_64`, `TestServeStatefulResultHandlerX86_64`
+and their self-host twins pin the handler that answers a Result: the
+compilers wrap it so `?` fails into an RFC 9457 problem and the state
+survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
+pins the rename and the wrapper's shape.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,

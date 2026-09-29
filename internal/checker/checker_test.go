@@ -4289,6 +4289,65 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 	}
 }
 
+// A handler answering a Result is renamed and wrapped: `handle` keeps the
+// plain shape every consumer calls, and the wrapper hands the user's answer
+// to std/http's `respond` (or `respond_with` with state).
+func TestResultHandlerIsAdapted(t *testing.T) {
+	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: "", headers: HeaderMap { names: [], values: [] } }; }
+function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
+`
+	cases := []struct {
+		name, src, adapter string
+		params             int
+	}{
+		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2},
+		{"stateful", decls + `function init(): i32 { return 0; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if findDecl(prog, resultHandlerName) == nil {
+				t.Fatalf("the Result-shaped handler was not renamed to %s", resultHandlerName)
+			}
+			handle := findDecl(prog, "handle")
+			if handle == nil || len(handle.Params) != tc.params {
+				t.Fatalf("no synthesised handle with %d params", tc.params)
+			}
+			ret, ok := handle.Body.Stmts[0].(*ast.Return)
+			if !ok {
+				t.Fatalf("handle's statement = %T, want *ast.Return", handle.Body.Stmts[0])
+			}
+			call, ok := ret.Value.(*ast.Call)
+			if !ok {
+				t.Fatalf("handle returns %T, want *ast.Call", ret.Value)
+			}
+			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.adapter {
+				t.Fatalf("handle calls %v, want %s", call.Callee, tc.adapter)
+			}
+			inner, ok := call.Args[0].(*ast.Call)
+			if !ok {
+				t.Fatalf("%s's argument = %T, want the call to the renamed handler", tc.adapter, call.Args[0])
+			}
+			if id, ok := inner.Callee.(*ast.Ident); !ok || id.Name != resultHandlerName || len(inner.Args) != tc.params {
+				t.Fatalf("%s is handed %v with %d args, want %s with %d", tc.adapter, inner.Callee, len(inner.Args), resultHandlerName, tc.params)
+			}
+			if findDecl(prog, "main") == nil {
+				t.Fatal("no main was synthesised over the adapted handle")
+			}
+		})
+	}
+}
+
 // The two halves have to agree about state. A handler that takes one
 // with nothing producing it, and an `init` that produces one with
 // nothing taking it, are both E075 — the second used to be accepted

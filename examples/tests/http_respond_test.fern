@@ -79,6 +79,20 @@ function test_string_error_answers_500_without_the_message(): test.TestOutcome {
     return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}");
 }
 
+function counted(n: i32, ok: boolean): (i32, Result[HttpResponse, http.HttpError]) {
+    if (!ok) { return (n, Err(http.fail(409, "conflict"))); }
+    return (n + 1, Ok(http.http_response_ok("counted")));
+}
+
+function test_respond_with_keeps_the_state(): test.TestOutcome {
+    var good: (i32, HttpResponse) = http.respond_with(counted(1, true));
+    if (good.0 != 2) { return test.fail("state after Ok: " + good.0.to_string()); }
+    match (test.assert_body(good.1, "counted")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    var bad: (i32, HttpResponse) = http.respond_with(counted(2, false));
+    if (bad.0 != 2) { return test.fail("state after Err: " + bad.0.to_string()); }
+    return test.assert_status(bad.1, 409);
+}
+
 function main(): i32 {
     var t: test.TestRunner = test.test_new("HTTP respond");
     t = t.it("an Ok response passes through", test_ok_passes_through);
@@ -88,5 +102,6 @@ function main(): i32 {
     t = t.it("a problem without detail leaves the member out", test_problem_without_detail);
     t = t.it("a JSON error answers 400 with where the text broke", test_json_error_answers_400);
     t = t.it("a string error answers 500 without the message", test_string_error_answers_500_without_the_message);
+    t = t.it("respond_with keeps the state beside the answer", test_respond_with_keeps_the_state);
     return t.finish();
 }
