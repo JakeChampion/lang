@@ -21710,6 +21710,7 @@ function lower_stmt_return(r0: ast.StmtReturn, s: LowerState): LowerState {
     if (!se.ok) { return se; }
     se = tail_release_snapshot_locals(r.value, se);
     se = settle_returned_append(r.value, se);
+    se = settle_returned_handbacks(r.value, se);
     // Perceus move-on-return: any array local the returned value MOVES out
     // (a bare array local, an `.append` receiver, or an array under a
     // returned enum / struct-enum-field — see returned_moved_arr_slots) is
@@ -29896,6 +29897,7 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         if (fl >= 0 && has_ret && !named) { ret_names = astwalk.collect_idents_expr(ret, []); named = true; }
         if (fl >= 0 && (util.index_of_str(ret_names, st.locals[i].slot_name) < 0
             || (has_ret && rebind_call_same_dec(ret, st.locals[i].slot_name, st))
+            || (has_ret && slot_list_has(returned_handback_slots(ret, st), i))
             || ret_type_cannot_hold_buffer(st.frame.cur_ret))) {
             st = st.emit(ir.op_load_local(fl));
             st = st.emit(ir.op_if(0));
@@ -29905,6 +29907,55 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
         i = i + 1;
     }
     return st;
+}
+
+// returned_handback_slots: the array slots the returned direct call `e` holds
+// at a declared `own` position its callee does not consume
+// (callee_consumes_own_array). Such a callee hands the buffer back uncounted
+// when it keeps it, so `return f(xs)` is `xs = f(xs); return xs`.
+function returned_handback_slots(e: ast.Expr, s: LowerState): i32[] {
+    var out: i32[] = [];
+    var cname: string = direct_call_callee_name(e);
+    if (cname.len() == 0 || s.slot_of(cname) >= 0) { return out; }
+    if let ast.ExprCall(c) = e {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            var sl: i32 = s.slot_of(ident_name_or_empty(c.args[i]));
+            if (sl >= 0 && s.is_arr_slot(sl) && call_arg_pos_owns(s, cname, 0 - 1, i)
+                && !s.callee_consumes_own_array(cname, i) && !s.callee_param_is_typevar(cname, i)) {
+                out = out.append(sl);
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// settle_returned_handbacks: with the returned call's result on the stack, a
+// handback slot the call gave back is the returned value, so the exit sweep
+// must not release it: an owned local is cleared, and a flagged binding's flag
+// is cleared. One the call replaced is released at exit as the rebind would.
+function settle_returned_handbacks(e: ast.Expr, s: LowerState): LowerState {
+    var slots: i32[] = returned_handback_slots(e, s);
+    if (slots.len() == 0) { return s; }
+    var tmpn: string = "$rhb" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(tmpn);
+    var tmp: i32 = st.slot_of(tmpn);
+    st = st.emit(ir.op_store_local(tmp));
+    for sl in slots {
+        var clear: i32 = st.ownflag_slot_of(sl);
+        if (clear < 0 && sl >= st.frame.n_params && !st.is_borrowed_arr_slot(sl)) { clear = sl; }
+        if (clear >= 0) {
+            st = st.emit(ir.op_load_local(sl));
+            st = st.emit(ir.op_load_local(tmp));
+            st = st.emit(ir.op_bin("eq", 0, false));
+            st = st.emit(ir.op_if(0));
+            st = st.emit(ir.op_const_i32(0));
+            st = st.emit(ir.op_store_local(clear));
+            st = st.emit(ir.op_end());
+        }
+    }
+    return st.emit(ir.op_load_local(tmp));
 }
 
 struct RetArm { handled: boolean, state: LowerState }
