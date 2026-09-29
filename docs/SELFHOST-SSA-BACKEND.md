@@ -35,8 +35,12 @@ lowered function it:
    and returns a value in at most twelve computing instructions, unless it is
    declared `@noinline`. Its body is already reference-counted as the
    callee's, so the splice keeps every retain and release the call made;
-3. drops what nothing reads (`ssa.prune_dead`), which is most of the zeros
-   the lift gives declared locals and most of the loop-header phis;
+3. turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
+   one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
+   left half is recognised through the zero extension that follows it), then
+   drops what nothing reads (`ssa.prune_dead`), which is the rotate's shifts,
+   most of the zeros the lift gives declared locals and most of the
+   loop-header phis;
 4. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
