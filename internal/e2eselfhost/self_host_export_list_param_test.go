@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -29,7 +28,7 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -40,7 +39,7 @@ func TestSelfHostExportListParamRunsViaConsumer(t *testing.T) {
 
 	// self-host emits the exporter core (command with main + list-param @export).
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/nums@0.1.0", "sum")
 function sum(xs: i32[]): i32 {
@@ -50,7 +49,7 @@ function sum(xs: i32[]): i32 {
 }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/nums@0.1.0#sum")) {
 		t.Fatalf("self-host core missing the surfaced list-param @export:\n%s", watBytes)
 	}
@@ -102,7 +101,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Go-built consumer that imports sum(xs: list<s32>) -> s32 and checks it.
+	// Self-host-built consumer that imports sum(xs: list<s32>) -> s32 and checks it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -138,17 +137,7 @@ function main(): i32 {
 	if (sum(xs) == 100) { write("` + want + `"); } else { write("sum-bad"); }
 	return 0;
 }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

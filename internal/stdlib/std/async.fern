@@ -54,7 +54,10 @@ pub enum Future[T] {
 //
 // The rest are the reactor (#9853): a readiness set that outlives one
 // wait. `watch(fd, interest)` registers a descriptor for the interest bits
-// (1 readable, 2 writable) or changes them, `unwatch(fd)` drops it, and
+// (1 readable, 2 writable; 4 exclusive, so that of several processes
+// watching one descriptor a readiness wakes one rather than all, epoll's
+// EPOLLEXCLUSIVE, and nothing elsewhere) or changes them, `unwatch(fd)`
+// drops it, and
 // `wait(max, timeout_ms)` is the (fd, readiness) pairs of up to `max`
 // ready descriptors, readiness 1 readable, 2 writable and 4 an error or
 // hang-up: empty on the timeout (-1 waits without one) and on an error. A

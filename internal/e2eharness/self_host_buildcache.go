@@ -283,35 +283,51 @@ func CopySelfHostFiles(t testing.TB, dir string, names ...string) {
 // with it, and two thousand call sites pass the pair together.
 func BuildSelfHostBin(t testing.TB, gcc, dir, fernName, out string) string {
 	t.Helper()
-	if InterpDriverMode() {
+	return BuildSelfHostBinFor(t, dir, fernName, out, TargetX86_64Linux)
+}
+
+// BuildSelfHostBinFor is BuildSelfHostBin for a -target: the arm64 legs run
+// the same self-host sources under qemu-aarch64. The interpreter shim
+// (FERN_SELFHOST_INTERP) stands in for the x86-64 binary only, since it runs
+// on the host where the arm64 binary runs under qemu.
+func BuildSelfHostBinFor(t testing.TB, dir, fernName, out, target string) string {
+	t.Helper()
+	if target == TargetX86_64Linux && InterpDriverMode() {
 		return writeInterpDriverShim(t, dir, fernName, out)
 	}
 	dst := filepath.Join(dir, out)
-	copyExecutable(t, CachedDriverBin(t, gcc, dir, fernName), dst)
+	copyExecutable(t, CachedDriverBinFor(t, dir, fernName, target), dst)
 	return dst
 }
 
-// CachedDriverBin builds (or restores) the self-host driver binary for
+// CachedDriverBin builds (or restores) the x86-64 self-host driver binary for
 // dir/fernName and returns the path to the shared cached binary (callers
 // copyExecutable it where they need it).
-//
-// The key is the driver's source closure plus driverCompilerKey (the pin's
-// bytes and the stdlib), so a driver rebuilds when its sources, the pin or the
-// stdlib change, and two tests staging the same stock driver share one build.
-// The disk cache (FERN_SELFHOST_BUILD_CACHE) shares it across the worker
-// processes of a CI shard; a static freestanding ELF from the same compiler
-// and sources is the same bytes on every runner.
 func CachedDriverBin(t testing.TB, gcc, dir, fernName string) string {
 	t.Helper()
+	return CachedDriverBinFor(t, dir, fernName, TargetX86_64Linux)
+}
+
+// CachedDriverBinFor is CachedDriverBin for a -target.
+//
+// The key is the driver's source closure, the target and driverCompilerKey
+// (the pin's bytes and the stdlib), so a driver rebuilds when its sources,
+// the pin or the stdlib change, and two tests staging the same stock driver
+// for the same target share one build. The disk cache
+// (FERN_SELFHOST_BUILD_CACHE) shares it across the worker processes of a CI
+// shard; a static freestanding binary from the same compiler and sources is
+// the same bytes on every runner.
+func CachedDriverBinFor(t testing.TB, dir, fernName, target string) string {
+	t.Helper()
 	compiler := Stage0Compiler(t)
-	key := HashSelfHostSources(t, dir, fernName) + "-" + driverCompilerKey(t)[:16]
+	key := HashSelfHostSources(t, dir, fernName) + "-" + target + "-" + driverCompilerKey(t)[:16]
 	path, err := selfHostDriverBinCache.get(key, func() (string, error) {
 		return cachedBinary(t, "drv-"+key, key+".driverbin", func(binPath string) error {
 			// The reservation serialises heavy builds on a RAM-limited host
 			// (and parallelises up to the budget on a big one): two cold
 			// driver builds peaking at once used to cross a 16 GB host's RAM
 			// and OOM-kill the run (exit 137) — see buildMemLimiter.
-			return CompileWithSelfHost(t, compiler, filepath.Join(dir, fernName), binPath, DriverBuildWeightMB(fernName))
+			return CompileWithSelfHost(t, compiler, target, filepath.Join(dir, fernName), binPath, DriverBuildWeightMB(fernName))
 		})
 	})
 	if err != nil {

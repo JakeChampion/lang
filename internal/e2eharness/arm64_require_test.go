@@ -3,6 +3,7 @@ package e2eharness
 import (
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,27 +19,41 @@ import (
 // terminates its caller. PATH is emptied rather than the binaries moved, since
 // LookupArm64Tooling finds them with exec.LookPath.
 //
+// Arm64Runner, the runner half alone, carries the same contract and is
+// checked the same way (FERN_ARM64_VERDICT_CHILD=runner); its native-arm64
+// early return is not taken on the x86-64 hosts this runs on.
+//
 // CI-DARK: FERN_ARM64_VERDICT_CHILD — this names the re-exec'd child of this
 // test, not a lane's coverage knob. The parent sets it when it spawns the
 // child, so a workflow setting it would only make the child run as the parent.
 func TestArm64ToolingMissingVerdict(t *testing.T) {
-	if os.Getenv("FERN_ARM64_VERDICT_CHILD") == "1" {
+	switch os.Getenv("FERN_ARM64_VERDICT_CHILD") {
+	case "1":
 		Arm64Tooling(t)
 		return
+	case "runner":
+		Arm64Runner(t)
+		return
+	}
+	if runtime.GOOS == "linux" && runtime.GOARCH == "arm64" {
+		t.Skip("a native arm64 host runs arm64 binaries with no tooling, so there is no missing-toolchain verdict to observe")
 	}
 	for _, tc := range []struct {
 		name     string
+		child    string
 		require  string
 		wantFail bool
 		wantText string
 	}{
-		{name: "skips by default", require: "", wantFail: false, wantText: "not available"},
-		{name: "fails when required", require: "1", wantFail: true, wantText: "covers nothing"},
+		{name: "skips by default", child: "1", require: "", wantFail: false, wantText: "not available"},
+		{name: "fails when required", child: "1", require: "1", wantFail: true, wantText: "covers nothing"},
+		{name: "runner skips by default", child: "runner", require: "", wantFail: false, wantText: "no qemu-aarch64"},
+		{name: "runner fails when required", child: "runner", require: "1", wantFail: true, wantText: "covers nothing"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run", "^TestArm64ToolingMissingVerdict$", "-test.v")
 			cmd.Env = append(os.Environ(),
-				"FERN_ARM64_VERDICT_CHILD=1",
+				"FERN_ARM64_VERDICT_CHILD="+tc.child,
 				"PATH="+t.TempDir(),
 				"FERN_REQUIRE_ARM64_TOOLING="+tc.require,
 			)

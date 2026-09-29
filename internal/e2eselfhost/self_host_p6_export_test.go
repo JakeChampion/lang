@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/wasm/component"
 	"github.com/jakechampion/lang/internal/wasm/componenttype"
 )
@@ -19,11 +18,11 @@ import (
 // the codegen slice), so the exported function compiles as an ordinary
 // function — here it's called from main and the self-host emits a working core.
 func TestSelfHostExportAttributeCompiles(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	// An `@export` function, also called from main. The self-host must parse
 	// the attribute and compile the program.
@@ -31,7 +30,7 @@ func TestSelfHostExportAttributeCompiles(t *testing.T) {
 function run(): i32 { return 42; }
 
 function main(): i32 { return run(); }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(prog))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(prog))
 	if len(watBytes) == 0 {
 		t.Fatal("self-host wasm emitter produced 0 bytes for an @export program")
 	}
@@ -56,7 +55,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -67,13 +66,13 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 
 	// --- self-host emits the exporter core (a command with main + @export). ---
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/math@0.1.0", "add")
 function add(a: i32, b: i32): i32 { return a + b; }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/math@0.1.0#add")) {
 		t.Fatalf("self-host core is missing the surfaced @export core export:\n%s", watBytes)
 	}
@@ -127,7 +126,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// --- Go-built consumer importing local:test/math#add. ---
+	// --- Self-host-built consumer importing local:test/math#add. ---
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -162,20 +161,7 @@ function main(): i32 {
 	if (add(20 as u32, 3 as u32) == 23 as u32) { write("` + want + `"); } else { write("export-bad"); }
 	return 0;
 }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true,
-		Preview2WASI:       true,
-		SynthCliRun:        true,
-		PrintMainResult:    true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -212,7 +198,7 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -223,13 +209,13 @@ func TestSelfHostExportStringResultRunsViaConsumer(t *testing.T) {
 
 	// self-host emits the exporter core (command with main + string @export).
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "greet")
 function greet(): string { return "hi"; }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#greet")) {
 		t.Fatalf("self-host core missing the surfaced string @export:\n%s", watBytes)
 	}
@@ -281,7 +267,7 @@ function main(): i32 { return 0; }`
 	}
 	run(wasmtools, "validate", exporter)
 
-	// Go-built consumer that imports greet() -> string and writes it.
+	// Self-host-built consumer that imports greet() -> string and writes it.
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
 		t.Fatalf("mkdir userwit: %v", err)
@@ -313,17 +299,7 @@ function main(): i32 { return 0; }`
 function greet(): string;
 
 function main(): i32 { write(greet()); return 0; }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)
@@ -359,7 +335,7 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-tools not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
+	runner := x86_64Runner(t)
 	dir := t.TempDir()
 	run := func(name string, args ...string) {
 		t.Helper()
@@ -369,13 +345,13 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	}
 
 	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }
 
 function main(): i32 { return 0; }`
-	watBytes := runCapture(t, gcc, runner, driverBin, []byte(exporterSrc))
+	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#len-of")) {
 		t.Fatalf("self-host core missing the surfaced string-param @export:\n%s", watBytes)
 	}
@@ -460,17 +436,7 @@ function main(): i32 {
 	if (len_of("hello") == 5) { write("` + want + `"); } else { write("len-bad"); }
 	return 0;
 }`
-	userPath := filepath.Join(dir, "consumer.fern")
-	if err := os.WriteFile(userPath, []byte(userSrc), 0o644); err != nil {
-		t.Fatalf("write consumer prog: %v", err)
-	}
-	userInfo, userProg := loadCheckMono(t, userPath)
-	userCore, err := wasmbin.BuildWithOptions(userProg, userInfo, wasmbin.BuildOptions{
-		ForceMemorySection: true, Preview2WASI: true, SynthCliRun: true, CliRunResult: true,
-	})
-	if err != nil {
-		t.Fatalf("build consumer core: %v", err)
-	}
+	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
 	userComp, err := component.ComposeFromWorldAuto(userCore, userWorld)
 	if err != nil {
 		t.Fatalf("ComposeFromWorldAuto (consumer): %v", err)

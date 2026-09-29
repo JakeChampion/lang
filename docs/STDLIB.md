@@ -1171,12 +1171,20 @@ The socket controls are typed faces over the descriptor builtins
 - `set_nodelay(sock, on)`, `set_keepalive(sock, on)`,
   `set_nonblocking(sock, on)` — `TCP_NODELAY`, `SO_KEEPALIVE` and
   `O_NONBLOCK`, each `Result[(), NetError]`. A non-blocking `tcp_recv`
-  answers the empty array at once when nothing is queued.
+  answers the empty array at once when nothing is queued, and a
+  non-blocking `tcp_send` what the kernel took, or `-EAGAIN` when it had
+  no room.
+- `send_queue(sock)` — how many bytes handed to the socket the peer has
+  not acknowledged yet, unsent and in flight alike (`SIOCOUTQ` on Linux,
+  `SO_NWRITE` on Darwin), as `Result[i32, NetError]`: how far the peer has
+  got with what was written, which is what a minimum data rate on a
+  response is judged by.
 - `shutdown(sock, how)` — `Shutdown.Read`, `Write` or `Both`; a write-side
   shutdown is the end of stream the peer's `tcp_recv` reads as EOF.
 
-On wasm, `set_nodelay` and `set_nonblocking` answer `Other(58)` (`ENOTSUP`):
-wasi:sockets 0.2 has neither control, and `reuse_port` is ignored there.
+On wasm, `set_nodelay`, `set_nonblocking` and `send_queue` answer
+`Other(58)` (`ENOTSUP`): wasi:sockets 0.2 has neither control and no
+reading of the queue, and `reuse_port` is ignored there.
 
 The datagram sockets are typed faces over `udp_bind`, `udp_connect`,
 `udp_sendto` and `udp_recvfrom`, on the same descriptors:
@@ -1241,22 +1249,36 @@ loop and `std/fetch` the client.
   it arrived first, and behind an answered one whose response then says
   `close`, since the close follows it.
 - `tcp_serve_opts(port, opts, handler)` — `tcp_serve` with
-  `ServeOptions { backlog, reuse_port, recv_deadline, body_min_rate,
-  body_rate_grace, keep_alive_idle, keep_alive_requests,
+  `ServeOptions { backlog, reuse_port, recv_deadline, min_data_rate,
+  data_rate_grace, keep_alive_idle, keep_alive_requests,
   max_connections }` (`serve_options()` is 128, one listener per port,
   the 10 s deadline, 240 bytes per second after 5 s, 130 s, 1000 and
   1024): the accept queue
   depth, port sharing between listeners (`SO_REUSEPORT`, ignored on
   wasm), the read deadline, the least rate a request body must keep
-  arriving at once its header block is in (after the grace, the body may
-  take as long as its bytes buy at that rate beyond the read deadline, so
-  a large upload that keeps flowing is read and a trickle is closed; 0
-  turns the rate off), how long an idle persistent connection waits for
+  arriving at once its header block is in and a response must keep
+  being drained at once a write came up short (after the grace, the body
+  may take as long as its bytes buy at that rate beyond the read
+  deadline, so a large upload that keeps flowing is read and a trickle
+  is closed; a response the peer keeps taking above the rate goes out
+  whole however long that takes, and one the peer stops reading is cut
+  off after the grace; 0 turns the rate off), how long an idle persistent connection waits for
   its next request, how many requests one connection may carry before
   its last response says `Connection: close` (a value below 1 behaves as
-  1), and how many connections the loop holds open at once: at the cap
-  the listener is not read, so further connections wait in its accept
-  queue (`backlog` deep, the kernel refusing past it) until one closes.
+  1), how many connections the loop holds open at once (at the cap the
+  listener is not read, so further connections wait in its accept queue,
+  `backlog` deep, the kernel refusing past it, until one closes), and
+  how many workers `tcp_serve_supervised_opts` forks (`workers`; 0, the
+  default, is one per processing unit the process may use, what
+  `cpu_count()` answers), and the shutdown SIGTERM starts: the loop keeps
+  accepting for `shutdown_grace` (2 s, since whoever routes to it removes
+  it in parallel), answers 503 on `readiness_path` ("" for none), then
+  closes the listener, ends keep-alive, closes the connections with
+  nothing in flight and gives the rest `drain_deadline` (30 s) from the
+  signal to finish before closing them; the loop returns 0 once every
+  connection is gone and 1 when it cut one off, so `main` exits with it.
+  A listener the process was started with (`LISTEN_FDS` at least 1,
+  descriptor 3) is served instead of a fresh one.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1271,8 +1293,13 @@ loop and `std/fetch` the client.
   `ServeOptions`, `tcp_serve_with_deadline` the read deadline alone.
 - `tcp_serve_supervised(port, handler)` — crash-only serving: the
   accept loop runs in a forked worker the parent reforks on
-  death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
-  a refork resets the loop frame.
+  death (docs/CRASH-ONLY-SERVE.md). `tcp_serve_supervised_opts(port,
+  opts, handler)` takes the `ServeOptions` and forks `workers` workers
+  (one per processing unit by default), each running its own loop over
+  the one listener, watched exclusively (epoll's `EPOLLEXCLUSIVE`) so a
+  connection wakes one of them; whichever dies is replaced, and SIGTERM
+  is forwarded to every worker and waited for. No threaded-state variant
+  — a refork resets the loop frame.
 - `tcp_recv_deadline(fd, max, deadline): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
