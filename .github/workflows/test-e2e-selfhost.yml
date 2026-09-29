@@ -178,18 +178,20 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
-  # THE DRIVER SIZE GATE (#6826, #7519). Links every driver named in
+  # THE DRIVER SIZE GATE (#6826, #7519). Builds every driver named in
   # .github/selfhost-driver-sizes.txt — the list is read from the baseline, so
-  # a baselined driver cannot go unmeasured — records each one's size, and
-  # compares the whole set against the baseline ONCE:
+  # a baselined driver cannot go unmeasured — plus fern.fern/stage2, the
+  # compiler's own output for itself, records each one's size, and compares
+  # the whole set against the baseline ONCE:
   #   * FERN_SIZE_REPORT_COMPLETE=1 makes a baselined driver that reached no
   #     report a MISSING finding instead of a row nobody notices is absent;
   #   * FERN_CI_SIZE_GATE_STRICT=1 makes findings FAIL the job.
   # Strict is affordable because nothing depends on this job. The drivers are
-  # built by the pinned self-host compiler, whose output is deterministic per
-  # input (the fixpoint rests on it), so a given commit yields the same byte
-  # count on any runner: a difference here is a real change in the drivers'
-  # sources, the stdlib or the pin.
+  # built by the pinned self-host compiler and fern.fern/stage2 by the current
+  # one; both are deterministic per input (the fixpoint rests on it), so a
+  # given commit yields the same byte count on any runner: a difference here
+  # is a real change in the sources, the stdlib, the pin or the current
+  # compiler's codegen.
   driver-sizes:
     name: driver-sizes-x86_64
     runs-on: ubuntu-latest
