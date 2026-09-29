@@ -200,7 +200,8 @@ function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c:
 		// local) is the form that miscompiled in the SHA schedule.
 		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { var x: u32 = 0x7da86405; var r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
 		// SHA-256("abc") — byte 0 (0xba) of ba7816bf… The whole schedule +
-		// compression depend on u32 wrapping; native is the known-correct vector.
+		// compression depend on u32 wrapping; the interpreter computes the
+		// reference vector.
 		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
 		// SHA-256("abc") byte 31 (0xad) — exercises the last state word.
 		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
@@ -209,7 +210,7 @@ function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c:
 		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked. (Not in the
 		// IR≡AST differential test: the legacy asm_ir_run AST fallback referenced
 		// __fern_alloc_u8 without emitting it, so its link failed there; the IR
-		// path compiles them, validated here against native.)
+		// path compiles them, validated here against the interpreter.)
 		{"alloc-u8", `function main(): i32 { var m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
 		{"str-from-bytes", `function main(): i32 { var m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); var s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},
 	}
