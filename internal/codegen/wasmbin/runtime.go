@@ -430,16 +430,19 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_random_bytes")
 				case "__fern_now_ns":
 					// wasi_clock_time_get + alloc-per-call for
-					// the 8-byte output buffer.
+					// the output buffer, freed after the read.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_now_ns")
 				case "__fern_now_unix_ms":
 					// Same as __fern_now_ns / 1_000_000.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_now_unix_ms")
 				case "__fern_monotonic_ns":
 					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
 					needs.add("__fern_alloc")
+					needs.add("__free")
 					needs.add("__fern_monotonic_ns")
 				case "__fern_sleep_ms":
 					// Its subscription buffer is scratch, so no allocator.

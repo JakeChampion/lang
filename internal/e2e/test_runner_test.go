@@ -3994,7 +3994,9 @@ func TestRunnerHttpResponseHeadersMigratedExample(t *testing.T) {
 		"ok 6 - duplicate Set-Cookie preserves order",
 		"ok 7 - status reason for extended codes",
 		"ok 8 - unknown status falls back to Status",
-		"# pass 8",
+		"ok 9 - HEAD response has no body",
+		"ok 10 - 204 has no Content-Length or body",
+		"# pass 11",
 		"# fail 0",
 	} {
 		if !strings.Contains(out, w) {
