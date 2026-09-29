@@ -5355,6 +5355,18 @@ function main(): i32 {
     return f(4) + g(5) + h(6) + e(7) + u(8) + either(1)(9);
 }
 `},
+	// A `str` result returning a call's OWNED `string`: std/string's trim
+	// builds a fresh string, and so does mk. The result anchors no parameter,
+	// so the function returns a copy; the anchor chase used to leave the
+	// callee pending forever and refused both with "view result escapes its
+	// source" (#10688).
+	{name: "a-str-result-returns-an-owned-call-result", atLeast: 48, noLeak: true, src: `
+import "std/string";
+function mk(p: string): string { return p + "xy"; }
+function owned(p: string): str { return mk(p); }
+function view(pre: string): str { var base: string = pre + "  xy  "; return slice_unchecked(base, 0, 6).trim(); }
+function main(): i32 { var v: str = view("ab"); var w: str = owned("abc"); return v.len() * 10 + w.len(); }
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
