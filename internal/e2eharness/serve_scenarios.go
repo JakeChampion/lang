@@ -525,3 +525,46 @@ func CheckStatefulResultHandler(t *testing.T, addr string) {
 		t.Fatalf("second /a: body %q, want \"/a=2\" (the state did not survive the failure)", got)
 	}
 }
+
+// ShutdownHookServerSource threads a request count and declares a
+// `shutdown(reason, state)` hook: the compilers wire it to the loop, which
+// calls it once it has stopped with the reason and the count as the last
+// request left it, and the hook reports both on stderr.
+func ShutdownHookServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): i32 {
+    return 0;
+}
+
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, http.http_response_ok("hit " + int.int_to_string(hits + 1)));
+}
+
+function shutdown(reason: string, hits: i32): void {
+    eprint("shutdown reason=" + reason + " hits=" + int.int_to_string(hits));
+}
+`
+}
+
+// CheckShutdownHook drives ShutdownHookServerSource: two requests, then
+// SIGTERM; the process exits 0 and its stderr carries the hook's line
+// with the reason and the count.
+func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for i := 1; i <= 2; i++ {
+		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
+			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
+		}
+	}
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
+		t.Fatalf("exit code %d, want 0", code)
+	}
+	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason=sigterm hits=2") {
+		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
+	}
+}

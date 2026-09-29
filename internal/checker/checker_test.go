@@ -4289,6 +4289,68 @@ function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse
 	}
 }
 
+// A `shutdown` hook sends the synthesised main to the `_shutdown` entry,
+// handed the default options and the hook; a hook whose state parameter
+// disagrees with the handler's is E075.
+func TestSynthesisedHandleMainWiresShutdown(t *testing.T) {
+	const decls = `struct ServeOptions { backlog: i32 }
+function serve_options(): ServeOptions { return ServeOptions { backlog: 128 }; }
+function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
+function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+`
+	const response = `HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } }`
+	cases := []struct{ name, src, entry, message string }{
+		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+function shutdown(reason: string): void { print(reason); }`, "tcp_serve_shutdown", ""},
+		{"stateful", decls + `function init(): i32 { return 7; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function shutdown(reason: string, n: i32): void { print(reason); }`, "tcp_serve_with_shutdown", ""},
+		{"state hook without init", decls + `function handle(req: HttpRequest, plat: Platform): HttpResponse { return ` + response + `; }
+function shutdown(reason: string, n: i32): void { print(reason); }`, "", "`shutdown` takes a state parameter, but no `init` produces the state to hand it"},
+		{"stateless hook drops the state", decls + `function init(): i32 { return 7; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) { return (n, ` + response + `); }
+function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` takes no state parameter, but the handler threads a state it would drop"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if tc.message != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.message) {
+					t.Fatalf("want E075 %q, got %v", tc.message, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			main := findDecl(prog, "main")
+			if main == nil || !main.IsSynthesisedHandlerMain {
+				t.Fatal("no synthesised main")
+			}
+			ret := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return)
+			call := ret.Value.(*ast.Call)
+			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.entry {
+				t.Fatalf("synth main calls %v, want %s", call.Callee, tc.entry)
+			}
+			if last, ok := call.Args[len(call.Args)-1].(*ast.Ident); !ok || last.Name != "shutdown" {
+				t.Fatalf("the last argument is %v, want the shutdown hook", call.Args[len(call.Args)-1])
+			}
+			if opts, ok := call.Args[1].(*ast.Call); !ok {
+				t.Fatalf("the second argument is %T, want the serve_options() call", call.Args[1])
+			} else if id, ok := opts.Callee.(*ast.Ident); !ok || id.Name != "serve_options" {
+				t.Fatalf("the second argument calls %v, want serve_options", opts.Callee)
+			}
+		})
+	}
+}
+
 // A handler answering a Result is renamed and wrapped: `handle` keeps the
 // plain shape every consumer calls, and the wrapper hands the user's answer
 // to std/http's `respond` (or `respond_with` with state).

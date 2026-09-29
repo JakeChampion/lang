@@ -13067,6 +13067,22 @@ function handler_state_diags(mod: parser.Module): util.Diag[] {
     var init: parser.FuncDecl = mod.funcs[init_idx];
     return [dg_at("E075", "`init` returns a value, but the handler takes no state parameter to thread it through", init.line, init.col)];
   }
+  // `shutdown(reason)` or `shutdown(reason, state)`: the state parameter
+  // follows the handler's, since the loop hands the hook the state as the
+  // last request left it.
+  var j: i32 = 0;
+  for fd in mod.funcs {
+    if (fd.name == "shutdown" && fd.receiver_type.len() == 0) {
+      if (fd.params.len() == 2 && !takes_state) {
+        return [dg_at("E075", "`shutdown` takes a state parameter, but no `init` produces the state to hand it", fd.line, fd.col)];
+      }
+      if (fd.params.len() == 1 && takes_state) {
+        return [dg_at("E075", "`shutdown` takes no state parameter, but the handler threads a state it would drop", fd.line, fd.col)];
+      }
+      return [];
+    }
+    j = j + 1;
+  }
   return [];
 }
 

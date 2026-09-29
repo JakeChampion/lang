@@ -1292,6 +1292,15 @@ loop and `std/fetch` the client.
   connection is gone and 1 when it cut one off, so `main` exits with it.
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
+- `tcp_serve_shutdown(port, opts, handler, shutdown)` and
+  `tcp_serve_with_shutdown(port, opts, init, handler, shutdown)` —
+  `tcp_serve_opts` and `tcp_serve_with_opts` with a hook the loop calls
+  once it has stopped, before returning: `shutdown(reason)`, or
+  `shutdown(reason, state)` with the state as the last request left it,
+  where a counter is flushed or a store closed. The reason is "sigterm"
+  when every request in flight was answered after the signal and
+  "drain-deadline" when one was cut off. Under `tcp_serve_supervised_opts`
+  each worker's loop calls its own hook on the way out.
 - `tcp_serve_deadline(port, handler, recv_deadline)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
@@ -1323,7 +1332,11 @@ loop and `std/fetch` the client.
   `tcp_serve_with` over `tcp_serve` when the program defines
   `init(): S` alongside a state-taking `handle`
   (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
-  E075. A `handle` declared as `Result[HttpResponse, E]` (or
+  E075. A top-level `shutdown(reason)`, or `shutdown(reason, state)`
+  beside a state-threading handler, sends the synthesis to
+  `tcp_serve_shutdown` / `tcp_serve_with_shutdown` with `serve_options()`
+  and the hook; a hook whose state parameter disagrees with the
+  handler's is E075 too. A `handle` declared as `Result[HttpResponse, E]` (or
   `(S, Result[HttpResponse, E])` with state), so its body fails with
   `?`, is accepted by both compilers: they rename it
   `__fern_handle_result` and synthesise the plain `handle` calling

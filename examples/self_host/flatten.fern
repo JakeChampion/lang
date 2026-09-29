@@ -314,7 +314,9 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 //
 // or, when `init` returns the state a three-parameter `handle` threads,
 // `tcp.tcp_serve_with(port, init(), handle)`; a void `init` runs before the
-// loop. `tcp` is whatever the entry imports std/tcp as; without the import
+// loop; with a `shutdown` hook declared, the `_shutdown` entry of either,
+// handed `tcp.serve_options()` and the hook. `tcp` is whatever the entry
+// imports std/tcp as; without the import
 // the names stay bare, so the checker reports them undefined as native does.
 // A mispaired `init` and `handle` is left alone: E075 is the checker's, and
 // a main calling the wrong serve would only add a second error.
@@ -331,16 +333,25 @@ pub function with_handler_main(entry0: parser.Module): parser.Module {
     }
     var takes_state: boolean = entry.funcs[hi].params.len() == 3;
     if (returns_state != takes_state) { return entry; }
+    var si: i32 = top_fn_index(entry, "shutdown");
+    if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) { return entry; }
     var qual: string = std_qualifier(entry, "tcp");
     var port: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
     var handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "" };
     var init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+    // A `shutdown` hook goes to the `_shutdown` entry, which takes the
+    // options too (`serve_options()`, the defaults) and calls the hook
+    // once the loop has stopped.
+    var opts_call: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "serve_options"), args: [], line: 0, col: 0, type_args: [], ty: "" };
+    var hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "" };
     var body: ast.Stmt[] = [];
     var serve: ast.Expr = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve"), args: [port, handle], line: 0, col: 0, type_args: [], ty: "" };
     if (takes_state) {
         serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_with"), args: [port, init_call, handle], line: 0, col: 0, type_args: [], ty: "" };
-    } else if (ii >= 0) {
-        body = body.append(ast.StmtExpr { value: init_call, line: 0 });
+        if (si >= 0) { serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_with_shutdown"), args: [port, opts_call, init_call, handle, hook], line: 0, col: 0, type_args: [], ty: "" }; }
+    } else {
+        if (ii >= 0) { body = body.append(ast.StmtExpr { value: init_call, line: 0 }); }
+        if (si >= 0) { serve = ast.ExprCall { callee: tcp_ref(qual, "tcp_serve_shutdown"), args: [port, opts_call, handle, hook], line: 0, col: 0, type_args: [], ty: "" }; }
     }
     body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
     var main: parser.FuncDecl = parser.FuncDecl { no_inline: false,
@@ -350,6 +361,11 @@ pub function with_handler_main(entry0: parser.Module): parser.Module {
         bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false,
         is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "" };
     return parser.Module { ...entry, funcs: entry.funcs.append(main) };
+}
+
+function bool_i32(b: boolean): i32 {
+    if (b) { return 1; }
+    return 0;
 }
 
 // top_fn_index is the position of the top-level function `name` (a method

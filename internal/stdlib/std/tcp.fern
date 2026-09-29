@@ -143,11 +143,21 @@ pub function serve_options(): ServeOptions {
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
 // the read deadline chosen by the caller.
 pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse): i32 {
+    return tcp_serve_shutdown(port, opts, handler, (reason: string): void => {});
+}
+
+// tcp_serve_shutdown(port, opts, handler, shutdown) — `tcp_serve_opts`
+// with a hook the loop calls once it has stopped, before returning: with
+// "sigterm" when every request in flight was answered after SIGTERM, or
+// "drain-deadline" when one was cut off at the drain deadline. Under
+// `tcp_serve_supervised_opts` each worker's loop calls it on its own way
+// out.
+pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop(listener, handler, opts);
+    return __serve_loop(listener, handler, opts, shutdown);
 }
 
 // __serve_listener(port, opts) — the listener a serve loop runs over: the
@@ -222,11 +232,20 @@ pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Pla
 // tcp_serve_with_opts(port, opts, init, handler) — `tcp_serve_with` with
 // the listener and the read deadline chosen by the caller.
 pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+    return tcp_serve_with_shutdown(port, opts, init, handler, (reason: string, state: S): void => {});
+}
+
+// tcp_serve_with_shutdown(port, opts, init, handler, shutdown) —
+// `tcp_serve_with_opts` with a hook the loop calls once it has stopped,
+// before returning, with the reason `tcp_serve_shutdown` gives and the
+// state as the last request left it: where a counter is flushed or a
+// store is closed.
+pub function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
         return listener;
     }
-    return __serve_loop_with(listener, init, handler, opts);
+    return __serve_loop_with(listener, init, handler, opts, shutdown);
 }
 
 // tcp_serve_with_deadline(port, init, handler, recv_deadline) —
@@ -880,6 +899,14 @@ function __stop_code(stop: __Stop): i32 {
     return 0;
 }
 
+// __stop_reason(stop) — what a finished shutdown tells the program's
+// `shutdown` hook: "sigterm" when every request in flight was answered,
+// "drain-deadline" when one was cut off.
+function __stop_reason(stop: __Stop): string {
+    if (stop.aborted) { return "drain-deadline"; }
+    return "sigterm";
+}
+
 // __serve_not_ready(f, opts, stop) — whether the request is the
 // readiness probe of a loop that is stopping, to be answered 503 by the
 // loop itself so whoever routes to it stops.
@@ -944,7 +971,7 @@ function __host_platform(reactor: i32): Platform {
 // yet), except that a listener the reactor cannot watch returns its
 // -errno like a failed bind. `opts` bounds each connection's request
 // read (see `tcp_serve_deadline`) and its persistence.
-function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions): i32 {
+function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, opts: ServeOptions, on_stop: (string) => void): i32 {
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
@@ -1011,6 +1038,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         accepting = ended.2;
         if (ended.3) {
             drv.close();
+            on_stop(__stop_reason(stop));
             return __stop_code(stop);
         }
     }
@@ -1025,7 +1053,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // value through the handler chain. The state lives in the loop frame,
 // so it is process-lifetime without any language-level global: each
 // request sees the value the previous one returned.
-function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions): i32 {
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), opts: ServeOptions, on_stop: (string, S) => void): i32 {
     var st: S = init;
     var drv: async.RealDriver = async.real_driver();
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
@@ -1094,6 +1122,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         accepting = ended.2;
         if (ended.3) {
             drv.close();
+            on_stop(__stop_reason(stop), st);
             return __stop_code(stop);
         }
     }
@@ -1180,12 +1209,12 @@ function __supervisor_fork(drv: async.RealDriver, listener: i32, handler: (HttpR
         drv.unwatch_signal(17);
         drv.unwatch_signal(15);
         drv.close();
-        return (sup, __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 }));
+        return (sup, __serve_loop(listener, handler, ServeOptions { ...opts, workers: 1 }, (reason: string): void => {}));
     }
     if (pid < 0) { return (sup, pid); }
     if (pid == 0) {
         drv.close();
-        exit(__serve_loop(listener, handler, opts));
+        exit(__serve_loop(listener, handler, opts, (reason: string): void => {}));
         return (sup, 0);
     }
     return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()) }, 0 - 1);

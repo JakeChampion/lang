@@ -154,7 +154,9 @@ the native supervised path and the interp fallback.
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,
   closes the listener, ends keep-alive and drains what is in flight
-  under a deadline, exiting 1 when it cut a request off.
+  under a deadline, exiting 1 when it cut a request off, and calls the
+  program's `shutdown` hook (per worker, with that worker's state) on
+  the way out.
 - Windows — no native Windows target exists.
 - Self-host compiler support for `proc_fork`/`proc_waitpid` —
   native serve supervision is a native-target runtime feature and

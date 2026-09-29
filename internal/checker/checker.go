@@ -20818,6 +20818,21 @@ func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
 			"`init` returns a value, but the handler takes no state parameter to thread it through")
 		return false
 	}
+	// `shutdown(reason)` or `shutdown(reason, state)`: the state parameter
+	// follows the handler's, since the loop hands the hook the state as
+	// the last request left it.
+	if shutdown := findDecl(prog, "shutdown"); shutdown != nil {
+		switch {
+		case len(shutdown.Params) == 2 && !handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes a state parameter, but no `init` produces the state to hand it")
+			return false
+		case len(shutdown.Params) == 1 && handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes no state parameter, but the handler threads a state it would drop")
+			return false
+		}
+	}
 	return true
 }
 
@@ -21004,6 +21019,13 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 //	    return tcp_serve_with(__port_from_env("PORT", 8080), init(), handle);
 //	}
 //
+// and with a `shutdown` hook declared, the `_shutdown` entry of either,
+// handed `serve_options()` and the hook:
+//
+//	function main(): i32 {
+//	    return tcp_serve_with_shutdown(__port_from_env("PORT", 8080), serve_options(), init(), handle, shutdown);
+//	}
+//
 // — the canonical entry point for handler-shaped programs on
 // CLI / arm64 targets. The wasi-http target has its own
 // `wasi:http/incoming-handler.handle` export wrapper that
@@ -21049,6 +21071,12 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 
 	var stmts []ast.Stmt
 	var serveCall *ast.Call
+	// A `shutdown` hook goes to the `_shutdown` entry, which takes the
+	// options too (`serve_options()`, the defaults) and calls the hook once
+	// the loop has stopped.
+	hasShutdown := findDecl(prog, "shutdown") != nil
+	optsCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve("serve_options", "tcp__serve_options")}, Args: nil}
+	shutdownRef := &ast.Ident{P: pos, Name: "shutdown"}
 	if initProvidesState(prog) {
 		// `init(): S` + `handle(state: S, req, plat): (S, HttpResponse)`
 		// — the two-phase lifecycle: build the state once, thread it
@@ -21064,6 +21092,13 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 				&ast.Ident{P: pos, Name: "handle"},
 			},
 		}
+		if hasShutdown {
+			serveCall = &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with_shutdown", "tcp__tcp_serve_with_shutdown")},
+				Args:   []ast.Expr{portCall, optsCall, initCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
+			}
+		}
 	} else {
 		serveCall = &ast.Call{
 			P:      pos,
@@ -21072,6 +21107,13 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 				portCall,
 				&ast.Ident{P: pos, Name: "handle"},
 			},
+		}
+		if hasShutdown {
+			serveCall = &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_shutdown", "tcp__tcp_serve_shutdown")},
+				Args:   []ast.Expr{portCall, optsCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
+			}
 		}
 		// A void `init` runs for its side effects before the loop —
 		// logging "starting", reading env vars, warming a cache the

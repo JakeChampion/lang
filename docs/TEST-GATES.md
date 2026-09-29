@@ -327,7 +327,12 @@ in native): it serves on `PORT` and threads `init`'s state.
 and their self-host twins pin the handler that answers a Result: the
 compilers wrap it so `?` fails into an RFC 9457 problem and the state
 survives the failure; `TestResultHandlerIsAdapted` (`internal/checker`)
-pins the rename and the wrapper's shape.
+pins the rename and the wrapper's shape. `TestServeShutdownHookX86_64`
+and `TestSelfHostServeShutdownHook` pin the `shutdown(reason, state)`
+hook: after two requests and SIGTERM the hook reports "sigterm" and the
+count; `TestSynthesisedHandleMainWiresShutdown` (`internal/checker`) and
+`TestSelfHostHandlerStateX86_64` pin the wiring and the E075 pairing on
+both compilers.
 
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/e2e/testdata/http-corpus`,
