@@ -236,9 +236,8 @@ pub function is_wide(t: typeinfo.Type): boolean { return is_i64(t) || is_u64(t);
 
 // The pointer-width unsigned integer: an address, occupying the narrow slot,
 // which is the address's own width on every backend — 32 bits on wasm, the
-// whole 64-bit slot on the register backends. It converts to and from the
-// 64-bit integers and nothing else: an operator at it would run at the i32's
-// width on a register backend, which is not the address's.
+// whole 64-bit slot on the register backends. An operator at it runs at that
+// width, never at the i32's.
 pub function is_usize(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(i) = t { return i.width == typeinfo.width_ptr() && i.unsigned && !i.is_char; }
     return false;
@@ -1507,17 +1506,11 @@ pub function binary_result(op: string, left: typeinfo.Type, right: typeinfo.Type
     return typeinfo.unchecked();
 }
 
-// An address supports the operators whose lowering does not read the operand
-// WIDTH, since the stack IR carries no binary at the pointer width: the
-// backends run add/sub/mul and the bitwise three on the whole register, and a
-// comparison on the whole register too. The shifts mask their count to the
-// operand width and div/rem select their register pair from it, so at the
-// narrow width both would truncate an address — those stay refused until a
-// pointer-width binary exists for the backends to resolve. The saturating and
-// checked operators clamp at a width the type names, which the native checker
-// refuses for an address (E009) and this boundary refuses with it.
+// An address takes every integer operator at the pointer width, which each
+// backend resolves. The saturating and checked operators clamp at a width the
+// type names, which the native checker refuses for an address (E009) and this
+// boundary refuses with it.
 function address_result(op: string, t: typeinfo.Type): typeinfo.Type {
-    if (op == "/" || op == "%" || op == "<<" || op == ">>") { return typeinfo.unchecked(); }
     if (saturating(op) || checked_arith(op)) { return typeinfo.unchecked(); }
     return integer_result(op, t);
 }

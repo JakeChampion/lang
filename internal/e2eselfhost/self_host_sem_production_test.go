@@ -4860,6 +4860,13 @@ function main(): i32 {
     return 0;
 }
 `},
+	// Division, remainder, the shifts and the orderings on an address, with
+	// bit 31 set so wasm's 32-bit address needs the unsigned forms (#10737).
+	{name: "usize-unsigned-operators", atLeast: 1, noLeak: true, src: semUsizeOperatorsSource},
+	// The same operators past 32 bits, where the register backends must run
+	// them at 64: a 32-bit divide or a count masked mod 32 truncates. u64
+	// rides along as the width's reference.
+	{name: "usize-operators-at-register-width", atLeast: 3, nativeOnly: true, noLeak: true, src: semUsizeWideOperatorsSource},
 	// The FFI trampolines, reached behind a test that never holds so no C
 	// pointer is called: the typed path produces each caller and the shims
 	// link (#10736).
@@ -5752,6 +5759,58 @@ function make(i: i32): dyn Show {
     if (i % 3 == 0) { return i; }
     if (i % 3 == 1) { return "s" + i.to_string(); }
     return Sq { side: i, tag: "t" + i.to_string() };
+}
+`
+
+// semUsizeOperatorsSource checks each unsigned operator on addresses that stay
+// inside 32 bits, so it answers 31 on every target.
+const semUsizeOperatorsSource = `
+function main(): i32 {
+    var n: i32 = args().len() + 69;
+    var one: usize = (n - 69) as usize;
+    var top: usize = one << (n - 39);
+    var a: usize = top + (n as usize);
+    var b: usize = (n - 59) as usize;
+    var got: i32 = 0;
+    if ((a / b) as i64 == 195225792i64) { got = got + 1; }
+    if ((a % b) as i32 == 6) { got = got + 2; }
+    if ((top >> (n - 40)) as i32 == 2 && (a >> 28) as i32 == 8) { got = got + 4; }
+    if (top > b && a >= top && b < a && !(a <= b)) { got = got + 8; }
+    if (a / (0 as usize) == (0 as usize) && a % (0 as usize) == a) { got = got + 16; }
+    return got;
+}
+`
+
+// semUsizeWideOperatorsSource is semUsizeOperatorsSource past 32 bits, beside
+// the same checks on u64; it answers 127 on the register backends.
+const semUsizeWideOperatorsSource = `
+function scaled(n: i32): usize { return ((n as i64) * 1000000000i64) as usize; }
+function addresses(n: i32): i32 {
+    var a: usize = scaled(n);
+    var b: usize = scaled(1);
+    var one: usize = (n - 69) as usize;
+    var top: usize = one << (n - 7);
+    var got: i32 = 0;
+    if ((a / b) as i32 == 70) { got = got + 1; }
+    if ((a % (b + (7 as usize))) as i64 == 999999517i64) { got = got + 2; }
+    if (((one << (n - 30)) >> (n - 32)) as i32 == 4) { got = got + 4; }
+    if ((top >> 62) as i32 == 2) { got = got + 8; }
+    if (top > a && a >= b && b < top && !(a <= b)) { got = got + 16; }
+    return got;
+}
+function wide(n: i32): i32 {
+    var one: u64 = (n - 69) as u64;
+    var top: u64 = one << ((n - 7) as u64);
+    var a: u64 = top + (70 as u64);
+    var b: u64 = (n - 60) as u64;
+    var got: i32 = 0;
+    if (((a / b) >> 59) as i32 == 1 && (a % b) as i32 == 8) { got = got + 1; }
+    if ((top >> 62) as i32 == 2 && a > b && !(top < b)) { got = got + 2; }
+    return got;
+}
+function main(): i32 {
+    var n: i32 = args().len() + 69;
+    return addresses(n) + wide(n) * 32;
 }
 `
 
