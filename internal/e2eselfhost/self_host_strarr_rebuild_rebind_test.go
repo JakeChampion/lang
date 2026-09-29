@@ -30,9 +30,9 @@ import (
 //
 // The failure mode is an over-release rather than a leak — the store now frees
 // element boxes another holder could still reach — so the refused rows below
-// are essential. Five shapes escape the array, bind an element out of it,
-// rebind from a live local, rebuild from the array's own element, or store it
-// into a container; each reads its value back after 200 rounds of churn have
+// are essential. Four shapes bind an element out of the array, rebind from a
+// live local, rebuild from the array's own element, or store it into a
+// container; each reads its value back after 200 rounds of churn have
 // recycled the freelist, each stays pinned at its leaking count, and each
 // answers identically on native x86-64, `bin/fern -interp` and the self-host.
 //
@@ -170,8 +170,9 @@ function round(i: i32): i32 {
 			want: 51, balance: true,
 		},
 		{
-			// REFUSED: the array escapes the frame.
-			name: "refused_array_escapes",
+			// A local returned bare after its rebuild (#10721): the rebind releases
+			// the superseded array and the return moves the rebuilt one out.
+			name: "returned_after_rebuild",
 			src: strarrRebuildDecl + `function grab(i: i32): string[] { var x: string[] = [mkstr("x")]; x = [mkstr("y"), mkstr("z")]; return x; }
 function round(i: i32): i32 {
     var want: i32 = mkstr("y").len();
@@ -181,7 +182,7 @@ function round(i: i32): i32 {
     if (xs[0].len() != want) { return 0 - 2; }
     return (xs[1].len() + junk) % 101;
 }` + strarrRebuildChurnMain,
-			want: 72,
+			want: 72, balance: true,
 		},
 		{
 			// REFUSED: an ELEMENT is bound out before the rebind, so the store's
