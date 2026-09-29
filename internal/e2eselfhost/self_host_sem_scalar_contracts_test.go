@@ -17,8 +17,8 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 		want   int
 		interp bool
 	}{
-		{"usize-operators", semUsizeOperatorsSource, 31, true},
-		{"usize-operators-at-register-width", semUsizeWideOperatorsSource, 127, true},
+		{"usize-operators", semUsizeOperatorsSource, 63, true},
+		{"usize-operators-at-register-width", semUsizeWideOperatorsSource, 255, true},
 		{"usize-wide-literal", semUsizeWideLiteralSource, 70, true},
 		// The interpreter has no C ABI to call through.
 		{"c-call-trampolines", semCCallSource, 0, false},
@@ -43,7 +43,7 @@ func TestSelfHostSemScalarContracts(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"usize-operators", semUsizeOperatorsSource, 31},
+		{"usize-operators", semUsizeOperatorsSource, 63},
 		// 70000000000 wraps to the 32-bit address 1280523264 (#10743).
 		{"usize-wide-literal", semUsizeWideLiteralSource, 1},
 	}

@@ -10447,6 +10447,8 @@ pub function expr_is_usize(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprIdent(id) => { return s.is_usize_slot(s.slot_of(id.name)) || id.ty == "usize"; },
         ast.ExprUnary(u) => { return u.op == "as_usize"; },
+        ast.ExprIndex(x) => { return x.ty == "usize"; },
+        ast.ExprFieldAccess(fa) => { return fa.ty == "usize"; },
         ast.ExprBinary(b) => { return b.ty == "usize" || (util.has_str(["+", "-"], b.op) && expr_is_usize(b.left, s)); },
         ast.ExprCall(c) => {
             if (c.ty == "usize") { return true; }
