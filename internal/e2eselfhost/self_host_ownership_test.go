@@ -10,10 +10,12 @@ import (
 // ownershipCases pin the borrow inference: which reference parameters
 // `semsource` hands to the callee as COUNTED, and which stay borrowed.
 //
-// The rule is `ownership.escaping` — a parameter is counted when it, or
-// anything anchored to it, is returned, built into a container or box, stored
-// into a cell or a map, or passed to a slot its callee counts. Everything else
-// borrows, because the caller's retain and the callee's release would cancel.
+// The rule is `ownership.escaping` — a parameter is counted when it is
+// returned, or when it or anything anchored to it is built into a container or
+// box, stored into a cell or a map, or passed to a slot its callee counts.
+// Returning a projection of it does not count it: the callee retains the
+// projection instead. Everything else borrows, because the caller's retain and
+// the callee's release would cancel.
 //
 // What each CONSUMING case measures is the allocation census, because that is
 // what the two conventions differ on there. A borrowed parameter cannot be
@@ -140,6 +142,32 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 30},
+	// A reader that RETURNS a projection of its parameter keeps it borrowed:
+	// `peek` retains the element it hands back instead of taking the whole
+	// cursor, so a caller that goes on using the cursor retains and releases
+	// nothing per call. The parser's `Par.peek` is this shape. The census pins
+	// that the retained element is still reclaimed and the cursor is not
+	// over-released.
+	{"returned-projection-keeps-the-parameter-borrowed", `enum Tok { Word(string), Num(i32), End }
+struct Cursor { toks: Tok[], pos: i32 }
+@noinline
+function (c: Cursor) peek(): Tok {
+    if (c.pos < c.toks.len()) { return c.toks[c.pos]; }
+    return End;
+}
+@noinline
+function (c: Cursor) advance(): Cursor { return Cursor { toks: c.toks, pos: c.pos + 1 }; }
+function main(): i32 {
+    var c: Cursor = Cursor { toks: [Word("ab" + "c"), Num(4), Word("de" + "")], pos: 0 };
+    var total: i32 = 0;
+    while (c.pos < 4) {
+        match (c.peek()) { Word(s) => { total = total + s.len(); }, Num(n) => { total = total + n; }, End => { total = total + 100; } }
+        c = c.advance();
+    }
+    if (total != 109) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
 	// A parameter the frame hands BACK escapes, so it is counted even though
 	// the body only reads it — the caller must not also reclaim what it
 	// returned. The pin here is the exit code and a balanced census: an
@@ -204,10 +232,20 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 // parameter and must drop, `reads_only` must not. The same pair for a record:
 // `keep_or_new` hands its parameter back on one arm and drops it on the other,
 // and `lends_to_builtin` only lends a field to a builtin's lent slot, which
-// takes no unit.
+// takes no unit. And for a receiver: `advance` builds a new cursor out of its
+// parameter and must drop it, `peek` returns an element of its token array and
+// must not.
 const inferredModesProgram = `enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
+struct Cursor { toks: Node[], pos: i32 }
+@noinline
+function (c: Cursor) peek(): Node {
+    if (c.pos < c.toks.len()) { return c.toks[c.pos]; }
+    return Empty;
+}
+@noinline
+function (c: Cursor) advance(): Cursor { return Cursor { toks: c.toks, pos: c.pos + 1 }; }
 @noinline
 function depth(t: Tree): i32 {
     match (t) { Tip(_) => { return 1; }, Fork(l, r) => { return 1 + depth(l) + depth(r); } }
@@ -253,6 +291,10 @@ function main(): i32 {
     if (depth(t) != 5) { return 4; }
     t = bump(t);
     if (depth(t) != 5) { return 5; }
+    var c: Cursor = Cursor { toks: [Leaf(2), Label("xy" + "")], pos: 0 };
+    var w: i32 = 0;
+    while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
+    if (w != 6) { return 6; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -341,5 +383,20 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(walk, treeDrop) {
 		t.Errorf("depth calls %s: a recursive walk whose result holds no reference was inferred COUNTED through its own recursive call", treeDrop)
+	}
+	const cursorDrop = "__sem_release_Cursor"
+	step, ok := asmWholeFunc(string(asm), "Cursor__advance")
+	if !ok {
+		t.Fatal("no __fn_Cursor__advance in the emitted code")
+	}
+	if !strings.Contains(step, cursorDrop) {
+		t.Fatalf("Cursor.advance does not call %s — the marker this reads is gone, so the projection assertion below proves nothing", cursorDrop)
+	}
+	look, ok := asmWholeFunc(string(asm), "Cursor__peek")
+	if !ok {
+		t.Fatal("no __fn_Cursor__peek in the emitted code")
+	}
+	if strings.Contains(look, cursorDrop) {
+		t.Errorf("Cursor.peek calls %s: a receiver whose projection is returned was inferred COUNTED, so every call retains and releases the whole cursor", cursorDrop)
 	}
 }
