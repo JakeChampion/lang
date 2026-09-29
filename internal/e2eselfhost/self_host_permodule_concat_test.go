@@ -149,12 +149,11 @@ func TestSelfHostPerModuleConcatX86_64(t *testing.T) {
 // checks. Keeping it means a future regression in the arm64 unit path's
 // runtime-helper symbols fails here instead of silently going green.
 //
-// This is an x86-HOST test that cross-emits for arm64, and the reason is
-// structural rather than a choice: buildSelfHostBin compiles every driver
-// for x86-64-linux (e2eharness.CompileWithSelfHost), so a self-host DRIVER
-// binary is always x86-64. There is no arm64 driver to build, which is why
-// the whole TestSelfHost*Arm64 family runs the driver on x86 and only the
-// EMITTED program is arm64.
+// This is an x86-HOST test that cross-emits for arm64: the driver is the
+// x86-64 build (buildSelfHostBin) run on the host, and only the EMITTED
+// program is arm64, the shape the whole TestSelfHost*Arm64 family shares.
+// The pin can build an arm64 driver too (buildSelfHostBinFor), but the path
+// under test here is the cross-emit one.
 //
 // So the requirements are: a native x86-64 host to exec the driver, plus the
 // aarch64 cross toolchain to assemble/link/run the emitted program. On a native

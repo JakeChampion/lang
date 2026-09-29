@@ -622,7 +622,12 @@ stage1 is under `make bootstrap`, so every driver is held to what the pin can
 compile — a driver using a newer construct fails to build here, and the answer
 is the pin refresh `docs/BOOTSTRAP.md` describes. What these runs prove is the
 current SOURCE's behaviour; the current compiler's own output is what the
-fixture, differential and `cli` lanes run.
+fixture, differential and `cli` lanes run. The pin also builds a driver for
+`-target arm64-linux` (`BuildSelfHostBinFor`), which is how the module
+self-tests (`TestSelfHostParserArm64` and its siblings) and the cross-host
+mmc gate run the self-host sources as aarch64 programs under qemu, and it
+emits the arm64-darwin assembly the Mach-O gate assembles; the suite calls no
+Go emitter directly.
 
 ### An answer is not proof the IR path produced it
 
