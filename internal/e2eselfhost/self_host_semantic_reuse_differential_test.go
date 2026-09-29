@@ -378,6 +378,27 @@ function main(): i32 {
     return r;
 }`, 44, 1, 0, 3, 7, false, false},
 
+	// A field read from its own slot, stored back there and also returned:
+	// the read is taken and the construction retains it, two units where the
+	// donor's slot holds one, so the field is not kept. Kept, the
+	// construction's release freed the array `grab` returns.
+	{"update-keeps-no-field-held-twice", `struct P { f: string[], n: i32 }
+function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
+function mkv(): string[] { var o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+function grab(i: i32): string[] {
+    var q: P = P { f: mkv(), n: i };
+    var tt: string[] = q.f;
+    var p: P = P { f: tt, n: i };
+    return tt;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { var xs: string[] = grab(i); var y: string[] = mkv(); t = t + xs[0].len() + y[1].len(); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t % 101;
+}`, 46, 1, 0, 28, 32, false, false},
+
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {
     var v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };

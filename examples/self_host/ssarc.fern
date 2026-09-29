@@ -1217,8 +1217,10 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
     var pos: i32 = 0;
     while (pos <= taken) {
         var get: ssa.SInst = b.insts[pos];
+        // Exactly one unit: a read that is taken AND retained at the
+        // construction holds two, and keeping in place stands in for one.
         if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
-                && (payload_taken(f, p, get) || util.index_of_i32(retained, get.result) >= 0)) {
+                && payload_taken(f, p, get) != (util.index_of_i32(retained, get.result) >= 0)) {
             var i: i32 = util.index_of_i32(ins.args, get.result);
             // Once: the donor's slot holds one unit, which a second operand
             // naming the same value would need a retain of its own for.
