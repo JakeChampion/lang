@@ -356,10 +356,21 @@ function settled(t: typeinfo.Type): typeinfo.Type {
     if let typeinfo.TypeMap(m) = t { return typeinfo.TypeMap { key: settled(m.key), value: settled(m.value) }; }
     if let typeinfo.TypeUnion(u) = t {
         var args: typeinfo.Type[] = [];
-        for a in u.args { args = args.append(settled(a)); }
+        for a in u.args { args = args.append(settled_payload(a)); }
         return typeinfo.TypeUnion { ...u, args: args };
     }
     return t;
+}
+
+// A bare `None` names no payload, so as a payload itself (`Some(None)` with no
+// annotation) the checker leaves it `Option` alone. Nothing can build its
+// `Some` without settling the payload, so the value is only ever None and it
+// settles at a void payload, which carries nothing.
+function settled_payload(t: typeinfo.Type): typeinfo.Type {
+    if let typeinfo.TypeUnion(u) = t {
+        if (u.name == "Option" && u.args.len() == 0) { return typeinfo.TypeUnion { ...u, args: [t_void()] }; }
+    }
+    return settled(t);
 }
 
 // ---- expressions ------------------------------------------------------------

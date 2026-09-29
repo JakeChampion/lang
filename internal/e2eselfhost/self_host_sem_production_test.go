@@ -5512,6 +5512,18 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t % 256; }
 `},
+	// An unannotated Some(None): the checker leaves the inner Option's payload
+	// open, and it settles at a void payload, since only None can build it
+	// (#10693).
+	{name: "an-unannotated-none-payload-settles-at-void", atLeast: 2, noLeak: true, src: `
+function round(i: i32): i32 {
+    var o = Some(None);
+    var k: i32 = 0;
+    match (o) { Some(inner) => { match (inner) { Some(_) => { k = 1; }, None => { k = 9; } } }, None => { k = 2; } }
+    return k + i % 3;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 20) { t = t + round(i); i = i + 1; } return t; }
+`},
 }
 
 // semDynShapes is a trait with a record and an enum implementation, each
