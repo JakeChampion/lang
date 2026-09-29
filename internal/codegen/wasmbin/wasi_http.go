@@ -15,9 +15,10 @@
 // the wrapper hardcodes must stay in lockstep with the checker's
 // `Param` ordering:
 //
-//	HttpRequest  (24 bytes): method@+0/+4, path@+8/+12,
+//	HttpRequest  (28 bytes): method@+0/+4, path@+8/+12,
 //	                          body@+16 (Stream ptr),
-//	                          headers@+20 (HeaderMap ptr)
+//	                          headers@+20 (HeaderMap ptr),
+//	                          trailers@+24 (HeaderMap ptr, empty)
 //	HttpResponse (24 bytes): status@+0, body@+8/+12,
 //	                          headers@+16 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
@@ -176,7 +177,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //  5. Read body via consume → stream → blocking-read accumulator
 //     loop, then finish + drop.
 //  6. Drop incoming-request.
-//  7. Build the HttpRequest struct (28 bytes); populate the
+//  7. Build the HttpRequest struct (28 bytes + rc header); populate the
 //     HeaderMap from fields.entries via the lang-side
 //     __method_HeaderMap_append.
 //  8. Drop the fields handle.
@@ -243,6 +244,11 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //	41: $write_off
 //	42: $write_chunk
 //	43: $write_buf
+//	44: $body_box
+//	45: $body_stream_struct
+//	46: $req_trailers
+//	47: $tr_names
+//	48: $tr_values
 //	44: $req_body_arr
 //	45: $req_body_stream
 //
@@ -544,17 +550,16 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = memory.InstI32Store(body, 2, 0)
 
-	// ================ Build HttpRequest (24 bytes + 8-byte rc header) ================
+	// ================ Build HttpRequest (28 bytes + 8-byte rc header) ================
 	// Phase 1e-runtime: HttpRequest carries a static-sentinel
 	// rc header at `[req - 8]` so user code that aliases the
 	// request via `var r = req;` or `req.body_string()` can
 	// safely run through __fern_rc_inc/dec (Phase 1e-struct-ii
 	// widened the inc predicate to include struct types). Alloc
-	// bumps 24 → 32; sentinel at base+0; data = base+8. All
-	// field offsets below are still relative to the slot-17
-	// pointer, which now holds base+8 — same offsets as before
-	// from the data pointer's perspective.
-	body = inst.InstI32Const(body, 32)
+	// is 28 + 8; sentinel at base+0; data = base+8. All
+	// field offsets below are relative to the slot-17 pointer,
+	// which holds base+8.
+	body = inst.InstI32Const(body, 36)
 	body = inst.InstCall(body, alloc)
 	// Static sentinel at base + 0.
 	body = inst.InstLocalTee(body, 17)
@@ -700,6 +705,34 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 20)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 27)
+	body = memory.InstI32Store(body, 2, 0)
+
+	// HttpRequest.trailers (offset +24) = an empty HeaderMap, built
+	// like the headers' before its entries: the body's trailers are a
+	// future-trailers the wrapper drops unread.
+	body = emitEmptyStrArray(body, idxs, 47)
+	body = emitEmptyStrArray(body, idxs, 48)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 46)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 46)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 46)
+	body = inst.InstLocalGet(body, 46)
+	body = inst.InstLocalGet(body, 47)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 46)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 48)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 17)
+	body = inst.InstI32Const(body, 24)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 46)
 	body = memory.InstI32Store(body, 2, 0)
 
 	// Drop request fields, then the incoming-request itself —
@@ -970,11 +1003,11 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 0)
 	body = inst.InstCall(body, outparamSet)
 
-	// 42 i32 locals after the 2 params (slots 2..43). Slot 24
+	// 47 i32 locals after the 2 params (slots 2..48). Slot 24
 	// (formerly $arena_handle) is now unused: per-request memory
 	// is reclaimed by reference counting, not a bump-cursor reset.
-	// Kept allocated to avoid renumbering slots 25..43.
-	locals := inst.PutLocalsOneGroup(nil, 44, encode.ValtypeI32)
+	// Kept allocated to avoid renumbering slots 25..48.
+	locals := inst.PutLocalsOneGroup(nil, 47, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

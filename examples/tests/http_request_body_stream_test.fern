@@ -27,9 +27,9 @@ function wire(body: string): string {
 function parsed(body: string): HttpRequest {
     match (http.http_parse_request(wire(body))) {
         Some(req) => { return req; },
-        None => { return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() }; }
+        None => { return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() }; }
     }
-    return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() };
+    return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
 }
 
 function req_headers_placeholder(): HeaderMap {

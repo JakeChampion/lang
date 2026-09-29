@@ -201,9 +201,9 @@ function test_framing_tells_incomplete_from_malformed(): test.TestOutcome {
 }
 
 // A chunked body (RFC 9112 §7.1) is decoded, chunk extensions skipped,
-// trailers read under the header rules and then discarded, and the
-// framed length covers the whole wire, so the request behind it is
-// found.
+// trailers read under the header rules into `request.trailers`, apart
+// from the headers, and the framed length covers the whole wire, so the
+// request behind it is found.
 function wire_chunked(): string {
     return "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n5;ext=\"x\"\r\nhello\r\n06\r\n world\r\n0\r\nX-Sum: 11\r\n\r\n";
 }
@@ -226,6 +226,11 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
         Some(req) => {
             if (req.body_string() != "hello world") { return test.fail("body: " + req.body_string()); }
             if (req.headers.len() != 2) { return test.fail("the trailer reached the headers: " + req.headers.len().to_string()); }
+            if (req.trailers.len() != 1) { return test.fail("trailers: " + req.trailers.len().to_string()); }
+            match (req.trailers.get("x-sum")) {
+                Some(v) => { if (v != "11") { return test.fail("trailer value: " + v); } },
+                None => { return test.fail("the trailer was not kept"); }
+            }
         },
         None => { return test.fail("a chunked request refused"); }
     }
@@ -241,6 +246,10 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
     }
     if (body_of("POST / HTTP/1.1\r\nTransfer-Encoding: Chunked\r\n\r\n0A\r\n0123456789\r\n000\r\n\r\n") != "0123456789") { return test.fail("an uppercase coding, hex digit and leading zeros refused"); }
     if (body_of(chunked("0\r\n\r\n")) != "") { return test.fail("an empty chunked body refused"); }
+    match (http.http_parse_request(wire_post())) {
+        Some(req) => { if (req.trailers.len() != 0) { return test.fail("a Content-Length body has trailers"); } },
+        None => { return test.fail("parse failed"); }
+    }
     if (body_of(chunked("5 ;a=b\r\nhello\r\n0\r\n\r\n")) != "hello") { return test.fail("whitespace before a chunk extension refused"); }
     if (body_of(chunked("1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n")) != "abc") { return test.fail("three chunks not joined"); }
     return test.pass();
