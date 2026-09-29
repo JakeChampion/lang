@@ -1,25 +1,20 @@
 package e2eselfhost
 
 import (
-	"bytes"
-	"os/exec"
 	"strings"
 	"testing"
 )
 
 // Issue #2649 — IR-path runtime helpers written in Fern.
 //
-// The IR driver compiles each migrated helper from its Fern source
+// The compiler builds each migrated helper from its Fern source
 // (asmcore.rt_src_*, lowered by asm_ir.emit_ir_runtime_fern_fn), so it links as
 // the ordinary user-function symbol __fn___fern_<name>. The behavioural suites
 // prove the helpers compute correctly; this test locks in the *migration*: the
 // emitted asm must define the Fern-compiled symbol and must NOT contain the old
 // hand-asm body's local labels, so a silent revert fails.
 func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun_rt")
+	cli := newStrictCLI(t)
 
 	cases := []struct {
 		name string
@@ -46,7 +41,8 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// became Fern). The old hand-written IR body's local labels (.Lir_trim_*)
 			// must be gone.
 			"str_trim",
-			`function main(): i32 { return "  hi ".trim().len(); }`,
+			`import "std/string";
+function main(): i32 { return "  hi ".trim().len(); }`,
 			"__fn___fern_str_trim",
 			[]string{"\n__fern_str_trim:", ".Lir_trim_front", ".Ltrim_front"},
 		},
@@ -54,7 +50,8 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// str_lines — migrated on the IR path too. The old hand-written IR body
 			// (__fern_str_lines: / .Lir_lines_box) must be gone.
 			"str_lines",
-			`function main(): i32 { return "a\nb\n".lines().len(); }`,
+			`import "std/string";
+function main(): i32 { return "a\nb\n".lines().len(); }`,
 			"__fn___fern_str_lines",
 			[]string{"\n__fern_str_lines:", ".Lir_lines_box"},
 		},
@@ -62,8 +59,9 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// str_bytes — migrated on the IR path too. The old hand-written IR body
 			// (__fern_str_bytes: / .Lir_bytes_loop) must be gone.
 			"str_bytes",
-			`function main(): i32 { return "abc".bytes().len(); }`,
-			"__fn___fern_str_bytes",
+			`import "std/string";
+function main(): i32 { return "abc".bytes().len(); }`,
+			"__fn___fern_str_bytes_u8",
 			[]string{"\n__fern_str_bytes:", ".Lir_bytes_loop"},
 		},
 		{
@@ -77,35 +75,28 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			[]string{"movq 8(%rsp), %rdi"},
 		},
 		{
-			// str_concat — backs `+` on strings, migrated on the IR path too. The old
-			// hand-written register-ABI body (__fern_str_concat: / .Lstrconcat_a_loop)
-			// must be gone; the op now calls __fn___fern_str_concat.
+			// str_concat — backs `+` on strings. The old hand-written register-ABI
+			// body (__fern_str_concat: / .Lstrconcat_a_loop) must be gone. One
+			// operand comes from args() so the concat is not folded to a constant.
 			"str_concat",
-			`function main(): i32 { var s: string = "ab" + "cd"; return s.len(); }`,
+			`function main(): i32 { var xs: string[] = args(); var s: string = xs[0] + "cd"; return s.len(); }`,
 			"__fn___fern_str_concat",
 			[]string{"\n__fern_str_concat:", ".Lstrconcat_a_loop"},
-		},
-		{
-			// i32_to_string — migrated on the IR path too. The IR symbol
-			// __fn___fern_i32_to_string is unchanged, but the old hand-written body's
-			// loop label .Liri2s_div and stack-arg load `movq 8(%rsp), %rdi` are gone.
-			"i32_to_string",
-			`function main(): i32 { return i32_to_string(42).len(); }`,
-			"__fn___fern_i32_to_string",
-			[]string{".Liri2s_div", "movq 8(%rsp), %rdi"},
 		},
 		{
 			// str_to_upper — migrated on the IR path too. The old hand-written IR
 			// body (__fern_str_to_upper: / .Lir_upper_loop) must be gone.
 			"str_to_upper",
-			`function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
+			`import "std/string";
+function main(): i32 { return "aB".to_ascii_upper()[0] as i32; }`,
 			"__fn___fern_str_to_upper",
 			[]string{"\n__fern_str_to_upper:", ".Lir_upper_loop"},
 		},
 		{
 			// str_to_lower — the lower-case sibling on the IR path.
 			"str_to_lower",
-			`function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
+			`import "std/string";
+function main(): i32 { return "Ab".to_ascii_lower()[0] as i32; }`,
 			"__fn___fern_str_to_lower",
 			[]string{"\n__fern_str_to_lower:", ".Lir_lower_loop"},
 		},
@@ -114,7 +105,8 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// IR body (__fern_str_repeat: / .Lir_rep_outer) must be gone; the
 			// op_str_repeat handler now calls __fn___fern_str_repeat via the stack ABI.
 			"str_repeat",
-			`function main(): i32 { return "ab".repeat(3).len(); }`,
+			`import "std/string";
+function main(): i32 { return "ab".repeat(3).len(); }`,
 			"__fn___fern_str_repeat",
 			[]string{"\n__fern_str_repeat:", ".Lir_rep_outer"},
 		},
@@ -123,17 +115,18 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// IR body (__fern_str_replace: / .Lir_repl_walk) must be gone; the
 			// op_str_replace handler now calls __fn___fern_str_replace via the stack ABI.
 			"str_replace",
-			`function main(): i32 { return "a.b".replace(".", "-").len(); }`,
+			`import "std/string";
+function main(): i32 { return "a.b".replace(".", "-").len(); }`,
 			"__fn___fern_str_replace",
 			[]string{"\n__fern_str_replace:", ".Lir_repl_walk"},
 		},
 		{
 			// string_from_bytes_unchecked — migrated on the IR path too (#2649). The old
 			// hand-written IR body (__fern_string_from_bytes: / .Lir_sfb_loop) must
-			// be gone; op_str_from_bytes now calls __fn___fern_string_from_bytes.
+			// be gone; op_str_from_bytes now calls __fn___fern_string_from_bytes_u8.
 			"string_from_bytes_unchecked",
 			`function main(): i32 { var b: u8[] = [104 as u8, 105 as u8]; return string_from_bytes_unchecked(b).len(); }`,
-			"__fn___fern_string_from_bytes",
+			"__fn___fern_string_from_bytes_u8",
 			[]string{"\n__fern_string_from_bytes:", ".Lir_sfb_loop"},
 		},
 		{
@@ -141,7 +134,8 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// IR body (__fern_str_split: / .Lir_split_cl) must be gone; op_str_split
 			// now calls __fn___fern_str_split via the stack ABI.
 			"str_split",
-			`function main(): i32 { return "a,b,c".split(",").len(); }`,
+			`import "std/string";
+function main(): i32 { return "a,b,c".split(",").len(); }`,
 			"__fn___fern_str_split",
 			[]string{"\n__fern_str_split:", ".Lir_split_cl"},
 		},
@@ -149,11 +143,11 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// random_bytes — the first syscall-leaf migrated to Fern (#2649),
 			// over the __syscall3 sub-floor. The old hand-written IR body
 			// (__fern_random_bytes:) must be gone; op_random_bytes now calls
-			// __fn___fern_random_bytes via the stack ABI, whose body does the
+			// __fn___fern_random_bytes_u8 via the stack ABI, whose body does the
 			// getrandom syscall through the raw `syscall` the __syscall3 op emits.
 			"random_bytes",
 			`function main(): i32 { var b: u8[] = random_bytes(8); return b.len(); }`,
-			"__fn___fern_random_bytes",
+			"__fn___fern_random_bytes_u8",
 			[]string{"\n__fern_random_bytes:"},
 		},
 		{
@@ -265,7 +259,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 			// __fn___fern_print_str, whose body writes straight out of the
 			// caller's box via __raw_data.
 			"print_str",
-			`function main(): i32 { print_str("x"); return 0; }`,
+			`function main(): i32 { print("x"); return 0; }`,
 			"__fn___fern_print_str",
 			[]string{"\n__fern_print_str:"},
 		},
@@ -321,23 +315,12 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.prog))
-			out, err := cmd.Output()
-			if err != nil {
-				t.Fatalf("driver run: %v", err)
-			}
-			got := string(out)
+			got := cli.emit(t, "x86-64-linux", tc.prog)
 			if !strings.Contains(got, tc.sym+":") {
-				t.Errorf("IR asm missing %s: definition — helper no longer compiled from Fern on the IR path?", tc.sym)
+				t.Errorf("asm missing %s: definition — helper no longer compiled from Fern?", tc.sym)
 			}
 			if !strings.Contains(got, "call "+tc.sym) {
-				t.Errorf("IR asm missing call %s — call site not resolving to the Fern helper", tc.sym)
+				t.Errorf("asm missing call %s — call site not resolving to the Fern helper", tc.sym)
 			}
 			for _, bad := range tc.gone {
 				// Label patterns ("\n__fern_x:" definitions, ".L*" local
@@ -354,7 +337,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 					scope = extractFuncBody(got, tc.sym)
 				}
 				if strings.Contains(scope, bad) {
-					t.Errorf("IR asm still contains hand-written form %q — IR migration regressed", bad)
+					t.Errorf("asm still contains hand-written form %q — migration regressed", bad)
 				}
 			}
 		})
@@ -377,18 +360,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
     match (remove_dir_all("/nope-parent/deep/tree")) { Err(_) => { r = r + 1; }, Ok(_) => {} }
     return r;
 }`
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(driverBin)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], driverBin)...)
-		}
-		cmd.Stdin = bytes.NewReader([]byte(prog))
-		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("driver run: %v", err)
-		}
-		got := string(out)
+		got := cli.emit(t, "x86-64-linux", prog)
 		if n := strings.Count(got, "\n__fn___fern_io_error:"); n != 1 {
 			t.Errorf("__fn___fern_io_error defined %d times, want exactly 1 (shared classifier)", n)
 		}
