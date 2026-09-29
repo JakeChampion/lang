@@ -26,8 +26,9 @@
 //      appending to the connection's request bytes (at most the parser's
 //      header and body caps unread).
 //   3. http_parse_request_framed — Incomplete ⇒ keep reading (on EOF, close);
-//      Malformed(status) ⇒ answer with that status (400, 413, 414, 431 or
-//      501), an empty body and `Connection: close`, then close; a
+//      Continue ⇒ send `100 Continue` once (RFC 9110 §10.1.1) and keep
+//      reading; Malformed(status) ⇒ answer with that status (400, 413,
+//      414, 417, 431 or 501), an empty body and `Connection: close`, then close; a
 //      malformed request behind an answered one gets no answer, since
 //      that answer already said close (RFC 9112 §9.6).
 //   4. handler(req) returns the HttpResponse.
@@ -251,8 +252,8 @@ function __recv_scratch(): u8[] {
 // response in flight is sent, how many requests it has answered, and
 // whether a complete request is still buffered because the event's
 // burst ended before it (answered on the next wait, which returns at
-// once).
-struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[] }
+// once), and whether the request being read has had its `100 Continue`.
+struct __Conns { fds: i32[], bufs: u8[][], offs: i32[], pending: string[], deadlines: i64[], keep: boolean[], served: i32[], backlog: boolean[], continued: boolean[] }
 
 // __Clock — the `Date` every response carries (RFC 9110 §6.6.1),
 // formatted once per second: the wall-clock second it was formatted for,
@@ -289,7 +290,7 @@ function __conns_index(c: __Conns, fd: i32): i32 {
 
 function __conns_add(c: __Conns, fd: i32, deadline: i64): __Conns {
     var empty: u8[] = [];
-    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false) };
+    return __Conns { fds: c.fds.append(fd), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(""), deadlines: c.deadlines.append(deadline), keep: c.keep.append(false), served: c.served.append(0), backlog: c.backlog.append(false), continued: c.continued.append(false) };
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
@@ -301,6 +302,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     var keep: boolean[] = [];
     var served: i32[] = [];
     var backlog: boolean[] = [];
+    var continued: boolean[] = [];
     var i: i32 = 0;
     while (i < c.fds.len()) {
         if (i != at) {
@@ -312,10 +314,11 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
             keep = keep.append(c.keep[i]);
             served = served.append(c.served[i]);
             backlog = backlog.append(c.backlog[i]);
+            continued = continued.append(c.continued[i]);
         }
         i = i + 1;
     }
-    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog };
+    return __Conns { fds: fds, bufs: bufs, offs: offs, pending: pending, deadlines: deadlines, keep: keep, served: served, backlog: backlog, continued: continued };
 }
 
 // __conns_timeout(c, now) — the wait's timeout: the milliseconds until the
@@ -412,6 +415,7 @@ function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
     match (tail) {
         http.Framed(_) => { return true; },
         http.Incomplete => { return !eof; },
+        http.Continue => { return !eof; },
         http.Malformed(_) => { return false; }
     }
     return false;
@@ -427,7 +431,7 @@ function __tail_persists(tail: http.HttpFraming, eof: boolean): boolean {
 function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: ServeOptions, eof: boolean): (__Conns, boolean, http.HttpFraming) {
     var served: i32 = c.served[at] + 1;
     var keep: boolean = f.keep_alive && served < opts.keep_alive_requests;
-    c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false) };
+    c = __Conns { ...c, offs: c.offs.with(at, c.offs[at] + f.len), served: c.served.with(at, served), backlog: c.backlog.with(at, false), continued: c.continued.with(at, false) };
     var tail: http.HttpFraming = http.http_parse_request_framed_from(c.bufs[at], c.offs[at]);
     if (keep) { keep = __tail_persists(tail, eof); }
     return (__Conns { ...c, keep: c.keep.with(at, keep) }, keep, tail);
@@ -471,9 +475,28 @@ function __serve_ready[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Serve
     match (tail) {
         http.Framed(_) => { return (c, true); },
         http.Incomplete => { return (__serve_next(c, at, opts), false); },
+        http.Continue => { return (__serve_continue(drv, c, at, opts), false); },
         http.Malformed(status) => { return (__serve_refuse(drv, c, at, status, opts, clk), false); }
     }
     return (c, false);
+}
+
+// __serve_continue(drv, c, at, opts) — a request whose header block asks
+// for `100 Continue` before its body is sent (RFC 9110 §10.1.1): the
+// interim response, once per request, then the wait for the body under
+// `__serve_next`'s deadline. A short write leaves the rest pending, to be
+// finished by a later wait, and the connection is kept for the request
+// it is still reading; a refused write closes it.
+function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: ServeOptions): __Conns {
+    if (c.continued[at]) { return __serve_next(c, at, opts); }
+    c = __Conns { ...c, continued: c.continued.with(at, true), keep: c.keep.with(at, true) };
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, "HTTP/1.1 100 Continue\r\n\r\n", opts.recv_deadline);
+    match (sent.1) {
+        Partial => { return sent.0; },
+        Failed => { return __serve_close(drv, sent.0, at); },
+        Whole => { return __serve_next(sent.0, at, opts); }
+    }
+    return sent.0;
 }
 
 // __serve_refuse(drv, c, at, status, opts) — the loop's own answer to a
@@ -667,7 +690,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -702,6 +725,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
+                    http.Continue => {
+                        conns = __serve_continue(drv, conns, at, opts);
+                        more = false;
+                    },
                     http.Malformed(status) => {
                         conns = __serve_refuse(drv, conns, at, status, opts, clk);
                         more = false;
@@ -730,7 +757,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var watched: i32 = drv.watch(listener, 1);
     if (watched < 0) { return watched; }
     var plat: Platform = __host_platform(drv.handle());
-    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [] };
+    var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [] };
     var scratch: u8[] = __recv_scratch();
     var clk: __Clock = __Clock { sec: 0 as i64, date: "" };
     while (true) {
@@ -766,6 +793,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
+                    http.Continue => {
+                        conns = __serve_continue(drv, conns, at, opts);
+                        more = false;
+                    },
                     http.Malformed(status) => {
                         conns = __serve_refuse(drv, conns, at, status, opts, clk);
                         more = false;

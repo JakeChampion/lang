@@ -313,7 +313,10 @@ body past the cap, answered 413 before it arrives and closed; a chunked request
 with a request pipelined behind it, whose decoded body the handler echoes
 and whose framing must leave exactly the second request to answer; a HEAD
 with a GET pipelined behind it, answered with the Content-Length and none
-of the body, then a 204, answered with neither; and an HTTP/1.0 keep-alive
+of the body, then a 204, answered with neither; a request whose header
+block says `Expect: 100-continue`, answered `100 Continue` before its
+body is sent and then with the body's echo, and one whose expectation
+the server cannot meet, answered 417; and an HTTP/1.0 keep-alive
 request followed by an HTTP/1.1 one. Every response's `Connection` and
 `Date` are
 checked, every close the server owes is read as EOF (a connection the

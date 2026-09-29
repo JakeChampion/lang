@@ -1056,10 +1056,13 @@ serializer.
   the same parse over text, one copy dearer.
   `http_parse_request_framed(buf: u8[]): HttpFraming` is the parse a
   persistent connection needs, answering `Framed(HttpFramed)`,
-  `Incomplete` (keep reading) or `Malformed(status)` (the loop answers
-  `status` with an empty body and `Connection: close`, then closes; a
-  malformed request behind an answered one gets no answer, since that
-  answer already said close, RFC 9112 §9.6):
+  `Incomplete` (keep reading), `Continue` (the header block has arrived
+  and says `Expect: 100-continue`, the body has not: the loop sends
+  `100 Continue` once and keeps reading, RFC 9110 §10.1.1) or
+  `Malformed(status)` (the loop answers `status` with an empty body and
+  `Connection: close`, then closes; a malformed request behind an
+  answered one gets no answer, since that answer already said close,
+  RFC 9112 §9.6):
   `HttpFramed { request, len, keep_alive }`
   says how many bytes the request occupied at the head of the buffer (so
   the next pipelined request can be found behind it) and whether the
@@ -1084,7 +1087,8 @@ serializer.
   is known: a request past a cap once the cap is passed, a bad request
   line once its CRLF has arrived, before the rest of the request. The
   status names the violation: 400 for the grammar and the `Host` rule,
-  413 for a body past its cap, 414 for a request line past its cap, 431
+  413 for a body past its cap, 414 for a request line past its cap, 417
+  for an `Expect` other than `100-continue`, 431
   for a header block past its byte or field cap or chunk framing past its
   budget, 501 for a transfer coding the parser cannot decode. A chunked body (§7.1, HTTP/1.1 only) is
   decoded into `request.body`: chunk extensions are skipped, trailers are
