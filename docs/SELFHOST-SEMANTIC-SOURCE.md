@@ -415,18 +415,24 @@ Unsupported constructs refuse the whole function with a reason.
 
   What a view may NOT do is outlive its source. A value that holds views —
   a checked slice's `Option[str]`, a variant or a phi carrying one — is
-  anchored to the one value holding the bytes they read (`ssasem.bytes_root`),
-  so that source stays alive until the last read; a value gathering views of
-  two sources has no single anchor and is refused. A function whose result
-  holds a view is anchored to the one parameter those views read
+  anchored to every value holding the bytes they read (`ssasem.bytes_roots`),
+  so each source stays alive until the value's last read. A function whose
+  result holds views is anchored to every parameter those views read
   (`semsource.anchor_module`, `ssasem.Anchor`), and its caller anchors the
-  call's result to that argument, which is what keeps a temporary receiver
-  alive past the call. A plain `str` result with no one source, such as a
-  view of either of two parameters, returns a copy of each view instead
+  call's result to each of those arguments, which is what keeps a temporary
+  receiver alive past the call. A plain `str` result whose view reads storage
+  that is not a parameter's returns a copy of each view instead
   (`copy_returned_views`): a counted string retagged, which anchors nothing.
-  Any other result holding views with no one source is refused ("view result
-  escapes its source"). The parameter stays lent: a returned view reads it
-  without taking its unit.
+  Any other result holding such a view is refused ("view result escapes its
+  source"). The parameters stay lent: a returned view reads them without
+  taking their units, and a view parameter the result keeps, or any other
+  value keeps, is a fresh view of its bytes (`semsource.kept_view`).
+
+  An anchor is an edge in `Analysis.parents`, and `Analysis.dependencies` is
+  its transitive closure (`ssasem.closure`). A value with one parent has that
+  parent's chain behind it, nearest first, which is what `ssaunits.first_hop`
+  reads; a value with several has each parent's in turn, and `first_hop`
+  answers no single path through it.
 
   A view bound under a second name is a fresh view of the same bytes
   (`semsource.unaliased_view`): a declaration or assignment from another
@@ -443,8 +449,8 @@ Unsupported constructs refuse the whole function with a reason.
   A view as an
   array element — an array literal's, `.append`'s or `.with`'s — makes the
   array a value gathering views (`ssasem.gathers_views`), anchored the same
-  way: to its one source inside the body, and as a result to the one
-  parameter its views read. Each element is released through the view's own
+  way: to its sources inside the body, and as a result to the parameters its
+  views read. Each element is released through the view's own
   release when the array is dropped. A map INSERT's key has no such anchor —
   it joins the key column, which releases it when the map is released — and
   is refused ("view element escapes its source"). A map READ's key is not:

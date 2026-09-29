@@ -652,7 +652,7 @@ function array(e: ast.Expr, a: ast.ExprArray, s: State, expected: typeinfo.Type)
         s = v.s;
         if (!s.ok) { return Value { s: s, id: 0 - 1 }; }
         if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "array element type: " + typeinfo.spelling(s.values[v.id]) + " in " + typeinfo.spelling(ty)); }
-        v = unaliased_view(v);
+        v = kept_view(unaliased_view(v));
         s = v.s;
         ids = ids.append(v.id);
     }
@@ -668,7 +668,7 @@ function tuple(e: ast.Expr, t: ast.ExprTuple, s: State, expected: typeinfo.Type)
     while (at < t.elements.len()) {
         var v: Value = expr(t.elements[at], s, tuple_element_type(ty, at));
         if (!v.s.ok) { return Value { s: v.s, id: 0 - 1 }; }
-        v = unaliased_view(v);
+        v = kept_view(unaliased_view(v));
         s = v.s;
         ids = ids.append(v.id);
         types = types.append(s.values[v.id]);
@@ -899,7 +899,7 @@ function written_fields(sl: ast.ExprStructLit, sig: checker.StructSig, s: State)
         s = v.s;
         if (!s.ok) { return Written { s: s, ids: [], at: [] }; }
         if (!semtypes.equal(s.values[v.id], sig.field_types[slot])) { return Written { s: fail(s, "record field type"), ids: [], at: [] }; }
-        v = unaliased_view(v);
+        v = kept_view(unaliased_view(v));
         s = v.s;
         ids = ids.append(v.id);
         at = at.append(slot);
@@ -1011,7 +1011,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
             s = v.s;
         }
         if (!semtypes.equal(s.values[v.id], shape.types[i])) { return refused(s, "variant field type"); }
-        v = unaliased_view(v);
+        v = kept_view(unaliased_view(v));
         s = v.s;
         ids = ids.append(v.id);
         i = i + 1;
@@ -1501,7 +1501,7 @@ function builtin_append(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "append element type"); }
-    v = unaliased_view(v);
+    v = kept_view(unaliased_view(v));
     return define(v.s, ssasem.append(), [recv.id, v.id], 0, "", t);
 }
 
@@ -1520,7 +1520,7 @@ function builtin_with(c: ast.ExprCall, recv: Value, s: State): Value {
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], elem)) { return refused(s, "with element type"); }
-    v = unaliased_view(v);
+    v = kept_view(unaliased_view(v));
     return define(v.s, ssasem.with(), [recv.id, at.id, v.id], 0, "", t);
 }
 
@@ -1662,7 +1662,7 @@ function map_write(c: ast.ExprCall, recv: Value, s: State, t: typeinfo.Type): Va
     s = v.s;
     if (!s.ok) { return v; }
     if (!semtypes.equal(s.values[v.id], ssasem.map_value(t))) { return refused(s, "map value type"); }
-    v = unaliased_view(v);
+    v = kept_view(unaliased_view(v));
     return define(v.s, ssasem.map_insert(), [recv.id, k.id, v.id], 0, "", t);
 }
 
@@ -2677,7 +2677,18 @@ function unaliased_view(v: Value): Value {
     if (!ssasem.is_view(s.values[v.id]) || util.index_of_i32(s.vals, v.id) < 0) { return v; }
     var kind: i32 = defining_kind(s, v.id);
     if (kind == 5 || kind == ssasem.str_as()) { return v; }
-    var zero: Value = define(s, 1, [], 0, "", t_i32());
+    return fresh_view(v);
+}
+
+// A view parameter is lent (`owned_shape`), so a value that keeps one holds a
+// fresh view of the same bytes rather than the caller's box.
+function kept_view(v: Value): Value {
+    if (!v.s.ok || !ssasem.is_view(v.s.values[v.id]) || defining_kind(v.s, v.id) != ssasem.param()) { return v; }
+    return fresh_view(v);
+}
+
+function fresh_view(v: Value): Value {
+    var zero: Value = define(v.s, 1, [], 0, "", t_i32());
     var n: Value = define(zero.s, ssasem.length(), [v.id], 0, "", t_i32());
     return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
 }
@@ -2744,7 +2755,8 @@ function ret(r: ast.StmtReturn, s: State): State {
     s = value.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[value.id], s.result)) { return fail(s, "return type: declared " + typeinfo.spelling(s.result) + ", returns " + typeinfo.spelling(s.values[value.id])); }
-    return terminate(s, t_ret(value.id));
+    value = kept_view(value);
+    return terminate(value.s, t_ret(value.id));
 }
 
 // `value` is the arm's value in a value block's match (-1 for a statement arm).
@@ -5038,12 +5050,13 @@ function close_module(all: Produced[], names: string[]): Produced[] {
     return all;
 }
 
-// A result that holds a view reads a parameter's bytes, so its caller keeps
-// that argument alive while the result lives: the result is anchored to the
-// one parameter every returned view reads (`ssasem.result_anchor`), to a
-// fixpoint because an anchor can pass through a callee's. A plain view
-// result with no one source returns copies instead; any other result holding
-// views with no one source escapes it, and is refused along with its callers.
+// A result that holds views reads parameters' bytes, so its caller keeps those
+// arguments alive while the result lives: the result is anchored to every
+// parameter a returned view reads (`ssasem.result_anchor`), to a fixpoint
+// because an anchor can pass through a callee's. A plain view result that
+// reads storage other than a parameter's returns copies instead; any other
+// result holding such a view escapes its source, and is refused along with its
+// callers.
 // Every body then carries the whole table, which is what anchors a call's
 // result in the caller's graph.
 function anchor_module(all: Produced[], names: string[]): Produced[] {
@@ -5055,27 +5068,27 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
             changed = false;
             var i: i32 = 0;
             while (i < all.len()) {
-                if (all[i].ok && semtypes.holds_view(all[i].func.result) && ssasem.anchor_of(anchors, names[i]) == 0 - 2) {
-                    var k: i32 = ssasem.result_anchor(all[i].func, anchors, names);
-                    if (k >= 0 - 1) {
-                        anchors = anchors.append(ssasem.Anchor { name: names[i], param: k });
+                if (all[i].ok && semtypes.holds_view(all[i].func.result) && !ssasem.anchored(anchors, names[i])) {
+                    var k: ssasem.ResultAnchor = ssasem.result_anchor(all[i].func, anchors, names);
+                    if (!k.escapes && !k.pending) {
+                        anchors = anchors.append(ssasem.Anchor { name: names[i], params: k.params });
                         changed = true;
                     }
                 }
                 i = i + 1;
             }
         }
-        // A plain view result with no one source returns a copy of each view:
+        // A plain view result that escapes returns a copy of each view:
         // a counted string retagged, which anchors nothing. Its callers then
         // settle on the next round.
         copied = false;
         var j: i32 = 0;
         while (j < all.len()) {
             var p: Produced = all[j];
-            if (p.ok && ssasem.is_view(p.func.result) && ssasem.anchor_of(anchors, names[j]) == 0 - 2
-                    && ssasem.result_anchor(p.func, anchors, names) == 0 - 2) {
+            if (p.ok && ssasem.is_view(p.func.result) && !ssasem.anchored(anchors, names[j])
+                    && ssasem.result_anchor(p.func, anchors, names).escapes) {
                 all = all.with(j, Produced { ...p, func: copy_returned_views(p.func) });
-                anchors = anchors.append(ssasem.Anchor { name: names[j], param: 0 - 1 });
+                anchors = anchors.append(ssasem.Anchor { name: names[j], params: [] });
                 copied = true;
             }
             j = j + 1;
@@ -5085,7 +5098,7 @@ function anchor_module(all: Produced[], names: string[]): Produced[] {
     var i: i32 = 0;
     while (i < all.len()) {
         var p: Produced = all[i];
-        if (p.ok && semtypes.holds_view(p.func.result) && ssasem.anchor_of(anchors, names[i]) == 0 - 2) {
+        if (p.ok && semtypes.holds_view(p.func.result) && !ssasem.anchored(anchors, names[i])) {
             p = Produced { ...refuse("view result escapes its source"), key: p.key };
         }
         out = out.append(p);

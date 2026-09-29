@@ -32,6 +32,10 @@ var strictIRCorpus = []struct {
 	src  string
 	want int
 }{
+	// An array holding views of two parameters is anchored to both (#10687).
+	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
+function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
+`, 2},
 	// A builtin's Result bound from a match-expression whose Err arm returns
 	// early (#9326), beside its user-wrapper twin so a fix that widened only
 	// one of them is visible. The early return leaves the enclosing function;
@@ -686,10 +690,11 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// An array holding views of two parameters has no one argument to anchor to.
-	{"views-of-two-sources", `function g(x: string, y: string): str[] { var o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
-function main(): i32 { var xs: str[] = g("ab", "cd"); return xs.len(); }
-`, "g", "a value holds views of two sources"},
+	// One local view held twice by an array: each element needs a unit of the
+	// view's box, and a view carries no count to retain.
+	{"local-view-held-twice", `function g(s: string): str[] { var w: str = slice_unchecked(s, 0, 2); var o: str[] = [w, w]; return o; }
+function main(): i32 { return g("abcd").len(); }
+`, "g", "a view is lent, never retained"},
 }
 
 // TestSelfHostStrictIRNamesBailReason asserts each fixture's refusal names its

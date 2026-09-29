@@ -422,11 +422,10 @@ function narrow_float(x: f32): f32 { return x + 1.0; }
 
 // A string view: a slice is one; an owned string bound or passed where a view
 // is declared is lent (a retag that borrows the box); a view passed to a
-// borrowed 'string' parameter is the retag the other way. A view result reads
-// the one parameter it is anchored to; a plain view result that reads a
-// local, or either of two parameters, returns a copy instead, and any other
-// result holding such views escapes its source and is refused. An array of
-// views is anchored to its source the same way.
+// borrowed 'string' parameter is the retag the other way. A view result is
+// anchored to every parameter it reads; a plain view result that reads a
+// local returns a copy instead. An array of views is anchored to its sources
+// the same way.
 function view_len(v: str): i32 { return v.len(); }
 function view_of(s: string): i32 {
     var v: str = slice_unchecked(s, 1, 3);
@@ -441,11 +440,11 @@ function copied_view_of_a_local(t: string): str {
     var s: string = t + "x";
     return slice_unchecked(s, 0, 1);
 }
-function copied_view_of_either(a: string, b: string, c: boolean): str {
+function view_of_either(a: string, b: string, c: boolean): str {
     if (c) { return a; }
     return b;
 }
-function refused_option_of_either(a: string, b: string, c: boolean): Option[str] {
+function option_of_either(a: string, b: string, c: boolean): Option[str] {
     if (c) { return a[0:1]; }
     return b[0:1];
 }
@@ -457,9 +456,9 @@ function view_element(s: string): i32 {
 
 // One element replaced: the receiver's unit is handed over as an append's
 // is, and the array handed back holds the value. A view of s into an array
-// holding views of vs's own source reads two sources, and is refused.
+// holding views of vs's own source reads two sources, and is anchored to both.
 function replace_at(own xs: i32[], i: i32, v: i32): i32[] { return xs.with(i, v); }
-function refused_with_view(own vs: str[], s: string): str[] { return vs.with(0, slice_unchecked(s, 0, 1)); }
+function with_view(own vs: str[], s: string): str[] { return vs.with(0, slice_unchecked(s, 0, 1)); }
 
 // An integer literal tree is the width of its destination: a subtraction
 // from zero binds an i64 with no conversion, and a literal beside a wide
