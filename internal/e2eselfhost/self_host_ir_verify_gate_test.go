@@ -51,12 +51,12 @@ function main(): i32 { return chain(7); }`},
 }
 function main(): i32 { return loopy(10); }`},
 	{"strings-and-arrays", `function work(s: string, xs: i32[]): i32 {
-    var sl: string = slice_unchecked(s, 1, 4);
+    var sl: str = slice_unchecked(s, 1, 4);
     var joined: string = s + sl;
     var w: i32[] = xs.with(1, 9);
     var sum: i32 = 0;
     for x in w { sum = sum + x; }
-    return joined.len() + sum + s[0];
+    return joined.len() + sum + s[0] as i32;
 }
 function main(): i32 { return work("hello", [4, 5, 6]); }`},
 	{"closures", `function makeAdder(n: i32): (i32) => i32 {
@@ -100,39 +100,17 @@ function main(): i32 {
 }`},
 }
 
-// runGate compiles src with the driver under FERN_IR_VERIFY=1 or =0, and
+// runGate runs irverify_run with args under FERN_IR_VERIFY=1 or =0, and
 // returns stdout, stderr and the exit code. It does not fail the test on a
 // non-zero exit: every caller here is asserting something about that code.
-func runGate(t *testing.T, runner []string, bin string, args []string, src string, verify bool) (string, string, int) {
+func runGate(t *testing.T, bin string, args []string, verify bool) (string, string, int) {
 	t.Helper()
-	var cmd *exec.Cmd
-	if len(runner) == 0 {
-		cmd = exec.Command(bin, args...)
-	} else {
-		a := append([]string{}, runner[1:]...)
-		a = append(a, bin)
-		a = append(a, args...)
-		cmd = exec.Command(runner[0], a...)
-	}
-	cmd.Stdin = strings.NewReader(src)
-	// Strip any ambient value first: a duplicate key resolves to the FIRST
-	// occurrence, so appending alone would leave an outer setting in force and
-	// the "flag off" half of every case below would silently test nothing.
-	//
-	// Both halves are then set EXPLICITLY. The gate is on by default, so an
-	// unset variable is the on state — leaving it out would make "off" mean
-	// "on" and every byte-identity comparison below compare a run with itself.
-	cmd.Env = []string{}
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "FERN_IR_VERIFY=") {
-			cmd.Env = append(cmd.Env, kv)
-		}
-	}
+	cmd := exec.Command(bin, args...)
+	flag := "FERN_IR_VERIFY=0"
 	if verify {
-		cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=1")
-	} else {
-		cmd.Env = append(cmd.Env, "FERN_IR_VERIFY=0")
+		flag = "FERN_IR_VERIFY=1"
 	}
+	cmd.Env = childEnv(flag)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -149,20 +127,21 @@ func runGate(t *testing.T, runner []string, bin string, args []string, src strin
 // The byte-identity half is not decoration. A gate that perturbed codegen would
 // mean the flag changes the program under test, and every diagnosis made with
 // it turned on would be about a different compiler than the one that failed.
-func gateSilentSweep(t *testing.T, runner []string, bin string, args []string) {
+//
+// Both halves set the flag EXPLICITLY: the gate is on by default, so leaving it
+// out would make "off" mean "on" and the comparison compare a run with itself.
+func gateSilentSweep(t *testing.T, target string) {
 	t.Helper()
+	cli := newStrictCLI(t)
 	for _, tc := range gateProgs {
 		t.Run(tc.name, func(t *testing.T) {
-			off, offErr, offCode := runGate(t, runner, bin, args, tc.src, false)
-			if offCode != 0 {
-				t.Fatalf("compile without the flag exited %d:\n%s", offCode, offErr)
-			}
+			off := cli.emit(t, target, tc.src, "FERN_IR_VERIFY=0")
 			if len(off) == 0 {
 				t.Fatal("compile without the flag emitted 0 bytes")
 			}
-			on, onErr, onCode := runGate(t, runner, bin, args, tc.src, true)
-			if onCode != 0 {
-				t.Fatalf("FERN_IR_VERIFY=1 refused valid IR (exit %d) — the gate reports on code the compiler accepts:\n%s", onCode, onErr)
+			on, onErr, err := cli.tryEmit(t, target, tc.src, "FERN_IR_VERIFY=1")
+			if err != nil {
+				t.Fatalf("FERN_IR_VERIFY=1 refused valid IR (%v) — the gate reports on code the compiler accepts:\n%s", err, onErr)
 			}
 			if on != off {
 				t.Errorf("FERN_IR_VERIFY=1 changed the emitted code (%d bytes vs %d) — the gate must observe, not perturb", len(on), len(off))
@@ -171,41 +150,23 @@ func gateSilentSweep(t *testing.T, runner []string, bin string, args []string) {
 	}
 }
 
-// TestSelfHostIRVerifyGateSilentX86_64 is the x86-64 leg, through asm_ir's
-// emit_function_via_ir_pre — the call site both x86 entry points share.
+// TestSelfHostIRVerifyGateSilentX86_64 is the x86-64 leg.
 func TestSelfHostIRVerifyGateSilentX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-	gateSilentSweep(t, runner, bin, nil)
+	gateSilentSweep(t, "x86-64-linux")
 }
 
-// TestSelfHostIRVerifyGateSilentArm64 is the arm64 leg, through
-// asm_arm64_ir's own emit_function_via_ir.
-//
-// It needs no arm64 tooling: the driver is the x86-hosted one and `-target
-// arm64-linux` only changes which backend emits. What is under test is the
-// gate's verdict on the arm64 op stream, not whether the result runs — the
-// arm64 e2e suites already cover that.
+// TestSelfHostIRVerifyGateSilentArm64 is the arm64 leg. What is under test is
+// the gate's verdict on the arm64 op stream, not whether the result runs — the
+// arm64 e2e suites already cover that — so it needs no arm64 tooling.
 func TestSelfHostIRVerifyGateSilentArm64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
-	gateSilentSweep(t, runner, bin, []string{"-target", "arm64-linux"})
+	gateSilentSweep(t, "arm64-linux")
 }
 
-// TestSelfHostIRVerifyGateSilentWasm is the wasm leg, through wasm_ir's
-// emit_function_ir — the backend with the most to gain, since malformed IR
-// there fails module validation with a message about the module rather than
-// about the op that caused it.
+// TestSelfHostIRVerifyGateSilentWasm is the wasm leg — the backend with the
+// most to gain, since malformed IR there fails module validation with a
+// message about the module rather than about the op that caused it.
 func TestSelfHostIRVerifyGateSilentWasm(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-	gateSilentSweep(t, runner, bin, []string{"-ir"})
+	gateSilentSweep(t, "wasm32-wasi")
 }
 
 // TestSelfHostIRVerifyGateRefuses is the other direction, and the one that
@@ -229,7 +190,7 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	// Opted out: inert. The gate runs on every function of every build, so a
 	// working FERN_IR_VERIFY=0 is as much of the contract as the refusal is —
 	// it is the escape hatch when the gate itself is the suspect.
-	out, _, code := runGate(t, nil, bin, []string{"-refuse"}, "", false)
+	out, _, code := runGate(t, bin, []string{"-refuse"}, false)
 	if code != 0 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=0 exited %d, want 0 — the opt-out must make the gate inert", code)
 	}
@@ -238,7 +199,7 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	}
 
 	// Flag set: refuses, names the function, and says what is wrong with it.
-	_, stderr, code := runGate(t, nil, bin, []string{"-refuse"}, "", true)
+	_, stderr, code := runGate(t, bin, []string{"-refuse"}, true)
 	if code != 4 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=1 exited %d, want 4\nstderr: %s", code, stderr)
 	}
@@ -267,7 +228,7 @@ func TestSelfHostIRVerifyGateChecks(t *testing.T) {
 	copySelfHostDriver(t, dir, "irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
 
-	out, stderr, code := runGate(t, nil, bin, nil, "", false)
+	out, stderr, code := runGate(t, bin, nil, false)
 	if code != 0 {
 		t.Fatalf("irverify_run exit code = %d, want 0 — that code is the failing case's id\n%s", code, stderr)
 	}
