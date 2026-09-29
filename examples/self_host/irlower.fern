@@ -26403,7 +26403,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // rc half needs one: without it the assign fell through to a store with no
     // dec and every superseded box leaked.
     if (slot_is_reclaimable_scenum(s, slot)) {
-        return emit_arr_store(se, slot, reassign_inc, true);
+        return emit_arr_store_from(se, slot, reassign_inc, true, rebind_call_same_dec(a.value, a.target, s));
     }
     // A "TUP:" tuple rebind whose box RETAINED bare-ident ARRAY or STRING
     // elements (#7226): give those retains back with the superseded box, via the
@@ -37881,10 +37881,34 @@ function all_assigns_fresh_rcenum(stmts: ast.Stmt[], name: string, owner: string
     return true;
 }
 
+// counted_self_handback: `e` is `f(..)` for an "ENUM:" member `f` that hands
+// back only parameters at which `name` itself is passed (its "ENUMHB:" row), so
+// the result is `name`'s own chain with one more count (#10447).
+function counted_self_handback(e: ast.Expr, name: string, opt_fresh_ret: SigReg): boolean {
+    if let ast.ExprCall(c) = e {
+        var idxs: string = sig_reg_tagged_value_of(opt_fresh_ret, "ENUMHB:", ident_name_or_empty(c.callee));
+        if (idxs.len() == 0) { return false; }
+        var ai: i32 = 0;
+        var k: i32 = 0;
+        while (k <= idxs.len()) {
+            if (k == idxs.len() || idxs[k] == b',') {
+                if (ai >= c.args.len() || ident_name_or_empty(c.args[ai]) != name) { return false; }
+                ai = 0;
+            } else {
+                ai = ai * 10 + ((idxs[k] as i32) - 48);
+            }
+            k = k + 1;
+        }
+        return true;
+    }
+    return false;
+}
+
 function stmt_assigns_fresh_rcenum(st: ast.Stmt, name: string, owner: string, structs: StructTab, opt_fresh_ret: SigReg, str_fresh: string[]): boolean {
     match (st) {
         ast.StmtAssign(asn) => {
             if (asn.target != name) { return true; }
+            if (counted_self_handback(asn.value, name, opt_fresh_ret)) { return true; }
             var o: string = fresh_rcpayload_enum_init(asn.value, structs, str_fresh, [], false);
             if (o == "") { o = rcenum_call_init_owner(asn.value, opt_fresh_ret); }
             return o != "" && o == owner;
@@ -37996,7 +38020,9 @@ function collect_counted_enum_local_sites(stmts: ast.Stmt[], fn_reassigned: stri
         match (stmt) {
             ast.StmtVar(v) => {
                 var tag: string = counted_enum_local_tag(v.init, structs, fresh_ret, opt_fresh_ret);
-                if (tag != "" && !block_reassigns(stmts, fn_reassigned, nested, v.name)) {
+                var rebind_ok: boolean = !block_reassigns(stmts, fn_reassigned, nested, v.name)
+                    || (tag == "ECALL:" && all_assigns_counted_enum_call(stmts, v.name, fresh_ret));
+                if (tag != "" && rebind_ok) {
                     var site: string = reclaim_site_key_of(v.name, v.line, v.col);
                     var esc_ok: boolean = !body_unsafe_for_enumfield(stmts, v.name, borrowable, structs);
                     if (plan_on && !esc_ok) { esc_ok = util.index_of_str(plan_fe, site) >= 0; }
@@ -38013,6 +38039,29 @@ function collect_counted_enum_local_sites(stmts: ast.Stmt[], fn_reassigned: stri
         }
     }
     return a;
+}
+
+// all_assigns_counted_enum_call: every assignment to `name` in `stmts` is a
+// call to an "ENUM:" member, whose result carries its own count, so the rebind
+// releases the superseded value like the exit sweep does (#10447).
+function all_assigns_counted_enum_call(stmts: ast.Stmt[], name: string, fresh_ret: string[]): boolean {
+    for st in stmts { if (!stmt_assigns_counted_enum_call(st, name, fresh_ret)) { return false; } }
+    return true;
+}
+function stmt_assigns_counted_enum_call(st: ast.Stmt, name: string, fresh_ret: string[]): boolean {
+    match (st) {
+        ast.StmtAssign(asn) => { return asn.target != name || enum_fresh_ret_call(asn.value, fresh_ret); },
+        ast.StmtIf(iff) => { return all_assigns_counted_enum_call(iff.then_body, name, fresh_ret) && all_assigns_counted_enum_call(iff.else_body, name, fresh_ret); },
+        ast.StmtWhile(w) => { return all_assigns_counted_enum_call(w.body, name, fresh_ret); },
+        ast.StmtFor(f) => { return all_assigns_counted_enum_call(f.body, name, fresh_ret); },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { if (!all_assigns_counted_enum_call(arm.body, name, fresh_ret)) { return false; } }
+            return true;
+        },
+        ast.StmtDefer(d) => { return stmt_assigns_counted_enum_call(d.action, name, fresh_ret); },
+        _ => { return true; }
+    }
+    return true;
 }
 
 // counted_enum_local_tag: the collect_counted_enum_local_sites tag `init` earns
@@ -71051,7 +71100,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         return_fresh_struct_ret_fns: rf,
         recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams, sfok, cntret),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
-        opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
+        opt_fresh_ret_fns: sig_reg_of(append_all(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs)), enum_handback_rows(funcs, rf))),
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs, structs),
         own_positions: own_positions_of(funcs),
@@ -71116,6 +71165,23 @@ function bare_handback_rows(fn: parser.FuncDecl, key: string, skip_own: boolean)
     }
     return out;
 }
+// enum_handback_rows: "ENUMHB:<fn>|<i>,<j>" for each free "ENUM:" member of
+// `rf` that returns parameters i, j bare. Its return retains, so a call handing
+// a local's own chain to every such position gives that chain back counted.
+function enum_handback_rows(funcs: parser.FuncDecl[], rf: string[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.receiver_type.len() > 0 || util.index_of_str(rf, "ENUM:" + fn.name) < 0) { continue; }
+        var idxs: string = "";
+        for row in bare_handback_rows(fn, "", false) {
+            if (idxs.len() > 0) { idxs = idxs + ","; }
+            idxs = idxs + slice_unchecked(row, 1, row.len());
+        }
+        if (idxs.len() > 0) { out = out.append("ENUMHB:" + fn.name + "|" + idxs); }
+    }
+    return out;
+}
+
 function struct_ret_key(fn: parser.FuncDecl): string {
     if (fn.receiver_type.len() > 0) { return util.base_type_name(fn.receiver_type) + "." + fn.name; }
     return fn.name;

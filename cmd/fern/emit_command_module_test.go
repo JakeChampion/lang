@@ -18,8 +18,7 @@ import (
 //
 // A WASI preview-1 COMMAND is the shape that carries the value, and the shape
 // `web/wasi-shim.js` runs, so it is what a browser needs to host a Fern program
-// — or the self-host compiler — without a component transpile. It was reachable
-// only from internal/wasm/playground, never from the CLI.
+// — or the self-host compiler — without a component transpile.
 
 func TestEmitCommandModuleCarriesTheExitCode(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

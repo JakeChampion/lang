@@ -1071,7 +1071,7 @@ function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.E
 // ssa_unary_known is the unary vocabulary lift_from_ir_prod produces.
 function ssa_unary_known(what: string): boolean {
     if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") { return true; }
-    return util.str_has_prefix(what, "int_cast:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
+    return util.str_has_prefix(what, "int_cast:") || util.str_has_prefix(what, "rotr:") || ssa_funary_known(what) || ssa_bits_asm(what, "x4") != "";
 }
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
@@ -1138,6 +1138,11 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
     if (f != "") { return f; }
     if (what == "load_i32") { return "    ldrsw " + d + ", [" + d + "]\n"; }
     if (what == "!") { return "    cmp " + d + ", #0\n    cset " + d + ", eq\n"; }
+    if (util.str_has_prefix(what, "rotr:")) {
+        var n: string = util.i32_to_string(ssa.rotr_count(what));
+        if (ssa.rotr_width(what) == 64) { return "    ror " + d + ", " + d + ", #" + n + "\n"; }
+        return "    ror " + w + ", " + w + ", #" + n + "\n";
+    }
     if (what == "u32_wrap" || what == "int_cast:u32") { return "    mov " + w + ", " + w + "\n"; }
     if (what == "int_cast:u8") { return "    and " + d + ", " + d + ", #255\n"; }
     if (what == "int_cast:i32") { return "    sxtw " + d + ", " + w + "\n"; }
@@ -2128,7 +2133,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // most of them never read; prune_dead takes those out before the allocator
 // sees them.
 function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
-    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted)));
+    var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted))));
     var imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
     var reg_of: i32[] = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
     var lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";

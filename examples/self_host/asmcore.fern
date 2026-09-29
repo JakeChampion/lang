@@ -198,7 +198,7 @@ pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irlower.Lo
             }
             var lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(name, cache[fi].n_params, cache[fi].n_locals, cache[fi].ops);
             if (lifted.ok) {
-                var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.prune_trivial_phis(lifted.func)));
+                var f: ssa.SFunc = ssa.thread_forwarding(ssa.prune_dead(ssa.fuse_rotates(ssa.prune_trivial_phis(lifted.func))));
                 for leaf in ssa.leaf_of(name, f) { out = out.append(leaf); }
             }
         }
