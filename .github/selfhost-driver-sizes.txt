@@ -361,24 +361,28 @@
 # its output is 12-27% smaller per driver (fern.fern 14118057 -> 12342352).
 # fern.fern/stage2 joins as the tracked artifact — the compiler's own output
 # for itself, the one row a codegen change in the current compiler moves.
-# Equal to fern.fern today: the generator changes that have landed since the
-# pin's source commit (ssarc.fern #10670, ssasem.fern #10674) leave this input's
-# output unchanged. One that does not will part the two (docs/BOOTSTRAP.md).
 # Measured with FERN_WARM_DRIVER over every row, FERN_DRIVER_SIZE_REPORT on
 # the branch. Re-measured the same day against the refreshed pin
 # stage0-20260929-32d575e, whose hand-back set copies a lent view for a
-# callee that keeps it through a local: every row +0.01-0.05% (fern.fern
-# 12342352 -> 12346904), the copies that fix carries.
-fern.fern/stage2 12346904
-fern.fern 12346904
-asm_load_run.fern 8098096
-asm_modload_run.fern 7556312
-asm_ir_run.fern 7302512
-asm_run.fern 6765056
-wasm_ir_run.fern 6705640
-wasm_run.fern 6702744
-wasm_runio_run.fern 6672536
-asm_pathprobe_run.fern 5453048
-asm_ir_elig_run.fern 4626984
-irlower_run.fern 5313536
-checker_modload_run.fern 2219728
+# callee that keeps it through a local (every row +0.005-0.04%, fern.fern
+# 12342352 -> 12346904, the copies that fix carries), and once more on the
+# merge of main at 4ebba1ff4, which changed the driver sources themselves
+# (-0.03% to +0.04% per row, fern.fern 12346904 -> 12344952). Equal to
+# fern.fern in size on that tree: five commits to examples/self_host landed
+# after the pin's source commit 32d575e60 (740b49209 ssarc.fern, 319a4a50e
+# ssasem.fern, d5792c908 read_all_stdin, aee0e4136 parser.fern, 067f7462a
+# checker.fern) and none moved the stage2 byte count off stage1's. One that
+# does will part the two (docs/BOOTSTRAP.md).
+fern.fern/stage2 12344952
+fern.fern 12344952
+asm_load_run.fern 8097816
+asm_modload_run.fern 7555040
+asm_ir_run.fern 7301272
+asm_run.fern 6764128
+wasm_ir_run.fern 6703576
+wasm_run.fern 6700688
+wasm_runio_run.fern 6670496
+asm_pathprobe_run.fern 5453224
+asm_ir_elig_run.fern 4627160
+irlower_run.fern 5312848
+checker_modload_run.fern 2220656
