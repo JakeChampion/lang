@@ -4229,7 +4229,7 @@ pub struct OptimizedOps {
 
 // finish_ops is the post-fixpoint tail, in one place because optimize_ops reaches
 // it from two: drop what cannot be reached, fuse the store/load round trips,
-// propagate constants and copies over the result, fold once more, then drop again.
+// propagate constants and copies and fold until neither finds more, then drop again.
 //
 // The SECOND dead-code sweep is what the fold's branch pruning needs. Dropping a
 // decided `brif` in favour of an unconditional `br` turns everything after it in
@@ -4247,10 +4247,24 @@ pub struct OptimizedOps {
 // the lowering routes every value through a slot (the typed path's `ssarc`
 // does), so strength reduction gets one more pass over its output.
 function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
-    var done: Op[] = eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+    var done: Op[] = eliminate_dead_code(propagate_fold(fuse_tee(eliminate_dead_code(cur))));
     var again: StrengthResult = reduce_strength_ex(done);
-    if (again.changed) { done = eliminate_dead_code(strength_fixpoint(fold_const_binaries(again.ops))); }
+    if (again.changed) { done = eliminate_dead_code(propagate_fold(strength_fixpoint(fold_const_binaries(again.ops)))); }
     return hoist_loop_invariants(done, n_locals);
+}
+
+// propagate_fold alternates propagation and folding until a fold rewrites
+// nothing. When every intermediate goes through a slot, a fold leaves a new
+// `const ; store_local` whose loads only the next propagation can replace.
+// Every fold rule shrinks the list, so an unchanged length is the fixpoint.
+function propagate_fold(ops: Op[]): Op[] {
+    var cur: Op[] = propagate_copies(const_propagate(ops));
+    var folded: Op[] = fold_const_binaries(cur);
+    while (folded.len() < cur.len()) {
+        cur = propagate_copies(const_propagate(folded));
+        folded = fold_const_binaries(cur);
+    }
+    return folded;
 }
 
 // strength_fixpoint alternates strength reduction and folding until neither
