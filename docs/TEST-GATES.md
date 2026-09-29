@@ -327,8 +327,11 @@ with a GET pipelined behind it, answered with the Content-Length and none
 of the body, then a 204, answered with neither; a request whose header
 block says `Expect: 100-continue`, answered `100 Continue` before its
 body is sent and then with the body's echo, and one whose expectation
-the server cannot meet, answered 417; and an HTTP/1.0 keep-alive
-request followed by an HTTP/1.1 one. Every response's `Connection` and
+the server cannot meet, answered 417; an HTTP/1.0 keep-alive request
+followed by an HTTP/1.1 one; a body delivered in pieces over twice the
+read deadline but well above the minimum body rate, answered with its
+echo, and one trickled below the rate, closed at the read deadline
+without a response. Every response's `Connection` and
 `Date` are
 checked, every close the server owes is read as EOF (a connection the
 server merely left open fails), and the census must balance. The bounded

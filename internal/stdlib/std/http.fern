@@ -446,6 +446,15 @@ function __header_block_end(buf: u8[], from: i32): i32 {
     return -1;
 }
 
+// `http_header_block_complete(buf, from)` — whether the request at `from`
+// has its whole header block buffered: the CRLF CRLF that ends it lies
+// within the header cap. What follows is the body, and a serve loop times
+// the body by how fast it arrives rather than by the deadline the header
+// block had.
+pub function http_header_block_complete(buf: u8[], from: i32): boolean {
+    return __header_block_end(buf, __past_empty_line(buf, from)) >= 0;
+}
+
 // `__find_crlf_crlf(buf, from, end)` — where the first CRLF CRLF whose
 // four bytes lie in buf[from, end) starts, or -1.
 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32 {
