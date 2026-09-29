@@ -574,3 +574,36 @@ inside the compiler's own string literals). What does not yet hold is stage 3:
 container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
 byte-identical asm to stage 1, and compiles and runs a strbuf program
 correctly.
+
+The heap's address regime is not what breaks the darwin stage 3. XNU ignores
+the arena's mmap hint and maps it above the 4 GiB `__PAGEZERO`, so on darwin
+every heap pointer has a non-zero high half from the first allocation, where
+Linux honours the 256 MiB hint. `FERN_HIGH_HEAP=1` makes the self-host arm64
+emitter raise the hint to 8 GiB (`asm_arm64_ir.fern`, the twin of the native
+`arm64codegen.Options.HighHeapProbe`), and qemu-aarch64 honours it. Measured
+2026-09-29 on the 4-core x86-64 container: an aarch64 self-host compiler
+emitted with that hint compiles `fern.fern` for `arm64-linux` under qemu in
+537 s at 5.4 GB peak RSS, exit 0, and its output is byte-identical to the
+default-hint compiler's (517 s, 5.4 GB). The gate for the shapes is
+`TestSelfHostArm64HighHeap*` (`internal/e2eselfhost`). The recipe, from a
+`bin/fern-selfhost` built by `make selfhost-cli`:
+
+```
+FERN_HIGH_HEAP=1 bin/fern-selfhost -target arm64-linux -emit asm -o $B/fern_hh.s examples/self_host/fern.fern internal/stdlib
+aarch64-linux-gnu-gcc -static -nostdlib -o $B/fern_hh $B/fern_hh.s
+qemu-aarch64 $B/fern_hh -target arm64-linux -o $B/fern_s2 examples/self_host/fern.fern internal/stdlib
+```
+
+What the probe does not move is the image, `.rodata` and the stack, which on
+darwin also sit above 4 GiB; a truncation of one of those still needs the Mac.
+
+Nor is it the darwin OUTPUT path: on the same container a self-host-built
+x86-64 compiler compiles `fern.fern` for `arm64-darwin` in 111 s at 5.4 GB,
+exit 0, byte-identical to the native-built compiler's Mach-O. What is left is
+the self-host-built compiler running ON XNU, and the `macos-15` lane now runs
+that stage 3 on every round (`macos.yml`, "self-host stage 3 on Darwin") with
+`FERN_CLIFF_REPORT=1`, which prints `heap_bump_bytes` at each `sem:*` phase and
+at `darwin:emitted` / `darwinized` / `assembled` / `unwind` / `linked` /
+`image` (`fern.fern`), plus `/usr/bin/time -l` for the peak RSS. The step
+reports the exit rather than failing on it while #8479 is open; read its log
+for where the bump cursor leaves the RSS behind.

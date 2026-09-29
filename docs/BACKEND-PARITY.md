@@ -678,9 +678,12 @@ the rc below-heap guards classify `ptr >= 0x10000000` as heap, so it may be
 raised but never lowered — and qemu-aarch64 honours the raised hint. The gate
 is `internal/e2e/arm64_high_heap_test.go` (`TestArm64HighHeap*`, picked up by
 the ordinary `-run TestArm64` selection); `FERN_HIGH_HEAP=1` gives the same
-build from the driver for reproducing one by hand. What it does NOT reproduce:
-only the arena moves, so a truncation of a `.rodata`, image or stack address
-still needs the `macos-15` lane.
+build from the driver for reproducing one by hand. The self-host arm64 emitter
+reads the same `FERN_HIGH_HEAP=1` at emit time and its gate is
+`internal/e2eselfhost/self_host_arm64_high_heap_test.go`
+(`TestSelfHostArm64HighHeap*`). What neither reproduces: only the arena moves,
+so a truncation of a `.rodata`, image or stack address still needs the
+`macos-15` lane.
 
 All pointer-shaped values (string / array / struct / enum / slice / tuple)
 round-trip through 8-byte slots on arm64-darwin's high heap. Two pieces drive

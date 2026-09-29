@@ -131,7 +131,11 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    stage1 is the native candidate's), the one after it none. What is NOT
    closed: arm64-darwin, whose stage2
    exhausts the arena compiling the compiler (#8479), so its pin is still the
-   native-built candidate. `docs/BOOTSTRAP.md`.
+   native-built candidate. `docs/BOOTSTRAP.md`. Ruled out on Linux (heap
+   above 4 GiB under qemu, the darwin output path) and measured on every
+   `macos-15` round with the compiler's per-phase heap readout:
+   `docs/LOCAL-DEV-LOOP.md`, "The stage-1 / stage-2 self-compile on Apple
+   Silicon".
 2. **Every target self-contained on the self-host side.** ~~As of this
    writing `-target x86-64-linux` stops at GAS text and needs an external
    assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
