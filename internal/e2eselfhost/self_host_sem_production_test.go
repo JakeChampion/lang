@@ -4464,7 +4464,7 @@ function main(): i32 {
 	// box between them, and each frees its own (#10726). Here the copy is the
 	// append in `grow` on a lent array; before, `xs`'s release freed the box
 	// `ys[0]` still held, and `junk` reused it, so `ys[0]` printed "zz".
-	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, noLeak: true, src: `
+	{name: "a-copied-array-of-views-owns-its-boxes", atLeast: 4, noLeak: true, want: "3|ab\ncd\n", astAnswers: "3|ab\ncd\n", src: `
 function mk(s: string): str[] {
     var xs: str[] = [];
     xs = xs.append(slice_unchecked(s, 0, 2));
@@ -4484,7 +4484,7 @@ function main(): i32 {
 	// The same for every copy of a shared array of views: an append, a with, a
 	// window and an append onto a shared record's field, each with the
 	// original still live.
-	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, noLeak: true, src: `
+	{name: "every-copy-of-a-shared-array-of-views-owns-its-boxes", atLeast: 2, noLeak: true, want: "13|abcd\nabcdef\nabgh\nab\nababbc\n", astAnswers: "13|abcd\nabcdef\nabgh\nab\nababbc\n", src: `
 struct H { names: str[], n: i32 }
 function mk(s: string): str[] {
     var xs: str[] = [];
