@@ -2088,6 +2088,37 @@ function main(): i32 {
 	// it in the array it hands back, which is what every `*_tok` constructor in
 	// the self-host lexer does. Both reach the caller through the callee's
 	// result, so both callees are handed a copy the result may keep.
+	{name: "lent-view-stored", atLeast: 5, src: `
+struct Tok { text: string, line: i32 }
+function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
+function add_word(acc: string[], w: string): string[] { return acc.append(w); }
+function words_of(src: string): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i + 2 <= src.len()) {
+        var v: str = slice_unchecked(src, i, i + 2);
+        out = add_word(out, v);
+        i = i + 2;
+    }
+    return out;
+}
+function toks_of(src: string): Tok[] {
+    var out: Tok[] = [];
+    var i: i32 = 0;
+    while (i + 2 <= src.len()) {
+        var v: str = slice_unchecked(src, i, i + 2);
+        out = out.append(tok_of(v, i));
+        i = i + 2;
+    }
+    return out;
+}
+function main(): i32 {
+    var n: i32 = 0;
+    for w in words_of("abcdef") { n = n + w.len(); }
+    for t in toks_of("abcdef") { n = n + t.text.len() + t.line; }
+    return n;
+}
+`},
 	// A callee that keeps its argument through a LOCAL: `st` is bound from
 	// `acc`, rebound from a call that stores `name`, and returned. Reading
 	// only the returns left `add` out of `handers`, so its caller lent the view
@@ -2122,37 +2153,6 @@ function main(): i32 {
     var s: string = acc.items[0].name;
     if (s == "world" && z > 0) { return 0; }
     return 1;
-}
-`},
-	{name: "lent-view-stored", atLeast: 5, src: `
-struct Tok { text: string, line: i32 }
-function tok_of(text: string, line: i32): Tok { return Tok { text: text, line: line }; }
-function add_word(acc: string[], w: string): string[] { return acc.append(w); }
-function words_of(src: string): string[] {
-    var out: string[] = [];
-    var i: i32 = 0;
-    while (i + 2 <= src.len()) {
-        var v: str = slice_unchecked(src, i, i + 2);
-        out = add_word(out, v);
-        i = i + 2;
-    }
-    return out;
-}
-function toks_of(src: string): Tok[] {
-    var out: Tok[] = [];
-    var i: i32 = 0;
-    while (i + 2 <= src.len()) {
-        var v: str = slice_unchecked(src, i, i + 2);
-        out = out.append(tok_of(v, i));
-        i = i + 2;
-    }
-    return out;
-}
-function main(): i32 {
-    var n: i32 = 0;
-    for w in words_of("abcdef") { n = n + w.len(); }
-    for t in toks_of("abcdef") { n = n + t.text.len() + t.line; }
-    return n;
 }
 `},
 	// Appending through a BORROWED parameter, which is what the self-host x86
