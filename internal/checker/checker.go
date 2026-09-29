@@ -16269,7 +16269,7 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		// (an unresolved generic placeholder — should never
 		// surface here in practice but guard for safety).
 		switch t.(type) {
-		case ast.VoidType, ast.ParamType:
+		case ast.VoidType:
 			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
 		default:
 			captured[name] = t
@@ -18556,7 +18556,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return
 			}
 			switch t.(type) {
-			case ast.VoidType, ast.ParamType:
+			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			default:
 				captured[name] = t

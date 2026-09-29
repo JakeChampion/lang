@@ -224,6 +224,7 @@ char_cast_receiver                                   0
 closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
+closure_captures_generic_value                       0
 closure_field_match                                  0
 closure_field_rebind                                 0
 closure_returns_composite                            0
@@ -638,8 +639,8 @@ to_string_round_trip                                 0
 trailing_commas                                      0
 trait_method_bound_wins                              0
 trmc_map                                             0
-try_op_in_closure                                    0
 try_binding_takes_its_success_payload                0
+try_op_in_closure                                    0
 try_result_struct_payload                            0
 tuple_basics                                         0
 tuple_binder_shadows_module_decl                     0
