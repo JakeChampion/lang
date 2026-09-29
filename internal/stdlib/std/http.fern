@@ -974,7 +974,7 @@ pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
 // connection persists after its response (RFC 9112 §9.3: HTTP/1.1 unless
 // the request says `Connection: close`; HTTP/1.0 only when it says
 // `Connection: keep-alive`).
-pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean }
+pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, version: string }
 
 // HttpFraming — what a buffer holds at an offset: a complete request with
 // its framing; less than one (the loop keeps reading); less than one
@@ -1118,7 +1118,7 @@ pub function http_parse_request_framed_from(buf: u8[], from: i32): HttpFraming {
         headers: req_headers,
         trailers: body.3,
     };
-    return Framed(HttpFramed { request: req, len: body.2 - start, keep_alive: __persists(version, req_headers) });
+    return Framed(HttpFramed { request: req, len: body.2 - start, keep_alive: __persists(version, req_headers), version: version });
 }
 
 // `http_request_target(method, target)` — the request-target (RFC 9112
@@ -1439,30 +1439,44 @@ pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolea
 // neither, whatever the handler put in the body. Every other response
 // carries `Content-Length` and the body.
 pub function http_serialize_response_to(method: string, resp: HttpResponse, keep_alive: boolean): string {
+    var bodiless: boolean = http_bodiless(resp.status);
+    var framing: string = "";
+    if (!bodiless) { framing = "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"; }
+    var head: string = http_serialize_response_head(resp, keep_alive, framing);
+    if (bodiless || method == "HEAD") { return head; }
+    return head + resp.body_string();
+}
+
+// `http_bodiless(status)` — whether a response with `status` carries no
+// body whatever the request: 1xx, 204 and 304 (RFC 9112 §6.3).
+pub function http_bodiless(status: i32): boolean {
+    return status < 200 || status == 204 || status == 304;
+}
+
+// `http_serialize_response_head(resp, keep_alive, framing)` — the
+// status line and header block of `resp`, ending in the blank line:
+// the handler's headers but `Content-Length`, `Transfer-Encoding` and
+// `Connection`, which the caller's `framing` (a `Content-Length` or
+// `Transfer-Encoding` line, or none for a close-delimited or bodiless
+// response) and `keep_alive` decide. The serve loop writes a streamed
+// body behind this head.
+pub function http_serialize_response_head(resp: HttpResponse, keep_alive: boolean, framing: string): string {
     var connection: string = "Connection: close\r\n";
     if (keep_alive) { connection = "Connection: keep-alive\r\n"; }
     var status_line: string = "HTTP/1.1 " + int.int_to_string(resp.status)
         + " " + __http_reason(resp.status) + "\r\n";
-    // User-supplied headers first; skip `content-length` and
-    // `connection` so the auto-block below stays authoritative.
-    // (Names in HeaderMap are case-folded on insert, so a direct
-    // string compare against the lowercase sentinel is correct.)
+    // Names in HeaderMap are case-folded on insert, so a direct string
+    // compare against the lowercase sentinel is correct.
     var hdr_block: string = "";
     var i: i32 = 0;
     while (i < resp.headers.names.len()) {
         var hname: string = resp.headers.names[i];
-        if (hname != "content-length" && hname != "connection") {
+        if (hname != "content-length" && hname != "connection" && hname != "transfer-encoding") {
             hdr_block = hdr_block + hname + ": " + resp.headers.values[i] + "\r\n";
         }
         i = i + 1;
     }
-    var bodiless: boolean = resp.status < 200 || resp.status == 204 || resp.status == 304;
-    if (!bodiless) {
-        hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n";
-    }
-    hdr_block = hdr_block + connection + "\r\n";
-    if (bodiless || method == "HEAD") { return status_line + hdr_block; }
-    return status_line + hdr_block + resp.body_string();
+    return status_line + hdr_block + framing + connection + "\r\n";
 }
 
 // ============================================================
@@ -1538,12 +1552,12 @@ pub function (r: HttpRequest) body_len(): i32 {
 }
 
 // `(r: HttpResponse).body_string()` — the body as text, whichever
-// `Body` holds it: the text itself, or the bytes or the Stream's
-// remainder read as UTF-8 unchecked. A `BodyFile` answers "" here: the
-// file is read by the serve loop as the response is written
-// (`http_materialize`), never by code a handler reaches, since a
-// handler's host effects go through its `Platform` bag (E080). The
-// response-side twin of the HttpRequest readers above.
+// `Body` holds it: the text itself, the bytes or the Stream's remainder
+// read as UTF-8 unchecked, or every chunk the producer answers, joined.
+// A `BodyFile` answers "" here: the file is streamed by the serve loop
+// as the response is written, never read by code a handler reaches,
+// since a handler's host effects go through its `Platform` bag (E080).
+// The response-side twin of the HttpRequest readers above.
 pub function (r: HttpResponse) body_string(): string {
     match (r.body) {
         BodyText(s) => { return s; },
@@ -1552,7 +1566,11 @@ pub function (r: HttpResponse) body_string(): string {
             var rest: (u8[], Stream) = st.read_all();
             return string_from_bytes_unchecked(rest.0);
         },
-        BodyFile(path) => { return ""; }
+        BodyFile(path) => { return ""; },
+        BodyChunks(producer) => {
+            var joined: u8[] = __chunks_joined(producer);
+            return string_from_bytes_unchecked(joined);
+        }
     }
     return "";
 }
@@ -1567,30 +1585,49 @@ pub function (r: HttpResponse) body_bytes(): u8[] {
             var rest: (u8[], Stream) = st.read_all();
             return rest.0;
         },
-        BodyFile(path) => { var none: u8[] = []; return none; }
+        BodyFile(path) => { var none: u8[] = []; return none; },
+        BodyChunks(producer) => { return __chunks_joined(producer); }
     }
     var empty: u8[] = [];
     return empty;
 }
 
+// `__chunks_joined(producer)` — every chunk the producer answers, from
+// index 0 until it answers None, as one byte string.
+function __chunks_joined(producer: ChunkProducer): u8[] {
+    var next: (i32) => Option[u8[]] = producer.next;
+    var out: u8[] = [];
+    var i: i32 = 0;
+    while (true) {
+        match (next(i)) {
+            Some(chunk) => { out = out.concat(chunk); },
+            None => { return out; }
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
 // `(r: HttpResponse).body_len()` — the body's length in bytes: the
-// text's or the bytes' length, the Stream's remainder, 0 for a file
-// the loop has not read yet.
+// text's or the bytes' length, the Stream's remainder, the chunks'
+// total, 0 for a file the loop has not opened yet.
 pub function (r: HttpResponse) body_len(): i32 {
     match (r.body) {
         BodyText(s) => { return s.len(); },
         BodyBytes(bs) => { return bs.len(); },
         BodyStream(st) => { return st.remaining(); },
-        BodyFile(path) => { return 0; }
+        BodyFile(path) => { return 0; },
+        BodyChunks(producer) => { return __chunks_joined(producer).len(); }
     }
     return 0;
 }
 
 // `http_materialize(r)` — the response with a `BodyFile` read into a
 // `BodyBytes`, or a 404 when the file cannot be read; any other body
-// as it was. The serve loop calls it as it writes a response, which is
-// where the file is read: after the handler has answered, on the loop's
-// own thread of control, and outside the reach of E080's rule that a
+// as it was. For a test that wants the bytes a served file body would
+// carry: the serve loop itself streams the file from a `Reader` as the
+// socket takes it, after the handler has answered, on the loop's own
+// thread of control and outside the reach of E080's rule that a
 // handler's host effects go through its bag.
 pub function http_materialize(r: HttpResponse): HttpResponse {
     match (r.body) {
@@ -1622,12 +1659,23 @@ pub function http_response_stream(status: i32, s: Stream): HttpResponse {
 }
 
 // `http_response_file(path)` — a 200 whose body is the file at `path`,
-// read by the serve loop as the response is written, so a handler
+// streamed by the serve loop as the socket takes it, so a handler
 // answers a file without holding it or reaching the filesystem; a file
-// the loop cannot read is answered 404 in its place. The
+// the loop cannot open is answered 404 in its place. The
 // `Content-Type` is the caller's to set.
 pub function http_response_file(path: string): HttpResponse {
     return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new() };
+}
+
+// `http_response_chunks(status, next)` — a response whose body is what
+// `next` answers for the indexes 0, 1, 2, … until it answers None, each
+// chunk produced as the socket takes the one before it. The serve loop
+// writes it under chunked transfer coding to an HTTP/1.1 client and
+// close-delimited to an HTTP/1.0 one, so the length need not be known
+// up front; a `Content-Length` the handler set is dropped. The
+// `Content-Type` is the caller's to set.
+pub function http_response_chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
+    return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new() };
 }
 
 // ============================================================

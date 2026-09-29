@@ -1041,14 +1041,25 @@ serializer.
   `http_response_json` / `http_response_json_status` /
   `http_response_html` / `http_response_plain`
 - **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
-  `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder) or
-  `BodyFile(string)` (a path). `http_response_bytes(status, bytes)`,
-  `http_response_stream(status, stream)` and `http_response_file(path)`
-  build the last three. `(resp).body_string()`, `(resp).body_bytes()` and
-  `(resp).body_len()` read whichever a response carries; a `BodyFile` reads
-  as empty from a handler, since a handler may not reach the file system
-  (E080). The serve loop reads the file when it writes the response, through
-  `http_materialize(resp)`, and answers 404 for a file it cannot read.
+  `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
+  `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
+  producer asked for chunk 0, 1, 2, … until it answers None).
+  `http_response_bytes(status, bytes)`, `http_response_stream(status, stream)`,
+  `http_response_file(path)` and `http_response_chunks(status, next)` build
+  the last four. `(resp).body_string()`, `(resp).body_bytes()` and
+  `(resp).body_len()` read whichever a response carries, a producer's chunks
+  joined; a `BodyFile` reads as empty from a handler, since a handler may not
+  reach the file system (E080), and `http_materialize(resp)` reads one whole
+  for a test. The serve loop produces a file body and a chunks body as the
+  socket takes them, after the handler has answered: a file is opened and
+  streamed from a `Reader` under its size as the `Content-Length`, or
+  answered 404 when it cannot be opened; chunks go out under chunked transfer
+  coding to an HTTP/1.1 client, and close-delimited (the connection ending
+  with the body) to an HTTP/1.0 one, so the length need not be known up
+  front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
+  body either way. `http_serialize_response_head(resp, keep_alive, framing)`
+  is the head alone, the framing line (`Content-Length` or
+  `Transfer-Encoding`) the caller's.
 - **Typed JSON body:** `body_json[T](req): Result[T, BodyError]` decodes the
   body as a `T: json.FromJson` and tells the failures apart:
   `UnsupportedMediaType(ct)` when the `Content-Type` is not
