@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 )
 
 var fcRefRe = regexp.MustCompile(`\.Lfc_([A-Za-z0-9_]+)`)

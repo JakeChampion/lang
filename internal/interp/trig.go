@@ -4,7 +4,7 @@ import (
 	"math"
 	"math/bits"
 
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 )
 
 // fdlibm sin/cos, the same algorithm the codegen backends emit, operation for
@@ -23,7 +23,7 @@ import (
 // rounding fence.
 //
 // Agreeing bit for bit means agreeing on the numbers too, so the coefficients
-// and the 2/pi limbs come from internal/codegen/fdlibm — the table the
+// and the 2/pi limbs come from internal/fdlibm — the table the
 // backends emit — rather than a copy beside it. An oracle that drifted from
 // what it is checking would be the worst place for this table to diverge.
 

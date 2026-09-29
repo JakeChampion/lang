@@ -15,7 +15,7 @@ import (
 	"math"
 
 	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
@@ -10159,7 +10159,7 @@ func buildRoundF64Body(_ map[string]uint32) []byte {
 // --- f64 transcendentals (#6404) --------------------------------------------
 //
 // fdlibm kernels over the same reduction order the native backends use, with
-// the coefficients themselves from internal/codegen/fdlibm. exp / log / sin /
+// the coefficients themselves from internal/fdlibm. exp / log / sin /
 // cos / pow are the only primitives; exp2, exp10, log2, log10, tan, sinh,
 // cosh, tanh and cbrt compose from them in float.fern.
 //

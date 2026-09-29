@@ -1,14 +1,17 @@
 // Package fdlibm carries the numeric tables behind the f64 transcendental
 // runtime helpers — __fern_{exp,log,sin,cos,pow}_f64 — as one source of truth
-// for every backend that emits them.
+// for every backend that emits them and for the interpreter's own kernels
+// (internal/interp exp.go / log.go / trig.go). It lives outside
+// internal/codegen because the interpreter is the oracle the differential
+// suites anchor on and outlives the native backends (docs/NATIVE-FREEZE.md).
 //
 // The kernels are fdlibm's, and the accuracy is the point: measured against
 // the correctly-rounded reference over 20k samples per range they land at
 // <= 1 ulp, where the Taylor kernels these replaced measure 3.2e10 ulp (sin),
 // 4.5e7 (exp) and 9844 (log) while their own comments claimed "a few ulp".
 //
-// The tables lived in five copies before this package — internal/codegen's
-// arm64, arm64ssa, wasmbin and x86_64, plus the three self-host emitters —
+// The tables lived in five copies before this package — the native arm64,
+// arm64ssa, wasmbin and x86_64 backends, plus the three self-host emitters —
 // which is the parallel-emit drift hazard CLAUDE.md warns about, and it has
 // already cost real accuracy once: #6313 exists because three copies still
 // carried the old math after two prior PRs fixed the others. The emit layers
