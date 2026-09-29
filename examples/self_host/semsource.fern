@@ -2654,14 +2654,23 @@ function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
     if (!semtypes.concrete(ty, true)) { return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(ty)); }
     if (value_local_placeholder(v) && !ssasem.is_integer(ty)) {
         var z: Value = define(s, ssasem.zero(), [], 0, "", ty);
-        return State { ...bind(z.s, v.name, z.id), scope: after };
+        return State { ...bind_var(z.s, v.name, z.id), scope: after };
     }
     var init: Value = expr(v.init, s, ty);
     s = init.s;
     if (!s.ok) { return s; }
     if (!semtypes.equal(s.values[init.id], ty)) { return fail(s, mismatch(v.name, ty, s.values[init.id])); }
     init = unaliased_view(init);
-    return State { ...bind(init.s, v.name, init.id), scope: after };
+    return State { ...bind_var(init.s, v.name, init.id), scope: after };
+}
+
+// An escaping `var` is prebound at the top of the body (learn_body); its
+// declaration overwrites that slot, and a probe learns its type here.
+function bind_var(s: State, name: string, id: i32): State {
+    if (util.index_of_str(s.escaping, name) < 0) { return bind(s, name, id); }
+    if (util.index_of_str(s.names, name) >= 0) { return replace(s, name, id); }
+    if (util.index_of_str(s.learned, name) >= 0 || !semtypes.concrete(s.values[id], false)) { return bind(s, name, id); }
+    return bind(State { ...s, learned: s.learned.append(name), learned_types: s.learned_types.append(s.values[id]) }, name, id);
 }
 
 // A view bound under a second name, stored into a container, or yielded by a
@@ -2725,7 +2734,7 @@ function declare_from_call(v: ast.StmtVar, s: State, after: checker.Scope): Stat
     if (!semtypes.concrete(s.values[init.id], false)) {
         return fail(s, "unresolved type of binding " + v.name + ": " + type_detail(s.values[init.id]));
     }
-    return State { ...bind(s, v.name, init.id), scope: after };
+    return State { ...bind_var(s, v.name, init.id), scope: after };
 }
 
 // Replacing a binding that holds a value this frame did not create is a write
@@ -3782,14 +3791,56 @@ function arm_local_uses(st: ast.Stmt, own acc: string[]): string[] {
     return acc;
 }
 
+// A `var` the desugar could not lift (it has no annotation to zero) is local
+// to the statements that follow it in its own list.
+function var_local_uses(st: ast.Stmt, own acc: string[]): string[] {
+    if let ast.StmtIf(f) = st {
+        acc = list_var_uses(f.then_body, acc);
+        acc = list_var_uses(f.else_body, acc);
+    }
+    if let ast.StmtWhile(w) = st { acc = list_var_uses(w.body, acc); }
+    if let ast.StmtFor(fr) = st { acc = list_var_uses(fr.body, acc); }
+    if let ast.StmtMatch(m) = st {
+        for a in m.arms { acc = list_var_uses(a.body, acc); }
+    }
+    return acc;
+}
+
+function lambda_var_uses(e: ast.Expr, own acc: string[]): string[] {
+    if let ast.ExprLambda(l) = e { return list_var_uses(l.body, acc); }
+    return acc;
+}
+
+function list_var_uses(stmts: ast.Stmt[], own acc: string[]): string[] {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        if let ast.StmtVar(v) = stmts[i] {
+            if (!destructures(v)) {
+                acc = acc.append("=" + v.name);
+                var j: i32 = i + 1;
+                while (j < stmts.len()) {
+                    for u in astwalk.fold_stmt_nodes(stmts[j], [], name_uses, ident_uses, descend_all) { if (u == v.name) { acc = acc.append(u); } }
+                    j = j + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return acc;
+}
+
 function keep_names(e: ast.Expr, own acc: string[]): string[] { return acc; }
 
-// The pattern bindings used outside the arm that binds them. Lexical
-// resolution gives every binding a symbol of its own, so such a use can only
-// be the defer desugar's replay of an action the arm armed.
+// The pattern bindings used outside the arm that binds them, and the `var`s
+// used outside the statements that follow them. Lexical resolution gives every
+// binding a symbol of its own, so such a use can only be the defer desugar's
+// replay of an action the scope armed.
 function escaping_bindings(body: ast.Stmt[]): string[] {
-    var local: string[] = [];
-    for st in body { local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all); }
+    var local: string[] = list_var_uses(body, []);
+    for st in body {
+        local = astwalk.fold_stmt_nodes(st, local, arm_local_uses, keep_names, descend_all);
+        local = astwalk.fold_stmt_nodes(st, local, var_local_uses, lambda_var_uses, descend_all);
+    }
     if (local.len() == 0) { return []; }
     var all: string[] = uses_in(body, []);
     var out: string[] = [];
