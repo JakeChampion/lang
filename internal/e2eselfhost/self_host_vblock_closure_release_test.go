@@ -96,7 +96,8 @@ function main(): i32 {
 const closureRebindReleaseWant = 76
 
 // A defer inside a value block names an unannotated local of that block, which
-// the desugar cannot lift, and replays at the function's exit (#10496).
+// the desugar cannot lift, and replays at the function's exit, so the block
+// keeps the local rather than moving it out (#10496).
 const vblockDeferUnliftedSrc = `function main(): i32 {
     var r = 0;
     var c = 1;
@@ -114,7 +115,6 @@ type vblockClosureLowering struct{ name, env string }
 var (
 	vblockClosureBoth = []vblockClosureLowering{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}}
 	vblockClosureAST  = []vblockClosureLowering{{"ast", "FERN_SEM_IR="}}
-	vblockClosureSem  = []vblockClosureLowering{{"semantic", "FERN_SEM_IR=1"}}
 )
 
 var vblockClosureReleaseCases = []struct {
@@ -126,7 +126,7 @@ var vblockClosureReleaseCases = []struct {
 	{"vblock_tail_move", vblockTailMoveSrc, vblockTailMoveWant, vblockClosureBoth},
 	{"vblock_nested_tail_move", vblockNestedTailMoveSrc, vblockNestedTailMoveWant, vblockClosureBoth},
 	{"closure_rebind_release", closureRebindReleaseSrc, closureRebindReleaseWant, vblockClosureBoth},
-	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant, vblockClosureSem},
+	{"vblock_defer_unlifted_local", vblockDeferUnliftedSrc, vblockDeferUnliftedWant, vblockClosureBoth},
 }
 
 func TestSelfHostVblockClosureReleaseX86_64(t *testing.T) {

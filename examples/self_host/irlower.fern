@@ -19355,11 +19355,10 @@ function vb_iife_body(e: ast.Expr): ast.Stmt[] {
     return none;
 }
 
-// vb_arms_defer: a defer is armed at the block's top level.
+// vb_arms_defer: a defer is armed anywhere in the block, nested statements
+// included; the replay runs after the block and reads its locals.
 function vb_arms_defer(body: ast.Stmt[]): boolean {
-    var armed: string[] = [];
-    for st in body { armed = armed_defer_flag_at(st, armed); }
-    return armed.len() > 0;
+    return armed_defer_flags(body, []).len() > 0;
 }
 
 // vb_moved_tail is the body of a value block initializer and the index of the
