@@ -3,7 +3,7 @@ package interp
 import (
 	"math"
 
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 )
 
 // fdlibm log, the same algorithm the codegen backends emit, operation for
@@ -18,7 +18,7 @@ import (
 // which would silently diverge from the backends' separately-rounded
 // mulsd/addsd. Same fence, and same reason, as trig.go and exp.go.
 //
-// The coefficients come from internal/codegen/fdlibm — the table the backends
+// The coefficients come from internal/fdlibm — the table the backends
 // emit — rather than a copy beside it.
 func fernLog(x float64) float64 {
 	if math.IsNaN(x) {

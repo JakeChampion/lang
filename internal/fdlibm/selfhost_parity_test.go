@@ -30,9 +30,9 @@ import (
 // (`0.1531383769920937332`).
 
 const (
-	selfHostAsmX86   = "../../../examples/self_host/asm_ir.fern"
-	selfHostAsmArm64 = "../../../examples/self_host/asm_arm64_ir.fern"
-	selfHostWasm     = "../../../examples/self_host/wasm_ir.fern"
+	selfHostAsmX86   = "../../examples/self_host/asm_ir.fern"
+	selfHostAsmArm64 = "../../examples/self_host/asm_arm64_ir.fern"
+	selfHostWasm     = "../../examples/self_host/wasm_ir.fern"
 )
 
 func readSelfHost(t *testing.T, path string) string {

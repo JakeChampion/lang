@@ -32,7 +32,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/codegen/fdlibm"
+	"github.com/jakechampion/lang/internal/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/fernstring"
 	"github.com/jakechampion/lang/internal/ir"
@@ -8496,7 +8496,7 @@ func (g *generator) emitEnvironRuntime() {
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
 // __fern_{exp,log,sin,cos,pow}_f64 — plus the coefficient table. arm64 has no
 // hardware transcendental, so each is an argument reduction followed by a
-// polynomial. The numbers come from internal/codegen/fdlibm, which is also
+// polynomial. The numbers come from internal/fdlibm, which is also
 // where the reasons behind them are.
 //
 // The table is emitted contiguously and indexed off a single base pointer, so
@@ -15846,7 +15846,7 @@ type generator struct {
 	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus the
 	// .rodata coefficient table they share. arm64 has no hardware
 	// sin/cos/exp/log, so each is an argument reduction followed
-	// by an fdlibm kernel; the numbers are internal/codegen/fdlibm's.
+	// by an fdlibm kernel; the numbers are internal/fdlibm's.
 	usesFloatTranscendentals bool
 	// usesReadLine pulls in `__fern_read_line()` — stdin
 	// one-byte reader. Returns Option[string]: Some(line)
