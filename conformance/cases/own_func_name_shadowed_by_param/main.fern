@@ -28,10 +28,6 @@
 // The consume classifier reads the same table: a shadowed callee must not mark
 // its argument moved either, or `xs` here is a use-after-move. This is the E050
 // half of the same bug.
-//
-// This call is also the whole of the fixture's census row of 1: one array
-// handed to an `own` parameter and not reclaimed, which is the RECLAIM side
-// the port has not reached yet. The row was 0 before this function existed.
 @noinline function not_consumed(own xs: i32[], keep: (i32[]) => boolean): i32 {
     var hit: i32 = 0;
     if (keep(xs)) { hit = 1; }
