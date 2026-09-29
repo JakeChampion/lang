@@ -15,10 +15,15 @@
 #                               exit criterion names.
 #   FERN_OHA                    the oha binary. Default: `oha` on PATH.
 #
-# WHAT IS MEASURED. Two hello servers answering the same five-byte body on
-# a loopback port: scripts/net-bench.d/hello.fern, built by bin/fern for
-# the host, and scripts/net-bench.d/gohello, Go's net/http with its
-# defaults. oha holds N connections closed-loop for the duration and the
+# WHAT IS MEASURED. Four hello servers answering the same five-byte body
+# on a loopback port: scripts/net-bench.d/hello.fern, built by bin/fern
+# for the host; scripts/net-bench.d/gohello, Go's net/http with its
+# defaults; scripts/net-bench.d/hyperhello, hyper 1's http1 server on a
+# multi-threaded tokio runtime, built --locked against its Cargo.lock by
+# the Rust toolchain mise.net-nightly.toml pins; and h2o, the host's
+# package (Ubuntu's 2.2.5 on the runner), answering through an mruby
+# handler with a worker thread per core. The report's header names the
+# versions. oha holds N connections closed-loop for the duration and the
 # report keeps its throughput and its p50 / p99 latency per server and N,
 # plus, on x86-64, the bump-allocator growth one held idle connection
 # costs the Fern loop (the number TestHeldConnectionsHeapBoundX86_64
@@ -32,9 +37,7 @@
 # instead; nothing compares this report to a baseline. net-nightly.yml
 # runs it once a night on main and appends the report to the commit's
 # note under refs/notes/perf, so `scripts/perf-history show
-# net/fern/c64.rps` is the trend. The hyper and h2o columns #9854 asks
-# for are not here yet; when they join, they join as more servers in the
-# same table.
+# net/fern/c64.rps` is the trend.
 #
 #   net/<server>/c<N>.rps       requests per second, whole
 #   net/<server>/c<N>.p50_us    median latency, microseconds
@@ -61,6 +64,14 @@ esac
 
 if ! command -v "$OHA" >/dev/null 2>&1; then
   echo "net-bench: $OHA not found; mise.toml pins it (mise install oha)" >&2
+  exit 2
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "net-bench: cargo not found; mise.net-nightly.toml pins the toolchain (MISE_ENV=net-nightly mise install rust)" >&2
+  exit 2
+fi
+if ! command -v h2o >/dev/null 2>&1; then
+  echo "net-bench: h2o not found; the host's package supplies it (apt-get install h2o)" >&2
   exit 2
 fi
 
@@ -91,6 +102,29 @@ trap 'stop_server; rm -rf "$work"' EXIT
 
 bin/fern -target "$TARGET" -o "$work/fern-hello" scripts/net-bench.d/hello.fern
 go build -o "$work/go-hello" ./scripts/net-bench.d/gohello
+cargo build --release --locked --quiet --manifest-path scripts/net-bench.d/hyperhello/Cargo.toml --target-dir "$work/hyper-target"
+cp "$work/hyper-target/release/hyperhello" "$work/hyper-hello"
+hyper_version="$(sed -n '/^name = "hyper"$/{n;s/^version = "\(.*\)"/\1/p}' scripts/net-bench.d/hyperhello/Cargo.lock)"
+h2o_version="$(h2o --version | sed -n 's/^h2o version \(.*\)/\1/p')"
+
+# h2o answers the same body through an mruby handler; the config is
+# written per run since it carries the port and the thread count.
+h2o_config() {
+  cat > "$work/h2o.conf" <<EOF
+listen:
+  host: 127.0.0.1
+  port: $1
+num-threads: $(nproc)
+hosts:
+  default:
+    paths:
+      /:
+        mruby.handler: |
+          Proc.new do |env|
+            [200, {'content-type' => 'text/plain; charset=utf-8'}, ['hello']]
+          end
+EOF
+}
 
 free_port() {
   python3 -c 'import socket
@@ -99,10 +133,15 @@ s.bind(("127.0.0.1", 0))
 print(s.getsockname()[1])'
 }
 
-# start_server BIN PORT — the server in its own process group, so the
+# start_server NAME PORT — the server in its own process group, so the
 # supervisor and every worker it forks go together.
 start_server() {
-  PORT="$2" setsid "$1" > "$work/server.log" 2>&1 &
+  if [ "$1" = h2o ]; then
+    h2o_config "$2"
+    setsid h2o -c "$work/h2o.conf" > "$work/server.log" 2>&1 &
+  else
+    PORT="$2" setsid "$work/$1-hello" > "$work/server.log" 2>&1 &
+  fi
   server_pgid="$!"
   local tries=0
   until curl -s -m 1 -o /dev/null "http://127.0.0.1:$2/"; do
@@ -135,10 +174,10 @@ PY
 
 {
   echo "# scripts/net-bench report — arch $ARCH, target $TARGET, $(nproc) cpus"
-  echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3)"
-  for server in fern go; do
+  echo "# ${SECONDS_PER}s per load, connections: $CONNECTIONS, $("$OHA" --version), $(go version | cut -d' ' -f3), hyper $hyper_version ($(rustc --version | cut -d' ' -f2)), h2o $h2o_version"
+  for server in fern go hyper h2o; do
     port="$(free_port)"
-    start_server "$work/$server-hello" "$port"
+    start_server "$server" "$port"
     for n in $CONNECTIONS; do
       "$OHA" -z "${SECONDS_PER}s" -c "$n" --no-tui --output-format json "http://127.0.0.1:$port/" > "$work/$server-c$n.json"
       rows "$server" "$n" "$work/$server-c$n.json"
