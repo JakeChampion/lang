@@ -1,12 +1,6 @@
 package e2eselfhost
 
-import (
-	"bytes"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // The receiver-borrow deep drop (#6544).
 //
@@ -174,17 +168,16 @@ function main(): i32 {
 }`, 0},
 }
 
-// recvBorrowDeepDropLeakCases assert heap FLATNESS, so they are register-backend
-// only — the wasm driver's own allocations sit between the two probes and the
-// WAT leg reads __rc_underflow_count() instead (see the trap note in
-// docs/RC-PERCEUS-SELF-HOST-PORT.md §9).
+// recvBorrowDeepDropLeakCases assert heap FLATNESS across the two
+// __heap_bump_bytes() probes.
 var recvBorrowDeepDropLeakCases = []struct {
 	name string
 	src  string
 }{
 	// The main case: a struct local handed to a borrowing method keeps its deep
 	// drop, so its fresh string field is freed every round. 22 B/round before.
-	{"recvborrow-deep-drop-flat", `struct Box { tag: string, n: i32 }
+	{"recvborrow-deep-drop-flat", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) score(): i32 { return b.n * 2; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -206,7 +199,8 @@ function main(): i32 {
 	// its only path, and the result is consumed INLINE — read through to a
 	// `.len()` and dead. Nothing outliving `b` holds it, so `b` keeps its deep
 	// drop. 22 B/round before.
-	{"recvident-inline-result-flat", `struct Box { tag: string, n: i32 }
+	{"recvident-inline-result-flat", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -228,7 +222,8 @@ function main(): i32 {
 	// credit too — the same registry and reading fieldmove_expr already applies
 	// to a field chain. Marking every argument cost this shape 72 B/round in an
 	// intermediate of this slice, worse than the 22 it started at.
-	{"recvident-borrowable-arg-flat", `struct Box { tag: string, n: i32 }
+	{"recvident-borrowable-arg-flat", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function take(x: Box): i32 { return x.n; }
 function rounds(n: i32): i32 {
@@ -248,7 +243,8 @@ function main(): i32 {
     return 0;
 }`},
 	// The same credit over an rc-ARRAY field: the deep walk frees the buffer.
-	{"recvborrow-array-field-flat", `struct Box { tag: string, items: i32[] }
+	{"recvborrow-array-field-flat", `import "std/i32";
+struct Box { tag: string, items: i32[] }
 function (b: Box) total(): i32 { return b.items.len(); }
 function rounds(n: i32): i32 {
     var acc: i32 = 0;
@@ -270,7 +266,8 @@ function main(): i32 {
 	// the result's release, after a binding, a discarded statement and an
 	// argument temp. `.val()` lets the receiver escape nowhere, so the count
 	// this frame owes goes back once the call returns.
-	{"recvident-chain-recv-flat", `struct Box { tag: string, n: i32 }
+	{"recvident-chain-recv-flat", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
 function rounds(n: i32): i32 {
@@ -291,7 +288,8 @@ function main(): i32 {
 }`},
 	// The same over an rc-ARRAY field: the shallow dec leaves the buffer to the
 	// box's own drop, so the round still flattens.
-	{"recvident-chain-recv-array", `struct Box { tag: string, items: i32[] }
+	{"recvident-chain-recv-array", `import "std/i32";
+struct Box { tag: string, items: i32[] }
 function (b: Box) me(): Box { return b; }
 function (b: Box) total(): i32 { return b.items.len(); }
 function rounds(n: i32): i32 {
@@ -313,7 +311,8 @@ function main(): i32 {
 	// Two counted handbacks in a row: the inner result stands in the receiver
 	// position of a method that hands the receiver back COUNTED, so the outer
 	// call adds a count of its own and the inner's dec still leaves exactly one.
-	{"recvident-chain-recv-double", `struct Box { tag: string, n: i32 }
+	{"recvident-chain-recv-double", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
 function rounds(n: i32): i32 {
@@ -334,7 +333,8 @@ function main(): i32 {
 }`},
 	// A strict-fresh FREE producer under the same chain: counted_call_key reads
 	// a bare callee name too, so the receiver release is keyed the same way.
-	{"recvident-chain-recv-freecall", `struct Box { tag: string, n: i32 }
+	{"recvident-chain-recv-freecall", `import "std/i32";
+struct Box { tag: string, n: i32 }
 function mk(i: i32): Box { return Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; }
 function (b: Box) me(): Box { return b; }
 function (b: Box) val(): i32 { return b.n; }
@@ -356,8 +356,7 @@ function main(): i32 {
 }`},
 }
 
-// recvBorrowAllCases is the safety table plus the flatness table, for the
-// register backends that can run both.
+// recvBorrowAllCases is the safety table plus the flatness table.
 func recvBorrowAllCases() []struct {
 	name     string
 	src      string
@@ -378,104 +377,42 @@ func recvBorrowAllCases() []struct {
 	return out
 }
 
+const recvBorrowFailFmt = "%s exited %d, want %d (98 = receiver fields leaked; 99 = over-release; 95/96 = a refused move was freed anyway)"
+
 // TestSelfHostRecvBorrowDeepDropX86_64 runs every case through the self-hosted
-// x86-64 driver. 98 = the receiver's fields leaked, 99 = over-release,
-// 95/96 = a value a refusal was protecting was corrupted.
+// CLI for x86-64.
 func TestSelfHostRecvBorrowDeepDropX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range recvBorrowAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(progBin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d (98 = receiver fields leaked; 99 = over-release; 95/96 = a refused move was freed anyway)", tc.name, code, tc.expected)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.expected {
+				t.Errorf(recvBorrowFailFmt, tc.name, code, tc.expected)
 			}
 		})
 	}
 }
 
-// TestSelfHostRecvBorrowDeepDropArm64 runs the same cases through the arm64 IR
-// driver under qemu — the second register backend, where the deep drop lands in
-// the same place through a different emitter.
+// TestSelfHostRecvBorrowDeepDropArm64 runs the same cases for arm64 under qemu,
+// where the deep drop lands in the same place through a different emitter.
 func TestSelfHostRecvBorrowDeepDropArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range recvBorrowAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-ir", "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			progBin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, progBin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("%s exited %d, want %d (98 = receiver fields leaked; 99 = over-release; 95/96 = a refused move was freed anyway)", tc.name, code, tc.expected)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.expected {
+				t.Errorf(recvBorrowFailFmt, tc.name, code, tc.expected)
 			}
 		})
 	}
 }
 
-// TestSelfHostRecvBorrowDeepDropWasm runs the SAFETY cases on the wasm IR
-// backend. The flatness cases are excluded: the WAT driver's own allocations
-// sit between the probes, so __rc_underflow_count() is the witness there.
+// TestSelfHostRecvBorrowDeepDropWasm runs the same cases for wasm32-wasi.
 func TestSelfHostRecvBorrowDeepDropWasm(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH; skipping self-host receiver-borrow deep-drop wasm e2e")
-	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-
-	for _, tc := range recvBorrowDeepDropCases {
+	cli := newStrictCLI(t)
+	for _, tc := range recvBorrowAllCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			watFile := filepath.Join(dir, tc.name+".wat")
-			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-				t.Fatalf("write wat: %v", err)
-			}
-			run := exec.Command("wasmtime", "run", watFile)
-			_ = run.Run()
-			if run.ProcessState == nil || !run.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %q:\n%s", tc.name, wat)
-			}
-			if code := run.ProcessState.ExitCode(); code != tc.expected {
-				t.Errorf("receiver-borrow deep drop wasm %q = %d, want %d", tc.name, code, tc.expected)
+			if code, _ := runWasm(t, cli.emit(t, "wasm32-wasi", tc.src)); code != tc.expected {
+				t.Errorf(recvBorrowFailFmt, tc.name, code, tc.expected)
 			}
 		})
 	}
