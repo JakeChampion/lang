@@ -1,11 +1,16 @@
 package e2eselfhost
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // tryDeferIRCases pin defer/errdefer firing on the `?` (try) FAILURE path
 // (#4334): plain defers first, then errdefers, then the reclaim of owned
-// locals, in that order. Every case is cross-checked against the interpreter
-// before asserting the self-hosted CLI's result.
+// locals, in that order. Every case the interpreter can judge is cross-checked
+// against it before asserting the self-hosted CLI's result; the row that reads
+// the bump mark is its own oracle, since the interpreter's `__heap_bump_bytes`
+// is a constant 0 and it answers 7 there whatever is reclaimed.
 var tryDeferIRCases = []struct {
 	name    string
 	main    string
@@ -97,16 +102,20 @@ function main(): i32 {
 }`, "", 7},
 }
 
-// TestSelfHostTryDeferIRX86_64 cross-checks each case against the
-// interpreter, then runs the self-hosted CLI's binary and compares stdout and
-// exit code.
+// TestSelfHostTryDeferIRX86_64 cross-checks each case the interpreter can
+// judge against it, then runs the self-hosted CLI's binary and compares
+// stdout and exit code.
 func TestSelfHostTryDeferIRX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range tryDeferIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			oracleOut, oracleCode := runInterp(t, tc.main+"\n")
-			if oracleCode != tc.want || oracleOut != tc.wantOut {
-				t.Fatalf("%s interpreter: out %q exit %d, want %q / %d", tc.name, oracleOut, oracleCode, tc.wantOut, tc.want)
+			// A row whose verdict is a bump-mark difference has no witness in
+			// the interpreter, where the mark is always 0.
+			if !strings.Contains(tc.main, "__heap_bump_bytes()") {
+				oracleOut, oracleCode := runInterp(t, tc.main+"\n")
+				if oracleCode != tc.want || oracleOut != tc.wantOut {
+					t.Fatalf("%s interpreter: out %q exit %d, want %q / %d", tc.name, oracleOut, oracleCode, tc.wantOut, tc.want)
+				}
 			}
 			if code, out := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.main)); code != tc.want || out != tc.wantOut {
 				t.Errorf("%s: out %q exit %d, want %q / %d (defers skipped at `?`)",

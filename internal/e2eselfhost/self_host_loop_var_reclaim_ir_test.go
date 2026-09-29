@@ -34,7 +34,9 @@ var loopVarReclaimCases = []struct {
 	decl string
 	body string
 	// want is 7 when the bump mark is flat across the second run, 3 when it
-	// grows. A 3 is a PINNED DIVERGENCE from native, not an expectation.
+	// grows. A 3 is a pinned self-host gap, not an expectation: a reclaimed
+	// shape hands the second run the first run's buffers, so a flat mark is
+	// the answer every row is held toward.
 	//
 	// READ THE MARK FOR WHAT IT IS. It measures whether the allocator hands
 	// the second run the first run's buffers — so it grows for a leak AND for
@@ -133,10 +135,11 @@ function main(): i32 {
 }
 
 // TestSelfHostLoopVarReclaimIRX86_64 runs each case through the self-hosted
-// x86-64 IR driver, and cross-checks every case against the interpreter
-// first. That cross-check is what makes a `want: 3` row accurate: it asserts
-// the language still answers 7 on the same source, so the row records a
-// self-host gap rather than quietly ratifying a shape nothing reclaims.
+// x86-64 IR driver and holds it to its row. The rows are the oracle: the
+// interpreter's `__heap_bump_bytes` is a constant 0, so every shape answers
+// 7 there whatever it reclaims, and the mark itself is what says 7 is the
+// language's answer (a reclaimed shape reuses its buffers on the second
+// run). The 1/2 drift arms are checked by the same run.
 func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -146,9 +149,6 @@ func TestSelfHostLoopVarReclaimIRX86_64(t *testing.T) {
 	for _, tc := range loopVarReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := loopVarSrc(tc.decl, tc.body)
-			if code := runInterpExit(t, src); code != 7 {
-				t.Fatalf("interpreter exited %d, want 7 — the shape this case pins is not the language's behaviour any more", code)
-			}
 			asm := runCapture(t, gcc, runner, driverBin, []byte(src))
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
