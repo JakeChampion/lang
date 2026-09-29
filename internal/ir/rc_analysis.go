@@ -2358,6 +2358,27 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 // keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
 // builtin `__method_Map_set` argument (never in `summary`), so it is never
 // credited and its scalar `k` is never exempted.
+// projectionRootIdent is the identifier a chain of field and element reads
+// (`p.a.b`, `p.tails[i]`) starts from, or nil when the chain starts elsewhere
+// (a call).
+func projectionRootIdent(e ast.Expr) *ast.Ident {
+	for {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Index:
+			if x.IsString || x.IsSlice {
+				return nil
+			}
+			e = x.Array
+		case *ast.Ident:
+			return x
+		default:
+			return nil
+		}
+	}
+}
+
 func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	// tracked holds `pn` and every binding a match over a tracked name
 	// introduces: a payload binding is an uncounted alias of the value's
@@ -2375,9 +2396,12 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 	}
 	for {
 		grew := false
+		// A match over the parameter, or over a projection of it
+		// (`match (c.tails[at])`): the bindings alias the interior either
+		// way and are held to the same rules.
 		track := func(tag ast.Expr, names []string, types []ast.Type) {
-			id, ok := tag.(*ast.Ident)
-			if !ok || !tracked[id.Name] {
+			id := projectionRootIdent(tag)
+			if id == nil || !tracked[id.Name] {
 				return
 			}
 			for i, nm := range names {
@@ -2444,7 +2468,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 				safe[v] = true
 			}
 		case *ast.FieldAccess:
-			if id, ok := v.Target.(*ast.Ident); ok && tracked[id.Name] {
+			// Any depth of projection reads the innermost value into the
+			// position the same way `p.field` does: a pointer is inc'd, a
+			// scalar copied, and the intermediate boxes are read in passing.
+			if id := projectionRootIdent(v); id != nil && tracked[id.Name] {
 				safe[id] = true
 			}
 		case *ast.Index:
@@ -2457,7 +2484,7 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 					safe[arr] = true
 				}
 			case *ast.FieldAccess:
-				if id, ok := arr.Target.(*ast.Ident); ok && tracked[id.Name] {
+				if id := projectionRootIdent(arr); id != nil && tracked[id.Name] {
 					safe[id] = true
 				}
 			}
@@ -2514,13 +2541,14 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 				}
 			}
 		case *ast.Match:
-			// The bindings are tracked (above), so the match reads the box
-			// without anything escaping uncounted.
-			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
+			// The bindings are tracked (above), so the match reads the box,
+			// or the interior a projection names, without anything escaping
+			// uncounted.
+			if id := projectionRootIdent(x.Tag); id != nil && tracked[id.Name] {
 				safe[id] = true
 			}
 		case *ast.MatchExpr:
-			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
+			if id := projectionRootIdent(x.Tag); id != nil && tracked[id.Name] {
 				safe[id] = true
 			}
 		case *ast.MakeClosure:
@@ -2569,6 +2597,14 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 				markSlotValue(x.Array)
 			} else if root, ok := scalarElemRead(x); ok {
 				safe[root] = true
+			}
+		case *ast.Binary:
+			// An operator reads its operands and retains neither: a
+			// comparison answers a boolean and a concatenation a fresh
+			// string. So `h.names[i] == key` reads the element out of the
+			// field in passing, and `p.name + "x"` the field.
+			for _, e := range []ast.Expr{x.Left, x.Right} {
+				markSlotValue(e)
 			}
 		case *ast.Call:
 			// A `p` / `p.field` passed as argument i to a call whose callee
