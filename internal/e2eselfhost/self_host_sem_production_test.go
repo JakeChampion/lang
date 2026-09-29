@@ -440,7 +440,7 @@ function main(): i32 {
 `},
 	// The same shape in a MATCH expression. Its IIFE body is a StmtMatch, which
 	// the contract walk has to enter for the same reason the if-expression's
-	// StmtIf does — the hoist gate (iife_arms_have_lambda) already reaches both.
+	// StmtIf does — the hoist gate (iife_arms_have_unboxed_fn) already reaches both.
 	// Produces 0 of 4 without the match arm.
 	{name: "match-expr-lambda-arms-annotated", atLeast: 4, src: `
 enum Pick { A, B }
@@ -462,6 +462,115 @@ function main(): i32 {
     var f: (i32) => i32 = if (true) { ((x: i32) => x) } else { ((y: i32) => y + 1) };
     return f(42);
 }
+`},
+	// A bare function name as an if-expression arm (#10686). The lift boxed a
+	// lambda arm but refused a name arm as unboxable, so the name reached
+	// semsource as a function address. Pinned in a `var`, an assignment, a
+	// fn-typed argument beside a lambda arm, and through a nested if-expression.
+	{name: "if-expr-function-name-arms", atLeast: 6, want: "41|", astAnswers: "41|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function main(): i32 { var c: boolean = true; var f: (i32) => i32 = (if (c) { inc } else { dbl }); return f(40); }
+`},
+	{name: "if-expr-function-name-arms-nested", atLeast: 9, want: "80|", astAnswers: "80|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function neg(x: i32): i32 { return 0 - x; }
+function main(): i32 {
+    var a: i32 = 2;
+    var f: (i32) => i32 = (if (a == 1) { inc } else { (if (a == 2) { dbl } else { neg }) });
+    return f(40);
+}
+`},
+	{name: "if-expr-function-name-arms-assigned-and-passed", atLeast: 10, want: "41|", astAnswers: "41|", noLeak: true, src: `
+function inc(x: i32): i32 { return x + 1; }
+function dbl(x: i32): i32 { return x * 2; }
+function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+function main(): i32 {
+    var c: boolean = false;
+    var f: (i32) => i32 = inc;
+    f = (if (c) { inc } else { dbl });
+    return f(20) + apply((if (c) { dbl } else { (x: i32): i32 => x - 1 }), 2);
+}
+`},
+	// An immediately called capturing lambda (#10685). The lift hoisted a
+	// capture-free one to a direct call and left a capturing one inline, which
+	// semsource has no expression for; it now hoists with its captures as
+	// trailing arguments. The issue's program, the return-value form, and a
+	// loop whose lambda builds a string from a capture and returns early:
+	// the AST lowering used to inline that `return` as the enclosing
+	// function's.
+	{name: "immediately-called-capturing-lambda", atLeast: 4, want: "13|", astAnswers: "13|", noLeak: true, src: `
+function g(n: i32): i32 { return n * 2; }
+function main(): i32 {
+    var n: i32 = 5;
+    var t: i32 = ((): i32 => { return n + 2; })();
+    var i: i32 = 0;
+    while (i < 3) { t = t + ((): i32 => { return g(i); })(); i = i + 1; }
+    return t;
+}
+`},
+	{name: "immediately-called-capturing-lambda-returned", atLeast: 2, want: "3|", astAnswers: "3|", noLeak: true, src: `
+function main(): i32 { var k: i32 = 3; return ((): i32 => { return k; })(); }
+`},
+	{name: "immediately-called-capturing-lambda-in-a-loop", atLeast: 2, want: "18|", astAnswers: "18|", noLeak: true, src: `
+function main(): i32 {
+    var base: string = "ab";
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        total = total + ((): i32 => {
+            var s: string = base + "c";
+            if (i > 1) { return s.len() * 2; }
+            return s.len();
+        })();
+        i = i + 1;
+    }
+    return total;
+}
+`},
+	// Parameters and captures together: the hoisted body takes the written
+	// parameters and then the captures, and the call passes the written
+	// arguments and then the captured names. Transposing either order changes
+	// the answer (87 for the arguments, 123 for the captures).
+	{name: "immediately-called-capturing-lambda-with-parameters", atLeast: 2, want: "64|", astAnswers: "64|", noLeak: true, src: `
+function main(): i32 {
+    var k: i32 = 4;
+    var m: i32 = 7;
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) {
+        t = t + ((x: i32, y: i32): i32 => { if (x > k) { return x - y + m; } return x * k + y; })(i, 3);
+        i = i + 1;
+    }
+    return t;
+}
+`},
+	// i64 and f64 captures of hand-written IIFEs, one with a parameter and a
+	// defer. An immediately called lambda builds no env box, so the
+	// wide-capture pass leaves its captures alone whatever its parameters;
+	// snapshotting them into cells here left the AST lowering 64 bytes short.
+	{name: "immediately-called-lambda-with-wide-captures", atLeast: 3, want: "15|", astAnswers: "15|", noLeak: true, src: `
+function main(): i32 {
+    var big: i64 = 5000000000i64;
+    var ratio: f64 = 1.5;
+    var hits: i32 = 0;
+    var acc: i64 = 0i64;
+    var i: i32 = 0;
+    while (i < 3) {
+        acc = acc + ((): i64 => { return big + (i as i64); })();
+        var scaled: f64 = ((d: f64): f64 => { defer { hits = hits + 1; } return ratio * d + (big as f64) * 0.0; })(2.0);
+        acc = acc + (scaled as i64);
+        i = i + 1;
+    }
+    return ((acc - 15000000000i64) as i32) + hits;
+}
+`},
+	// A capture-free hand-written lambda called inside an if-expression arm:
+	// the lift kept every zero-parameter call inside a value block inline, not
+	// only a nested value block.
+	{name: "immediately-called-lambda-in-an-if-expr-arm", atLeast: 2, want: "5|", astAnswers: "5|", noLeak: true, src: `
+function main(): i32 { var c: boolean = true; var x: i32 = (if (c) { ((): i32 => { return 5; })() } else { 2 }); return x; }
 `},
 	{name: "scalar-calls", atLeast: 3, src: `
 function add(a: i32, b: i32): i32 { return a + b; }

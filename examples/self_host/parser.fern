@@ -670,11 +670,9 @@ pub const ORIGIN_MAP_COMP: string = "map_comp";
 // value-block origin: irlower must CALL it, because inlining would splice the
 // defer machinery into the enclosing function and hoist the cleanup with it.
 //
-// A defer-free IIFE is deliberately left unmarked and keeps being inlined.
-// Inlining and calling differ only where the scope boundary is observable, and
-// `defer` / `errdefer` is the only construct that observes it — a `return`
-// inside one is already lowered as the block's value, not a function return. So
-// the narrow marker fixes #7192 without moving any program that worked before.
+// A defer-free IIFE is left unmarked: the lambda lift hoists it to a direct
+// `__lam_N` call either way (irlower.lift_capturing_iife for a capturing one),
+// and only one the lift declines is inlined.
 pub const ORIGIN_IIFE_SCOPED: string = "iife_scoped";
 
 // ORIGIN_USE marks the callback lambda a `use NAME[: TYPE] <- CALL;` desugars
