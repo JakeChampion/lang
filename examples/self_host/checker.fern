@@ -12304,6 +12304,21 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
+        // E035: a match on a declared STRUCT takes `Name { … }` patterns, which
+        // the parser desugars before this sees the match, or `_`; any named arm
+        // left here is a variant pattern over a value that has no variants.
+        if let typeinfo.TypeStruct(msts) = mst {
+          var msig: StructSig = cur.lookup_struct(msts.name);
+          if (m.origin == "" && msig.name == msts.name && msig.enum_owner.len() == 0) {
+            for sarm in m.arms {
+              if let ast.PatVariant(spv) = sarm.pattern {
+                if (spv.type_name.len() > 0) {
+                  out = out.append(dg_at("E035", "match on struct `" + msts.name + "` only accepts struct patterns `" + msts.name + " { … }` or `_`", sarm.line, sarm.col));
+                }
+              }
+            }
+          }
+        }
         if (is_primitive_type(mst) && m.origin == "") {
           for arm in m.arms {
             match (arm.pattern) {
@@ -19212,11 +19227,8 @@ function main(): i32 {
     return 280;
   }
 
-  // Pattern binding lifetime: the binding is in scope inside
-  // the arm body only. Referencing it outside the match is
-  // an undefined identifier — fold the StmtAssign approach by
-  // using c.r inside the arm and a separate var outside.
-  var src29: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Circle(x) => { return x.r; } } return 0; }";
+  // A struct pattern's binding is in scope inside its arm.
+  var src29: string = "struct Circle { r: i32 } function main(): i32 { var c = Circle { r: 1 }; match (c) { Circle { r } => { return r; } } return 0; }";
   var mod29: parser.Module = parser.parse_module(lexer.tokenize(src29));
   var mt29: ModuleTypes = check_module(mod29);
   if (!mt29.all_well_typed) {
