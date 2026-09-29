@@ -197,3 +197,10 @@ func TestSelfHostServeShutdownHook(t *testing.T) {
 	stderrPath := e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
+
+func TestSelfHostSupervisedServeHandlerStallsItsWorker(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StallServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckHandlerStallsItsWorker(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

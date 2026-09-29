@@ -568,3 +568,38 @@ func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
 		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
 	}
 }
+
+// StallServerSource is WorkersServerSource with one worker: the shape
+// whose handler, running to completion, holds the whole worker.
+func StallServerSource(port int) string {
+	return strings.Replace(WorkersServerSource(port), "workers: 2", "workers: 1", 1)
+}
+
+// CheckHandlerStallsItsWorker drives StallServerSource: a request on a
+// second connection is answered only once the first worker's /slow has
+// run to completion, since a handler runs on the worker's own thread of
+// control and nothing else runs there meanwhile. This pins what P1
+// documents so that the phase which changes it inherits a failing test.
+func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	time.Sleep(200 * time.Millisecond)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 20*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok behind /slow: want 200 once the worker is free, got\n%s", resp)
+	}
+	if waited := time.Since(started); waited < 500*time.Millisecond {
+		t.Fatalf("/ok behind /slow was answered after %v, before the one worker could have finished /slow", waited)
+	}
+	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow") {
+		t.Fatalf("/slow itself: %q, %v", b, err)
+	}
+}

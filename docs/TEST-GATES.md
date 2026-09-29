@@ -297,7 +297,10 @@ listener handed in through `LISTEN_FDS` is served. The scenarios are
 `TestSelfHostServeInheritsListenFds`) drive the same servers compiled by
 the self-host compiler.
 `TestSupervisedServeWorkersServeSideBySide` pins two workers over one
-listener answering side by side and surviving one worker's death;
+listener answering side by side and surviving one worker's death, and
+`TestSupervisedServeHandlerStallsItsWorker` (with its self-host twin) the
+converse on one worker: a request behind /slow waits for it, the pin
+#9857's multiplexing has to turn;
 `TestSupervisedServeOneWorkerPerCPU` counts the default worker set
 against the processing units, and `TestSupervisedServeShutsDownAfterBurst`
 requires every one of four workers to exit on SIGTERM after a burst of
