@@ -56,23 +56,16 @@ var oobBranchRangeCases = []struct {
 	src  string
 }{
 	{"arr-get", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i: i32 = 2; return xs[i]; }"},
-	{"arr-set", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i: i32 = 1; xs[i] = 9; return xs[1]; }"},
+	{"arr-set", "function main(): i32 { var xs: i32[] = [1, 2, 3]; var i: i32 = 1; xs = xs.with(i, 9); return xs[1]; }"},
 }
 
 // TestSelfHostOOBBranchRangeArm64 pins that no emitted arm64 bounds check
 // branches conditionally to __fern_oob_abort (#5851).
 func TestSelfHostOOBBranchRangeArm64(t *testing.T) {
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	cli := newStrictCLI(t)
 	for _, tc := range oobBranchRangeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src), "-target", "arm64-linux"))
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
+			asm := cli.emit(t, "arm64-linux", tc.src)
 			if !anyBranchToAbort.MatchString(asm) {
 				t.Fatal("no branch to __fern_oob_abort — the bounds check is gone, so this case guards nothing")
 			}
