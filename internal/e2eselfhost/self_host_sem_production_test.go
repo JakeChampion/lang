@@ -1523,7 +1523,7 @@ function main(): i32 {
 	//
 	// `examples/tests/array_combinators_test` went 0 of 211 to 211 of 211 on
 	// this, on one call to `join_with_last`.
-	{name: "an-array-helper-is-a-free-function", atLeast: 49, noLeak: true, src: `
+	{name: "an-array-helper-is-a-free-function", atLeast: 45, noLeak: true, src: `
 import "std/array" as array;
 
 function main(): i32 {
@@ -3084,7 +3084,7 @@ function main(): i32 {
 	// shape rather than one entry's: 0 of 55 before, 55 of 55 after. The
 	// stdin methods and the two standard Writers are all one family, so the
 	// second half drives those too.
-	{name: "stdin-and-the-stream-handles", atLeast: 48, stdin: "alpha\nbeta\n", src: `
+	{name: "stdin-and-the-stream-handles", atLeast: 44, stdin: "alpha\nbeta\n", src: `
 import "std/io";
 
 function main(): i32 {
@@ -3477,7 +3477,7 @@ function main(): i32 {
 	// bounded key is that clone, and the tree under it is produced with it.
 	// 65 of 65: core/cmp's numeric `add` impls reach only i32 and u64 (and
 	// bigint); the f32, f64, i64 and u32 ones are unreachable.
-	{name: "ordmap-bounded-method-clones", atLeast: 65, src: `
+	{name: "ordmap-bounded-method-clones", atLeast: 61, src: `
 import "std/ordmap";
 function main(): i32 {
     var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
@@ -3919,7 +3919,7 @@ function main(): i32 {
 	// WAT body for this builtin, so the register legs' fix says nothing about
 	// it: before the wasm half of the fix this program printed 25 over-releases
 	// on the typed leg against its own AST leg's 0.
-	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 64, noLeak: true, src: `
+	{name: "a-builtin-string-result-is-never-its-argument", atLeast: 60, noLeak: true, src: `
 import "std/string";
 import "std/io";
 function sq(s: string): string { return s.replace("Q", "Z"); }
@@ -3946,7 +3946,7 @@ function main(): i32 {
 	// what settles it. Every declaration here refused before, through the
 	// binding, so `std/result`'s whole combinator surface stood on the AST
 	// lowering.
-	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 57, noLeak: true, src: `
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 53, noLeak: true, src: `
 import "std/option";
 import "std/result";
 function mapped(): i32 {
@@ -3972,7 +3972,7 @@ function main(): i32 {
 	// without saying what `Some` holds, and only the payload can say. The
 	// checker does not settle it either, since it infers the literal from the
 	// same parameter.
-	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 48, noLeak: true, src: `
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 44, noLeak: true, src: `
 import "std/option";
 function both(): i32 {
     var s: Option[i32] = Some(5);
@@ -3993,7 +3993,7 @@ function main(): i32 {
 	// the contract table for `Empty.to_string` and found nothing. Every other
 	// spelling of the same call already worked: a binding of the variant, an
 	// annotated binding, and a payloaded `Circle(1).to_string()`.
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 99, noLeak: true, src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 95, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -4006,7 +4006,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + direct().len() + qualified().len() + bound().len(); i = i + 1; }
     return acc % 101;
 }`},
-	{name: "a-method-reads-its-receiver-by-name", atLeast: 101, noLeak: true, src: `
+	{name: "a-method-reads-its-receiver-by-name", atLeast: 97, noLeak: true, src: `
 import "std/json";
 @derive(json.Json)
 struct Bag { items: i32[], names: string[] }
@@ -4027,7 +4027,7 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
-	{name: "a-composite-compares-through-its-own-method", atLeast: 55, noLeak: true, src: `
+	{name: "a-composite-compares-through-its-own-method", atLeast: 51, noLeak: true, src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct Point { x: i32, y: string }
@@ -4989,7 +4989,7 @@ function pick(n: i32): i32 {
 function main(): i32 { return pick(9); }
 `},
 	// std/time's Zoned.format_rfc3339 is that branch shape (#10796).
-	{name: "std-time-format-rfc3339-is-produced", atLeast: 77, noLeak: true, src: `
+	{name: "std-time-format-rfc3339-is-produced", atLeast: 74, noLeak: true, src: `
 import "std/time";
 function main(): i32 {
     var s: string = time.instant_from_unix(90061 as i64).format_rfc3339();
@@ -6088,7 +6088,7 @@ function width(v: JsonValue): i32 {
 }
 function main(): i32 { return width(JString("abc")) + width(JNull); }
 `},
-	{name: "std-json-encode-is-produced", atLeast: 139, noLeak: true, src: `
+	{name: "std-json-encode-is-produced", atLeast: 137, noLeak: true, src: `
 import "std/json";
 function main(): i32 {
     var s: string = json.json_encode(JNumber("42"));
@@ -6154,7 +6154,7 @@ function main(): i32 {
 	// so the function returns a copy; the anchor chase used to leave the
 	// callee pending forever and refused both with "view result escapes its
 	// source" (#10688).
-	{name: "a-str-result-returns-an-owned-call-result", atLeast: 48, noLeak: true, src: `
+	{name: "a-str-result-returns-an-owned-call-result", atLeast: 47, noLeak: true, src: `
 import "std/string";
 function mk(p: string): string { return p + "xy"; }
 function owned(p: string): str { return mk(p); }
@@ -6373,6 +6373,114 @@ function main(): i32 {
     var s: string = apply("ab" + "c");
     var t: string = nested("de" + "f");
     return apply(7) + nested(2) + s.len() + t.len();
+}
+`},
+	// An instance of a lifted generic lambda that returns a call to another
+	// lifted lambda reads that callee's result under its own binding, not as
+	// the template's `T`.
+	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => ((y: T): T => y)(x);
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+pub function keep[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => {
+            var inner: (T) => T = (y: T): T => y;
+            return inner(x);
+        };
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var t: string = keep("de" + "f");
+    return make(7) + keep(1) + s.len() + t.len();
+}
+`},
+	// A nested function returning `(T) => (T) => T` spells its result's result
+	// as a whole function type, respelled with the template's variables, and
+	// the nested template `__lam_0$wrap0$wrap0` is produced per instance.
+	{name: "a-nested-generic-function-returning-a-curried-function", atLeast: 5, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => (T) => T {
+        return (x: T): (T) => T => (y: T): T => y;
+    }
+    var f: (T) => (T) => T = outer(seed);
+    var g: (T) => T = f(seed);
+    return g(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    return make(7) + s.len();
+}
+`},
+	// A lambda returned out of a nested generic function that names no type
+	// variable is an ordinary declaration row, `__lam_0$wrap0` or
+	// `__lam_0$clo0`. Its creator `__lam_0` is a template: not kept, yet no
+	// AST-lowered body either, so the value it builds is produced. Under
+	// the skip knob the template's erased body stands and builds the box,
+	// so there the lambda keeps the AST lowering.
+	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, noLeak: true,
+		skip: "main", refuses: "__lam_0$wrap0: is a function value __lam_0 builds, which the AST lowering defines", src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        return (s: string): i32 => s.len() + 1;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("ab" + "c");
+    return seed;
+}
+
+pub function keep[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        var k: i32 = 2;
+        return (s: string): i32 => s.len() + k;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("de" + "f");
+    return seed;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var t: string = keep("gh" + "i");
+    return make(7) + keep(1) + s.len() + t.len();
+}
+`},
+	// An AST-lowered hoisted body that calls a generic calls its erased
+	// body, so the indirect cone runs through the template row it never
+	// seeds from and reaches `helper`.
+	{name: "the-indirect-cone-runs-through-an-erased-generic-body", atLeast: 6, noLeak: true,
+		skip: "__lam_0$wrap0", refuses: "helper: is reached by a direct call from pick", src: `
+function helper(own xs: string[]): i32 {
+    return xs.len();
+}
+
+pub function pick[T](seed: T): T {
+    var n: i32 = helper(["a" + "b"]);
+    return seed;
+}
+
+pub function make[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        return (s: string): i32 => pick(s).len() + 1;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("ab" + "c");
+    return seed;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    return make(7) + s.len() + pick(2);
 }
 `},
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;

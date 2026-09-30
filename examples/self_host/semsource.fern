@@ -1281,7 +1281,8 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     var good_shape: Payloads = arm_payloads(s, from, fnames[0], flayout);
     var gone_shape: Payloads = arm_payloads(s, from, fnames[1], flayout);
     var out_shape: Payloads = literal_payloads(s, s.result, rnames[1], rlayout);
-    if (!good_shape.found || good_shape.types.len() != 1) { return refused(s, "try of a success variant that is not one payload"); }
+    var unit_good: boolean = good_shape.unit && good_shape.types.len() == 0;
+    if (!good_shape.found || (good_shape.types.len() != 1 && !unit_good)) { return refused(s, "try of a success variant that is not one payload"); }
     if (!gone_shape.found || !out_shape.found) { return refused(s, "try failure is not a variant"); }
     if (gone_shape.types.len() > 1 || gone_shape.types.len() != out_shape.types.len()) {
         return refused(s, "try failure does not match the body's result");
@@ -1318,6 +1319,7 @@ function try_expr(u: ast.ExprUnary, s: State): Value {
     s = terminate(out.s, t_ret(out.id));
     s = State { ...s, names: entry.names, vals: entry.vals, scope: entry.scope };
 
+    if (unit_good) { return define(open(s, good, [pred]), 1, [], 0, "", t_void()); }
     return define(open(s, good, [pred]), ssasem.variant_get(), [v.id], 0, fnames[0], good_shape.types[0]);
 }
 
@@ -2434,6 +2436,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
         var at: i32 = base + i;
         var want: typeinfo.Type = ssasem.substitute(contract.params[at], bound);
         if (!semtypes.concrete(want, false)) { want = ssasem.substitute(want, seed); }
+        if (!semtypes.concrete(want, false)) { want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s)); }
         var v: Value = lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract.name));
         s = v.s;
         if (!s.ok) { return v; }
@@ -2452,6 +2455,23 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     }
     if (ssasem.find_contract(s.calls, callee.name) < 0) { s = State { ...s, calls: s.calls.append(callee) }; }
     return define(s, ssasem.call(), ids, 0, callee.name, callee.result);
+}
+
+// What the arguments after `from` bind, over `b`: an empty literal ahead of
+// the argument that fixes its element (`head2([], [7, 8])`) is produced at the
+// type that argument binds. One that would contradict the binding adds
+// nothing; the left-to-right pass still checks every argument.
+function later_binding(b: ssasem.Binding, args: ast.Expr[], from: i32, base: i32, contract: ssasem.Contract, s: State): ssasem.Binding {
+    var i: i32 = from;
+    while (i < args.len()) {
+        var t: typeinfo.Type = checked(args[i], s);
+        if (semtypes.concrete(t, false)) {
+            var next: ssasem.Binding = ssasem.bind_type(b, contract.params[base + i], t);
+            if (next.ok) { b = next; }
+        }
+        i = i + 1;
+    }
+    return b;
 }
 
 // An instance a call or a closure constructor names is asked for once.
@@ -3609,7 +3629,7 @@ function coarse_fn_tag_without_contract(fd: parser.FuncDecl): boolean {
 function inferred_result(fd: parser.FuncDecl, scope: checker.Scope, b: ssasem.Binding, contracts: ssasem.Contract[]): typeinfo.Type {
     var (returned, at) = checker.first_returned(fd.body, scope);
     if (checker.bare_return(returned)) { return t_void(); }
-    if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts); }
+    if (calls_synthesised(returned)) { return called_synthesised_result(returned, contracts, b); }
     var constructed: typeinfo.Type = closure_slot_type(returned, contracts);
     if (semtypes.concrete(constructed, false)) { return constructed; }
     if let ast.ExprIdent(id) = returned {
@@ -3683,12 +3703,14 @@ function calls_synthesised(e: ast.Expr): boolean {
 // fixpoint so the inner declaration's is there when the outer one is read,
 // and until it is, the result is UNCHECKED rather than the checker's guess:
 // a contract recorded from the guess on the first pass would never be
-// revisited, since the fixpoint only fills what is missing.
-function called_synthesised_result(e: ast.Expr, contracts: ssasem.Contract[]): typeinfo.Type {
+// revisited, since the fixpoint only fills what is missing. A body lifted
+// out of a template spells its variables as the template does, so an instance
+// reads the callee's result under its own binding.
+function called_synthesised_result(e: ast.Expr, contracts: ssasem.Contract[], b: ssasem.Binding): typeinfo.Type {
     if let ast.ExprCall(c) = e {
         if let ast.ExprIdent(id) = c.callee {
             var at: i32 = ssasem.find_contract(contracts, id.name);
-            if (at >= 0) { return contracts[at].result; }
+            if (at >= 0) { return ssasem.substitute(contracts[at].result, b); }
         }
     }
     return typeinfo.unchecked();

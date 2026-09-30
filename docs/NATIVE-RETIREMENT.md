@@ -53,12 +53,12 @@ targets).
 
 | issue | cause | tests |
 |---|---|---|
-| #10005 | typed lowering: a map key wider than 4 bytes (`Map[i64, i32]`, `Map[i64, i64]`, `Map[i64, f64]`) has no column | 17 |
-| #10767 | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
-| #10756 | typed lowering: `impl mem.Drop` finalizers never run | 8 |
-| #10760 | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
-| #10766 | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
-| #10763 | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
+| #10005 (closed by #10780 after this measurement) | typed lowering: a map key wider than 4 bytes (`Map[i64, i32]`, `Map[i64, i64]`, `Map[i64, f64]`) has no column | 17 |
+| #10767 (closed by #10821 after this measurement) | checker: six rejections native accepts (E009, E015, E038 x2, E042, E064) | 12 |
+| #10756 (the mechanics landed in #10821; the finalizer timing is open) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
+| #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
+| #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
+| #10763 (closed by this change after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
 | #10757 | typed lowering: f32 values typed f64 | 5 |
 | #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
@@ -72,7 +72,7 @@ targets).
 | #10761 | typed lowering: reading a `str` map value | 3 |
 | #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
 | #10773 | arm64: the termios round trip fails at step 21 | 2 |
-| #10758 | typed lowering: unary minus on u32 | 1 |
+| #10758 (closed by this change after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
 
 The three fuzz differentials (`TestDifferential_LangsmithMain`,
