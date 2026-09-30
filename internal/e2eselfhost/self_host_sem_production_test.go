@@ -4712,6 +4712,48 @@ function f(n: i32): string {
 }
 function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
 `},
+	// A `.with` and a map insert take a view of a branch local: copied where
+	// each takes it.
+	{name: "an-array-with-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var a: str[] = ["zz"];
+    if (n != 0) {
+        var s: string = mk(n);
+        a = a.with(0, slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for v in a { out = out + v + "|"; }
+    return out;
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
+	{name: "a-map-inserted-a-view-of-a-branch-local-is-produced", atLeast: 3, noLeak: true, src: `
+import "core/map";
+import "std/i32";
+function mk(n: i32): string {
+    var s: string = "ab";
+    var i: i32 = 0;
+    while (i < n) { s = s + "c"; i = i + 1; }
+    return s;
+}
+function f(n: i32): string {
+    var m: Map[string, str] = Map {};
+    if (n != 0) {
+        var s: string = mk(n);
+        m = m.insert("k", slice_unchecked(s, 0, 2));
+    }
+    var out: string = "";
+    for k in m.keys() { out = out + k + "|"; }
+    return out + m.len().to_string();
+}
+function main(): i32 { print(f(3) + " " + f(0)); return f(2).len(); }
+`},
 	// A container a call returns, anchored to a string declared in the branch or
 	// loop body it merges out of, is copied whole at the merge (#10815).
 	{name: "a-str-array-a-call-returns-from-a-branch-local-is-produced", atLeast: 4, noLeak: true, src: `
@@ -6495,14 +6537,16 @@ func TestSelfHostSemanticAllocationParity(t *testing.T) {
 }
 
 // semAllocations compiles the program under FERN_LEAKCHECK on x86-64 with the
-// semantic path on or off and answers the run's allocation count.
+// semantic path on or off and answers the run's allocation count. The typed
+// leg is strict, so a refusal fails the compile instead of measuring the AST
+// lowering twice.
 func semAllocations(t *testing.T, fernBin, stdlibRoot, src string, sem bool) int64 {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "prog")
 	cmd := exec.Command(fernBin, "-target", "x86-64-linux", src, stdlibRoot, "-o", out)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if sem {
-		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1")
+		cmd.Env = append(cmd.Env, "FERN_SEM_IR=1", "FERN_SEM_IR_STRICT=1")
 	} else {
 		cmd.Env = append(cmd.Env, "FERN_SEM_IR=")
 	}

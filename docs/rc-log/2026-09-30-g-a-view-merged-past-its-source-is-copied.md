@@ -46,8 +46,12 @@ Each program gives the interpreter's answer on x86-64, arm64 and wasm.
 - `a-str-array-built-from-a-view-of-a-branch-local-is-produced`
 - `a-str-array-built-from-a-view-of-a-dominating-local-is-produced`
 - `a-tuple-option-and-array-of-views-of-a-loop-body-local-is-produced`
+- `an-array-with-a-view-of-a-branch-local-is-produced`
+- `a-map-inserted-a-view-of-a-branch-local-is-produced`
 - `a-map-reached-only-through-a-jsonvalue-is-produced`
 - `std-json-encode-is-produced`
 
 `TestSelfHostSemanticAllocationParity`:
-`a-view-of-a-dominating-source-is-not-copied`.
+`a-view-of-a-dominating-source-is-not-copied`. Its typed leg is strict, so a
+row whose program the typed path refuses fails rather than comparing the AST
+lowering with itself.
