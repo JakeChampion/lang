@@ -333,7 +333,7 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
 // from an `@import("iface", "wit-resource-name")` attribute (empty for an
 // unbound resource). lower_defers_prepass_module uses the binding to synthesize the
 // `[resource-drop]` import an owned handle is released through.
-pub struct ResourceDecl { name: string, iface: string, wit: string }
+pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }
 
 // ExportBinding records an `@export("iface", "wit-name") function f {…}` binding
 // (P6 — docs/WIT-BRING-YOUR-OWN.md): the function `func_name` implements the WIT
@@ -16102,6 +16102,40 @@ function handle_resource_of(type_name: string): string {
     return "";
 }
 
+// resource_collision names what an earlier declaration makes resources[idx]'s
+// name already mean — "resource", "struct" or "enum" (a union alias is an enum)
+// — or "" when the name is free. The Go checker registers only the free ones.
+pub function resource_collision(mod: Module, idx: i32): string {
+    var name: string = mod.resources[idx].name;
+    var j: i32 = 0;
+    while (j < idx) {
+        if (mod.resources[j].name == name) { return "resource"; }
+        j = j + 1;
+    }
+    for sd in mod.structs {
+        if (sd.name == name && sd.enum_owner.len() == 0) { return "struct"; }
+    }
+    for ed in mod.enums {
+        if (ed.name == name) { return "enum"; }
+    }
+    for al in mod.aliases {
+        if (al.name == name) { return "enum"; }
+    }
+    return "";
+}
+
+// registered_resources is mod.resources less the declarations
+// resource_collision refuses, so a colliding name keeps its other meaning.
+pub function registered_resources(mod: Module): ResourceDecl[] {
+    var out: ResourceDecl[] = [];
+    var i: i32 = 0;
+    while (i < mod.resources.len()) {
+        if (resource_collision(mod, i).len() == 0) { out = out.append(mod.resources[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 function resource_binding_iface(resources: ResourceDecl[], name: string): string {
     var i: i32 = 0;
     while (i < resources.len()) {
@@ -21280,9 +21314,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
                     // `@import(iface, wit) resource Name;` binds a WIT resource
                     // handle type to its WIT identity (P5). Record it so
                     // lower_defers_prepass_module can synthesize the [resource-drop].
+                    var rnr_line: i32 = p.peek_line();
+                    var rnr_col: i32 = p.peek_col();
                     var (rnr_name, rnr_p) = parse_resource_decl_name(p);
                     p = rnr_p;
-                    resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit });
+                    resources = resources.append(ResourceDecl { name: rnr_name, iface: iar_iface, wit: iar_wit, line: rnr_line, col: rnr_col });
                 } else {
                     top_stmts = top_stmts.append(decl_sentinel(p, "@import only applies to a function or resource declaration"));
                 }
@@ -21584,9 +21620,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         if (p.peek_ident() == "resource") {
             var pr: Par = p.advance();
             if (pr.peek_ident().len() > 0) {
+                var rnr2_line: i32 = p.peek_line();
+                var rnr2_col: i32 = p.peek_col();
                 var (rnr2_name, rnr2_p) = parse_resource_decl_name(p);
                 p = rnr2_p;
-                resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "" });
+                resources = resources.append(ResourceDecl { name: rnr2_name, iface: "", wit: "", line: rnr2_line, col: rnr2_col });
                 continue;
             }
         }
@@ -21715,7 +21753,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
     var ri: i32 = 0;
     while (ri < from.resources.len()) {
         var rd: ResourceDecl = from.resources[ri];
-        nresources = nresources.append(ResourceDecl { name: prefix + "." + rd.name, iface: rd.iface, wit: rd.wit });
+        nresources = nresources.append(ResourceDecl { ...rd, name: prefix + "." + rd.name });
         ri = ri + 1;
     }
     var nexports: ExportBinding[] = into.exports;

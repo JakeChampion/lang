@@ -1540,7 +1540,7 @@ function struct_table(structs: StructSig[], resources: string[]): StructTable {
 
 function resource_names(mod: parser.Module): string[] {
   var out: string[] = [];
-  for r in mod.resources { out = out.append(r.name); }
+  for r in parser.registered_resources(mod) { out = out.append(r.name); }
   return out;
 }
 
@@ -13429,10 +13429,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   // E006: a free function redeclared (same name, both receiver-less), or
   // a method redeclared (same name AND receiver type). The redeclaration
   // SITE — the second + occurrences — is flagged, matching the Go
-  // checker. Enum / struct redeclaration aren't covered yet: the parser
-  // desugars enums into variant structs and drops the enum name, so a
-  // struct name in `mod.structs` can't be told apart from a variant (a
-  // later slice handles them once that grouping is recovered).
+  // checker.
   var di: i32 = 0;
   while (di < mod.funcs.len()) {
     var f2: parser.FuncDecl = mod.funcs[di];
@@ -13451,8 +13448,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     di = di + 1;
   }
-  // E006: struct redeclared (#4363 item 4 — the func/method/enum forms
-  // below predate it). mod.structs is the FLAT table: enum variant
+  // E006: struct redeclared. mod.structs is the FLAT table: enum variant
   // payloads land there too (tagged with their owning enum via
   // enum_owner), and desugars synthesize `__`-prefixed entries — both are
   // skipped so only genuine user struct declarations collide.
@@ -13512,6 +13508,21 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       vk = vk + 1;
     }
     en = en + 1;
+  }
+  // E006: a resource redeclared, or named like a struct, enum or union alias.
+  // registered_resources leaves it out, so the name keeps its other meaning.
+  var rn: i32 = 0;
+  while (rn < mod.resources.len()) {
+    var rclash: string = parser.resource_collision(mod, rn);
+    var rdecl: parser.ResourceDecl = mod.resources[rn];
+    if (rclash == "resource") {
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" redeclared", rdecl.line, rdecl.col));
+    } else if (rclash.len() > 0) {
+      var article: string = "a ";
+      if (rclash == "enum") { article = "an "; }
+      out = out.append(dg_at("E006", "resource \"" + rdecl.name + "\" conflicts with " + article + rclash + " of the same name", rdecl.line, rdecl.col));
+    }
+    rn = rn + 1;
   }
   // E070: a named function that declares no return type. Every function
   // writes its return type — `: void` when it returns nothing — so an
