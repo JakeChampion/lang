@@ -291,6 +291,9 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 // constructor that disagrees with its inserts is invisible on x86-64 and fatal
 // here.
 func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
+	// These programs pin the AST lowering's built-in map runtime; the typed lowering
+	// takes maps from core/map.
+	t.Setenv("FERN_SEM_IR", "")
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm IR e2e")
 	}

@@ -160,6 +160,7 @@ var wasmLoadRunStdlibCases = []struct {
 	{"map-plus-closure", "import \"core/map\";\nfunction apply(f: (i32) => i32, x: i32): i32 { return f(x); } function main(): i32 { var m = Map { 5: 50, 6: 60 }; var g: (i32) => i32 = (n: i32) => n + 1; var r = apply(g, 7); if (r != 8) { return 1; } if (m.len() != 2) { return 2; } if (m.get_or(5, 0) != 50) { return 3; } return 0; }", 0, ""},
 	{"freshbuiltin-mapkeys-swept", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; var ks: i32[] = m.keys(); return ks.len() + __rc_underflow_count(); }", 2, ""},
 	{"freshbuiltin-values-loop", "import \"core/map\";\nfunction main(): i32 { var m = Map { 1: 10, 2: 20 }; var s = 0; var k = 0; while (k < 100) { var vs: i32[] = m.values(); s = s + vs[0]; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 6, ""},
+	{"map-value-closure-captured", "import \"core/map\"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }", 17, ""},
 }
 
 // TestSelfHostWasmLoadRunStdlib compiles each case with asm_load_run -target
