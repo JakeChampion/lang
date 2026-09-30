@@ -34,7 +34,7 @@ func TestSelfHostContractsEveryBuiltin(t *testing.T) {
 	quoted := func(src, name string) bool { return strings.Contains(src, `"`+name+`"`) }
 
 	contracted := map[string]bool{}
-	for _, m := range regexp.MustCompile(`Contract \{ name: "([a-z_0-9]+)"`).FindAllStringSubmatch(semsource, -1) {
+	for _, m := range regexp.MustCompile(`Contract \{\s*name: "([a-z_0-9]+)"`).FindAllStringSubmatch(semsource, -1) {
 		contracted[m[1]] = true
 	}
 	if len(contracted) == 0 {

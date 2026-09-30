@@ -6,68 +6,107 @@ import "std/string";
 // `text()` reads the decoded bytes back to assert against a literal; a
 // real ingest path would use `std/utf8.from_bytes` and handle None.
 function text(b: u8[]): string {
-    return string_from_bytes_unchecked(b);
+  return string_from_bytes_unchecked(b);
 }
+
 // examples/tests/base32_test.fern — std/base32 against the RFC 4648 §10
 // known-answer vectors (the "" / f / fo / foo / foob / fooba / foobar
 // progression that exercises every padding length) plus decode
 // round-trips.
-
 function test_encode_vectors(): test.TestOutcome {
-    if (base32.base32_encode("".bytes()) != "") { return test.fail("empty"); }
-    if (base32.base32_encode("f".bytes()) != "MY======") { return test.fail("f"); }
-    if (base32.base32_encode("fo".bytes()) != "MZXQ====") { return test.fail("fo"); }
-    if (base32.base32_encode("foo".bytes()) != "MZXW6===") { return test.fail("foo"); }
-    if (base32.base32_encode("foob".bytes()) != "MZXW6YQ=") { return test.fail("foob"); }
-    if (base32.base32_encode("fooba".bytes()) != "MZXW6YTB") { return test.fail("fooba"); }
-    return test.assert_eq(base32.base32_encode("foobar".bytes()), "MZXW6YTBOI======");
+  if (base32.base32_encode("".bytes()) != "") {
+    return test.fail("empty");
+  }
+  if (base32.base32_encode("f".bytes()) != "MY======") {
+    return test.fail("f");
+  }
+  if (base32.base32_encode("fo".bytes()) != "MZXQ====") {
+    return test.fail("fo");
+  }
+  if (base32.base32_encode("foo".bytes()) != "MZXW6===") {
+    return test.fail("foo");
+  }
+  if (base32.base32_encode("foob".bytes()) != "MZXW6YQ=") {
+    return test.fail("foob");
+  }
+  if (base32.base32_encode("fooba".bytes()) != "MZXW6YTB") {
+    return test.fail("fooba");
+  }
+  return test.assert_eq(base32.base32_encode("foobar".bytes()), "MZXW6YTBOI======");
 }
 
 function test_decode_vectors(): test.TestOutcome {
-    if (text(base32.base32_decode("MY======")) != "f") { return test.fail("f"); }
-    if (text(base32.base32_decode("MZXW6===")) != "foo") { return test.fail("foo"); }
-    return test.assert_eq(text(base32.base32_decode("MZXW6YTBOI======")), "foobar");
+  if (text(base32.base32_decode("MY======")) != "f") {
+    return test.fail("f");
+  }
+  if (text(base32.base32_decode("MZXW6===")) != "foo") {
+    return test.fail("foo");
+  }
+  return test.assert_eq(text(base32.base32_decode("MZXW6YTBOI======")), "foobar");
 }
 
 function test_roundtrip(): test.TestOutcome {
-    var payload: string = "Hello, base32 World! 12345";
-    return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload.bytes()))), payload);
+  var payload: string = "Hello, base32 World! 12345";
+  return test.assert_eq(text(base32.base32_decode(base32.base32_encode(payload.bytes()))), payload);
 }
 
 function test_empty_decode(): test.TestOutcome {
-    return test.assert_true(text(base32.base32_decode("")) == "" &&
-                            base32.base32_encode("".bytes()) == "");
+  return test.assert_true(text(base32.base32_decode("")) == ""
+    && base32.base32_encode("".bytes()) == "");
 }
 
 // Strict decode: RFC vectors round-trip; malformed input rejects.
 function b32_opt(o: Option[u8[]], fb: string): string {
-    match (o) { Some(v) => { return text(v); }, None => { return fb; } }
+  match (o) {
+    Some(v) => {
+      return text(v);
+    },
+    None => {
+      return fb;
+    }
+  }
 }
+
 function b32_is_none(o: Option[u8[]]): boolean {
-    match (o) { Some(v) => { return false; }, None => { return true; } }
+  match (o) {
+    Some(v) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 function test_decode_strict_valid(): test.TestOutcome {
-    if (b32_opt(base32.base32_decode_strict("MY======"), "X") != "f") { return test.fail("f"); }
-    if (b32_opt(base32.base32_decode_strict("MZXW6YTBOI======"), "X") != "foobar") { return test.fail("foobar"); }
-    // Empty decodes to Some("").
-    return test.assert_eq(b32_opt(base32.base32_decode_strict(""), "X"), "");
+  if (b32_opt(base32.base32_decode_strict("MY======"), "X") != "f") {
+    return test.fail("f");
+  }
+  if (b32_opt(base32.base32_decode_strict("MZXW6YTBOI======"), "X") != "foobar") {
+    return test.fail("foobar");
+  }
+  // Empty decodes to Some("").
+  return test.assert_eq(b32_opt(base32.base32_decode_strict(""), "X"), "");
 }
 
 function test_decode_strict_rejects(): test.TestOutcome {
-    // Non-base32 char, bad padding count, and trailing junk after padding.
-    if (!b32_is_none(base32.base32_decode_strict("MY0====="))) { return test.fail("bad char"); }
-    if (!b32_is_none(base32.base32_decode_strict("MY====="))) { return test.fail("short pad"); }
-    return test.assert_true(b32_is_none(base32.base32_decode_strict("MY======X")));
+  // Non-base32 char, bad padding count, and trailing junk after padding.
+  if (!b32_is_none(base32.base32_decode_strict("MY0====="))) {
+    return test.fail("bad char");
+  }
+  if (!b32_is_none(base32.base32_decode_strict("MY====="))) {
+    return test.fail("short pad");
+  }
+  return test.assert_true(b32_is_none(base32.base32_decode_strict("MY======X")));
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("std/base32");
-    r = r.it("encode vectors", test_encode_vectors);
-    r = r.it("decode vectors", test_decode_vectors);
-    r = r.it("roundtrip",      test_roundtrip);
-    r = r.it("empty",          test_empty_decode);
-    r = r.it("decode_strict valid",   test_decode_strict_valid);
-    r = r.it("decode_strict rejects", test_decode_strict_rejects);
-    return r.finish();
+  var r: test.TestRunner = test.test_new("std/base32");
+  r = r.it("encode vectors", test_encode_vectors);
+  r = r.it("decode vectors", test_decode_vectors);
+  r = r.it("roundtrip", test_roundtrip);
+  r = r.it("empty", test_empty_decode);
+  r = r.it("decode_strict valid", test_decode_strict_valid);
+  r = r.it("decode_strict rejects", test_decode_strict_rejects);
+  return r.finish();
 }

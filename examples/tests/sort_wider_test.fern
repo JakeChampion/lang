@@ -104,7 +104,7 @@ function test_u32_asc_large(): test.TestOutcome {
   var arr: u32[] = [];
   var i: i32 = 0;
   while (i < 96) {
-    arr = arr.append(((i * 61) % 37) as u32);
+    arr = arr.append((i * 61 % 37) as u32);
     i = i + 1;
   }
   var sorted: u32[] = cmp.sort(arr);

@@ -1,4 +1,5 @@
 import "std/test";
+
 // examples/tests/helpers_test.fern — exercises the
 // multi-substring / string-diff / numeric-range / file-state
 // / tempdir-tuple helpers added on top of the std/test base.
@@ -7,133 +8,154 @@ import "std/test";
 // `process_assertions_test`) cover the per-type assertion
 // shape; this file covers the layered convenience helpers
 // that fold common patterns into one-liners.
-
 function test_contains_all_pass(): test.TestOutcome {
-    return test.assert_contains_all(
-        "error: function `foo` undefined at line 5",
-        ["error:", "foo", "line 5"]);
+  return test.assert_contains_all(
+    "error: function `foo` undefined at line 5",
+    ["error:", "foo", "line 5"],
+  );
 }
 
 function test_contains_all_localises_missing(): test.TestOutcome {
-    // `assert_contains_all` should surface the FIRST missing
-    // needle in its failure message, not say "something didn't
-    // match" — we invert the assertion and check the message
-    // mentions the right needle.
-    match (test.assert_contains_all("error: foo", ["error:", "xyzzy"])) {
-        Fail(msg) => {
-            if (!msg.contains("xyzzy")) {
-                return test.fail("failure message did not name the missing needle: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected assert_contains_all to fail"); }
+  // `assert_contains_all` should surface the FIRST missing
+  // needle in its failure message, not say "something didn't
+  // match" — we invert the assertion and check the message
+  // mentions the right needle.
+  match (test.assert_contains_all("error: foo", ["error:", "xyzzy"])) {
+    Fail(msg) => {
+      if (!msg.contains("xyzzy")) {
+        return test.fail("failure message did not name the missing needle: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected assert_contains_all to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_contains_any_one_matches(): test.TestOutcome {
-    return test.assert_contains_any("connection refused",
-                               ["timeout", "refused", "reset"]);
+  return test.assert_contains_any(
+    "connection refused",
+    ["timeout", "refused", "reset"],
+  );
 }
 
 function test_contains_in_order(): test.TestOutcome {
-    return test.assert_contains_in_order(
-        "expected X at line 5, got Y",
-        ["expected", "line 5", "got"]);
+  return test.assert_contains_in_order(
+    "expected X at line 5, got Y",
+    ["expected", "line 5", "got"],
+  );
 }
 
 function test_contains_in_order_rejects_wrong_order(): test.TestOutcome {
-    // The needles appear in the haystack but in the wrong
-    // order — `in_order` must reject this.
-    match (test.assert_contains_in_order("got Y at line 5 expected X",
-                                    ["expected", "line 5", "got"])) {
-        Fail(_) => { return test.pass(); },
-        Pass => { return test.fail("expected in-order check to reject reversed sequence"); }
+  // The needles appear in the haystack but in the wrong
+  // order — `in_order` must reject this.
+  match (test.assert_contains_in_order(
+    "got Y at line 5 expected X",
+    ["expected", "line 5", "got"],
+  )) {
+    Fail(_) => {
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected in-order check to reject reversed sequence");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_in_range_i32_pass(): test.TestOutcome {
-    return test.assert_in_range_i32(50, 0, 100);
+  return test.assert_in_range_i32(50, 0, 100);
 }
 
 function test_in_range_i32_boundary_pass(): test.TestOutcome {
-    return test.assert_in_range_i32(0, 0, 100);
+  return test.assert_in_range_i32(0, 0, 100);
 }
 
 function test_in_range_i32_below_fails(): test.TestOutcome {
-    match (test.assert_in_range_i32(0 - 1, 0, 100)) {
-        Fail(msg) => {
-            if (!msg.contains("< lower bound")) {
-                return test.fail("failure msg should name lower-bound side");
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected below-range to fail"); }
+  match (test.assert_in_range_i32(0 - 1, 0, 100)) {
+    Fail(msg) => {
+      if (!msg.contains("< lower bound")) {
+        return test.fail("failure msg should name lower-bound side");
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected below-range to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_in_range_i64_pass(): test.TestOutcome {
-    return test.assert_in_range_i64(5000000000 as i64,
-                               1000000000 as i64,
-                               9999999999 as i64);
+  return test.assert_in_range_i64(
+    5000000000 as i64,
+    1000000000 as i64,
+    9999999999 as i64,
+  );
 }
 
 function test_string_diff_equal_strings(): test.TestOutcome {
-    return test.assert_eq_string_diff("a\nb\nc\n", "a\nb\nc\n");
+  return test.assert_eq_string_diff("a\nb\nc\n", "a\nb\nc\n");
 }
 
 function test_string_diff_localises_line(): test.TestOutcome {
-    // Two strings differ at line 3 (foo vs FOO). The failure
-    // message must name line 3 and show both values.
-    match (test.assert_eq_string_diff("a\nb\nfoo\nd\n", "a\nb\nFOO\nd\n")) {
-        Fail(msg) => {
-            if (!msg.contains("line 3")) {
-                return test.fail("failure msg should pin line 3: " + msg);
-            }
-            return test.pass();
-        },
-        Pass => { return test.fail("expected string diff to fail"); }
+  // Two strings differ at line 3 (foo vs FOO). The failure
+  // message must name line 3 and show both values.
+  match (test.assert_eq_string_diff("a\nb\nfoo\nd\n", "a\nb\nFOO\nd\n")) {
+    Fail(msg) => {
+      if (!msg.contains("line 3")) {
+        return test.fail("failure msg should pin line 3: " + msg);
+      }
+      return test.pass();
+    },
+    Pass => {
+      return test.fail("expected string diff to fail");
     }
-    return test.pass();
+  }
+  return test.pass();
 }
 
 function test_file_helpers(r: test.TestRunner): test.TestRunner {
-    // Group the file-state helpers behind a temp-dir setup so
-    // they share one fixture lifecycle. `must_temp_dir` returns
-    // a (path, runner) tuple — empty path on failure with the
-    // runner already carrying a recorded skip.
-    var (dir, rr) = test.must_temp_dir(r, "helpers-fs");
-    if (dir == "") { return rr; }
-    var path: string = dir + "/payload.txt";
-    match (write_file(path, "hello\nworld\n")) {
-        Ok(_) => { },
-        Err(_) => { return rr.it("write setup", () => test.fail("write_file failed")); }
-    }
-    rr = rr.it("file exists",        () => test.assert_file_exists(path));
-    rr = rr.it("file does not exist", () => test.assert_file_not_exists(dir + "/missing.txt"));
-    rr = rr.it("file contains",      () => test.assert_file_contains(path, "world"));
-    rr = rr.it("file contents eq",   () => test.assert_file_contents(path, "hello\nworld\n"));
+  // Group the file-state helpers behind a temp-dir setup so
+  // they share one fixture lifecycle. `must_temp_dir` returns
+  // a (path, runner) tuple — empty path on failure with the
+  // runner already carrying a recorded skip.
+  let (dir, rr) = test.must_temp_dir(r, "helpers-fs");
+  if (dir == "") {
     return rr;
+  }
+  var path: string = dir + "/payload.txt";
+  match (write_file(path, "hello\nworld\n")) {
+    Ok(_) => {},
+    Err(_) => {
+      return rr.it("write setup", () => test.fail("write_file failed"));
+    }
+  }
+  rr = rr.it("file exists", () => test.assert_file_exists(path));
+  rr = rr.it("file does not exist", () => test.assert_file_not_exists(dir + "/missing.txt"));
+  rr = rr.it("file contains", () => test.assert_file_contains(path, "world"));
+  rr = rr.it("file contents eq", () => test.assert_file_contents(path, "hello\nworld\n"));
+  return rr;
 }
 
 function main(): i32 {
-    var r: test.TestRunner = test.test_new("helpers");
+  var r: test.TestRunner = test.test_new("helpers");
 
-    r = r.it("contains_all pass",                test_contains_all_pass);
-    r = r.it("contains_all names missing",       test_contains_all_localises_missing);
-    r = r.it("contains_any one matches",         test_contains_any_one_matches);
-    r = r.it("contains_in_order pass",           test_contains_in_order);
-    r = r.it("contains_in_order rejects reorder", test_contains_in_order_rejects_wrong_order);
-    r = r.it("in_range_i32 pass",                test_in_range_i32_pass);
-    r = r.it("in_range_i32 boundary pass",       test_in_range_i32_boundary_pass);
-    r = r.it("in_range_i32 below fails",         test_in_range_i32_below_fails);
-    r = r.it("in_range_i64 pass",                test_in_range_i64_pass);
-    r = r.it("string diff equal",                test_string_diff_equal_strings);
-    r = r.it("string diff localises line",       test_string_diff_localises_line);
+  r = r.it("contains_all pass", test_contains_all_pass);
+  r = r.it("contains_all names missing", test_contains_all_localises_missing);
+  r = r.it("contains_any one matches", test_contains_any_one_matches);
+  r = r.it("contains_in_order pass", test_contains_in_order);
+  r = r.it("contains_in_order rejects reorder", test_contains_in_order_rejects_wrong_order);
+  r = r.it("in_range_i32 pass", test_in_range_i32_pass);
+  r = r.it("in_range_i32 boundary pass", test_in_range_i32_boundary_pass);
+  r = r.it("in_range_i32 below fails", test_in_range_i32_below_fails);
+  r = r.it("in_range_i64 pass", test_in_range_i64_pass);
+  r = r.it("string diff equal", test_string_diff_equal_strings);
+  r = r.it("string diff localises line", test_string_diff_localises_line);
 
-    r = test_file_helpers(r);
+  r = test_file_helpers(r);
 
-    return r.finish();
+  return r.finish();
 }

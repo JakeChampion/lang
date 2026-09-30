@@ -44,16 +44,18 @@ import "std/i32";
 
 struct Tk { name: string, line: i32 }
 
-function mkT(name: string, line: i32): Tk { return Tk { name: name, line: line }; }
+function mkT(name: string, line: i32): Tk {
+  return Tk { name: name, line: line };
+}
 
 function main(): i32 {
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    while (r < 1000) {
-        var s: string = "id" + r.to_string();
-        var t: Tk = mkT(s, r);
-        acc = acc + t.name.len();
-        r = r + 1;
-    }
-    return acc % 5;
+  var acc: i32 = 0;
+  var r: i32 = 0;
+  while (r < 1000) {
+    var s: string = "id" + r.to_string();
+    var t: Tk = mkT(s, r);
+    acc = acc + t.name.len();
+    r = r + 1;
+  }
+  return acc % 5;
 }

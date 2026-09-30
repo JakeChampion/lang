@@ -102,7 +102,7 @@ func TestSelfHostTableMatches(t *testing.T) {
 // prefix pair, which is the one piece of the table that is not a row.
 func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 	src := readSelfHost(t)
-	m := regexp.MustCompile(`(?s)pub function strerror_unknown_prefix\(t: string\): string \{.*?if \(t == "arm64-darwin"\) \{ return "([^"]*)"; \}\s*return "([^"]*)";`).FindStringSubmatch(src)
+	m := regexp.MustCompile(`(?s)pub function strerror_unknown_prefix\(t: string\): string \{.*?if \(t == "arm64-darwin"\) \{\s*return "([^"]*)";\s*\}\s*return "([^"]*)";`).FindStringSubmatch(src)
 	if m == nil {
 		t.Fatalf("no strerror_unknown_prefix() found in %s — the extraction pattern has gone stale, which would make this test vacuous", selfHostSrc)
 	}

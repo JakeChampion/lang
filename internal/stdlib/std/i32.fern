@@ -4,7 +4,6 @@
 // it declares `import "std/i32";` (docs/PRELUDE-TO-MODULES.md,
 // Phase 5). Callers reference the free functions qualified
 // (`i32.<name>`) and the receiver methods bare (`n.abs()`).
-
 import "core/int";
 // std/i32's bodies dispatch (string) methods like `s.pad_start(
 // width, "0")` (inside to_string_padded / to_string_with_sep).
@@ -20,11 +19,11 @@ import "std/string";
 // behaviour). Callers needing exact handling should widen
 // to i64 first.
 pub function (n: i32) abs(): i32 {
-    if (n < 0) {
-        var w: i64 = 0 - (n as i64);
-        return w as i32;
-    }
-    return n;
+  if (n < 0) {
+    var w: i64 = 0 - n as i64;
+    return w as i32;
+  }
+  return n;
 }
 
 // `abs_diff(other)` — the absolute difference `|n - other|`, always
@@ -36,8 +35,10 @@ pub function (n: i32) abs(): i32 {
 // when the operands straddle nearly the whole range, e.g. MAX vs MIN — wraps;
 // widen to i64 first if that range matters.
 pub function (n: i32) abs_diff(other: i32): i32 {
-    if (n >= other) { return n - other; }
-    return other - n;
+  if (n >= other) {
+    return n - other;
+  }
+  return other - n;
 }
 
 // `(n: i32) midpoint(other)` — the average of `n` and `other`, rounded toward
@@ -47,8 +48,9 @@ pub function (n: i32) abs_diff(other: i32): i32 {
 // does. `midpoint(4, 6)` is `5`, `midpoint(i32::MAX, i32::MAX - 2)` is
 // `i32::MAX - 1`, and `midpoint(-2, 4)` is `1`.
 pub function (n: i32) midpoint(other: i32): i32 {
-    return (n & other) + ((n ^ other) >> 1);
+  return (n & other) + ((n ^ other) >> 1);
 }
+
 // ASCII byte predicates — `is_ascii_digit` / `is_ascii_alpha` /
 // `is_ascii_alnum` / `is_ascii_white_space` classify a single byte (typically an
 // `s[i]` index into a string, i.e. a UTF-8 code unit, hence the
@@ -64,21 +66,20 @@ pub function (n: i32) midpoint(other: i32): i32 {
 // `__is_ascii_ws` is the single implementation, which
 // `is_ascii_white_space` widens its byte into, since the `trim()`
 // family calls it directly and pre-dates this surface.
-
 pub function (b: u8) is_ascii_digit(): boolean {
-    return b >= 48 && b <= 57;
+  return b >= 48 && b <= 57;
 }
 
 pub function (b: u8) is_ascii_alpha(): boolean {
-    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122);
+  return b >= 65 && b <= 90 || b >= 97 && b <= 122;
 }
 
 pub function (b: u8) is_ascii_alnum(): boolean {
-    return b.is_ascii_digit() || b.is_ascii_alpha();
+  return b.is_ascii_digit() || b.is_ascii_alpha();
 }
 
 pub function (b: u8) is_ascii_white_space(): boolean {
-    return string.__is_ascii_ws(b as i32);
+  return string.__is_ascii_ws(b as i32);
 }
 
 // `(b: u8) is_ascii_newline()` — true for LF (10) or CR (13). Use
@@ -86,7 +87,7 @@ pub function (b: u8) is_ascii_white_space(): boolean {
 // CRLF pair like a single boundary; pair with the trailing-CR
 // strip in lines().
 pub function (b: u8) is_ascii_newline(): boolean {
-    return b == 10 || b == 13;
+  return b == 10 || b == 13;
 }
 
 // `(b: u8) is_ascii_vowel()` — true for ASCII a/e/i/o/u in either
@@ -94,9 +95,13 @@ pub function (b: u8) is_ascii_newline(): boolean {
 // English-class default). Useful for text analysis,
 // Pig Latin / spelling-rule kinds of routines.
 pub function (b: u8) is_ascii_vowel(): boolean {
-    if (b == 97 || b == 101 || b == 105 || b == 111 || b == 117) { return true; }
-    if (b == 65 || b == 69 || b == 73 || b == 79 || b == 85) { return true; }
-    return false;
+  if (b == 97 || b == 101 || b == 105 || b == 111 || b == 117) {
+    return true;
+  }
+  if (b == 65 || b == 69 || b == 73 || b == 79 || b == 85) {
+    return true;
+  }
+  return false;
 }
 
 // `(b: u8) is_ascii_printable()` — printable ASCII (32..126).
@@ -104,7 +109,7 @@ pub function (b: u8) is_ascii_vowel(): boolean {
 // byte range (128..255). Useful for log sanitisation /
 // diagnostic dumps.
 pub function (b: u8) is_ascii_printable(): boolean {
-    return b >= 32 && b <= 126;
+  return b >= 32 && b <= 126;
 }
 
 // `(b: u8) is_ascii_control()` — ASCII control character: 0..31
@@ -112,7 +117,7 @@ pub function (b: u8) is_ascii_printable(): boolean {
 // high-byte range (128..255) is neither printable nor
 // control under this definition.
 pub function (b: u8) is_ascii_control(): boolean {
-    return (b >= 0 && b <= 31) || b == 127;
+  return b >= 0 && b <= 31 || b == 127;
 }
 
 // `(b: u8) matches_any(bytes)` — true if b appears anywhere
@@ -120,13 +125,15 @@ pub function (b: u8) is_ascii_control(): boolean {
 // custom classifier predicates without writing a chain of
 // `b == x || b == y || ...` comparisons.
 pub function (b: u8) matches_any(bytes: string): boolean {
-    var n: i32 = bytes.len();
-    var i: i32 = 0;
-    while (i < n) {
-        if (bytes[i] == b) { return true; }
-        i = i + 1;
+  var n: i32 = bytes.len();
+  var i: i32 = 0;
+  while (i < n) {
+    if (bytes[i] == b) {
+      return true;
     }
-    return false;
+    i = i + 1;
+  }
+  return false;
 }
 
 // `(b: u8) is_ascii_letter()` — alias for is_ascii_alpha. The
@@ -134,17 +141,17 @@ pub function (b: u8) matches_any(bytes: string): boolean {
 // `alpha` is the Python / Go one. Both stay, both ASCII-named:
 // neither classifies a non-ASCII byte (#5629).
 pub function (b: u8) is_ascii_letter(): boolean {
-    return b.is_ascii_alpha();
+  return b.is_ascii_alpha();
 }
 
 pub function (b: u8) is_ascii_hex_digit(): boolean {
-    return b.is_ascii_digit() ||
-           (b >= 65 && b <= 70) ||   // A-F
-           (b >= 97 && b <= 102);    // a-f
+  return b.is_ascii_digit()
+    || b >= 65 && b <= 70  // A-F
+    || b >= 97 && b <= 102;  // a-f
 }
 
 pub function (b: u8) is_ascii(): boolean {
-    return b >= 0 && b <= 127;
+  return b >= 0 && b <= 127;
 }
 
 // `(b: u8) is_ascii_punct()` — true for an ASCII punctuation byte.
@@ -152,11 +159,19 @@ pub function (b: u8) is_ascii(): boolean {
 // four ranges 33-47, 58-64, 91-96, 123-126. Useful for
 // tokenisers that slice on `!"#$%&'()*+,-./:;<=>?@[\]^_\``{|}~`.
 pub function (b: u8) is_ascii_punct(): boolean {
-    if (b >= 33 && b <= 47)  { return true; }
-    if (b >= 58 && b <= 64)  { return true; }
-    if (b >= 91 && b <= 96)  { return true; }
-    if (b >= 123 && b <= 126){ return true; }
-    return false;
+  if (b >= 33 && b <= 47) {
+    return true;
+  }
+  if (b >= 58 && b <= 64) {
+    return true;
+  }
+  if (b >= 91 && b <= 96) {
+    return true;
+  }
+  if (b >= 123 && b <= 126) {
+    return true;
+  }
+  return false;
 }
 
 // `(b: u8) hex_digit()` — single-byte string with the byte's
@@ -164,29 +179,42 @@ pub function (b: u8) is_ascii_punct(): boolean {
 // digit (0..15). Inverse of is_hex_digit which classifies
 // the string byte → numeric value direction.
 pub function (b: u8) hex_digit(): string {
-    if (b < 0 || b > 15) { return ""; }
-    var buf: u8[] = __alloc_u8(1);
-    if (b < 10) { buf = buf.with(0, (b + 48) as u8); }
-    else        { buf = buf.with(0, (b + 87) as u8); }
-    return string_from_bytes_unchecked(buf);
+  if (b < 0 || b > 15) {
+    return "";
+  }
+  var buf: u8[] = __alloc_u8(1);
+  if (b < 10) {
+    buf = buf.with(0, (b + 48) as u8);
+  } else {
+    buf = buf.with(0, (b + 87) as u8);
+  }
+  return string_from_bytes_unchecked(buf);
 }
 
 // `(b: u8) digit_value()` — '0'..'9' → 0..9, -1 otherwise.
 // Useful for hand-rolled numeric parsers without the
 // __radix_digit detour.
 pub function (b: u8) digit_value(): i32 {
-    if (b >= 48 && b <= 57) { return (b as i32) - 48; }
-    return 0 - 1;
+  if (b >= 48 && b <= 57) {
+    return b as i32 - 48;
+  }
+  return 0 - 1;
 }
 
 // `(b: u8) hex_value()` — '0'..'9' / 'a'..'f' / 'A'..'F'
 // → 0..15, -1 otherwise. Same semantics as the internal
 // __hex_value but on the public byte-receiver surface.
 pub function (b: u8) hex_value(): i32 {
-    if (b >= 48 && b <= 57)  { return (b as i32) - 48; }      // 0-9
-    if (b >= 97 && b <= 102) { return (b as i32) - 87; }      // a-f
-    if (b >= 65 && b <= 70)  { return (b as i32) - 55; }      // A-F
-    return 0 - 1;
+  if (b >= 48 && b <= 57) {  // 0-9
+    return b as i32 - 48;
+  }
+  if (b >= 97 && b <= 102) {  // a-f
+    return b as i32 - 87;
+  }
+  if (b >= 65 && b <= 70) {  // A-F
+    return b as i32 - 55;
+  }
+  return 0 - 1;
 }
 
 // `(b: u8) to_ascii_string()` — single-byte string from a
@@ -195,10 +223,12 @@ pub function (b: u8) hex_value(): i32 {
 // composing tokeniser output where you've got the byte and
 // want a string at the call site.
 pub function (b: u8) to_ascii_string(): string {
-    if (b < 0 || b > 255) { return ""; }
-    var buf: u8[] = __alloc_u8(1);
-    buf = buf.with(0, b as u8);
-    return string_from_bytes_unchecked(buf);
+  if (b < 0 || b > 255) {
+    return "";
+  }
+  var buf: u8[] = __alloc_u8(1);
+  buf = buf.with(0, b as u8);
+  return string_from_bytes_unchecked(buf);
 }
 
 // === i32 sign helpers ===
@@ -208,20 +238,32 @@ pub function (b: u8) to_ascii_string(): string {
 // companions. signum is the function name used by Rust /
 // Java / Haskell; matches Rust i32::signum exactly.
 pub function (n: i32) signum(): i32 {
-    if (n > 0) { return 1; }
-    if (n < 0) { return 0 - 1; }
-    return 0;
+  if (n > 0) {
+    return 1;
+  }
+  if (n < 0) {
+    return 0 - 1;
+  }
+  return 0;
 }
 
-pub function (n: i32) is_positive(): boolean { return n > 0; }
-pub function (n: i32) is_negative(): boolean { return n < 0; }
-pub function (n: i32) is_zero(): boolean { return n == 0; }
+pub function (n: i32) is_positive(): boolean {
+  return n > 0;
+}
+
+pub function (n: i32) is_negative(): boolean {
+  return n < 0;
+}
+
+pub function (n: i32) is_zero(): boolean {
+  return n == 0;
+}
 
 // `(n: i32) is_in_range(lo, hi)` — true iff lo <= n < hi
 // (half-open). Empty / inverted ranges return false. The
 // standard "bucket" / "valid array index" check shape.
 pub function (n: i32) is_in_range(lo: i32, hi: i32): boolean {
-    return n >= lo && n < hi;
+  return n >= lo && n < hi;
 }
 
 // `(n: i32) is_between(lo, hi)` — inclusive range check
@@ -229,7 +271,7 @@ pub function (n: i32) is_in_range(lo: i32, hi: i32): boolean {
 // open. The closed form is the more natural shape for
 // human-facing bounds ("number must be between 1 and 100").
 pub function (n: i32) is_between(lo: i32, hi: i32): boolean {
-    return n >= lo && n <= hi;
+  return n >= lo && n <= hi;
 }
 
 // `(n: i32) reverse_digits()` — flip the decimal digit
@@ -237,19 +279,23 @@ pub function (n: i32) is_between(lo: i32, hi: i32): boolean {
 // reverse drop (1000 → 1). Overflow on the reverse is
 // possible for large values; wraps silently.
 pub function (n: i32) reverse_digits(): i32 {
-    var neg: boolean = (n < 0);
-    // i64 magnitude so i32::MIN reverses instead of spinning zero times
-    // (abs() can't represent 2147483648). The reversed accumulator stays
-    // i32, so it still wraps silently on overflow, as documented.
-    var mag: i64 = n as i64;
-    if (neg) { mag = 0 - mag; }
-    var r: i32 = 0;
-    while (mag > 0) {
-        r = r * 10 + ((mag % 10) as i32);
-        mag = mag / 10;
-    }
-    if (neg) { return 0 - r; }
-    return r;
+  var neg: boolean = n < 0;
+  // i64 magnitude so i32::MIN reverses instead of spinning zero times
+  // (abs() can't represent 2147483648). The reversed accumulator stays
+  // i32, so it still wraps silently on overflow, as documented.
+  var mag: i64 = n as i64;
+  if (neg) {
+    mag = 0 - mag;
+  }
+  var r: i32 = 0;
+  while (mag > 0) {
+    r = r * 10 + (mag % 10) as i32;
+    mag = mag / 10;
+  }
+  if (neg) {
+    return 0 - r;
+  }
+  return r;
 }
 
 // `(n: i32) is_palindrome()` — true iff the decimal
@@ -257,41 +303,53 @@ pub function (n: i32) reverse_digits(): i32 {
 // numbers return false (the minus sign doesn't reverse
 // to itself). 0 is a palindrome.
 pub function (n: i32) is_palindrome(): boolean {
-    if (n < 0) { return false; }
-    return n == n.reverse_digits();
+  if (n < 0) {
+    return false;
+  }
+  return n == n.reverse_digits();
 }
 
 // `(n: i32) sum_of_digits()` — total of the decimal digits.
 // 123 → 6. Negative numbers use their magnitude. Useful for
 // digital-root puzzles, checksum precomputation.
 pub function (n: i32) sum_of_digits(): i32 {
-    // i64 magnitude so i32::MIN's digits are summed (abs() wraps it back
-    // negative, which an i32 `while (mag > 0)` loop would skip entirely).
-    var mag: i64 = n as i64;
-    if (mag < 0) { mag = 0 - mag; }
-    var s: i32 = 0;
-    while (mag > 0) {
-        s = s + ((mag % 10) as i32);
-        mag = mag / 10;
-    }
-    return s;
+  // i64 magnitude so i32::MIN's digits are summed (abs() wraps it back
+  // negative, which an i32 `while (mag > 0)` loop would skip entirely).
+  var mag: i64 = n as i64;
+  if (mag < 0) {
+    mag = 0 - mag;
+  }
+  var s: i32 = 0;
+  while (mag > 0) {
+    s = s + (mag % 10) as i32;
+    mag = mag / 10;
+  }
+  return s;
 }
 
 // `(n: i32) has_digit(d)` — true if d (0..9) appears in
 // the decimal representation. Negative numbers use their
 // magnitude.
 pub function (n: i32) has_digit(d: i32): boolean {
-    if (d < 0 || d > 9) { return false; }
-    // i64 magnitude so i32::MIN's digits are scanned (abs() wraps it back
-    // negative, which an i32 `while (mag > 0)` loop would skip entirely).
-    var mag: i64 = n as i64;
-    if (mag < 0) { mag = 0 - mag; }
-    if (mag == 0) { return d == 0; }
-    while (mag > 0) {
-        if ((mag % 10) as i32 == d) { return true; }
-        mag = mag / 10;
-    }
+  if (d < 0 || d > 9) {
     return false;
+  }
+  // i64 magnitude so i32::MIN's digits are scanned (abs() wraps it back
+  // negative, which an i32 `while (mag > 0)` loop would skip entirely).
+  var mag: i64 = n as i64;
+  if (mag < 0) {
+    mag = 0 - mag;
+  }
+  if (mag == 0) {
+    return d == 0;
+  }
+  while (mag > 0) {
+    if ((mag % 10) as i32 == d) {
+      return true;
+    }
+    mag = mag / 10;
+  }
+  return false;
 }
 
 // `(n: i32) percent_of(total)` — what percentage of `total`
@@ -302,8 +360,10 @@ pub function (n: i32) has_digit(d: i32): boolean {
 // i32 multiply silently wrapped for |n| beyond ~21M); the
 // quotient is correct whenever the true percentage fits i32.
 pub function (n: i32) percent_of(total: i32): i32 {
-    if (total <= 0) { return 0; }
-    return ((n as i64) * 100 / (total as i64)) as i32;
+  if (total <= 0) {
+    return 0;
+  }
+  return (n as i64 * 100 / (total as i64)) as i32;
 }
 
 // `(n: i32) is_multiple_of(d)` — true if d divides n
@@ -312,25 +372,33 @@ pub function (n: i32) percent_of(total: i32): i32 {
 // divisors are normalised via the modulo — `(-6) % 3 == 0`
 // holds.
 pub function (n: i32) is_multiple_of(d: i32): boolean {
-    if (d == 0) { return false; }
-    return n % d == 0;
+  if (d == 0) {
+    return false;
+  }
+  return n % d == 0;
 }
 
 // `(n: i32) min_zero()` — saturate to non-negative: return
 // 0 when `n < 0`, otherwise `n`. Cheaper / clearer than
 // `n.max(0)` for the common "negative-as-error" pattern.
 pub function (n: i32) min_zero(): i32 {
-    if (n < 0) { return 0; }
-    return n;
+  if (n < 0) {
+    return 0;
+  }
+  return n;
 }
 
 // `(n: i32) sign_str()` — string form of the sign:
 // "+" for positive, "-" for negative, "" for zero.
 // Useful for human-readable signed-magnitude formatting.
 pub function (n: i32) sign_str(): string {
-    if (n > 0) { return "+"; }
-    if (n < 0) { return "-"; }
-    return "";
+  if (n > 0) {
+    return "+";
+  }
+  if (n < 0) {
+    return "-";
+  }
+  return "";
 }
 
 // `(n: i32) is_perfect_square()` — true if n is k*k for some
@@ -338,9 +406,11 @@ pub function (n: i32) sign_str(): string {
 // `sqrt_floor`, so the check is O(log n) via that helper's
 // binary search; faster than a linear k-walk.
 pub function (n: i32) is_perfect_square(): boolean {
-    if (n < 0) { return false; }
-    var k: i32 = n.sqrt_floor();
-    return k * k == n;
+  if (n < 0) {
+    return false;
+  }
+  var k: i32 = n.sqrt_floor();
+  return k * k == n;
 }
 
 // `(n: i32) factorial()` — n! for n in 0..12. Returns 1 for
@@ -349,14 +419,16 @@ pub function (n: i32) is_perfect_square(): boolean {
 // out-of-range sentinel. Callers needing 13!+ should widen
 // to i64 / bigint when those land.
 pub function (n: i32) factorial(): i32 {
-    if (n < 0 || n > 12) { return 0; }
-    var result: i32 = 1;
-    var i: i32 = 2;
-    while (i <= n) {
-        result = result * i;
-        i = i + 1;
-    }
-    return result;
+  if (n < 0 || n > 12) {
+    return 0;
+  }
+  var result: i32 = 1;
+  var i: i32 = 2;
+  while (i <= n) {
+    result = result * i;
+    i = i + 1;
+  }
+  return result;
 }
 
 // `(n: i32) is_prime()` — primality check via 6k±1 trial
@@ -365,19 +437,27 @@ pub function (n: i32) factorial(): i32 {
 // callers running heavy number theory should bring a
 // sieve.
 pub function (n: i32) is_prime(): boolean {
-    if (n < 2) { return false; }
-    if (n == 2 || n == 3) { return true; }
-    if (n % 2 == 0 || n % 3 == 0) { return false; }
-    var i: i32 = 5;
-    // `i <= n / i` rather than `i * i <= n`: the square overflows for
-    // i >= 46341, and the wrapped value stays below n, so the loop ran
-    // past the square root until i itself wrapped negative and `n % -1`
-    // reported a prime as composite.
-    while (i <= n / i) {
-        if (n % i == 0 || n % (i + 2) == 0) { return false; }
-        i = i + 6;
-    }
+  if (n < 2) {
+    return false;
+  }
+  if (n == 2 || n == 3) {
     return true;
+  }
+  if (n % 2 == 0 || n % 3 == 0) {
+    return false;
+  }
+  var i: i32 = 5;
+  // `i <= n / i` rather than `i * i <= n`: the square overflows for
+  // i >= 46341, and the wrapped value stays below n, so the loop ran
+  // past the square root until i itself wrapped negative and `n % -1`
+  // reported a prime as composite.
+  while (i <= n / i) {
+    if (n % i == 0 || n % (i + 2) == 0) {
+      return false;
+    }
+    i = i + 6;
+  }
+  return true;
 }
 
 // === Byte-level case helpers ===
@@ -388,23 +468,26 @@ pub function (n: i32) is_prime(): boolean {
 // non-ASCII) pass through unchanged for the to_* path and
 // return false for the is_* path. Used by string-level
 // methods below and by hand-rolled tokenisers.
-
 pub function (b: u8) is_ascii_lower(): boolean {
-    return b >= 97 && b <= 122;
+  return b >= 97 && b <= 122;
 }
 
 pub function (b: u8) is_ascii_upper(): boolean {
-    return b >= 65 && b <= 90;
+  return b >= 65 && b <= 90;
 }
 
 pub function (b: u8) to_ascii_lower(): u8 {
-    if (b >= 65 && b <= 90) { return b + 32; }
-    return b;
+  if (b >= 65 && b <= 90) {
+    return b + 32;
+  }
+  return b;
 }
 
 pub function (b: u8) to_ascii_upper(): u8 {
-    if (b >= 97 && b <= 122) { return b - 32; }
-    return b;
+  if (b >= 97 && b <= 122) {
+    return b - 32;
+  }
+  return b;
 }
 
 // === i32 numeric methods ===
@@ -419,19 +502,27 @@ pub function (b: u8) to_ascii_upper(): u8 {
 // scalar reductions. Standard shape; matches Rust /
 // Gleam / Go (stdlib min/max which landed in Go 1.21).
 pub function (n: i32) min(other: i32): i32 {
-    if (n < other) { return n; }
-    return other;
+  if (n < other) {
+    return n;
+  }
+  return other;
 }
 
 pub function (n: i32) max(other: i32): i32 {
-    if (n > other) { return n; }
-    return other;
+  if (n > other) {
+    return n;
+  }
+  return other;
 }
 
 pub function (n: i32) clamp(lo: i32, hi: i32): i32 {
-    if (n < lo) { return lo; }
-    if (n > hi) { return hi; }
-    return n;
+  if (n < lo) {
+    return lo;
+  }
+  if (n > hi) {
+    return hi;
+  }
+  return n;
 }
 
 // === i32 saturating / checked arithmetic ===
@@ -441,44 +532,63 @@ pub function (n: i32) clamp(lo: i32, hi: i32): i32 {
 // caller can decide. Overflow detection is sign-bit-based —
 // no i64 widening (the natives' i64 codegen has a comparison
 // bug with values straddling the i32::MAX threshold).
-
 pub function (n: i32) saturating_add(other: i32): i32 {
-    var r: i32 = n + other;
-    // Overflow: both signs match but result flips sign.
-    if (n > 0 && other > 0 && r < 0) { return 2147483647; }
-    if (n < 0 && other < 0 && r >= 0) { return 0 - 2147483647 - 1; }
-    return r;
+  var r: i32 = n + other;
+  // Overflow: both signs match but result flips sign.
+  if (n > 0 && other > 0 && r < 0) {
+    return 2147483647;
+  }
+  if (n < 0 && other < 0 && r >= 0) {
+    return 0 - 2147483647 - 1;
+  }
+  return r;
 }
 
 pub function (n: i32) saturating_sub(other: i32): i32 {
-    var r: i32 = n - other;
-    // Overflow: signs differ and result has the wrong sign.
-    if (n >= 0 && other < 0 && r < 0) { return 2147483647; }
-    if (n < 0 && other > 0 && r > 0) { return 0 - 2147483647 - 1; }
-    return r;
+  var r: i32 = n - other;
+  // Overflow: signs differ and result has the wrong sign.
+  if (n >= 0 && other < 0 && r < 0) {
+    return 2147483647;
+  }
+  if (n < 0 && other > 0 && r > 0) {
+    return 0 - 2147483647 - 1;
+  }
+  return r;
 }
 
 pub function (n: i32) checked_add(other: i32): Option[i32] {
-    var r: i32 = n + other;
-    if (n > 0 && other > 0 && r < 0) { return None; }
-    if (n < 0 && other < 0 && r >= 0) { return None; }
-    return Some(r);
+  var r: i32 = n + other;
+  if (n > 0 && other > 0 && r < 0) {
+    return None;
+  }
+  if (n < 0 && other < 0 && r >= 0) {
+    return None;
+  }
+  return Some(r);
 }
 
 pub function (n: i32) checked_sub(other: i32): Option[i32] {
-    var r: i32 = n - other;
-    if (n >= 0 && other < 0 && r < 0) { return None; }
-    if (n < 0 && other > 0 && r > 0) { return None; }
-    return Some(r);
+  var r: i32 = n - other;
+  if (n >= 0 && other < 0 && r < 0) {
+    return None;
+  }
+  if (n < 0 && other > 0 && r > 0) {
+    return None;
+  }
+  return Some(r);
 }
 
 // `(n: i32) checked_div(other)` — None on divide-by-zero
 // OR on i32::MIN / -1 (the one i32 division that overflows).
 pub function (n: i32) checked_div(other: i32): Option[i32] {
-    if (other == 0) { return None; }
-    var min32: i32 = 0 - 2147483647 - 1;
-    if (n == min32 && other == (0 - 1)) { return None; }
-    return Some(n / other);
+  if (other == 0) {
+    return None;
+  }
+  var min32: i32 = 0 - 2147483647 - 1;
+  if (n == min32 && other == 0 - 1) {
+    return None;
+  }
+  return Some(n / other);
 }
 
 // `(n: i32) checked_rem(other)` — `Some(n % other)`, or `None` on divide-by-zero
@@ -486,10 +596,14 @@ pub function (n: i32) checked_div(other: i32): Option[i32] {
 // counterpart does, and the operation traps on some targets). The remainder
 // sibling of `checked_div`, completing the `checked_` family for `%`.
 pub function (n: i32) checked_rem(other: i32): Option[i32] {
-    if (other == 0) { return None; }
-    var min32: i32 = 0 - 2147483647 - 1;
-    if (n == min32 && other == (0 - 1)) { return None; }
-    return Some(n % other);
+  if (other == 0) {
+    return None;
+  }
+  var min32: i32 = 0 - 2147483647 - 1;
+  if (n == min32 && other == 0 - 1) {
+    return None;
+  }
+  return Some(n % other);
 }
 
 // `(n: i32) checked_mul(other)` — `Some(n * other)`, or `None` when the
@@ -498,11 +612,13 @@ pub function (n: i32) checked_rem(other: i32): Option[i32] {
 // i64, so it widens and range-checks against the i32 bounds — no wrap to
 // second-guess.
 pub function (n: i32) checked_mul(other: i32): Option[i32] {
-    var p: i64 = (n as i64) * (other as i64);
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);   // i32::MIN
-    var hi: i64 = 2147483647 as i64;                               // i32::MAX
-    if (p < lo || p > hi) { return None; }
-    return Some(p as i32);
+  var p: i64 = n as i64 * (other as i64);
+  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
+  var hi: i64 = 2147483647 as i64;  // i32::MAX
+  if (p < lo || p > hi) {
+    return None;
+  }
+  return Some(p as i32);
 }
 
 // `(n: i32) saturating_mul(other)` — `n * other` clamped to the i32 range
@@ -511,10 +627,14 @@ pub function (n: i32) checked_mul(other: i32): Option[i32] {
 // sibling of `saturating_add` / `saturating_sub`. Exact: the full i32×i32
 // product fits an i64, so the clamp reads off the widened product's sign.
 pub function (n: i32) saturating_mul(other: i32): i32 {
-    var p: i64 = (n as i64) * (other as i64);
-    if (p > (2147483647 as i64)) { return 2147483647; }
-    if (p < ((0 as i64) - (2147483647 as i64) - (1 as i64))) { return 0 - 2147483647 - 1; }
-    return p as i32;
+  var p: i64 = n as i64 * (other as i64);
+  if (p > 2147483647 as i64) {
+    return 2147483647;
+  }
+  if (p < 0 as i64 - 2147483647 as i64 - 1 as i64) {
+    return 0 - 2147483647 - 1;
+  }
+  return p as i32;
 }
 
 // `(n: i32) saturating_div(other)` — `n / other` clamped to the i32 range, the
@@ -524,8 +644,10 @@ pub function (n: i32) saturating_mul(other: i32): i32 {
 // every other pair is exact. Divide-by-zero is the caller's responsibility, as
 // for the bare `/` operator.
 pub function (n: i32) saturating_div(other: i32): i32 {
-    if (n == (0 - 2147483647 - 1) && other == (0 - 1)) { return 2147483647; }
-    return n / other;
+  if (n == 0 - 2147483647 - 1 && other == 0 - 1) {
+    return 2147483647;
+  }
+  return n / other;
 }
 
 // `(n: i32) saturating_neg()` / `saturating_abs()` — `-n` / `|n|` clamped to the
@@ -533,13 +655,20 @@ pub function (n: i32) saturating_div(other: i32): i32 {
 // is the one value whose negation / magnitude (2^31) overflows, so both saturate
 // it to i32::MAX instead of wrapping it back to MIN.
 pub function (n: i32) saturating_neg(): i32 {
-    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
-    return 0 - n;
+  if (n == 0 - 2147483647 - 1) {
+    return 2147483647;
+  }
+  return 0 - n;
 }
+
 pub function (n: i32) saturating_abs(): i32 {
-    if (n == (0 - 2147483647 - 1)) { return 2147483647; }
-    if (n < 0) { return 0 - n; }
-    return n;
+  if (n == 0 - 2147483647 - 1) {
+    return 2147483647;
+  }
+  if (n < 0) {
+    return 0 - n;
+  }
+  return n;
 }
 
 // `(n: i32) checked_pow(exp)` — `Some(n ** exp)` by exponentiation-by-squaring,
@@ -552,24 +681,30 @@ pub function (n: i32) saturating_abs(): i32 {
 // skipped once the exponent is exhausted, so an exact result never reports a
 // spurious overflow from an unused square.
 pub function (n: i32) checked_pow(exp: i32): Option[i32] {
-    if (exp < 0) { return None; }
-    var result: i64 = 1 as i64;
-    var base: i64 = n as i64;
-    var e: i32 = exp;
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);   // i32::MIN
-    var hi: i64 = 2147483647 as i64;                               // i32::MAX
-    while (e > 0) {
-        if (e % 2 == 1) {
-            result = result * base;
-            if (result < lo || result > hi) { return None; }
-        }
-        e = e / 2;
-        if (e > 0) {
-            base = base * base;
-            if (base < lo || base > hi) { return None; }
-        }
+  if (exp < 0) {
+    return None;
+  }
+  var result: i64 = 1 as i64;
+  var base: i64 = n as i64;
+  var e: i32 = exp;
+  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;  // i32::MIN
+  var hi: i64 = 2147483647 as i64;  // i32::MAX
+  while (e > 0) {
+    if (e % 2 == 1) {
+      result = result * base;
+      if (result < lo || result > hi) {
+        return None;
+      }
     }
-    return Some(result as i32);
+    e = e / 2;
+    if (e > 0) {
+      base = base * base;
+      if (base < lo || base > hi) {
+        return None;
+      }
+    }
+  }
+  return Some(result as i32);
 }
 
 // `(n: i32) overflowing_add(other)` / `overflowing_sub(other)` /
@@ -580,18 +715,20 @@ pub function (n: i32) checked_pow(exp: i32): Option[i32] {
 // detect overflow without recomputing it. The overflow tests are the same ones
 // `checked_add` / `checked_sub` / `checked_mul` use.
 pub function (n: i32) overflowing_add(other: i32): (i32, boolean) {
-    var r: i32 = n + other;
-    return (r, (n > 0 && other > 0 && r < 0) || (n < 0 && other < 0 && r >= 0));
+  var r: i32 = n + other;
+  return (r, n > 0 && other > 0 && r < 0 || n < 0 && other < 0 && r >= 0);
 }
+
 pub function (n: i32) overflowing_sub(other: i32): (i32, boolean) {
-    var r: i32 = n - other;
-    return (r, (n >= 0 && other < 0 && r < 0) || (n < 0 && other > 0 && r > 0));
+  var r: i32 = n - other;
+  return (r, n >= 0 && other < 0 && r < 0 || n < 0 && other > 0 && r > 0);
 }
+
 pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
-    var p: i64 = (n as i64) * (other as i64);
-    var lo: i64 = (0 as i64) - (2147483647 as i64) - (1 as i64);
-    var hi: i64 = 2147483647 as i64;
-    return (p as i32, p < lo || p > hi);
+  var p: i64 = n as i64 * (other as i64);
+  var lo: i64 = 0 as i64 - 2147483647 as i64 - 1 as i64;
+  var hi: i64 = 2147483647 as i64;
+  return (p as i32, p < lo || p > hi);
 }
 
 // `(n: i32) overflowing_div(other)` / `overflowing_rem(other)` — the wrapped
@@ -602,14 +739,19 @@ pub function (n: i32) overflowing_mul(other: i32): (i32, boolean) {
 // the flag is false. Divide-by-zero is the caller's responsibility, exactly as
 // for the bare `/` and `%` operators.
 pub function (n: i32) overflowing_div(other: i32): (i32, boolean) {
-    var min32: i32 = 0 - 2147483647 - 1;
-    if (n == min32 && other == (0 - 1)) { return (min32, true); }
-    return (n / other, false);
+  var min32: i32 = 0 - 2147483647 - 1;
+  if (n == min32 && other == 0 - 1) {
+    return (min32, true);
+  }
+  return (n / other, false);
 }
+
 pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
-    var min32: i32 = 0 - 2147483647 - 1;
-    if (n == min32 && other == (0 - 1)) { return (0, true); }
-    return (n % other, false);
+  var min32: i32 = 0 - 2147483647 - 1;
+  if (n == min32 && other == 0 - 1) {
+    return (0, true);
+  }
+  return (n % other, false);
 }
 
 // Unary overflow: negation and magnitude. i32::MIN (-2147483648) is the one
@@ -617,19 +759,24 @@ pub function (n: i32) overflowing_rem(other: i32): (i32, boolean) {
 // representation — so `abs()` / unary `-` wrap MIN to itself. These give the
 // overflow-safe forms, the unary counterparts of the checked_ / overflowing_
 // binary ops.
-
 // `(n: i32) checked_neg()` — `Some(-n)`, or `None` for i32::MIN.
 pub function (n: i32) checked_neg(): Option[i32] {
-    if (n == (0 - 2147483647 - 1)) { return None; }
-    return Some(0 - n);
+  if (n == 0 - 2147483647 - 1) {
+    return None;
+  }
+  return Some(0 - n);
 }
 
 // `(n: i32) checked_abs()` — `Some(|n|)`, or `None` for i32::MIN (whose
 // magnitude overflows). The overflow-safe counterpart of `abs`.
 pub function (n: i32) checked_abs(): Option[i32] {
-    if (n == (0 - 2147483647 - 1)) { return None; }
-    if (n < 0) { return Some(0 - n); }
-    return Some(n);
+  if (n == 0 - 2147483647 - 1) {
+    return None;
+  }
+  if (n < 0) {
+    return Some(0 - n);
+  }
+  return Some(n);
 }
 
 // `(n: i32) unsigned_abs()` — `|n|` as a u32, where the one magnitude the signed
@@ -638,16 +785,22 @@ pub function (n: i32) checked_abs(): Option[i32] {
 // The MIN case takes the u32 literal directly, since `0 - n` would overflow i32
 // before the widening cast.
 pub function (n: i32) unsigned_abs(): u32 {
-    if (n == (0 - 2147483647 - 1)) { return 2147483648 as u32; }
-    if (n < 0) { return (0 - n) as u32; }
-    return n as u32;
+  if (n == 0 - 2147483647 - 1) {
+    return 2147483648 as u32;
+  }
+  if (n < 0) {
+    return (0 - n) as u32;
+  }
+  return n as u32;
 }
 
 // `(n: i32) overflowing_neg()` — the wrapped negation paired with a
 // did-overflow boolean; only i32::MIN overflows (negating to itself).
 pub function (n: i32) overflowing_neg(): (i32, boolean) {
-    if (n == (0 - 2147483647 - 1)) { return (n, true); }
-    return (0 - n, false);
+  if (n == 0 - 2147483647 - 1) {
+    return (n, true);
+  }
+  return (0 - n, false);
 }
 
 // `(n: i32) checked_shl(rhs)` / `checked_shr(rhs)` — `Some(n << rhs)` /
@@ -657,34 +810,47 @@ pub function (n: i32) overflowing_neg(): (i32, boolean) {
 // runtime value" case. `>>` is arithmetic (sign-extending) on the signed type,
 // matching Rust's `checked_shr`.
 pub function (n: i32) checked_shl(rhs: i32): Option[i32] {
-    if (rhs < 0 || rhs >= 32) { return None; }
-    return Some(n << rhs);
+  if (rhs < 0 || rhs >= 32) {
+    return None;
+  }
+  return Some(n << rhs);
 }
+
 pub function (n: i32) checked_shr(rhs: i32): Option[i32] {
-    if (rhs < 0 || rhs >= 32) { return None; }
-    return Some(n >> rhs);
+  if (rhs < 0 || rhs >= 32) {
+    return None;
+  }
+  return Some(n >> rhs);
 }
 
 // === i32 / i64 parity + power + gcd/lcm ===
+pub function (n: i32) is_even(): boolean {
+  return n % 2 == 0;
+}
 
-pub function (n: i32) is_even(): boolean { return n % 2 == 0; }
-pub function (n: i32) is_odd(): boolean  { return n % 2 != 0; }
+pub function (n: i32) is_odd(): boolean {
+  return n % 2 != 0;
+}
 
 // `(n: i32) pow(exp)` — integer exponentiation by squaring.
 // Negative exponents return 0 (lang has no fractional i32).
 // Overflow wraps silently (matches Rust wrapping_pow); use
 // i64 power for ranges beyond ~2^31.
 pub function (n: i32) pow(exp: i32): i32 {
-    if (exp < 0) { return 0; }
-    var base: i32 = n;
-    var e: i32 = exp;
-    var out: i32 = 1;
-    while (e > 0) {
-        if (e % 2 == 1) { out = out * base; }
-        base = base * base;
-        e = e / 2;
+  if (exp < 0) {
+    return 0;
+  }
+  var base: i32 = n;
+  var e: i32 = exp;
+  var out: i32 = 1;
+  while (e > 0) {
+    if (e % 2 == 1) {
+      out = out * base;
     }
-    return out;
+    base = base * base;
+    e = e / 2;
+  }
+  return out;
 }
 
 // `(n: i32) gcd(other)` — greatest common divisor via the
@@ -692,14 +858,14 @@ pub function (n: i32) pow(exp: i32): i32 {
 // abs()'d up front. gcd(0, n) == gcd(n, 0) == abs(n); gcd(0,
 // 0) == 0 per the standard convention.
 pub function (n: i32) gcd(other: i32): i32 {
-    var a: i32 = n.abs();
-    var b: i32 = other.abs();
-    while (b != 0) {
-        var t: i32 = b;
-        b = a % b;
-        a = t;
-    }
-    return a;
+  var a: i32 = n.abs();
+  var b: i32 = other.abs();
+  while (b != 0) {
+    var t: i32 = b;
+    b = a % b;
+    a = t;
+  }
+  return a;
 }
 
 // `(n: i32) lcm(other)` — least common multiple. Computed as
@@ -707,9 +873,11 @@ pub function (n: i32) gcd(other: i32): i32 {
 // overflow-prone multiply gets divided down before the
 // result lands. lcm(0, _) == lcm(_, 0) == 0.
 pub function (n: i32) lcm(other: i32): i32 {
-    if (n == 0 || other == 0) { return 0; }
-    var g: i32 = n.gcd(other);
-    return (n / g).abs() * other.abs();
+  if (n == 0 || other == 0) {
+    return 0;
+  }
+  var g: i32 = n.gcd(other);
+  return (n / g).abs() * other.abs();
 }
 
 // `(n: i32) is_power_of_2()` — true iff n is a positive
@@ -718,8 +886,10 @@ pub function (n: i32) lcm(other: i32): i32 {
 // debatable; we follow Rust's convention where 0 isn't a
 // power of 2).
 pub function (n: i32) is_power_of_2(): boolean {
-    if (n <= 0) { return false; }
-    return (n & (n - 1)) == 0;
+  if (n <= 0) {
+    return false;
+  }
+  return (n & n - 1) == 0;
 }
 
 // `(n: i32) next_power_of_2()` — smallest power of 2 that
@@ -729,11 +899,17 @@ pub function (n: i32) is_power_of_2(): boolean {
 // representable power" sentinel) — which also keeps the
 // doubling loop from wrapping past 0 and spinning forever.
 pub function (n: i32) next_power_of_2(): i32 {
-    if (n <= 1) { return 1; }
-    if (n > 1073741824) { return 0; }
-    var p: i32 = 1;
-    while (p < n) { p = p * 2; }
-    return p;
+  if (n <= 1) {
+    return 1;
+  }
+  if (n > 1073741824) {
+    return 0;
+  }
+  var p: i32 = 1;
+  while (p < n) {
+    p = p * 2;
+  }
+  return p;
 }
 
 // `(n: i32) log2_floor()` — floor(log2(n)) for n >= 1; -1
@@ -741,8 +917,10 @@ pub function (n: i32) next_power_of_2(): i32 {
 // test `>= 0` to mean "valid"). Equivalent to 31 -
 // leading_zeros(n) for positives.
 pub function (n: i32) log2_floor(): i32 {
-    if (n <= 0) { return 0 - 1; }
-    return 31 - n.leading_zeros();
+  if (n <= 0) {
+    return 0 - 1;
+  }
+  return 31 - n.leading_zeros();
 }
 
 // `(n: i32) log10_floor()` — `floor(log10(n))` for `n >= 1`; `-1`
@@ -752,11 +930,16 @@ pub function (n: i32) log2_floor(): i32 {
 // decimal digits. Counts divisions by ten (exact, overflow-free —
 // it only ever shrinks `n`), so it needs no float `log10`.
 pub function (n: i32) log10_floor(): i32 {
-    if (n <= 0) { return 0 - 1; }
-    var r: i32 = 0;
-    var m: i32 = n;
-    while (m >= 10) { m = m / 10; r = r + 1; }
-    return r;
+  if (n <= 0) {
+    return 0 - 1;
+  }
+  var r: i32 = 0;
+  var m: i32 = n;
+  while (m >= 10) {
+    m = m / 10;
+    r = r + 1;
+  }
+  return r;
 }
 
 // `(n: i32) sqrt_floor()` — integer square root. floor(sqrt(n))
@@ -764,15 +947,21 @@ pub function (n: i32) log10_floor(): i32 {
 // method from a half-of-n starting point — converges in
 // O(log n) iterations regardless of starting guess.
 pub function (n: i32) sqrt_floor(): i32 {
-    if (n <= 0) { return 0; }
-    if (n < 4) { return 1; }
-    var x: i32 = n / 2;
-    while (true) {
-        var y: i32 = (x + n / x) / 2;
-        if (y >= x) { return x; }
-        x = y;
+  if (n <= 0) {
+    return 0;
+  }
+  if (n < 4) {
+    return 1;
+  }
+  var x: i32 = n / 2;
+  while (true) {
+    var y: i32 = (x + n / x) / 2;
+    if (y >= x) {
+      return x;
     }
-    return x;
+    x = y;
+  }
+  return x;
 }
 
 // `(n: i32) ceil_div(d)` — n divided by d, rounded up.
@@ -780,9 +969,13 @@ pub function (n: i32) sqrt_floor(): i32 {
 // d; for negative or zero d the result is undefined and
 // returns 0 (no panic — caller validates).
 pub function (n: i32) ceil_div(d: i32): i32 {
-    if (d <= 0) { return 0; }
-    if (n <= 0) { return n / d; }
-    return (n + d - 1) / d;
+  if (d <= 0) {
+    return 0;
+  }
+  if (n <= 0) {
+    return n / d;
+  }
+  return (n + d - 1) / d;
 }
 
 // `(n: i32) div_euclid(rhs)` — Euclidean division: the quotient `q` for which
@@ -792,12 +985,14 @@ pub function (n: i32) ceil_div(d: i32): i32 {
 // further from zero so the remainder stays non-negative. `rhs` must be non-zero
 // (same contract as `/`).
 pub function (n: i32) div_euclid(rhs: i32): i32 {
-    var q: i32 = n / rhs;
-    if (n % rhs < 0) {
-        if (rhs > 0) { return q - 1; }
-        return q + 1;
+  var q: i32 = n / rhs;
+  if (n % rhs < 0) {
+    if (rhs > 0) {
+      return q - 1;
     }
-    return q;
+    return q + 1;
+  }
+  return q;
 }
 
 // `(n: i32) rem_euclid(rhs)` — the non-negative Euclidean remainder, always in
@@ -806,29 +1001,39 @@ pub function (n: i32) div_euclid(rhs: i32): i32 {
 // with `div_euclid`: `n == rhs * n.div_euclid(rhs) + n.rem_euclid(rhs)`. `rhs`
 // must be non-zero.
 pub function (n: i32) rem_euclid(rhs: i32): i32 {
-    var r: i32 = n % rhs;
-    if (r < 0) {
-        if (rhs < 0) { return r - rhs; }
-        return r + rhs;
+  var r: i32 = n % rhs;
+  if (r < 0) {
+    if (rhs < 0) {
+      return r - rhs;
     }
-    return r;
+    return r + rhs;
+  }
+  return r;
 }
 
 // `(n: i32) round_up_to(m)` — round n up to the nearest
 // multiple of m (m > 0). For n already a multiple, returns
 // n unchanged. m <= 0 returns n.
 pub function (n: i32) round_up_to(m: i32): i32 {
-    if (m <= 0) { return n; }
-    if (n <= 0) { return 0; }
-    return ((n + m - 1) / m) * m;
+  if (m <= 0) {
+    return n;
+  }
+  if (n <= 0) {
+    return 0;
+  }
+  return (n + m - 1) / m * m;
 }
 
 // `(n: i32) round_down_to(m)` — round n down to the nearest
 // multiple of m. Mirror of round_up_to.
 pub function (n: i32) round_down_to(m: i32): i32 {
-    if (m <= 0) { return n; }
-    if (n < 0) { return 0 - ((0 - n + m - 1) / m * m); }
-    return (n / m) * m;
+  if (m <= 0) {
+    return n;
+  }
+  if (n < 0) {
+    return 0 - (0 - n + m - 1) / m * m;
+  }
+  return n / m * m;
 }
 
 // `(n: i32) divmod(d)` — `(quotient, remainder)` pair from a
@@ -838,7 +1043,7 @@ pub function (n: i32) round_down_to(m: i32): i32 {
 // `/` and `%` are total (docs/INTEGER-SEMANTICS.md): d == 0
 // gives `(0, n)`.
 pub function (n: i32) divmod(d: i32): (i32, i32) {
-    return (n / d, n % d);
+  return (n / d, n % d);
 }
 
 // === i32 bit ops ===
@@ -862,18 +1067,23 @@ pub function (n: i32) divmod(d: i32): (i32, i32) {
 //
 // `byte_swap` stays a software shift/mask sequence — endian conversion has no
 // single-instruction form the IR exposes.
-
-pub function (n: i32) count_ones(): i32 { return __popcount32(n as u32); }
+pub function (n: i32) count_ones(): i32 {
+  return __popcount32(n as u32);
+}
 
 // `count_zeros` — the number of ZERO bits in the 32-bit two's-complement
 // representation; the complement of `count_ones` (the two always sum to 32).
 pub function (n: i32) count_zeros(): i32 {
-    return 32 - n.count_ones();
+  return 32 - n.count_ones();
 }
 
-pub function (n: i32) leading_zeros(): i32 { return __clz32(n as u32); }
+pub function (n: i32) leading_zeros(): i32 {
+  return __clz32(n as u32);
+}
 
-pub function (n: i32) trailing_zeros(): i32 { return __ctz32(n as u32); }
+pub function (n: i32) trailing_zeros(): i32 {
+  return __ctz32(n as u32);
+}
 
 // `(n: i32) bit_length()` — the number of bits needed to represent the
 // MAGNITUDE `|n|`: the position of the highest set bit, plus one. `0` needs 0
@@ -882,60 +1092,72 @@ pub function (n: i32) trailing_zeros(): i32 { return __ctz32(n as u32); }
 // i32::MIN, whose magnitude 2^31 needs 32). Matches Rust's `i32::ilog2() + 1`
 // / Python's `int.bit_length`. Handy for sizing bitfields and buffers.
 pub function (n: i32) bit_length(): i32 {
-    if (n == 0) { return 0; }
-    // Magnitude as u32 (i32::MIN's negation is representable here).
-    var mag: i64 = n as i64;
-    if (mag < (0 as i64)) { mag = 0 - mag; }
-    var u: u32 = mag as u32;
-    var c: i32 = 0;
-    while (u != (0 as u32)) {
-        c = c + 1;
-        u = u >> (1 as u32);
-    }
-    return c;
+  if (n == 0) {
+    return 0;
+  }
+  // Magnitude as u32 (i32::MIN's negation is representable here).
+  var mag: i64 = n as i64;
+  if (mag < 0 as i64) {
+    mag = 0 - mag;
+  }
+  var u: u32 = mag as u32;
+  var c: i32 = 0;
+  while (u != 0 as u32) {
+    c = c + 1;
+    u = u >> 1 as u32;
+  }
+  return c;
 }
 
 // `(n: i32) bit(i)` — read bit at position i (0 = LSB).
 // Out-of-range returns false. Useful for unpacking bit-
 // packed flags / nibbles.
 pub function (n: i32) bit(i: i32): boolean {
-    if (i < 0 || i >= 32) { return false; }
-    var mask: u32 = (1 as u32) << (i as u32);
-    return ((n as u32) & mask) != (0 as u32);
+  if (i < 0 || i >= 32) {
+    return false;
+  }
+  var mask: u32 = 1 as u32 << i as u32;
+  return (n as u32 & mask) != 0 as u32;
 }
 
 // `(n: i32) set_bit(i)` / `clear_bit(i)` / `toggle_bit(i)`
 // — return a fresh i32 with bit i set / cleared / flipped.
 // Out-of-range i is a no-op (returns n unchanged).
 pub function (n: i32) set_bit(i: i32): i32 {
-    if (i < 0 || i >= 32) { return n; }
-    var mask: u32 = (1 as u32) << (i as u32);
-    return ((n as u32) | mask) as i32;
+  if (i < 0 || i >= 32) {
+    return n;
+  }
+  var mask: u32 = 1 as u32 << i as u32;
+  return (n as u32 | mask) as i32;
 }
 
 pub function (n: i32) clear_bit(i: i32): i32 {
-    if (i < 0 || i >= 32) { return n; }
-    var mask: u32 = (1 as u32) << (i as u32);
-    var inv: u32 = ((0 - 1) as u32) ^ mask;
-    return ((n as u32) & inv) as i32;
+  if (i < 0 || i >= 32) {
+    return n;
+  }
+  var mask: u32 = 1 as u32 << i as u32;
+  var inv: u32 = (0 - 1) as u32 ^ mask;
+  return (n as u32 & inv) as i32;
 }
 
 pub function (n: i32) toggle_bit(i: i32): i32 {
-    if (i < 0 || i >= 32) { return n; }
-    var mask: u32 = (1 as u32) << (i as u32);
-    return ((n as u32) ^ mask) as i32;
+  if (i < 0 || i >= 32) {
+    return n;
+  }
+  var mask: u32 = 1 as u32 << i as u32;
+  return (n as u32 ^ mask) as i32;
 }
 
 // `(n: i32) byte_swap()` — reverse the four bytes of n.
 // Useful for endian conversion when reading / writing on-
 // disk formats. Reverses bytewise: ABCD → DCBA.
 pub function (n: i32) byte_swap(): i32 {
-    var u: u32 = n as u32;
-    var b0: u32 = u & (255 as u32);
-    var b1: u32 = (u >> (8 as u32)) & (255 as u32);
-    var b2: u32 = (u >> (16 as u32)) & (255 as u32);
-    var b3: u32 = (u >> (24 as u32)) & (255 as u32);
-    return ((b0 << (24 as u32)) | (b1 << (16 as u32)) | (b2 << (8 as u32)) | b3) as i32;
+  var u: u32 = n as u32;
+  var b0: u32 = u & 255 as u32;
+  var b1: u32 = u >> 8 as u32 & 255 as u32;
+  var b2: u32 = u >> 16 as u32 & 255 as u32;
+  var b3: u32 = u >> 24 as u32 & 255 as u32;
+  return (b0 << 24 as u32 | b1 << 16 as u32 | b2 << 8 as u32 | b3) as i32;
 }
 
 // `(n: i32) reverse_bits()` — reverse the ORDER of the 32 bits: bit i moves to
@@ -945,15 +1167,15 @@ pub function (n: i32) byte_swap(): i32 {
 // like the rest of the family), so `reverse_bits(1)` is i32::MIN (bit 0 -> bit
 // 31) and it round-trips (`n.reverse_bits().reverse_bits() == n`).
 pub function (n: i32) reverse_bits(): i32 {
-    var u: u32 = n as u32;
-    var r: u32 = 0 as u32;
-    var i: i32 = 0;
-    while (i < 32) {
-        r = (r << (1 as u32)) | (u & (1 as u32));
-        u = u >> (1 as u32);
-        i = i + 1;
-    }
-    return r as i32;
+  var u: u32 = n as u32;
+  var r: u32 = 0 as u32;
+  var i: i32 = 0;
+  while (i < 32) {
+    r = r << 1 as u32 | u & 1 as u32;
+    u = u >> 1 as u32;
+    i = i + 1;
+  }
+  return r as i32;
 }
 
 // `(n: i32) rotate_left(bits)` / `rotate_right(bits)` —
@@ -963,33 +1185,36 @@ pub function (n: i32) reverse_bits(): i32 {
 // rotation. Useful for hash mixing, bit-permutation cipher
 // stages, and other bit-rotation primitives.
 pub function (n: i32) rotate_left(bits: i32): i32 {
-    var k: i32 = bits & 31;
-    if (k == 0) { return n; }
-    var u: u32 = n as u32;
-    var left: u32 = u << (k as u32);
-    var right: u32 = u >> ((32 - k) as u32);
-    return (left | right) as i32;
+  var k: i32 = bits & 31;
+  if (k == 0) {
+    return n;
+  }
+  var u: u32 = n as u32;
+  var left: u32 = u << k as u32;
+  var right: u32 = u >> (32 - k) as u32;
+  return (left | right) as i32;
 }
 
 pub function (n: i32) rotate_right(bits: i32): i32 {
-    var k: i32 = bits & 31;
-    if (k == 0) { return n; }
-    var u: u32 = n as u32;
-    var right: u32 = u >> (k as u32);
-    var left: u32 = u << ((32 - k) as u32);
-    return (left | right) as i32;
+  var k: i32 = bits & 31;
+  if (k == 0) {
+    return n;
+  }
+  var u: u32 = n as u32;
+  var right: u32 = u >> k as u32;
+  var left: u32 = u << (32 - k) as u32;
+  return (left | right) as i32;
 }
-
 
 // `(n: i32) to_binary()` / `to_oct()` — sugar for
 // int_to_string_radix(n, 2) / (n, 8). Signed (negatives
 // emit a leading `-`).
 pub function (n: i32) to_binary(): string {
-    return int.int_to_string_radix(n, 2);
+  return int.int_to_string_radix(n, 2);
 }
 
 pub function (n: i32) to_oct(): string {
-    return int.int_to_string_radix(n, 8);
+  return int.int_to_string_radix(n, 8);
 }
 
 // `(n: i32) to_string_radix(base)` — render `n` in an arbitrary `base` (2..36),
@@ -999,26 +1224,29 @@ pub function (n: i32) to_oct(): string {
 // `string.parse_int_radix`: `n.to_string_radix(b).parse_int_radix(b) == Some(n)`
 // for any valid base. An out-of-range base (< 2 or > 36) yields `""`.
 pub function (n: i32) to_string_radix(base: i32): string {
-    return int.int_to_string_radix(n, base);
+  return int.int_to_string_radix(n, base);
 }
-
 
 // `(n: i32) digits()` — number of decimal digits in n. The
 // minus sign isn't counted. Zero has 1 digit. Useful for
 // table-column-width math and progress bars.
 pub function (n: i32) digits(): i32 {
-    if (n == 0) { return 1; }
-    // Magnitude in i64: |i32::MIN| = 2147483648 doesn't fit in i32 (abs()
-    // wraps it back to i32::MIN, which is < 0, so an i32 `while (u > 0)`
-    // loop would spin zero times and wrongly report 0 digits).
-    var u: i64 = n as i64;
-    if (u < 0) { u = 0 - u; }
-    var c: i32 = 0;
-    while (u > 0) {
-        c = c + 1;
-        u = u / 10;
-    }
-    return c;
+  if (n == 0) {
+    return 1;
+  }
+  // Magnitude in i64: |i32::MIN| = 2147483648 doesn't fit in i32 (abs()
+  // wraps it back to i32::MIN, which is < 0, so an i32 `while (u > 0)`
+  // loop would spin zero times and wrongly report 0 digits).
+  var u: i64 = n as i64;
+  if (u < 0) {
+    u = 0 - u;
+  }
+  var c: i32 = 0;
+  while (u > 0) {
+    c = c + 1;
+    u = u / 10;
+  }
+  return c;
 }
 
 // `(n: i32) pluralize(singular, plural)` — pick `singular`
@@ -1026,8 +1254,10 @@ pub function (n: i32) digits(): i32 {
 // helper. Doesn't compose the count into the result — caller
 // formats `"$n widget$s"` themselves via concat or format().
 pub function (n: i32) pluralize(singular: string, plural: string): string {
-    if (n.abs() == 1) { return singular; }
-    return plural;
+  if (n.abs() == 1) {
+    return singular;
+  }
+  return plural;
 }
 
 // `(n: i32) ordinal()` — the English ordinal string: `1` → `"1st"`,
@@ -1037,17 +1267,21 @@ pub function (n: i32) pluralize(singular: string, plural: string): string {
 // from |n|, so a negative keeps its sign (`-1` → `"-1st"`). For turning
 // a rank into display text ("the 3rd result").
 pub function (n: i32) ordinal(): string {
-    var m: i32 = n.abs();
-    var suffix: string = "th";
-    var mod100: i32 = m % 100;
-    // 11, 12, 13 are always "th"; otherwise the last digit decides.
-    if (mod100 < 11 || mod100 > 13) {
-        var mod10: i32 = m % 10;
-        if (mod10 == 1) { suffix = "st"; }
-        else if (mod10 == 2) { suffix = "nd"; }
-        else if (mod10 == 3) { suffix = "rd"; }
+  var m: i32 = n.abs();
+  var suffix: string = "th";
+  var mod100: i32 = m % 100;
+  // 11, 12, 13 are always "th"; otherwise the last digit decides.
+  if (mod100 < 11 || mod100 > 13) {
+    var mod10: i32 = m % 10;
+    if (mod10 == 1) {
+      suffix = "st";
+    } else if (mod10 == 2) {
+      suffix = "nd";
+    } else if (mod10 == 3) {
+      suffix = "rd";
     }
-    return n.to_string() + suffix;
+  }
+  return n.to_string() + suffix;
 }
 
 // `(i32).to_string()` / `(u32).to_string()` /
@@ -1063,10 +1297,10 @@ pub function (n: i32) ordinal(): string {
 // (-2147483648) is special-cased before the negate-to-magnitude
 // step in int_to_string would overflow i32.
 pub function (n: i32) to_string(): string {
-    if (n == 0 - 2147483647 - 1) {
-        return "-2147483648";
-    }
-    return int.int_to_string(n);
+  if (n == 0 - 2147483647 - 1) {
+    return "-2147483648";
+  }
+  return int.int_to_string(n);
 }
 
 // `(n: i32) to_string_padded(width)` — decimal with zero-pad
@@ -1074,12 +1308,16 @@ pub function (n: i32) to_string(): string {
 // the slot AFTER the leading zeros (i.e. "-0042", not
 // "0-042"). Already-wide values pass through.
 pub function (n: i32) to_string_padded(width: i32): string {
-    var s: string = n.to_string();
-    if (s.len() >= width) { return s; }
-    if (n >= 0) { return s.pad_start(width, "0"); }
-    // For negatives, pad the body and re-prefix with '-'.
-    var body: str = slice_unchecked(s, 1, s.len());
-    return "-" + body.pad_start(width - 1, "0");
+  var s: string = n.to_string();
+  if (s.len() >= width) {
+    return s;
+  }
+  if (n >= 0) {
+    return s.pad_start(width, "0");
+  }
+  // For negatives, pad the body and re-prefix with '-'.
+  var body: str = slice_unchecked(s, 1, s.len());
+  return "-" + body.pad_start(width - 1, "0");
 }
 
 // `(n: i32) to_string_with_sep(sep)` — decimal with `sep`
@@ -1087,25 +1325,27 @@ pub function (n: i32) to_string_padded(width: i32): string {
 // shape; `sep` is typically "," or "_" or " ". Negative
 // numbers keep the "-" prefix outside the grouping.
 pub function (n: i32) to_string_with_sep(sep: string): string {
-    var s: string = n.to_string();
-    var sign: string = "";
-    if (n < 0) {
-        sign = "-";
-        s = slice_unchecked(s, 1, s.len()).to_owned();
+  var s: string = n.to_string();
+  var sign: string = "";
+  if (n < 0) {
+    sign = "-";
+    s = slice_unchecked(s, 1, s.len()).to_owned();
+  }
+  var L: i32 = s.len();
+  if (L <= 3) {
+    return sign + s;
+  }
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < L) {
+    var idx: i32 = L - 1 - i;
+    out = slice_unchecked(s, idx, idx + 1) + out;
+    if (i % 3 == 2 && i < L - 1) {
+      out = sep + out;
     }
-    var L: i32 = s.len();
-    if (L <= 3) { return sign + s; }
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < L) {
-        var idx: i32 = L - 1 - i;
-        out = slice_unchecked(s, idx, idx + 1) + out;
-        if (i % 3 == 2 && i < L - 1) {
-            out = sep + out;
-        }
-        i = i + 1;
-    }
-    return sign + out;
+    i = i + 1;
+  }
+  return sign + out;
 }
 
 // `(n: i32) to_hex()` — lowercase hex without prefix.
@@ -1115,7 +1355,7 @@ pub function (n: i32) to_string_with_sep(sep: string): string {
 // `int_to_string_radix` on that; the i32 form here keeps
 // the signed semantics consistent with `to_string`.
 pub function (n: i32) to_hex(): string {
-    return int.int_to_string_radix(n, 16);
+  return int.int_to_string_radix(n, 16);
 }
 
 // `(n: i32) to_rgb_hex()` — render the low 24 bits as a
@@ -1123,21 +1363,25 @@ pub function (n: i32) to_hex(): string {
 // zero-padded). Useful for CSS / SVG / terminal-ANSI
 // emission. Bits above bit 23 are ignored.
 pub function (n: i32) to_rgb_hex(): string {
-    var r: i32 = (n >> 16) & 255;
-    var g: i32 = (n >> 8) & 255;
-    var b: i32 = n & 255;
-    return "#" + r.to_hex().pad_start(2, "0") +
-                 g.to_hex().pad_start(2, "0") +
-                 b.to_hex().pad_start(2, "0");
+  var r: i32 = n >> 16 & 255;
+  var g: i32 = n >> 8 & 255;
+  var b: i32 = n & 255;
+  return "#" + r.to_hex().pad_start(2, "0")
+    + g.to_hex().pad_start(2, "0")
+    + b.to_hex().pad_start(2, "0");
 }
-
 
 // `(n: i32) is_one()` / `is_minus_one()` — sentinel-value
 // shortcuts for the two most-checked small-integer constants.
 // Mirror `is_zero` / `is_positive` / `is_negative` already in
 // this module.
-pub function (n: i32) is_one(): boolean { return n == 1; }
-pub function (n: i32) is_minus_one(): boolean { return n == (0 - 1); }
+pub function (n: i32) is_one(): boolean {
+  return n == 1;
+}
+
+pub function (n: i32) is_minus_one(): boolean {
+  return n == 0 - 1;
+}
 
 // `(n: i32) div_ceil(d)` / `div_floor(d)` — division rounding toward
 // +inf / -inf, unlike `/` which truncates toward zero:
@@ -1145,27 +1389,38 @@ pub function (n: i32) is_minus_one(): boolean { return n == (0 - 1); }
 // truncated quotient is adjusted by the sign of the remainder relative
 // to the divisor. `d == 0` returns 0 (Fern's division is total).
 pub function (n: i32) div_ceil(d: i32): i32 {
-    if (d == 0) { return 0; }
-    var q: i32 = n / d;
-    var r: i32 = n % d;
-    if ((r > 0 && d > 0) || (r < 0 && d < 0)) { return q + 1; }
-    return q;
+  if (d == 0) {
+    return 0;
+  }
+  var q: i32 = n / d;
+  var r: i32 = n % d;
+  if (r > 0 && d > 0 || r < 0 && d < 0) {
+    return q + 1;
+  }
+  return q;
 }
+
 pub function (n: i32) div_floor(d: i32): i32 {
-    if (d == 0) { return 0; }
-    var q: i32 = n / d;
-    var r: i32 = n % d;
-    if ((r > 0 && d < 0) || (r < 0 && d > 0)) { return q - 1; }
-    return q;
+  if (d == 0) {
+    return 0;
+  }
+  var q: i32 = n / d;
+  var r: i32 = n % d;
+  if (r > 0 && d < 0 || r < 0 && d > 0) {
+    return q - 1;
+  }
+  return q;
 }
+
 // `(n: i32) next_multiple_of(d)` — the smallest multiple of `d` that is
 // `>= n` (`next_multiple_of(7, 5) == 10`, `next_multiple_of(10, 5) ==
 // 10`). `div_ceil(d) * d`; wraps on overflow like `*`. `d == 0` → 0.
 pub function (n: i32) next_multiple_of(d: i32): i32 {
-    if (d == 0) { return 0; }
-    return n.div_ceil(d) * d;
+  if (d == 0) {
+    return 0;
+  }
+  return n.div_ceil(d) * d;
 }
-
 
 // `i32.gcd_all(xs)` / `lcm_all(xs)` — the gcd / lcm folded over a whole
 // array (`gcd_all([12,18,24]) == 6`, `lcm_all([2,3,4]) == 12`). `gcd_all`
@@ -1173,14 +1428,21 @@ pub function (n: i32) next_multiple_of(d: i32): i32 {
 // identity of gcd; `lcm_all` seeds at 1 and an empty array yields 1. The
 // whole-array siblings of the pairwise `(n: i32) gcd` / `lcm`.
 pub function gcd_all(xs: i32[]): i32 {
-    var g: i32 = 0;
-    var i: i32 = 0;
-    while (i < xs.len()) { g = g.gcd(xs[i]); i = i + 1; }
-    return g;
+  var g: i32 = 0;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    g = g.gcd(xs[i]);
+    i = i + 1;
+  }
+  return g;
 }
+
 pub function lcm_all(xs: i32[]): i32 {
-    var l: i32 = 1;
-    var i: i32 = 0;
-    while (i < xs.len()) { l = l.lcm(xs[i]); i = i + 1; }
-    return l;
+  var l: i32 = 1;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    l = l.lcm(xs[i]);
+    i = i + 1;
+  }
+  return l;
 }

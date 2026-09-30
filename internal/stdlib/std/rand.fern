@@ -15,51 +15,54 @@
 //
 // The seeded generator is NOT cryptographically secure: two consecutive
 // outputs pin its state. Never use it where unpredictability matters.
-
 import "std/math" as math;
 
 // `shuffle(xs)` — a uniformly random permutation of `xs` (Fisher-Yates
 // over a fresh copy). `xs` is left unchanged.
 pub function shuffle[T](xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    // Fisher-Yates: for j from n-1 down to 1, swap out[j] with a random
-    // out[k], k in [0, j].
-    var j: i32 = out.len() - 1;
-    while (j > 0) {
-        var k: i32 = math.random_int(0, j + 1);
-        var tmp: T = out[j];
-        out = out.with(j, out[k]);
-        out = out.with(k, tmp);
-        j = j - 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  // Fisher-Yates: for j from n-1 down to 1, swap out[j] with a random
+  // out[k], k in [0, j].
+  var j: i32 = out.len() - 1;
+  while (j > 0) {
+    var k: i32 = math.random_int(0, j + 1);
+    var tmp: T = out[j];
+    out = out.with(j, out[k]);
+    out = out.with(k, tmp);
+    j = j - 1;
+  }
+  return out;
 }
 
 // `choice(xs)` — a uniformly random element of `xs`, or `None` when `xs`
 // is empty.
 pub function choice[T](xs: T[]): Option[T] {
-    if (xs.len() == 0) { return None; }
-    return Some(xs[math.random_int(0, xs.len())]);
+  if (xs.len() == 0) {
+    return None;
+  }
+  return Some(xs[math.random_int(0, xs.len())]);
 }
 
 // `sample(xs, k)` — `k` elements of `xs` chosen uniformly WITHOUT
 // replacement, in random order. Returns all of `xs` (shuffled) when
 // `k >= xs.len()`; the empty array when `k <= 0`.
 pub function sample[T](xs: T[], k: i32): T[] {
-    var shuffled: T[] = shuffle(xs);
-    if (k >= shuffled.len()) { return shuffled; }
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < k) {
-        out = out.append(shuffled[i]);
-        i = i + 1;
-    }
-    return out;
+  var shuffled: T[] = shuffle(xs);
+  if (k >= shuffled.len()) {
+    return shuffled;
+  }
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < k) {
+    out = out.append(shuffled[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // === Seeded, non-cryptographic generation (PCG32) ===
@@ -87,11 +90,15 @@ pub function sample[T](xs: T[], k: i32): T[] {
 // NOT cryptographically secure: two consecutive outputs pin the state.
 // Use `shuffle` / `choice` / `sample` (CSPRNG-backed) when unpredictability
 // matters.
-
 // __pcg_mult / __pcg_inc — the standard PCG32 LCG constants. Written as
 // functions because the language has no const declarations.
-function __pcg_mult(): u64 { return 6364136223846793005 as u64; }
-function __pcg_inc(): u64 { return 1442695040888963407 as u64; }
+function __pcg_mult(): u64 {
+  return 6364136223846793005 as u64;
+}
+
+function __pcg_inc(): u64 {
+  return 1442695040888963407 as u64;
+}
 
 // `rng_seed(seed)` — the initial generator state for `seed`. Equal seeds
 // give identical sequences on every backend, so a seed reproduces a run
@@ -99,11 +106,11 @@ function __pcg_inc(): u64 { return 1442695040888963407 as u64; }
 // rather than using the seed as the state directly, so nearby seeds do not
 // produce correlated openings.
 pub function rng_seed(seed: i64): i64 {
-    var s: u64 = 0 as u64;
-    s = s * __pcg_mult() + __pcg_inc();
-    s = s + (seed as u64);
-    s = s * __pcg_mult() + __pcg_inc();
-    return s as i64;
+  var s: u64 = 0 as u64;
+  s = s * __pcg_mult() + __pcg_inc();
+  s = s + seed as u64;
+  s = s * __pcg_mult() + __pcg_inc();
+  return s as i64;
 }
 
 // `__rotr32(v, r)` — rotate `v` right by `r` bits (r taken mod 32).
@@ -113,19 +120,19 @@ pub function rng_seed(seed: i64): i64 {
 // full width, which is undefined rather than zero. `(32 - k) & 31` folds
 // that case to `v << 0`, so a zero rotation correctly returns `v`.
 function __rotr32(v: u32, r: u32): u32 {
-    var k: u32 = r & (31 as u32);
-    var back: u32 = ((32 as u32) - k) & (31 as u32);
-    return (v >> k) | (v << back);
+  var k: u32 = r & 31 as u32;
+  var back: u32 = 32 as u32 - k & 31 as u32;
+  return v >> k | v << back;
 }
 
 // `rng_next(state)` — the next 32-bit output and the advanced state, as
 // `(state', value)`. Thread `state'` into the following call.
 pub function rng_next(state: i64): (i64, u32) {
-    var old: u64 = state as u64;
-    var advanced: u64 = old * __pcg_mult() + __pcg_inc();
-    var xorshifted: u32 = ((((old >> (18 as u64)) ^ old) >> (27 as u64)) as u32);
-    var rot: u32 = (old >> (59 as u64)) as u32;
-    return (advanced as i64, __rotr32(xorshifted, rot));
+  var old: u64 = state as u64;
+  var advanced: u64 = old * __pcg_mult() + __pcg_inc();
+  var xorshifted: u32 = ((old >> 18 as u64 ^ old) >> 27 as u64) as u32;
+  var rot: u32 = (old >> 59 as u64) as u32;
+  return (advanced as i64, __rotr32(xorshifted, rot));
 }
 
 // `rng_below(state, n)` — a uniformly distributed i32 in [0, n) and the
@@ -137,32 +144,36 @@ pub function rng_next(state: i64): (i64, u32) {
 // this one from the threaded state — rather than sharing a helper that
 // would have to abstract over the source.
 pub function rng_below(state: i64, n: i32): (i64, i32) {
-    if (n <= 0) { return (state, 0); }
-    var wide: u64 = n as u64;
-    var mask: u64 = ((1 as u64) << (32 as u64)) - (1 as u64);
-    var step = rng_next(state);
-    var st: i64 = step.0;
-    var product: u64 = (step.1 as u64) * wide;
-    var low: u64 = product & mask;
-    if (low < wide) {
-        var threshold: u64 = (((1 as u64) << (32 as u64)) - wide) % wide;
-        while (low < threshold) {
-            var again = rng_next(st);
-            st = again.0;
-            product = (again.1 as u64) * wide;
-            low = product & mask;
-        }
+  if (n <= 0) {
+    return (state, 0);
+  }
+  var wide: u64 = n as u64;
+  var mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
+  var step = rng_next(state);
+  var st: i64 = step.0;
+  var product: u64 = step.1 as u64 * wide;
+  var low: u64 = product & mask;
+  if (low < wide) {
+    var threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
+    while (low < threshold) {
+      var again = rng_next(st);
+      st = again.0;
+      product = again.1 as u64 * wide;
+      low = product & mask;
     }
-    return (st, (product >> (32 as u64)) as i32);
+  }
+  return (st, (product >> 32 as u64) as i32);
 }
 
 // `rng_between(state, lo, hi)` — a uniformly distributed i32 in [lo, hi)
 // and the advanced state; `lo` when the range is empty. The seeded
 // counterpart of `math.random_int`.
 pub function rng_between(state: i64, lo: i32, hi: i32): (i64, i32) {
-    if (hi <= lo) { return (state, lo); }
-    var step = rng_below(state, hi - lo);
-    return (step.0, lo + step.1);
+  if (hi <= lo) {
+    return (state, lo);
+  }
+  var step = rng_below(state, hi - lo);
+  return (step.0, lo + step.1);
 }
 
 // `shuffle_seeded(seed, xs)` — `shuffle`'s seeded counterpart: a uniformly
@@ -171,31 +182,33 @@ pub function rng_between(state: i64, lo: i32, hi: i32): (i64, i32) {
 // through the CSPRNG and 7 ms here. Equal seeds give equal permutations.
 // Same Fisher-Yates and the same value semantics — `xs` is untouched.
 pub function shuffle_seeded[T](seed: i64, xs: T[]): T[] {
-    var out: T[] = [];
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        out = out.append(xs[i]);
-        i = i + 1;
-    }
-    var st: i64 = rng_seed(seed);
-    var j: i32 = out.len() - 1;
-    while (j > 0) {
-        var pick = rng_below(st, j + 1);
-        st = pick.0;
-        var k: i32 = pick.1;
-        var tmp: T = out[j];
-        out = out.with(j, out[k]);
-        out = out.with(k, tmp);
-        j = j - 1;
-    }
-    return out;
+  var out: T[] = [];
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  var st: i64 = rng_seed(seed);
+  var j: i32 = out.len() - 1;
+  while (j > 0) {
+    var pick = rng_below(st, j + 1);
+    st = pick.0;
+    var k: i32 = pick.1;
+    var tmp: T = out[j];
+    out = out.with(j, out[k]);
+    out = out.with(k, tmp);
+    j = j - 1;
+  }
+  return out;
 }
 
 // `choice_seeded(seed, xs)` — `choice`'s seeded counterpart.
 pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
-    if (xs.len() == 0) { return None; }
-    var pick = rng_below(rng_seed(seed), xs.len());
-    return Some(xs[pick.1]);
+  if (xs.len() == 0) {
+    return None;
+  }
+  var pick = rng_below(rng_seed(seed), xs.len());
+  return Some(xs[pick.1]);
 }
 
 // ---- bulk bytes -------------------------------------------------------------
@@ -215,7 +228,6 @@ pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
 //
 // The bytes go out eight at a time through `buf_push_u64`, because a byte at
 // a time is what made this slow in the first place (#9221).
-
 // `rng_fill(state, h, n)` — push `n` pseudorandom bytes onto the builder `h`
 // and return the advanced state. `n <= 0` pushes nothing.
 //
@@ -224,85 +236,93 @@ pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
 // what filling 32 does. A tail shorter than a word takes its bytes from one
 // more draw pair, least significant first.
 pub function rng_fill(state: i64, h: usize, n: i32): i64 {
-    // The generator is `rng_next`'s, and the step is written out here
-    // rather than called: a call whose result is a TUPLE is returned
-    // through a box, and two of them per eight bytes cost more than the
-    // syscall this exists to beat (17.9 ms against 15.3 for 4 MiB, measured
-    // before inlining; 7.6 after). `rng_next` stays the definition of what
-    // the step IS — this loop must produce the same stream, which
-    // `rng_fill_matches_next` in the suite pins.
-    var mult: u64 = __pcg_mult();
-    var inc: u64 = __pcg_inc();
-    var st: u64 = state as u64;
-    var left: i32 = n;
-    while (left >= 8) {
-        var lo: u64 = st;
-        st = lo * mult + inc;
-        var hi: u64 = st;
-        st = hi * mult + inc;
-        var a: u32 = __rotr32(((((lo >> (18 as u64)) ^ lo) >> (27 as u64)) as u32), (lo >> (59 as u64)) as u32);
-        var b: u32 = __rotr32(((((hi >> (18 as u64)) ^ hi) >> (27 as u64)) as u32), (hi >> (59 as u64)) as u32);
-        buf_push_u64(h, (a as u64) | ((b as u64) << (32 as u64)));
-        left = left - 8;
-    }
-    if (left <= 0) { return st as i64; }
-    var tail = __rng_word(st as i64);
-    var v: u64 = tail.1;
-    var k: i32 = 0;
-    while (k < left) {
-        buf_push_byte(h, (v & (255 as u64)) as i32);
-        v = v >> (8 as u64);
-        k = k + 1;
-    }
-    return tail.0;
+  // The generator is `rng_next`'s, and the step is written out here
+  // rather than called: a call whose result is a TUPLE is returned
+  // through a box, and two of them per eight bytes cost more than the
+  // syscall this exists to beat (17.9 ms against 15.3 for 4 MiB, measured
+  // before inlining; 7.6 after). `rng_next` stays the definition of what
+  // the step IS — this loop must produce the same stream, which
+  // `rng_fill_matches_next` in the suite pins.
+  var mult: u64 = __pcg_mult();
+  var inc: u64 = __pcg_inc();
+  var st: u64 = state as u64;
+  var left: i32 = n;
+  while (left >= 8) {
+    var lo: u64 = st;
+    st = lo * mult + inc;
+    var hi: u64 = st;
+    st = hi * mult + inc;
+    var a: u32 = __rotr32(((lo >> 18 as u64 ^ lo) >> 27 as u64) as u32, (lo >> 59 as u64) as u32);
+    var b: u32 = __rotr32(((hi >> 18 as u64 ^ hi) >> 27 as u64) as u32, (hi >> 59 as u64) as u32);
+    buf_push_u64(h, a as u64 | b as u64 << 32 as u64);
+    left = left - 8;
+  }
+  if (left <= 0) {
+    return st as i64;
+  }
+  var tail = __rng_word(st as i64);
+  var v: u64 = tail.1;
+  var k: i32 = 0;
+  while (k < left) {
+    buf_push_byte(h, (v & 255 as u64) as i32);
+    v = v >> 8 as u64;
+    k = k + 1;
+  }
+  return tail.0;
 }
 
 // `__rng_word(state)` — the next 64 bits as `(state', value)`: two 32-bit
 // draws, the first in the low half. The word shape `rng_fill` writes out.
 function __rng_word(state: i64): (i64, u64) {
-    var lo = rng_next(state);
-    var hi = rng_next(lo.0);
-    return (hi.0, (lo.1 as u64) | ((hi.1 as u64) << (32 as u64)));
+  var lo = rng_next(state);
+  var hi = rng_next(lo.0);
+  return (hi.0, lo.1 as u64 | hi.1 as u64 << 32 as u64);
 }
 
 // `rng_bytes(state, n)` — `n` pseudorandom bytes as a string, and the
 // advanced state. The builder form is what a caller filling block after
 // block wants: this one allocates one per call.
 pub function rng_bytes(state: i64, n: i32): (i64, string) {
-    if (n <= 0) { return (state, ""); }
-    var h: usize = buf_new(n);
-    var st: i64 = rng_fill(state, h, n);
-    var out: string = buf_take(h);
-    buf_free(h);
-    return (st, out);
+  if (n <= 0) {
+    return (state, "");
+  }
+  var h: usize = buf_new(n);
+  var st: i64 = rng_fill(state, h, n);
+  var out: string = buf_take(h);
+  buf_free(h);
+  return (st, out);
 }
 
 // `rng_seed_from_os()` — a generator state seeded from the platform CSPRNG,
 // for a caller that wants the throughput of the seeded generator without a
 // reproducible run. Eight bytes of `random_bytes` folded into the seed.
 pub function rng_seed_from_os(): i64 {
-    var bs: u8[] = random_bytes(8);
-    var seed: u64 = 0 as u64;
-    var i: i32 = 0;
-    while (i < bs.len()) {
-        seed = (seed << (8 as u64)) | (bs[i] as u64);
-        i = i + 1;
-    }
-    return rng_seed(seed as i64);
+  var bs: u8[] = random_bytes(8);
+  var seed: u64 = 0 as u64;
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    seed = seed << 8 as u64 | bs[i] as u64;
+    i = i + 1;
+  }
+  return rng_seed(seed as i64);
 }
 
 // `sample_seeded(seed, xs, k)` — `sample`'s seeded counterpart: `k`
 // elements of `xs` chosen uniformly WITHOUT replacement, in random order.
 pub function sample_seeded[T](seed: i64, xs: T[], k: i32): T[] {
-    var out: T[] = [];
-    if (k <= 0) { return out; }
-    var pool: T[] = shuffle_seeded(seed, xs);
-    var take: i32 = k;
-    if (take > pool.len()) { take = pool.len(); }
-    var i: i32 = 0;
-    while (i < take) {
-        out = out.append(pool[i]);
-        i = i + 1;
-    }
+  var out: T[] = [];
+  if (k <= 0) {
     return out;
+  }
+  var pool: T[] = shuffle_seeded(seed, xs);
+  var take: i32 = k;
+  if (take > pool.len()) {
+    take = pool.len();
+  }
+  var i: i32 = 0;
+  while (i < take) {
+    out = out.append(pool[i]);
+    i = i + 1;
+  }
+  return out;
 }
