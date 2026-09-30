@@ -70,7 +70,7 @@ targets).
 | #10762 (closed by #10807 after this measurement) | typed lowering: a generic enum's struct payload; the rc-correctness corpus probe | 4 |
 | #10770 (three rows were the measuring harness failing on stderr; the split fixed after this measurement) | wasm: four programs answer wrongly (payloadless Result box, `std/platform`, scratch slots, split on `""`) | 4 |
 | #10761 | typed lowering: reading a `str` map value | 3 |
-| #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
+| #10769 (the selection and the missing helper fixed after this measurement; `TestBytesFloorWasm` then waits on #8799, the self-host's word-per-element `u8[]`) | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
 | #10773 | arm64: the termios round trip fails at step 21 | 2 |
 | #10758 (closed by #10828 after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |

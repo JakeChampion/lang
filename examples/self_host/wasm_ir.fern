@@ -1539,11 +1539,12 @@ function all_lowered_ok(cache: irlower.LowerResult[]): boolean {
 // wasm serves those helpers with hand-written WAT and has neither a raw address
 // space nor a syscall instruction to lower them onto.
 //
-// __raw_load8 / __raw_load_ptr / __raw_store_ptr are NOT in the set — wasm
-// selects them (kind_tag 83 / 84 / 85; raw_load8 also backs __load_u8) — and neither are their type-only bridges: __raw_data
+// __raw_load8 / __raw_store8 / __raw_load_ptr / __raw_store_ptr are NOT in the
+// set — wasm selects them (kind_tag 83 / 82 / 84 / 85; raw_load8 and raw_store8
+// also back __load_u8 and __store_u8) — and neither are their type-only bridges: __raw_data
 // lowers to a raw_load_ptr, and __raw_array and __raw_arr_ptr emit nothing at all.
 function is_raw_floor_builtin(name: string): boolean {
-    if (name == "__raw_alloc" || name == "__raw_store8") { return true; }
+    if (name == "__raw_alloc") { return true; }
     if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe") { return true; }
     if (name == "__raw_addr" || name == "__raw_arr_box") { return true; }
     return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
@@ -4300,7 +4301,7 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
 function is_host_op_kind(tag: i32): boolean {
     return tag == 163 || tag == 164 || tag == 182 || tag == 184 ||
         tag == 183 || tag == 209 || tag == 168 || tag == 169 || tag == 233 || tag == 170 ||
-        tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
+        tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231 ||
         tag == 171 || tag == 310 || tag == 172 || tag == 180 || tag == 249 || tag == 166 ||
         tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264 ||
         tag == 267 || tag == 269 || tag == 273;
@@ -5037,6 +5038,11 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         parts = parts.append("    drop\n");
     } else if (o.kind_tag == 84) {  // raw_store_ptr
         parts = emit_wasm_raw_store_ptr(arrtmp, eltmp, parts);
+    } else if (o.kind_tag == 82) {  // raw_store8
+        // pop v (top), off, ptr; store v's low byte at ptr+off; push v back.
+        parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.add\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n    i32.store8\n");
+        parts = parts.append("    local.get " + util.i32_to_string(eltmp) + "\n");
     } else if (o.kind_tag == 83) {  // raw_load8
         // pop off (top), ptr; push the zero-extended byte at ptr+off.
         parts = parts.append("    i32.add\n    i32.load8_u\n");
@@ -5648,7 +5654,7 @@ function needs_fd_sync(needs: string[]): boolean {
 // needs_io_error reports whether the module carries any fs op — the gate on
 // $__fern_build_io_error and on the strerror texts it selects from.
 pub function needs_io_error(needs: string[]): boolean {
-    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || needs_fd_sync(needs);
+    return need(needs, "stat") || need(needs, "lstat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "create_dir") || need(needs, "remove_dir") || need(needs, "create_link") || need(needs, "create_symlink") || need(needs, "rename") || need(needs, "set_file_times") || need(needs, "truncate") || need(needs, "read_link") || need(needs, "read_dir") || need(needs, "read_dir_all") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need_open_file(needs) || need(needs, "writer_write") || need(needs, "write_some") || need(needs, "reader_close") || need(needs, "read_chunk") || need(needs, "fd_stat") || need(needs, "reader_seek") || need(needs, "writer_truncate") || need(needs, "fd_flags") || needs_fd_sync(needs);
 }
 
 // with_strerror_texts adds the strerror texts and the "Unknown error " prefix

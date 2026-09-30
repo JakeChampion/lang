@@ -349,6 +349,18 @@ function index_of_str(xs: string[], n: string): i32 {
     return 0 - 1;
 }
 
+// name_idx resolves a `$name` reference, refusing one nothing defines: its
+// index would encode as 2^32-1, which wasmtime reports only as an
+// out-of-bounds index in an unnamed function.
+function name_idx(names: string[], n: string): i32 {
+    var k: i32 = index_of_str(names, n);
+    if (k < 0) {
+        eprint("watbin: reference to undefined " + n + "\n");
+        exit(1);
+    }
+    return k;
+}
+
 // node_head returns the head-atom text of a list node ("" if not a list
 // or the head isn't an atom).
 function node_head(n: SExpr): string {
@@ -1107,12 +1119,12 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
     }
     if (op == "global.get") {
         out = out.append(35);
-        return leb_u32(out, index_of_str(gnames, node.items[1].text));
+        return leb_u32(out, name_idx(gnames, node.items[1].text));
     }
     if (op == "global.set") {
         out = wcat(out, enc_instr(node.items[2], lnames, fnames, gnames, labels, tnames));
         out = out.append(36);
-        return leb_u32(out, index_of_str(gnames, node.items[1].text));
+        return leb_u32(out, name_idx(gnames, node.items[1].text));
     }
     if (op == "unreachable") {
         out = out.append(0);   // 0x00 unreachable
@@ -1135,7 +1147,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
             k = k + 1;
         }
         out = out.append(16);
-        return leb_u32(out, index_of_str(fnames, node.items[1].text));
+        return leb_u32(out, name_idx(fnames, node.items[1].text));
     }
     if (op == "call_indirect") {
         // (call_indirect (type $c) <args…> <funcptr>) — the type ref is
@@ -1150,7 +1162,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         }
         out = wcat(out, enc_instr(node.items[lasti], lnames, fnames, gnames, labels, tnames));
         out = out.append(17);    // 0x11
-        out = leb_u32(out, index_of_str(tnames, node.items[1].items[1].text));
+        out = leb_u32(out, name_idx(tnames, node.items[1].items[1].text));
         return leb_u32(out, 0);    // table index 0
     }
     if (op == "memory.size") {
@@ -1324,7 +1336,7 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
 // flat_idx resolves a local index operand: a numeric index (the IR emitter's
 // form) is used directly; a `$name` resolves through lnames.
 function flat_idx(text: string, names: string[]): i32 {
-    if (text.len() > 0 && text[0] == b'$') { return index_of_str(names, text); }
+    if (text.len() > 0 && text[0] == b'$') { return name_idx(names, text); }
     return parse_dec(text);
 }
 
@@ -1380,15 +1392,15 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             i = i + 2;
         } else if (op == "global.get") {
             out = out.append(35);
-            out = leb_u32(out, index_of_str(gnames, instrs[i + 1].text));
+            out = leb_u32(out, name_idx(gnames, instrs[i + 1].text));
             i = i + 2;
         } else if (op == "global.set") {
             out = out.append(36);
-            out = leb_u32(out, index_of_str(gnames, instrs[i + 1].text));
+            out = leb_u32(out, name_idx(gnames, instrs[i + 1].text));
             i = i + 2;
         } else if (op == "call") {
             out = out.append(16);
-            out = leb_u32(out, index_of_str(fnames, instrs[i + 1].text));
+            out = leb_u32(out, name_idx(fnames, instrs[i + 1].text));
             i = i + 2;
         } else if (op == "call_indirect") {
             // `call_indirect (type $c)` — the `(type $c)` node is the next flat
@@ -1398,7 +1410,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             // closure) was DROPPED — the module validated but the indirect call
             // vanished and the result was garbage (#4801).
             out = out.append(17);    // 0x11
-            out = leb_u32(out, index_of_str(tnames, instrs[i + 1].items[1].text));
+            out = leb_u32(out, name_idx(tnames, instrs[i + 1].items[1].text));
             out = leb_u32(out, 0);   // table index 0
             i = i + 2;
         } else if (op == "br") {
@@ -1674,7 +1686,7 @@ function emit_binary(mod: SExpr): i32[] {
             var ex: SExpr = mod.items[i];
             expBody = wname(expBody, ex.items[1].text);
             expBody = expBody.append(0);         // func
-            expBody = leb_u32(expBody, index_of_str(fnames, ex.items[2].items[1].text));
+            expBody = leb_u32(expBody, name_idx(fnames, ex.items[2].items[1].text));
             expCount = expCount + 1;
         }
         i = i + 1;
@@ -1755,7 +1767,7 @@ function emit_binary(mod: SExpr): i32[] {
             var fb: i32[] = [];
             var ei: i32 = 2;
             while (ei < en.items.len()) {
-                fb = leb_u32(fb, index_of_str(fnames, en.items[ei].text));
+                fb = leb_u32(fb, name_idx(fnames, en.items[ei].text));
                 ei = ei + 1;
             }
             elemBody = wcat(elemBody, wvec(en.items.len() - 2, fb));
