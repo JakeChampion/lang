@@ -364,15 +364,16 @@ function fresh_unit(kind: i32): boolean {
 // result, a rebuilt container, a view's box, a cell's element, a map read,
 // which retains what it answers because the value may come from the column or
 // from the caller's default, a column snapshot, which semsource admits only
-// where the runtime hands back a copy the frame owns whole, and a delete,
-// whose tuple is fresh and holds the map the receiver handed over.
+// where the runtime hands back a copy the frame owns whole, a delete,
+// whose tuple is fresh and holds the map the receiver handed over, and a hole
+// fill, which hands back the chain it was given or the value it stored.
 function hands_out(kind: i32): boolean {
     return kind == ssasem.call() || kind == ssasem.call_value() || kind == ssasem.closure_new()
         || kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.slice() || kind == ssasem.cell_get()
         || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
         || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
         || kind == ssasem.str_bytes() || kind == ssasem.arr_join() || kind == ssasem.arr_slice()
-        || kind == ssasem.map_iter();
+        || kind == ssasem.map_iter() || kind == ssasem.hole_fill();
 }
 // A phi is a literal too when every operand is: assumed of every phi, then
 // withdrawn from each one with another operand, to a fixpoint, so a loop
@@ -497,7 +498,8 @@ function add_use(own live: boolean[], value: i32, deps: i32[][]): boolean[] {
 // column holds until the map is released, and one for the value when that
 // column is counted too. A delete takes one for the receiver it hands back
 // inside its tuple and only COMPARES the key, whose unit stays with the
-// caller.
+// caller. A hole fill takes the chain's and the stored value's, and reads the
+// hole's address.
 function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     var out: Supply[] = [];
     var counted: boolean[] = [];
@@ -515,6 +517,8 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
         counted = [true, ssasem.reference(f.values[ins.args[1]])];
     } else if (ins.kind_tag == ssasem.with()) {
         counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
+    } else if (ins.kind_tag == ssasem.hole_fill()) {
+        counted = [true, false, true];
     } else if (construction(ins.kind_tag)) {
         for arg in ins.args { counted = counted.append(taken(f.values[arg])); }
     }

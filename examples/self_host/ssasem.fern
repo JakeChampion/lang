@@ -176,6 +176,14 @@ pub function dyn_box(): i32 { return 0 - 45; }
 // `dyn_is` has settled it, as a variant narrowing is.
 pub function dyn_is(): i32 { return 0 - 46; }
 pub function dyn_as(): i32 { return 0 - 47; }
+// Tail recursion modulo cons (`tail_recursion`). `hole_at` is a node's
+// address, which owns nothing: the chain the node is linked into owns it.
+// `hole_fill(r, h, v)` stores `v` in field `imm` of the node at `h` and answers
+// `r`, or answers `v` when `h` is 0 and `r` is the empty chain. It takes the
+// units of `r` and `v`, and the field it writes held the zero placeholder.
+pub function hole_at(): i32 { return 0 - 48; }
+pub function hole_fill(): i32 { return 0 - 49; }
+pub function is_hole_op(kind: i32): boolean { return kind == hole_at() || kind == hole_fill(); }
 pub function is_map_iter_op(kind: i32): boolean {
     return kind == map_iter() || kind == mapiter_has_next() || kind == mapiter_key()
         || kind == mapiter_value() || kind == mapiter_advance();
@@ -1673,7 +1681,39 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     if (is_function_op(kind)) { return function_error(ins, f, result); }
     if (is_builtin_op(kind)) { return builtin_error(ins, f, result); }
     if (is_variant_op(kind)) { return variant_error(ins, f, result); }
+    if (is_hole_op(kind)) { return hole_error(ins, f, result); }
     return "unsupported semantic operation";
+}
+
+// A hole is a field of a declared enum's node, whose payload is laid out as a
+// record's: every field sits in a slot of its own, so one index names the hole
+// in whichever variant the node was built as.
+function hole_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+    if (ins.kind_tag == hole_at()) {
+        if (ins.args.len() != 1) { return "hole address arity"; }
+        if (!is_usize(result) || !record_laid(f, f.values[ins.args[0]])) { return "hole address type"; }
+        return "";
+    }
+    if (ins.args.len() != 3) { return "hole fill arity"; }
+    if (!record_laid(f, result) || !is_usize(f.values[ins.args[1]])) { return "hole fill type"; }
+    if (!semtypes.equal(f.values[ins.args[0]], result) || !semtypes.equal(f.values[ins.args[2]], result)) { return "hole fill type"; }
+    if (!holds_own_type(f, result, ins.imm)) { return "hole fill index"; }
+    return "";
+}
+
+function record_laid(f: Func, t: typeinfo.Type): boolean {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    return at >= 0 && f.enums[at].layout == semrecords.layout_variant();
+}
+
+// Some variant of `t` has a field of type `t` at `index`.
+function holds_own_type(f: Func, t: typeinfo.Type, index: i32): boolean {
+    var at: i32 = semrecords.find_enum(f.enums, t);
+    if (at < 0 || index < 0) { return false; }
+    for v in f.enums[at].variants {
+        if (index < v.fields.len() && semtypes.equal(v.fields[index].ty, t)) { return true; }
+    }
+    return false;
 }
 
 // A zero names its type and nothing else: arity 0, and a result the layout
@@ -2236,77 +2276,144 @@ pub function analyze(f: Func): Analysis {
 // phi per parameter, merging the incoming argument with the one each tail call
 // passes, and every use of a parameter becomes a use of its phi. Each tail
 // call drops its call instruction and branches to the header.
+//
+// A self-call whose result is a payload of the variant the block returns —
+// `return Cons(h + 1, inc_all(t))` — is a tail call MODULO CONS (#10462). The
+// loop then carries the result built so far as a chain: `r`, the first node,
+// and `h`, the address of the last, whose payload at the hole index holds the
+// zero placeholder the call's result became. A cons block builds its node over
+// a placeholder, fills the hole with it and moves `h` to it; every other return
+// fills the hole with its value and returns the chain. Each node's unit moves
+// exactly once, into the field the previous fill wrote or into `r`, and `h`
+// owns nothing, so the planner sees `r` as one owned phi and `h` as a word.
 pub function tail_recursion(own f: Func, name: string): Func {
     if (name.len() == 0 || f.graph.blocks.len() == 0) { return f; }
     if (f.graph.blocks[0].preds.len() > 0) { return f; }
     var nparams: i32 = f.graph.nparams;
     if (f.values.len() < nparams) { return f; }
     var parents: i32[][] = borrow_parents(f);
-    var tails: i32[] = tail_blocks(f, name, nparams, parents);
-    if (tails.len() == 0) { return f; }
-    return spliced(f, tails, nparams);
+    var defs: ssa.SInst[] = definitions(f);
+    var kinds: i32[] = back_kinds(f, name, nparams, parents, defs);
+    var hole: i32 = agreed_hole(f, kinds, name, nparams, parents, defs);
+    if (hole < 0) { kinds = without_cons(kinds); }
+    if (util.index_of_i32(kinds, self_tail()) < 0 && util.index_of_i32(kinds, cons_tail()) < 0) { return f; }
+    return spliced(f, kinds, nparams, hole, name);
 }
 
-// A view PARAMETER's phi merges the incoming argument with what each tail
-// call passes, and a call passing a view of anything is declined per block
-// below (`borrowed_arg`), so every operand is a parameter passed whole: all
-// borrowed, and the planner leaves such a phi unowned (#9802). Before that
-// rule the planner owned every reference-typed phi, the entry edge retained
-// the view with a no-op and the exit released it with a free, and this pass
-// declined any function with a view parameter to stay out of it.
+function self_tail(): i32 { return 1; }
+function cons_tail(): i32 { return 2; }
+
+// Per block: a self-tail call, a tail call modulo cons, or neither.
+function back_kinds(f: Func, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32[] {
+    var out: i32[] = [];
+    for b in f.graph.blocks {
+        var k: i32 = 0;
+        if (is_self_tail(f, b, name, nparams, parents, defs)) { k = self_tail(); }
+        else if (cons_hole(f, b, name, nparams, parents, defs) >= 0) { k = cons_tail(); }
+        out = out.append(k);
+    }
+    return out;
+}
+
+// The one payload index every cons block puts its call's result at, or -1. A
+// fill writes the node the previous round built without knowing which variant
+// that was, so the index has to be the same in all of them.
+function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
+    if (!record_laid(f, f.result)) { return 0 - 1; }
+    var hole: i32 = 0 - 1;
+    var bi: i32 = 0;
+    while (bi < kinds.len()) {
+        if (kinds[bi] == cons_tail()) {
+            var at: i32 = cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs);
+            if (hole >= 0 && at != hole) { return 0 - 1; }
+            hole = at;
+        }
+        bi = bi + 1;
+    }
+    return hole;
+}
+
+function without_cons(kinds: i32[]): i32[] {
+    var out: i32[] = [];
+    for k in kinds { if (k == cons_tail()) { out = out.append(0); } else { out = out.append(k); } }
+    return out;
+}
+
+// An ANCHORED argument crosses the jump only as a counted payload read out of
+// its anchor: the phi it reaches is owned, so the edge retains it before the
+// anchor's release, and the unit keeps the payload whole. A VIEW cannot — the
+// call kept its anchor alive for the callee's frame, the jump re-enters the
+// loop with that anchor dead, and a view's retain is a no-op against the
+// immortal sentinel. `irlower.rc_consumed_drop_wired` is that shape: it
+// recurses on `slice_unchecked(t, 0, t.len() - 2)`, a view of the very
+// parameter the argument replaces, and rewriting it corrupted the heap of every
+// compiler built through this path (#9692). An address anchored to its box, and
+// a value holding views, are declined for the same reason; a map's unit is
+// linear and is never retained.
+//
+// This declines the ONE block, not the function: a call that stays a call
+// keeps holding what it holds.
+function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
+    if (a < 0 || a >= parents.len() || parents[a].len() == 0) { return true; }
+    var t: typeinfo.Type = f.values[a];
+    if (!reference(t) || semtypes.holds_view(t) || is_map(t)) { return false; }
+    var k: i32 = defs[a].kind_tag;
+    return k == variant_get() || k == record_get() || k == tuple_get() || k == array_get();
+}
+
+function args_cross(f: Func, args: i32[], parents: i32[][], defs: ssa.SInst[]): boolean {
+    for a in args { if (!crosses_jump(f, a, parents, defs)) { return false; } }
+    return true;
+}
+
 // The blocks whose last instruction is a self-call the terminator returns.
 // Nothing follows such a call, so its result has no other reader: the block
 // ends there. A void body spells the same shape with a statement call and a
 // valueless return.
-function tail_blocks(f: Func, name: string, nparams: i32, parents: i32[][]): i32[] {
-    var out: i32[] = [];
-    var bi: i32 = 0;
-    while (bi < f.graph.blocks.len()) {
-        if (is_self_tail(f, f.graph.blocks[bi], name, nparams, parents)) { out = out.append(bi); }
-        bi = bi + 1;
-    }
-    return out;
-}
-
-// An argument that is a VIEW of something cannot travel a jump. The call kept
-// its anchor alive: the anchor is this frame's, and the frame stands until the
-// callee returns. A jump re-enters the loop, where the anchor is a parameter
-// the phi has just replaced or a local the iteration has just finished with —
-// either way dead, and the view left pointing into a buffer the next release
-// frees. `irlower.rc_consumed_drop_wired` is the shape: it recurses on
-// `slice_unchecked(t, 0, t.len() - 2)`, a view of the very parameter the
-// argument replaces, and rewriting it corrupted the heap of every compiler
-// built through this path (#9692).
-//
-// Nothing here is a view's fault — a tail call with a fresh argument, or one
-// that passes a parameter along whole, has no anchor to lose and still
-// rewrites. This declines the ONE block, not the function: a call that stays a
-// call keeps holding what it holds.
-function borrowed_arg(args: i32[], parents: i32[][]): boolean {
-    for a in args { if (a >= 0 && a < parents.len() && parents[a].len() > 0) { return true; } }
-    return false;
-}
-
-function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][]): boolean {
+function is_self_tail(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
     if (b.term.kind_tag != 1 || b.insts.len() == 0) { return false; }
     var last: ssa.SInst = b.insts[b.insts.len() - 1];
     if (last.kind_tag != call() || last.str != name || last.args.len() != nparams) { return false; }
-    if (borrowed_arg(last.args, parents)) { return false; }
+    if (!args_cross(f, last.args, parents, defs)) { return false; }
     if (b.term.value == last.result) { return true; }
     return b.term.value < 0 && is_void(f.result);
 }
 
-// The arguments each tail call passes, read BEFORE the parameter uses are
-// rewritten and mapped afterwards, so an argument that is a parameter itself
-// (`return f(n - 1, acc)`) carries the phi the loop is re-entered with rather
-// than the value the function was first called on.
-function tail_args(f: Func, tails: i32[]): i32[][] {
-    var out: i32[][] = [];
-    for bi in tails {
-        var insts: ssa.SInst[] = f.graph.blocks[bi].insts;
-        out = out.append(insts[insts.len() - 1].args);
+// The payload index of a block returning `V(…, self(…), …)`, or -1. The call's
+// result is read by the construction alone, and what runs between the two
+// runs before the rest of the recursion once the call is gone, so it has to
+// be something whose order cannot show (`reorderable`).
+function cons_hole(f: Func, b: ssa.SBlock, name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
+    var n: i32 = b.insts.len();
+    if (b.term.kind_tag != 1 || n < 2) { return 0 - 1; }
+    var cons: ssa.SInst = b.insts[n - 1];
+    if (cons.kind_tag != variant_new() || b.term.value != cons.result) { return 0 - 1; }
+    var at: i32 = n - 2;
+    while (at >= 0 && !(b.insts[at].kind_tag == call() && b.insts[at].str == name)) {
+        if (!reorderable(b.insts[at])) { return 0 - 1; }
+        at = at - 1;
     }
-    return out;
+    if (at < 0) { return 0 - 1; }
+    var c: ssa.SInst = b.insts[at];
+    if (c.args.len() != nparams || !args_cross(f, c.args, parents, defs)) { return 0 - 1; }
+    var i: i32 = at + 1;
+    while (i < n - 1) {
+        if (util.index_of_i32(b.insts[i].args, c.result) >= 0) { return 0 - 1; }
+        i = i + 1;
+    }
+    var uses: i32 = 0;
+    for a in cons.args { if (a == c.result) { uses = uses + 1; } }
+    if (uses != 1) { return 0 - 1; }
+    return util.index_of_i32(cons.args, c.result);
+}
+
+// Reads of values nothing can change, and operators that cannot stop the
+// program: a division or remainder can trap, so it stays behind the call.
+function reorderable(ins: ssa.SInst): boolean {
+    var k: i32 = ins.kind_tag;
+    if (k == 9) { return ins.str != "/" && ins.str != "%"; }
+    return k == 1 || k == 2 || k == 5 || k == 7 || k == 10 || k == zero() || k == cast()
+        || k == variant_get() || k == variant_is() || k == record_get() || k == tuple_get() || k == length();
 }
 
 function fresh_block_id(f: Func): i32 {
@@ -2349,71 +2456,128 @@ function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
     return t;
 }
 
-// spliced performs the rewrite: it is one pass over the blocks with the
-// parameter map applied, then the header assembled from what block 0 held.
+// What the rewrite has built so far: the value types, the rewritten blocks, and
+// per edge back into the header the block it leaves and the phi operands it
+// passes — the parameters, then the chain and its hole under modulo cons.
+struct Splice { values: typeinfo.Type[], blocks: ssa.SBlock[], backs: i32[], rows: i32[][] }
+
+// The loop's own values under modulo cons: the chain and hole phis, then the
+// empty chain and null hole the entry edge passes.
+struct Chain { r: i32, h: i32, r0: i32, h0: i32 }
+
+function loop_chain(f: Func, nparams: i32): Chain {
+    var r: i32 = f.graph.nvals + nparams;
+    return Chain { r: r, h: r + 1, r0: r + 2, h0: r + 3 };
+}
+
+function address(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false }; }
+
+// spliced performs the rewrite: the header is block 0's instructions without
+// its parameter definitions, rewritten like any other block, and the phis are
+// assembled once every edge back into it is known.
 //
 // The entry block can BE a tail block — an unconditional self-call, which is
 // how a parameterless event loop is written. Everything it holds moves to the
-// header anyway, so what changes is that the header keeps the branch instead
-// of the return, and the edge that tail contributes comes from the header
-// rather than from the entry.
-function spliced(own f: Func, tails: i32[], nparams: i32): Func {
-    var args: i32[][] = tail_args(f, tails);
+// header anyway, so what changes is that the edge that tail contributes comes
+// from the header rather than from the entry.
+function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: string): Func {
     var map: i32[] = phi_map(f, nparams);
     var header: i32 = fresh_block_id(f);
     var entry: ssa.SBlock = f.graph.blocks[0];
-    var loops: boolean = util.index_of_i32(tails, 0) >= 0;
-    var preds: i32[] = [entry.id];
-    for bi in tails { if (bi == 0) { preds = preds.append(header); } else { preds = preds.append(f.graph.blocks[bi].id); } }
+    var ch: Chain = loop_chain(f, nparams);
+    var values: typeinfo.Type[] = f.values;
+    var p: i32 = 0;
+    while (p < nparams) { values = values.append(f.values[p]); p = p + 1; }
+    if (hole >= 0) { values = values.append(f.result).append(address()).append(f.result).append(address()); }
+    var s: Splice = Splice { values: values, blocks: [], backs: [], rows: [] };
+    var head: ssa.SBlock = ssa.SBlock { ...entry, id: header, insts: not_kind_6(entry.insts) };
+    s = rewrite_block(s, f, head, kinds[0], map, header, hole, ch);
+    var bi: i32 = 1;
+    while (bi < f.graph.blocks.len()) {
+        var b: ssa.SBlock = f.graph.blocks[bi];
+        s = rewrite_block(s, f, ssa.SBlock { ...b, preds: repointed(b.preds, entry.id, header) }, kinds[bi], map, header, hole, ch);
+        bi = bi + 1;
+    }
 
     // The parameter definitions STAY in the entry block: ssadeps.verify reads a
     // `param` instruction anywhere else as a malformed graph, and they are also
     // what the entry edge's phi operands name.
-    var blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: kind_6(entry.insts), term: ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }, preds: [] }];
-    var head_insts: ssa.SInst[] = phis(f, map, args, nparams);
-    for ins in rewritten(map, not_kind_6(without_tail_call(entry.insts, loops))) { head_insts = head_insts.append(ins); }
-    var head_term: ssa.STerm = mapped_ret_term(map, entry.term);
-    if (loops) { head_term = ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }; }
-    blocks = blocks.append(ssa.SBlock { id: header, insts: head_insts, term: head_term, preds: preds });
-    var bi: i32 = 1;
-    while (bi < f.graph.blocks.len()) {
-        blocks = blocks.append(rewritten_block(f.graph.blocks[bi], map, header, entry.id, util.index_of_i32(tails, bi) >= 0));
-        bi = bi + 1;
+    var entry_insts: ssa.SInst[] = kind_6(entry.insts);
+    if (hole >= 0) {
+        entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
+        entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
     }
-
-    var values: typeinfo.Type[] = f.values;
-    var p: i32 = 0;
-    while (p < nparams) { values = values.append(f.values[p]); p = p + 1; }
-    var graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: f.graph.nvals + nparams, blocks: blocks };
-    return Func { ...f, graph: graph, values: values };
+    var blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: entry_insts, term: branch_to(header), preds: [] }];
+    var built: ssa.SBlock = s.blocks[0];
+    var head_insts: ssa.SInst[] = phis(map, s.rows, nparams, hole, ch, name);
+    for ins in built.insts { head_insts = head_insts.append(ins); }
+    var preds: i32[] = [entry.id];
+    for back in s.backs { preds = preds.append(back); }
+    blocks = blocks.append(ssa.SBlock { ...built, insts: head_insts, preds: preds });
+    var k: i32 = 1;
+    while (k < s.blocks.len()) { blocks = blocks.append(s.blocks[k]); k = k + 1; }
+    var graph: ssa.SFunc = ssa.SFunc { ...f.graph, nvals: s.values.len(), blocks: blocks };
+    return Func { ...f, graph: graph, values: s.values };
 }
 
-// A tail block loses its call and branches to the header; every other block
-// keeps its own terminator. Every block reached FROM the entry is now reached
-// from the header instead, so the entry's id leaves their predecessor lists in
-// the same slot the header takes — the slot is what a phi's operands are
-// parallel to, so it has to be the same one.
-function rewritten_block(b: ssa.SBlock, map: i32[], header: i32, entry: i32, tail: boolean): ssa.SBlock {
-    var preds: i32[] = repointed(b.preds, entry, header);
-    if (!tail) { return ssa.SBlock { ...b, insts: rewritten(map, b.insts), term: mapped_ret_term(map, b.term), preds: preds }; }
-    var kept: ssa.SInst[] = [];
-    var i: i32 = 0;
-    while (i + 1 < b.insts.len()) { kept = kept.append(mapped_inst(map, b.insts[i])); i = i + 1; }
-    return ssa.SBlock { ...b, insts: kept, term: ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }, preds: preds };
+function branch_to(header: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, cond: 0, target: header, t: 0, f: 0, value: 0 }; }
+
+// A tail block loses its call and branches to the header; a cons block keeps
+// its construction over the placeholder its call's result became, links it
+// and branches; under modulo cons every other return fills the hole with its
+// value first. Every block reached FROM the entry is now reached from the
+// header instead, so the entry's id leaves their predecessor lists in the
+// same slot the header takes — the slot is what a phi's operands are parallel
+// to, so it has to be the same one.
+function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
+    if (kind == self_tail()) {
+        var kept: ssa.SInst[] = [];
+        var i: i32 = 0;
+        while (i + 1 < b.insts.len()) { kept = kept.append(mapped_inst(map, b.insts[i])); i = i + 1; }
+        var row: i32[] = mapped_list(map, b.insts[b.insts.len() - 1].args);
+        if (hole >= 0) { row = row.append(ch.r).append(ch.h); }
+        return Splice { ...s, blocks: s.blocks.append(ssa.SBlock { ...b, insts: kept, term: branch_to(header) }), backs: s.backs.append(b.id), rows: s.rows.append(row) };
+    }
+    if (kind == cons_tail()) { return linked(s, f, b, map, header, hole, ch); }
+    var insts: ssa.SInst[] = rewritten(map, b.insts);
+    var term: ssa.STerm = mapped_ret_term(map, b.term);
+    if (hole >= 0 && term.kind_tag == 1 && term.value >= 0) {
+        var filled: i32 = s.values.len();
+        insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: filled, args: [ch.r, ch.h, term.value], imm: hole, str: "" });
+        term = ssa.STerm { ...term, value: filled };
+        s = Splice { ...s, values: s.values.append(f.result) };
+    }
+    return Splice { ...s, blocks: s.blocks.append(ssa.SBlock { ...b, insts: insts, term: term }) };
+}
+
+// The cons block: the self-call's result becomes the zero placeholder the
+// node is built over, the call's arguments go to the header, and the node is
+// linked into the chain and becomes its hole.
+function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
+    var cons: ssa.SInst = b.insts[b.insts.len() - 1];
+    var placeholder: i32 = cons.args[hole];
+    var insts: ssa.SInst[] = [];
+    var row: i32[] = [];
+    for ins in b.insts {
+        if (ins.result == placeholder) {
+            row = mapped_list(map, ins.args);
+            insts = insts.append(ssa.SInst { kind_tag: zero(), result: placeholder, args: [], imm: 0, str: "" });
+        } else {
+            insts = insts.append(mapped_inst(map, ins));
+        }
+    }
+    var at: i32 = s.values.len();
+    var chain: i32 = at + 1;
+    insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [cons.result], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: chain, args: [ch.r, ch.h, cons.result], imm: hole, str: "" });
+    row = row.append(chain).append(at);
+    var block: ssa.SBlock = ssa.SBlock { ...b, insts: insts, term: branch_to(header) };
+    return Splice { values: s.values.append(address()).append(f.result), blocks: s.blocks.append(block), backs: s.backs.append(b.id), rows: s.rows.append(row) };
 }
 
 function repointed(preds: i32[], from: i32, to: i32): i32[] {
     var out: i32[] = [];
     for p in preds { if (p == from) { out = out.append(to); } else { out = out.append(p); } }
-    return out;
-}
-
-// The block's instructions without the self-call that ended it.
-function without_tail_call(insts: ssa.SInst[], drop: boolean): ssa.SInst[] {
-    if (!drop) { return insts; }
-    var out: ssa.SInst[] = [];
-    var i: i32 = 0;
-    while (i + 1 < insts.len()) { out = out.append(insts[i]); i = i + 1; }
     return out;
 }
 
@@ -2437,16 +2601,27 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
 }
 
 // One phi per parameter, its operands parallel to the header's predecessors:
-// the entry edge carries the parameter itself, each tail edge the argument
-// that call passed.
-function phis(f: Func, map: i32[], args: i32[][], nparams: i32): ssa.SInst[] {
+// the entry edge carries the parameter itself, each back edge the argument
+// its call passed. A parameter's phi names the call and the slot it stands
+// for, so the ownership inference reads the loop as the recursion it was
+// (`ownership.slot_carried`). Under modulo cons the chain and its hole follow,
+// entering empty.
+function phis(map: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
     var out: ssa.SInst[] = [];
     var p: i32 = 0;
     while (p < nparams) {
-        var ops: i32[] = [p];
-        for a in args { ops = ops.append(mapped(map, a[p])); }
-        out = out.append(ssa.SInst { kind_tag: 8, result: map[p], args: ops, imm: 0, str: "" });
+        out = out.append(ssa.SInst { ...phi_over(map[p], p, rows, p), imm: p, str: name });
         p = p + 1;
     }
+    if (hole >= 0) {
+        out = out.append(phi_over(ch.r, ch.r0, rows, nparams));
+        out = out.append(phi_over(ch.h, ch.h0, rows, nparams + 1));
+    }
     return out;
+}
+
+function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
+    var ops: i32[] = [first];
+    for row in rows { ops = ops.append(row[at]); }
+    return ssa.SInst { kind_tag: 8, result: result, args: ops, imm: 0, str: "" };
 }
