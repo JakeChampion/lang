@@ -51,6 +51,10 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 	if code, out := compile(produced, "FERN_SEM_IR_STRICT=1"); code != 0 {
 		t.Fatalf("a module produced whole: exit %d under strict\n%s", code, out)
 	}
+	async := "async function compute(): i32 { return 7; }\nfunction main(): i32 { return compute(); }\n"
+	if code, out := compile(async, "FERN_SEM_IR_STRICT=1"); code != 0 {
+		t.Fatalf("an async function: exit %d under strict\n%s", code, out)
+	}
 
 	// Each target spells the clock, id and termios helpers' sources on its own
 	// syscalls. termios_get calls the fs bundle's __fern_io_error.

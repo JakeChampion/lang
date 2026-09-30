@@ -698,8 +698,7 @@ Unsupported constructs refuse the whole function with a reason.
 Refused, each with its own reason: calls of the remaining builtins, a void
 call in expression position, an operator or a literal at the pointer width,
 unsigned negation, generic records, the pattern shapes
-above, receiver methods, external and async
-functions.
+above, receiver methods and external functions.
 
 A `defer` arrives here already lowered: the desugar replaces it with a flag
 and replays its action at the scope's exits, lifting the declaration of a

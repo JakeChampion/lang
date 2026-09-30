@@ -3459,15 +3459,6 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[]): ss
 
 // ---- functions --------------------------------------------------------------
 
-// A generic declaration is a template, produced once per instantiation its
-// callers bind (docs/SEMANTIC-GENERICS.md). A generic METHOD is refused
-// outright: its receiver spelling is what the checker's dispatch resolves, and
-// the binding here is read off a free function's parameters.
-function unsupported_declaration(fd: parser.FuncDecl, scope: checker.Scope): string {
-    if (fd.async) { return "unsupported async function"; }
-    return "";
-}
-
 // An `@import` extern is a declaration with a contract and no body: its
 // callers are produced against the signature it declares, and the wasm
 // bridge emits the function itself from the declaration.
@@ -4330,8 +4321,6 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
 function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[], binding: ssasem.Binding, name: string, handers: string[], shadows: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[]): Produced {
-    var why: string = unsupported_declaration(fd, scope);
-    if (why != "") { return refuse(why); }
     if (fd.import_iface.len() > 0) { return external_entry(); }
     var s: State = initial(fd, scope, contracts, binding, name, handers, shadows, funcs, impls);
     if (!semtypes.concrete(s.result, true)) { return refuse("unresolved result type: " + unresolved_result_spelling(fd, s)); }
@@ -4380,7 +4369,6 @@ function prebind(s: State): State {
 // template's contract keeps its variables, for the call site to bind.
 function contract(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contract[]): ssasem.Contract {
     var none: ssasem.Contract = ssasem.Contract { name: "", params: [], modes: [], result: t_void() };
-    if (unsupported_declaration(fd, scope) != "") { return none; }
     var result: typeinfo.Type = result_type(fd, scope, ssasem.unbound(), contracts);
     if (!semtypes.shaped(result, true)) { return none; }
     var params: typeinfo.Type[] = [];

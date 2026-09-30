@@ -315,6 +315,24 @@ var semProductionPrograms = []struct {
 	// the array moves into the write and is written in place rather than
 	// copied (#9849); TestSelfHostSemanticAllocationParity pins the count.
 	{name: "element-read-outlives-the-array-write", atLeast: 2, noLeak: true, src: semHeldElementSource},
+	// A bodied `async function` is an ordinary function whose only extra
+	// meaning is a component export; the interpreter answers
+	// 16|4 squares ending 9. semsource refused the modifier (#10794).
+	{name: "async-function", atLeast: 4, noLeak: true, src: `
+import "std/i32";
+async function compute(): i32 { return 7; }
+pub async function squares(n: i32): i32[] {
+    var out: i32[] = [];
+    for i in 0..n { out = out.append(i * i); }
+    return out;
+}
+async function label(xs: i32[]): string { return f"{xs.len()} squares ending {xs[xs.len() - 1]}"; }
+function main(): i32 {
+    var xs: i32[] = squares(4);
+    print(label(xs) + "\n");
+    return compute() + xs[3];
+}
+`},
 	// A lambda the SOURCE wrote, with an explicit callable return annotation.
 	// parse_type_name coarsens that annotation to the tag "fn" and the lambda
 	// parse discarded the contract, so e_lambda_at built every source lambda
