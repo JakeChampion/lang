@@ -58,7 +58,7 @@ function report(src: string): string {
 // the only thing take_doc looks at. Column is irrelevant to association and is
 // fixed at 1 to say so.
 function c(line: i32, text: string): lexer.Comment {
-    return lexer.Comment { line: line, col: 1, text: text };
+    return lexer.Comment { line: line, col: 1, text: text, trailing: false };
 }
 
 function took(cs: lexer.Comment[], cursor: i32, decl_line: i32): string {

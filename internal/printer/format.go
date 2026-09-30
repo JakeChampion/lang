@@ -220,7 +220,7 @@ func (f *formatter) drainLeading(line, depth int) {
 // queued comment matches, we emit `  //` + text (no newline; the
 // surrounding loop's `\n` follows).
 func (f *formatter) emitTrailing(line int) {
-	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line == line {
+	if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line == line && f.comments[f.ci].Trailing {
 		f.b.WriteString("  //")
 		f.b.WriteString(f.comments[f.ci].Text)
 		f.ci++
@@ -1910,7 +1910,10 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if writtenBreak(x) {
 			f.emitTrailing(lastLine(x.Left))
 			f.b.WriteByte('\n')
-			f.drainLeading(x.P.Line, f.depth+1)
+			// Only a comment written inside the expression belongs at its break.
+			if f.ci < len(f.comments) && f.comments[f.ci].Pos.Line > firstLine(x.Left) {
+				f.drainLeading(x.P.Line, f.depth+1)
+			}
 			f.indent(f.depth + 1)
 		} else {
 			f.b.WriteByte(' ')

@@ -625,10 +625,15 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
             var (bl, bf) = print_expr_c(b.left, p, depth, f);
             var gap: string = " ";
             if (written_break(b)) {
-                let (tr, tf) = emit_trailing(bf, last_line(b.left));
-                let (lead, lf) = drain_leading(tf, b.line, depth + 1);
+                var (tr, tf) = emit_trailing(bf, last_line(b.left));
+                var lead: string = "";
+                if (tf.ci < tf.comments.len() && tf.comments[tf.ci].line > first_line(b.left)) {
+                    let (ld, lf) = drain_leading(tf, b.line, depth + 1);
+                    lead = ld;
+                    tf = lf;
+                }
                 gap = tr + "\n" + lead + indent_str(depth + 1);
-                bf = lf;
+                bf = tf;
             }
             var (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
             var inner: string = bl + gap + b.op + " " + br;
@@ -958,7 +963,7 @@ function drain_leading(f: Fmt, line: i32, depth: i32): (string, Fmt) {
 // emit_trailing emits a comment sharing the source line of the statement just
 // written — `putchar(70);  // F`. No newline: the caller's line break follows.
 function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
-    if (f.ci < f.comments.len() && f.comments[f.ci].line == line) {
+    if (f.ci < f.comments.len() && f.comments[f.ci].line == line && f.comments[f.ci].trailing) {
         return ("  //" + f.comments[f.ci].text, Fmt { ...f, ci: f.ci + 1 });
     }
     return ("", f);
@@ -996,30 +1001,43 @@ function is_postfix_unary(op: string): boolean {
     return util.str_has_prefix(op, "as_") || util.str_has_prefix(op, "as?_") || op == "try_";
 }
 
-// last_line is the line of the last operand an expression records a position
-// for. Closing brackets carry no position, so a call ends at its last argument.
-// A lambda counts as its first line: its body is laid out by the statement
-// printer, not by the line it happened to end on.
+// last_line is the line an expression ends on, as far as the AST records it. A
+// closing bracket carries no position, so a list ends at its last element, or on
+// the line below it when the list prints as written (list_closer), since that
+// form puts the closer on a line of its own. A lambda counts as its first line:
+// its body is laid out by the statement printer.
 function last_line(e: ast.Expr): i32 {
     var ln: i32 = ast.expr_line(e);
     match (e) {
         ast.ExprBinary(b) => { return max_line(max_line(ln, last_line(b.left)), last_line(b.right)); },
         ast.ExprUnary(u) => { return max_line(ln, last_line(u.operand)); },
-        ast.ExprCall(c) => { return max_line(max_line(ln, last_line(c.callee)), last_line_of(c.args)); },
-        ast.ExprArray(a) => { return max_line(ln, last_line_of(a.elements)); },
+        ast.ExprCall(c) => { return max_line(max_line(ln, last_line(c.callee)), last_line_of(c.args)) + list_closer(c.line, c.args); },
+        ast.ExprArray(a) => { return max_line(ln, last_line_of(a.elements)) + list_closer(a.line, a.elements); },
         ast.ExprTuple(t) => { return max_line(ln, last_line_of(t.elements)); },
         ast.ExprIndex(ix) => { return max_line(max_line(ln, last_line(ix.array)), last_line(ix.index)); },
         ast.ExprSlice(sl) => { return max_line(max_line(max_line(ln, last_line(sl.array)), last_line(sl.start)), last_line(sl.end)); },
         ast.ExprStructLit(st) => {
-            var m: i32 = max_line(ln, last_line_of(st.field_values));
-            if (st.has_base) { m = max_line(m, last_line(st.base)); }
-            return m;
+            var vals: ast.Expr[] = [];
+            if (st.has_base) { vals = vals.append(st.base); }
+            for v in st.field_values {
+                vals = vals.append(v);
+            }
+            return max_line(ln, last_line_of(vals)) + list_closer(st.line, vals);
         },
         ast.ExprFieldAccess(fa) => { return max_line(ln, last_line(fa.obj)); },
         ast.ExprMapLit(ml) => { return max_line(max_line(ln, last_line_of(ml.keys)), last_line_of(ml.vals)); },
         _ => { return ln; }
     }
     return ln;
+}
+
+// list_closer is 1 for a list that prints as written, whose closer sits on the
+// line below its last element, and 0 otherwise.
+function list_closer(open: i32, es: ast.Expr[]): i32 {
+    if (open <= 0 || es.len() == 0) { return 0; }
+    var lns: i32[] = elem_lines(es, open);
+    if (lns[lns.len() - 1] > open) { return 1; }
+    return 0;
 }
 
 function last_line_of(es: ast.Expr[]): i32 {
@@ -1947,8 +1965,9 @@ function strip_semi(s: string): string {
 // first (#6779). They are not interchangeable to a reader, to `make fmt-check`,
 // or to a block-scoped binding written before the inner `if`.
 function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
-    var (then_text, g) = print_block(ifs.then_body, depth, f);
-    var out: string = "if (" + print_expr(ifs.cond, depth) + ") " + then_text;
+    var (cond_text, cf) = print_expr_c(ifs.cond, prec_lowest(), depth, f);
+    var (then_text, g) = print_block(ifs.then_body, depth, cf);
+    var out: string = "if (" + cond_text + ") " + then_text;
     if (ifs.else_body.len() == 0) { return (out, g); }
     if (ifs.else_chained && ifs.else_body.len() == 1) {
         match (ifs.else_body[0]) {
@@ -2321,9 +2340,13 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
             return print_if_chain(ifs, depth, f);
         },
         ast.StmtWhile(w) => {
-            var (wb, wg) = print_block(w.body, depth, f);
-            if (w.is_loop) { return (loop_label(w.label) + "loop " + wb, wg); }
-            return (loop_label(w.label) + "while (" + print_expr(w.cond, depth) + ") " + wb, wg);
+            if (w.is_loop) {
+                var (lb, lg) = print_block(w.body, depth, f);
+                return (loop_label(w.label) + "loop " + lb, lg);
+            }
+            var (wc, wcf) = print_expr_c(w.cond, prec_lowest(), depth, f);
+            var (wb, wg) = print_block(w.body, depth, wcf);
+            return (loop_label(w.label) + "while (" + wc + ") " + wb, wg);
         },
         ast.StmtAssign(a) => {
             var (av, af) = print_expr_c(a.value, prec_lowest(), depth, f);

@@ -188,13 +188,24 @@ function is_single_punct(b: i32): boolean {
 // diagnostics. The Go lexer carries the same trio on a *lexer
 // receiver — porting it as a struct lets the same shape work
 // without generic methods on the lexer state.
-pub struct Comment { line: i32, col: i32, text: string }
+// `trailing` is set when code precedes the comment on its line.
+pub struct Comment { line: i32, col: i32, text: string, trailing: boolean }
 
 // Takes the body as a `string` parameter so the slice is copied at the call —
 // a `str` coerces into a string param but not into a struct field, and the
 // Comment outlives the scan.
-function comment_tok(line: i32, col: i32, text: string): Comment {
-    return Comment { line: line, col: col, text: text };
+// code_before: does anything but whitespace precede src[i] on its line?
+function code_before(src: string, i: i32): boolean {
+    var j: i32 = i - 1;
+    while (j >= 0 && src[j] != b'\n') {
+        if (src[j] != b' ' && src[j] != b'\t' && src[j] != b'\r' && src[j] != 11u8 && src[j] != 12u8) { return true; }
+        j = j - 1;
+    }
+    return false;
+}
+
+function comment_tok(line: i32, col: i32, text: string, trailing: boolean): Comment {
+    return Comment { line: line, col: col, text: text, trailing: trailing };
 }
 
 // Comments are returned alongside the tokens rather than becoming a token kind, so the
@@ -278,7 +289,7 @@ function skip_trivia(l: Lex, acc: Comment[], keep: boolean): TrivResult {
             while (ce < l.n && l.src[ce] != b'\n') {
                 ce = ce + 1;
             }
-            if (keep) { acc = acc.append(comment_tok(c_line, c_col, slice_unchecked(l.src, body, ce))); }
+            if (keep) { acc = acc.append(comment_tok(c_line, c_col, slice_unchecked(l.src, body, ce), code_before(l.src, l.i))); }
             l = l.advance_to(ce);
             continue;
         }
