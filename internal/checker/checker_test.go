@@ -1662,6 +1662,19 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 	}
 }
 
+// A redeclared builtin is reported once. An injected declaration naming it
+// with type arguments (ChunkProducer's `Option[u8[]]`) finds the user's
+// shape once the builtin is dropped, and that is not a second error.
+func TestReservedShadowIsReportedOnce(t *testing.T) {
+	err := checkSource(t, "enum Option { A, B }\nfunction main(): i32 { return 0; }\n")
+	if err == nil || !strings.Contains(err.Error(), "reserved built-in name") {
+		t.Fatalf("want the reserved-name error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "type parameter(s)") {
+		t.Fatalf("the redeclaration was reported again as an arity mismatch: %v", err)
+	}
+}
+
 func TestBuiltinPutchar(t *testing.T) {
 	if err := checkSource(t, `function f(): void { putchar(65); }`); err != nil {
 		t.Errorf("putchar(65) should type-check: %v", err)
