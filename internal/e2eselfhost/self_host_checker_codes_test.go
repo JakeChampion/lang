@@ -1951,6 +1951,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// captured `dyn`, a `dyn`-typed value may not (#8440).
 		{"cap-dyn-outer-store-struct", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction main(): i32 { var d: dyn Shape = Sq { s: 3 }; var f: () => i32 = (): i32 => { return d.area(); }; d = Sq { s: 5 }; return f(); }\n", nil},
 		{"cap-dyn-outer-store-dyn", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction main(): i32 { var d: dyn Shape = Sq { s: 3 }; var e: dyn Shape = Sq { s: 4 }; var f: () => i32 = (): i32 => { return d.area(); }; d = e; return f(); }\n", []string{"E049"}},
+		// An if-expression's concrete arm does not coerce to its dyn arm;
+		// a match-expression's does (#10601).
+		{"if-arms-dyn-vs-struct", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction pick(c: boolean, d: dyn Shape): dyn Shape { return if (c) { d } else { Sq { s: 3 } }; }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"if-arms-struct-vs-dyn", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction pick(c: boolean, d: dyn Shape): dyn Shape { return if (c) { Sq { s: 3 } } else { d }; }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"match-arms-dyn-vs-struct-ok", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction pick(k: i32, d: dyn Shape): dyn Shape { return match (k) { 0 => d, _ => Sq { s: 3 } }; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"if-arms-both-dyn-ok", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction pick(c: boolean, d: dyn Shape): dyn Shape { var x: dyn Shape = Sq { s: 3 }; return if (c) { d } else { x }; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cap-assign-unann-scalar-ok", "function main(): i32 { var n = 5; var f = (): i32 => { n = 7; return 0; }; return f(); }\n", nil},
 		// E002 inside lambda bodies: a lambda's `return` is checked against
 		// the lambda's OWN declared return type, not the enclosing function's

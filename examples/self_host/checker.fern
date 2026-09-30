@@ -8468,7 +8468,10 @@ function vb_arms_compatible(types: typeinfo.Type[], s: Scope): boolean {
   return true;
 }
 
-function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumDecl[], line: i32, col: i32): util.Diag[] {
+// An if-expression's concrete arm does not coerce to its other, dyn arm: the
+// Go checker's unifyIfArms has no assignability rule, where a match's arms
+// unify under one.
+function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumDecl[], if_form: boolean, line: i32, col: i32): util.Diag[] {
   var out: util.Diag[] = [];
   if (types.len() < 2) {
     return out;
@@ -8481,7 +8484,7 @@ function mx_e031(types: typeinfo.Type[], unions: UnionSig[], enums: parser.EnumD
   var t0: typeinfo.Type = types[0];
   var j: i32 = 1;
   while (j < types.len()) {
-    if (!mx_arm_compatible(t0, types[j], unions, enums)) {
+    if (!mx_arm_compatible(t0, types[j], unions, enums) || (if_form && is_dyn_slot(t0) != is_dyn_slot(types[j]))) {
       out = out.append(dg_at("E031", "match/if-expression arms have incompatible types: " + type_label(t0) + " vs " + type_label(types[j]), line, col));
       return out;
     }
@@ -8589,10 +8592,10 @@ function mx_expr(e: ast.Expr, s: Scope, unions: UnionSig[], enums: parser.EnumDe
             if (lm.params.len() == 0 && lm.body.len() == 1) {
               match (lm.body[0]) {
                 ast.StmtMatch(m) => {
-                  out = util.append_diags(out, mx_e031(mx_match_arm_types(m, s), unions, enums, expr_line(m.scrutinee), expr_col(m.scrutinee)));
+                  out = util.append_diags(out, mx_e031(mx_match_arm_types(m, s), unions, enums, false, expr_line(m.scrutinee), expr_col(m.scrutinee)));
                 },
                 ast.StmtIf(f) => {
-                  out = util.append_diags(out, mx_e031(mx_if_branch_types(f, s), unions, enums, expr_line(f.cond), expr_col(f.cond)));
+                  out = util.append_diags(out, mx_e031(mx_if_branch_types(f, s), unions, enums, lm.origin == parser.ORIGIN_IF_EXPR, expr_line(f.cond), expr_col(f.cond)));
                 },
                 _ => {}
               }
