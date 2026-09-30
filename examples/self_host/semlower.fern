@@ -359,18 +359,6 @@ function creator_of(name: string): string {
     return "";
 }
 
-// The creator of row `i`. An instance of `<creator>$wrapN` is named with its
-// bindings after the template's key, and its creator is the instance of
-// `<creator>` under the same bindings.
-function row_creator(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
-    if (i < mod.funcs.len()) { return creator_of(r.n1[i]); }
-    var key: string = built.instances[i - mod.funcs.len()].key;
-    var creator: string = creator_of(key);
-    var name: string = r.n1[i];
-    if (creator.len() == 0 || !util.str_has_prefix(name, key)) { return creator; }
-    return creator + slice_unchecked(name, key.len(), name.len());
-}
-
 // A produced hoisted body whose value an AST-lowered creator builds is
 // called by the AST lowering through that box, under the AST convention:
 // the mirror of `ast_value_call`. Such a body keeps the AST lowering, and
@@ -378,12 +366,38 @@ function row_creator(r: Rows, mod: parser.Module, built: semsource.Built, i: i32
 // (ssarc.caller_sigs, irlower.consume_sigs) instead. A creator no row
 // names is read as AST-lowered.
 function ast_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
-    var creator: string = row_creator(r, mod, built, i);
+    if (i >= mod.funcs.len()) { return instance_built_value(r, mod, built, i); }
+    var creator: string = creator_of(r.n1[i]);
     if (creator.len() == 0) { return ""; }
     var at: i32 = util.index_of_str(r.n1, creator);
     if (at < 0) { at = util.index_of_str(r.n2, creator); }
     if (at >= 0 && r.keep[at]) { return ""; }
     return "is a function value " + creator + " builds, which the AST lowering defines";
+}
+
+// An instance of a hoisted body is built by the instances of its creator that
+// request it. The instance binds only the variables its own contract mentions,
+// so its name does not say which creator instances those are.
+function instance_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i: i32): string {
+    var creator: string = creator_of(built.instances[i - mod.funcs.len()].key);
+    if (creator.len() == 0) { return ""; }
+    var found: boolean = false;
+    var j: i32 = mod.funcs.len();
+    while (j < r.n1.len()) {
+        var p: semsource.Produced = produced_at(built, mod, j);
+        if (j != i && p.key == creator && requests_name(p, r.n1[i])) {
+            if (!r.keep[j]) { return "is a function value " + r.n1[j] + " builds, which the AST lowering defines"; }
+            found = true;
+        }
+        j = j + 1;
+    }
+    if (found) { return ""; }
+    return "is a function value " + creator + " builds, which the AST lowering defines";
+}
+
+function requests_name(p: semsource.Produced, name: string): boolean {
+    for q in p.requests { if (q.name == name) { return true; } }
+    return false;
 }
 
 // The names a body calls directly, as written: a bare callee, or a method's

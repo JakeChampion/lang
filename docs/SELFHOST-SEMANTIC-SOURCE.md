@@ -2036,10 +2036,12 @@ lowering, with the output byte-identical. What remains is `semsource` +
 `ssaunits` + `ssarc` running once per declaration on top of the AST lowering
 that still runs for the eligibility verdict.
 
-**Production is all or nothing.** A module with a refused declaration keeps
-the AST lowering whole: `semlower.substitution` reports the refusals and the
-tally as `produced 0 of N declarations … K refused, the AST lowering stands`
-and hands the emit `no_sub()`. A produced body beside an AST-lowered one is
+**Production is all or nothing.** A module with a refused declaration or a
+refused instance keeps the AST lowering whole: `semlower.substitution`
+reports the refusals and the tally as `produced 0 of N declarations and 0 of
+M instances … K refused, the AST lowering stands` and hands the emit
+`no_sub()`. An instance has no AST body to stand in for it, so dropping one
+alone would leave its symbol undefined. A produced body beside an AST-lowered one is
 two memory conventions on one module — every crash this path has had was a
 mixed module — and the contracts `prune` reads cover the crossings it can
 see, not every data structure that crosses. A TEMPLATE's row is no body of

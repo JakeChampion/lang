@@ -5879,6 +5879,23 @@ function main(): i32 {
     return make(7);
 }
 `},
+	// The lambda binds only the variable its type mentions, so its one
+	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
+	// whose names carry a second binding it does not spell.
+	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
+pub function make[A, B](a: A, b: B): A {
+    function idmaker(base: A, other: B): (A) => A {
+        return (x: A) => x;
+    }
+    var f: (A) => A = idmaker(a, b);
+    return f(a);
+}
+
+function main(): i32 {
+    var s: string = "x";
+    return make(7, s) + make(2, true);
+}
+`},
 	// A value block, if-expression or match-expression no path leaves by its
 	// end: the enclosing expression is unreachable, including from inside a
 	// loop whose join and exit the block's `break` still reaches (#10793).
