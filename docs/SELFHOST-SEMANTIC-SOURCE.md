@@ -686,9 +686,14 @@ Unsupported constructs refuse the whole function with a reason.
   parameter is a `cast` between the two; a borrow never becomes an owned
   handle, and neither converts to or from an integer. Dropping one is not a
   release: the front end inserts `defer __resource_drop_R(h)` after each
-  owned local that is not moved, with the `[resource-drop]` import it calls
+  owned local that is not moved, when `R` carries an `@import` WIT binding,
+  with the `[resource-drop]` import it calls
   (`parser.lower_defers_prepass_module`), so both lowerings see an ordinary
-  extern call. An owned parameter is not dropped there.
+  extern call. An owned local is spelled `own R` or bare `R`; both are
+  dropped. An owned parameter is not dropped there. A resource named like
+  another resource, a struct, an enum or a union alias is E006 and is not
+  registered (`parser.registered_resources`), so the name keeps its other
+  meaning and is never taken for a handle.
 
 - A GENERIC declaration, as a TEMPLATE produced once per instantiation
   (`docs/SEMANTIC-GENERICS.md`). A declaration is generic when it declares
