@@ -9208,7 +9208,7 @@ pub function parse_type_ref(sin: string): TypeRef {
                 while (pi < psegs.len()) { fargs = fargs.append(parse_type_ref(fn_parameter_type(psegs[pi]))); pi = pi + 1; }
             }
             fargs = fargs.append(parse_type_ref(rhs));
-            return TypeRef { base: "", args: fargs, array_depth: depth, is_tuple: false, is_fn: true };
+            return TypeRef { base: "", args: fargs, array_depth: 0, is_tuple: false, is_fn: true };
         }
     }
     // Only peel array suffixes after ruling out an outer arrow. In
@@ -11124,6 +11124,31 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
     if (type_ends_arr(name)) {
         return subst_ty(slice_unchecked(name, 0, name.len() - 2), tparams, cts) + "[]";
     }
+    // A callable `(P, Q) => R` substitutes through its parameters and result;
+    // the tuple arm below would read it as a malformed tuple. A spelling that
+    // substitutes to itself is handed back verbatim.
+    if (name.len() > 0 && name[0] == b'(' && util.contains(name, "=>")) {
+        var fref: TypeRef = parse_type_ref(name);
+        if (fref.is_fn) {
+            var parts: string[] = [];
+            var changed: boolean = false;
+            for a in fref.args {
+                var sp: string = render_type_ref(a);
+                var sub: string = subst_ty(sp, tparams, cts);
+                if (sub != sp) { changed = true; }
+                parts = parts.append(sub);
+            }
+            if (!changed) { return name; }
+            var out: string = "(";
+            var i: i32 = 0;
+            while (i + 1 < parts.len()) {
+                if (i > 0) { out = out + ", "; }
+                out = out + parts[i];
+                i = i + 1;
+            }
+            return out + ") => " + parts[parts.len() - 1];
+        }
+    }
     if (util.is_tuple_type_name(name) && slice_unchecked(name, name.len() - 1, name.len()) == ")") {
         return "(" + subst_ty_join(split_top_commas(slice_unchecked(name, 1, name.len() - 1)), ", ", tparams, cts) + ")";
     }
@@ -12242,7 +12267,7 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     // itself is handed back verbatim rather than respelled.
     if (ty.len() > 0 && ty[0] == b'(' && util.contains(ty, "=>")) {
         var fref: TypeRef = parse_type_ref(ty);
-        if (fref.is_fn && fref.array_depth == 0) {
+        if (fref.is_fn) {
             var fcur: Insts = ins;
             var fout: string = "";
             var fchanged: boolean = false;

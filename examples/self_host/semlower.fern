@@ -300,7 +300,7 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
     var out: AstValue[] = [];
     var i: i32 = 0;
     while (i < r.keep.len()) {
-        if (!r.keep[i]) {
+        if (ast_lowered(built, r, i)) {
             var key: string = r.n1[i];
             var params: i32 = 0;
             if (i < mod.funcs.len()) { key = call_key(mod.funcs[i]); params = mod.funcs[i].params.len(); }
@@ -322,6 +322,15 @@ function ast_values(mod: parser.Module, built: semsource.Built, r: Rows): AstVal
         i = i + 1;
     }
     return out;
+}
+
+// Whether row `i` is a body the AST lowering emits. A template's row is not
+// kept, but in a module produced whole its instances stand for it and no body
+// is emitted in its name; under the bisect knobs its erased body stands.
+function ast_lowered(built: semsource.Built, r: Rows, i: i32): boolean {
+    if (r.keep[i]) { return false; }
+    if (i >= built.decls.len() || !built.decls[i].template) { return true; }
+    return sem_ir_only() != "" || sem_ir_skip() != "";
 }
 
 // Whether a function type carries a reference: a parameter or the result
@@ -373,7 +382,7 @@ function ast_built_value(r: Rows, mod: parser.Module, built: semsource.Built, i:
     if (creator.len() == 0) { return ""; }
     var at: i32 = util.index_of_str(r.n1, creator);
     if (at < 0) { at = util.index_of_str(r.n2, creator); }
-    if (at >= 0 && r.keep[at]) { return ""; }
+    if (at >= 0 && !ast_lowered(built, r, at)) { return ""; }
     return "is a function value " + creator + " builds, which the AST lowering defines";
 }
 
@@ -449,7 +458,7 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
     var pending: i32[] = [];
     var i: i32 = 0;
     while (i < r.body.len()) {
-        if (!r.keep[i] && hoisted(r.n1[i])) { pending = pending.append(i); }
+        if (ast_lowered(built, r, i) && hoisted(r.n1[i])) { pending = pending.append(i); }
         i = i + 1;
     }
     var seen: i32[] = [];
@@ -465,6 +474,8 @@ function ast_indirect_cone(r: Rows, mod: parser.Module, built: semsource.Built):
                     report(r.n1[callee], "is reached by a direct call from " + r.n1[row] + ", which the AST lowering calls through a box");
                     r = Rows { ...r, keep: r.keep.with(callee, false) };
                 }
+                // A template never seeds, but an AST-lowered caller calls its
+                // erased body, so the cone continues through it.
                 pending = pending.append(callee);
             }
         }
