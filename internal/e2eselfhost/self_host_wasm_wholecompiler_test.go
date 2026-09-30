@@ -111,7 +111,16 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	if _, se, err := drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir); err != nil {
+	// A host OOM kill (137) on a loaded runner is retried once; the units the
+	// killed run wrote are cache hits the second time. The arena trap (125) is
+	// deterministic, so it is not retried.
+	_, se, err := drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir)
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 137 {
+		t.Logf("-per-module-emit-all was killed (137); retrying once")
+		_, se, err = drive(t, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir)
+	}
+	if err != nil {
 		t.Fatalf("-per-module-emit-all failed: %v\n%s", err, se)
 	}
 	wat, se, err := drive(t, "-link", "-plan", planPath, "-cache-dir", cacheDir)

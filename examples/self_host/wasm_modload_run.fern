@@ -16,22 +16,32 @@
 //   -per-module-emit-all        emit every unit of the link plan into the cache
 //     -cache-dir DIR [-plan F]  in one process, which lowers the program once
 //
-// The cache key is modloader.module_unit_cache_key: a module's own source hash
-// folded with the SIGNATURE hashes of everything it depends on, plus the function
-// window the unit covers, and the whole-program facts lowering reads
-// (irlower.wp_fact_rows, split by module in modloader.module_fact_hashes). That asymmetry is the point — a body-only edit
-// re-emits just that module, while a signature change also invalidates its
-// dependents, whose call-site tagging depends on it. A body edit that moves a
-// fact about a function (a borrow verdict) invalidates that module's dependents
-// the same way; one that moves a type-level reclaim verdict invalidates every unit.
+// Every key starts from a module's own source hash folded with the SIGNATURE
+// hashes of everything it depends on, plus the function window the unit
+// covers. The two lowerings add different things to it.
+//
+// On the AST lowering (FERN_SEM_IR=) the key is modloader.module_unit_cache_key,
+// which adds the whole-program facts lowering reads (irlower.wp_fact_rows,
+// split by module in modloader.module_fact_hashes). A body-only edit re-emits
+// just that module, while a signature change also invalidates its dependents,
+// whose call-site tagging depends on it. A body edit that moves a fact about a
+// function (a borrow verdict) invalidates that module's dependents the same
+// way; one that moves a type-level reclaim verdict invalidates every unit.
+// Producing unit N parses every module to build the whole-program VIEW its side
+// tables need, but LOWERS only module N, and a cache hit skips the lowering
+// along with the emit.
+//
+// On the typed lowering the key is modloader.typed_unit_cache_key, which adds
+// a hash of the unit's lowered bodies (ircore.lowered_key) and of the view the
+// emit reads beyond its dependencies (TypedView.view). That lowering is
+// whole-program: it inlines callees and infers ownership across modules. So a
+// body-only edit re-emits just that module only when it moves no other
+// module's lowered body; an edit to a body an importer inlined re-emits the
+// importer too. Every emit and link lowers the whole program once, and a hit
+// skips only the emit.
+//
 // hit/miss is reported on stderr (one ns per line) so a build orchestrator, or a
 // test, can observe the reuse set; stdout stays exactly the unit text.
-//
-// On the AST lowering (FERN_SEM_IR=), producing unit N parses every module to
-// build the whole-program VIEW its side tables need, but LOWERS only module N,
-// and a cache hit skips the lowering along with the emit. The typed lowering is
-// whole-program, so on it every emit and link lowers the whole program once
-// (see TypedView), and a hit skips only the emit.
 
 import "./util";
 import "./lexer";
@@ -306,9 +316,11 @@ struct TypedView {
     // Module j with its own functions from the view, and their signature hashes.
     mods: parser.Module[],
     sighashes: string[],
-    // A hash of the signatures of the functions no module declares, which any
-    // unit can call.
-    unowned: string,
+    // A hash of what every unit's emit reads beyond its dependencies'
+    // signatures: the signatures of the functions no module declares, which
+    // any unit can call, and the whole struct table, which an op's `decl`
+    // indexes and whose enum owners and type parameters the emit reads.
+    view: string,
 }
 
 function func_key(f: parser.FuncDecl): string {
@@ -375,8 +387,29 @@ function typed_view(parts: flatten.PerModule[], full: parser.Module): TypedView 
     }
     return TypedView {
         im: im, stab: irlower.struct_tab(im.structs), owner: owner, mods: mods, sighashes: sighashes,
-        unowned: util.hash_key(modloader.module_sig_string(parser.Module { ...im, funcs: unowned })),
+        view: util.hash_key(modloader.module_sig_string(parser.Module { ...im, funcs: unowned, structs: [] }) + struct_table_text(im.structs)),
     };
+}
+
+// struct_table_text spells every struct decl in table order, with each part
+// the lowering or the emit can read.
+function struct_table_text(structs: parser.StructDecl[]): string {
+    var parts: string[] = [];
+    for sd in structs {
+        parts = parts.append("st " + sd.name + "<" + list_text(sd.type_params) + ">" + sd.enum_owner
+            + "|" + list_text(sd.derives) + "|" + list_text(sd.variant_field_names) + "|");
+        if (sd.must_consume) { parts = parts.append("mc"); }
+        parts = parts.append("{");
+        for f in sd.fields { parts = parts.append(f.name + ":" + f.type_name + "/" + f.fn_ret + "/" + f.fn_param_types + ","); }
+        parts = parts.append("}");
+    }
+    return util.str_join_chunks(parts);
+}
+
+function list_text(xs: string[]): string {
+    var parts: string[] = [];
+    for x in xs { parts = parts.append(x + ","); }
+    return util.str_join_chunks(parts);
 }
 
 function owned_rows(owner: i32[], idx: i32): i32[] {
@@ -426,7 +459,7 @@ function typed_unit(tv: TypedView, whole: irlower.LowerResult[], idx: i32, lo: i
 function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[], tv: TypedView, u: TypedUnit, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
     if (cache_dir.len() == 0) { return ""; }
     var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
-    var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_key(u.cache) + ":" + tv.unowned);
+    var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_key(u.cache) + ":" + tv.view);
     if (key.len() == 0) { return ""; }
     return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__t" + util.hash_key(key) + ".wu";
 }
