@@ -1084,7 +1084,11 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
   // written slots only: a slot no arm wrote holds the same value on
   // every path.
   var slot_mark: i32[] = filled(nslots, 0 - 1);
-  var slot_pos: i32[] = filled(nslots, 0 - 1);  // scratch: a slot's row in the table being built
+  // slot_pos is a merge's scratch: -1 outside one, else the slot's entry in
+  // the table that merge builds (a dl_* row, a tl_* index or tl_n plus a
+  // dl_* row at an if's end, an lp_* row at a loop's). A merge clears the
+  // range it set before it finishes, so the next one starts from -1.
+  var slot_pos: i32[] = filled(nslots, 0 - 1);
   var dl_slot: i32[] = [];
   var dl_old: i32[] = [];
   var dl_prev: i32[] = [];
