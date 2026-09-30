@@ -9747,7 +9747,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         var vname: string = ctor_variant_name(c.callee, funcs.enums);
         if (vname.len() > 0) {
             var owner: i32 = genum_owner_of_variant(funcs.enums, vname);
-            if (owner < 0) { return binds; }
+            if (owner < 0) { return builtin_variant_arg_binds(pattern, c, env, funcs, vars, binds); }
             var ed: EnumDecl = funcs.enums[owner];
             var own: MEnv = me_variant_binds(ed, vname, c.args, env, funcs.structs, funcs);
             if (str_list_contains(vars, pattern)) {
@@ -9771,6 +9771,27 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         }
     }
     return binds;
+}
+
+// builtin_variant_arg_binds is variant_arg_binds for the builtin `Some`, `Ok`
+// and `Err`: the payload binds the matching argument of an `Option[..]` or
+// `Result[..]` parameter, and the other half stays for another argument.
+function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
+    if (c.args.len() != 1) { return binds; }
+    var slot: i32 = 0 - 1;
+    var base: string = "";
+    if let ast.ExprIdent(cid) = c.callee {
+        if (cid.name == "Some") { base = "Option"; slot = 0; }
+        if (cid.name == "Ok") { base = "Result"; slot = 0; }
+        if (cid.name == "Err") { base = "Result"; slot = 1; }
+    }
+    var pb: i32 = first_bracket(pattern);
+    if (slot < 0 || pb <= 0 || slice_unchecked(pattern, 0, pb) != base) { return binds; }
+    var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
+    if (slot >= pargs.len()) { return binds; }
+    var pt: string = mono_infer(c.args[0], env, funcs);
+    if (pt.len() == 0) { return binds; }
+    return bind_unify(pargs[slot], pt, vars, binds);
 }
 
 // func_ret_of returns the return type of a plain function by name.
@@ -10269,6 +10290,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
             if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
+            // A tuple index reads that element of a tuple-typed value.
+            if (util.is_all_digits(fa.field) && util.is_tuple_type_name(ot)) {
+                var elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1));
+                var k: i32 = util.digits_to_i32(fa.field);
+                if (k >= elems.len()) { return ""; }
+                return elems[k];
+            }
             var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
             if (mono_ty_mentions_var(ft)) { return ""; }
             return ft;
