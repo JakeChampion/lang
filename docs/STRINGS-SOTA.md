@@ -21,6 +21,12 @@ characters in a set do not multiply a match. For example,
 `"éê".without_chars("é")` returns `"ê"`; it previously removed the shared
 UTF-8 lead byte from both characters, leaving an invalid string.
 
+Malformed input from legacy or explicitly unchecked APIs follows the existing
+maximal-subpart decoder: each ill-formed unit compares as U+FFFD in both the
+source and the set. Forward and reverse trimming use the same units. Retained
+units keep their original bytes, so these operations preserve valid input but
+do not repair or validate malformed input.
+
 `StringCharacterSetProgram` exercises exact results and UTF-8 preservation
 through the bootstrap interpreter and native/wasm backends, and through the
 primary self-host CLI. Raw-byte methods such as `reverse_bytes` and
