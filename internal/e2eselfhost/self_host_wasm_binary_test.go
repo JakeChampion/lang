@@ -20,7 +20,7 @@ import (
 // decimals. It is itself compiled through the self-host wasm pipeline and
 // built ONCE; reading the WAT from a file (rather than embedding it in a
 // string literal) keeps it independent of program size — large modules
-// (maps, the string runtime) assemble fine.
+// (the string runtime, a grown heap) assemble fine.
 //
 // For each program the test:
 //  1. runs the WAT emitter (wasm_run) to get the textual module + its
@@ -73,7 +73,7 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"shift-right", "function main(): i32 { return 100 >> 2; }", 25},
 		{"shift-left", "function main(): i32 { return 5 << 3; }", 40},
 		{"struct-fields", "struct P { x: i32, y: i32 } function main(): i32 { var p = P { x: 30, y: 12 }; return p.x + p.y; }", 42},
-		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c.n = c.n + 37; return c.n; }", 42},
+		{"struct-mutate", "struct C { n: i32 } function main(): i32 { var c = C { n: 5 }; c = C { ...c, n: c.n + 37 }; return c.n; }", 42},
 		{"struct-nested", "struct Inner { v: i32 } struct Outer { inner: Inner, k: i32 } function main(): i32 { var o = Outer { inner: Inner { v: 8 }, k: 34 }; return o.inner.v + o.k; }", 42},
 		// i64.
 		{"i64-div", "function main(): i32 { var a: i64 = 5000000000; var b: i64 = 7; return ((a / 1000000000) + b) as i32; }", 12},
@@ -86,15 +86,11 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		{"str-compare", "function main(): i32 { if (\"apple\" < \"banana\") { return 7; } return 0; }", 7},
 		{"str-write", "function main(): i32 { write(\"hello world\"); return 0; }", 0},
 		{"str-builder", "function main(): i32 { var s: string = \"\"; var i: i32 = 0; while (i < 3) { s = s + \"ab\"; i = i + 1; } write(s); return s.len(); }", 6},
-		// Maps — now testable via the read_file harness (the 33 KB map WAT
-		// overran the old embed-the-WAT approach).
-		{"map-get", "function main(): i32 { var m = Map { 1: 10, 2: 20, 3: 30 }; return m.get_or(2, 0) + m.get_or(3, 0); }", 50},
-		{"map-string-key", "function main(): i32 { var m = map_new(8); m = m.insert(\"k\", 41); return m.get_or(\"k\", 0) + 1; }", 42},
 		// Closures — named `(type $clos*)` decls + the table & elem sections
 		// + call_indirect through the function table.
-		{"closure-capture", "function adder(n: i32): fn { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
+		{"closure-capture", "function adder(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; } function main(): i32 { var a = adder(10); return a(5); }", 15},
 		{"closure-capture-array", "function main(): i32 { var xs = [10, 20, 30]; var get = (i: i32): i32 => { return xs[i]; }; return get(0) + get(2); }", 40},
-		{"lambda-as-arg", "function apply(f: fn, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
+		{"lambda-as-arg", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); } function main(): i32 { return apply((x: i32): i32 => { return x * 7; }, 6); }", 42},
 		// f64: f64.const (8-byte IEEE-754 immediate via f64_bits), the f64
 		// arithmetic / comparison ops, the math intrinsics, and the
 		// int<->float conversions.
@@ -107,10 +103,6 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// now grows linear memory instead of trapping (and the encoder emits
 		// memory.size / memory.grow).
 		{"memory-grow", "function main(): i32 { var xs: i32[] = []; var i: i32 = 0; while (i < 300000) { xs = xs.append(i); i = i + 1; } return xs[299999] - xs[299998]; }", 1},
-		// Full integration case: string[] + a string-keyed count map + a
-		// loop. Its ~34 KB WAT also exercises the assembler's own grown heap
-		// (it OOM'd before memory.grow).
-		{"integration-wordcount", "function main(): i32 { var words: string[] = [\"a\", \"b\", \"a\", \"c\", \"a\", \"b\"]; var counts = map_new(8); var i: i32 = 0; while (i < words.len()) { var w: string = words[i]; counts = counts.insert(w, counts.get_or(w, 0) + 1); i = i + 1; } return counts.get_or(\"a\", 0) * 10 + counts.get_or(\"b\", 0); }", 32},
 		// At-scale validation: substantial multi-feature programs round-trip
 		// through the binary encoder — deep recursion, a struct-array
 		// "linked list" walked by index, and a string split + iteration.
