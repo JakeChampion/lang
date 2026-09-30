@@ -2267,7 +2267,26 @@ function captures(c: ast.ExprCall, s: State, types: typeinfo.Type[]): Captured {
 function variant_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, expected: typeinfo.Type): Value {
     var whole: typeinfo.Type = settled_union(settled(literal_union(e, s, expected)), name, c.args, s);
     if (names_variant(s, whole, name)) { return variant(name, whole, c.args, s); }
+    if (c.args.len() == 1 && names_member(s, whole, name)) { return member_literal(name, whole, c.args[0], s); }
+    if (c.args.len() == 1 && names_member(s, expected, name)) { return member_literal(name, expected, c.args[0], s); }
     return refused(s, "call target has no semantic contract: " + name);
+}
+
+// A name is a member literal when the union of structs it is written against
+// (`type Expr = Add | Mul`) has a member of that name.
+function names_member(s: State, whole: typeinfo.Type, name: string): boolean {
+    var owner: string = union_name(whole);
+    if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) { return false; }
+    return checker.variant_shape_sig(s.scope, name, owner).name.len() > 0;
+}
+
+// `Add(a)` builds the member from the struct value it is given, as an
+// implicit wrap of `a` does.
+function member_literal(name: string, whole: typeinfo.Type, written: ast.Expr, s: State): Value {
+    var v: Value = expr(written, s, checked(written, s));
+    if (!v.s.ok) { return v; }
+    if (struct_name(v.s.values[v.id]) != name) { return refused(v.s, "union member literal"); }
+    return define(v.s, ssasem.variant_up(), [v.id], 0, name, whole);
 }
 
 // A destination that names a builtin union but settles nothing in it is no
