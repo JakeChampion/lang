@@ -103,21 +103,18 @@ func TestSelfHostReaderX86_64(t *testing.T) {
 
 // TestSelfHostStdIoBundleX86_64 is the final gate of the Reader work:
 // the self-hosted compiler compiles the REAL internal/stdlib/std/io.fern
-// — unmodified — bundled as a module behind an `import "./io"`, with the
-// qualified `io.read_all_stdin()` call rewritten by flatten. This proves
+// — unmodified, with its whole import closure — behind an
+// `import "std/io"`, with the qualified `io.read_all_stdin()` call rewritten
+// by flatten. This proves
 // the emitter handles std/io's actual Reader / Option / match source,
 // not just a hand-written reduction of it, so a program can use std/io
 // through the self-hosted toolchain.
 func TestSelfHostStdIoBundleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 
-	// The unmodified std/io source vendored as module "io", plus a main
-	// that imports it and echoes stdin through io.read_all_stdin(). The
-	// loader vendors std/io.fern as ./io and skips its own unresolved
-	// std/ imports — the exact set the ///MODULE bundle hand-picked.
-	mainMod := "import \"./io\";\n" +
+	mainMod := "import \"std/io\";\n" +
 		"function main(): i32 { write(io.read_all_stdin()); return 0; }\n"
-	progAsm, progDir := compileStdProgModload(t, runner, driverBin, []string{"io"}, mainMod)
+	progAsm, progDir := compileSourceModload(t, runner, driverBin, mainMod)
 	if len(progAsm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the std/io bundle")
 	}

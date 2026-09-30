@@ -1040,7 +1040,9 @@ func emitStrNormalize(body []byte, idxs map[string]uint32, dataLocal, lenLocal, 
 //     preopen.
 //  3. On errno != 0: build IoError, wrap in Some(IoError),
 //     return.
-//  4. Loop fd_write until all content bytes drained.
+//  4. Loop fd_write until all content bytes drained. On errno != 0,
+//     build Err(IoError), fd_close, return it. A zero-byte write with
+//     bytes still outstanding ends the loop and answers Ok.
 //  5. fd_close.
 //  6. Return None (4-byte alloc, tag = 1).
 //
@@ -1174,7 +1176,33 @@ func buildWriteFileBody(idxs map[string]uint32) []byte {
 		body = inst.InstI32Const(body, 12)
 		body = numeric.InstI32Add(body)
 		body = inst.InstCall(body, fdWrite)
-		body = inst.InstDrop(body) // ignore errno mid-stream (matches WAT)
+		body = inst.InstLocalTee(body, 5) // $errno
+
+		// if errno != 0 { build Err(IoError); fd_close; return it }
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstLocalGet(body, 5) // errno
+			body = inst.InstLocalGet(body, 0) // path_data
+			body = inst.InstLocalGet(body, 1) // path_len
+			body = inst.InstCall(body, buildIoErr)
+			body = inst.InstLocalSet(body, 15) // $err_ptr
+			body = inst.InstI32Const(body, 8)
+			body = inst.InstCall(body, allocRc1)
+			body = inst.InstLocalTee(body, 16) // $result
+			body = inst.InstI32Const(body, 1)  // tag = 1 (Err)
+			body = memory.InstI32Store(body, 2, 0)
+			body = inst.InstLocalGet(body, 16)
+			body = inst.InstI32Const(body, 4)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalGet(body, 15)
+			body = memory.InstI32Store(body, 2, 0)
+			body = inst.InstLocalGet(body, 6)
+			body = inst.InstCall(body, fdClose)
+			body = inst.InstDrop(body)
+			body = inst.InstLocalGet(body, 16)
+			body = inst.InstReturn(body)
+		}
+		body = inst.InstEnd(body)
 
 		// nwritten = mem[scratch+12]
 		body = inst.InstLocalGet(body, 4)

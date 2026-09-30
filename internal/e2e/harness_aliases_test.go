@@ -24,7 +24,6 @@ var compileAndRunWasmbinMain = e2eharness.CompileAndRunWasmbinMain
 var compileAndRunX86_64 = e2eharness.CompileAndRunX86_64
 var compileFilesModload = e2eharness.CompileFilesModload
 var compileSourceModload = e2eharness.CompileSourceModload
-var compileStdProgModload = e2eharness.CompileStdProgModload
 var componentCoreSection = e2eharness.ComponentCoreSection
 
 const conformanceCases = e2eharness.ConformanceCases

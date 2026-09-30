@@ -34,7 +34,7 @@ function main(): i32 {
 // self-hosted x86-64 compiler and asserts the runtime exit code (42).
 func TestSelfHostWideIntReceiverMethodsX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
-	asm, progDir := compileStdProgModload(t, runner, driverBin, []string{}, wideRecvMain)
+	asm, progDir := compileSourceModload(t, runner, driverBin, wideRecvMain)
 	progBin := buildBin(t, gcc, progDir, "widerecv", asm)
 	var cmd *exec.Cmd
 	if len(runner) == 0 {
