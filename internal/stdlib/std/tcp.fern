@@ -124,8 +124,10 @@ pub function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpRespon
 // after the signal, since whoever routes to it removes it in parallel,
 // the path it answers 503 from the signal on (a readiness probe; "" for
 // none), how long the requests in flight get to finish once the
-// listener is closed before the loop gives up on them, and the parser's
-// caps on each request (`http.HttpLimits`).
+// listener is closed before the loop gives up on them, the parser's
+// caps on each request (`http.HttpLimits`), and whether the parent's exit
+// starts that shutdown too (`async.Driver.watch_parent`), which the
+// supervisor sets for its workers.
 pub struct ServeOptions {
     backlog: i32,
     reuse_port: boolean,
@@ -141,6 +143,7 @@ pub struct ServeOptions {
     readiness_path: string,
     drain_deadline: Duration,
     limits: http.HttpLimits,
+    stop_with_parent: boolean,
 }
 
 // serve_options() — what `tcp_serve` uses: a backlog of 128, the port held
@@ -148,7 +151,7 @@ pub struct ServeOptions {
 // 1000 requests per connection, 1024 connections open and 100 of them per
 // client, a worker per processing unit, and the parser's `http_limits()`.
 pub function serve_options(): ServeOptions {
-    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits() };
+    return ServeOptions { backlog: 128, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false };
 }
 
 // tcp_serve_opts(port, opts, handler) — `tcp_serve` with the listener and
@@ -1067,6 +1070,16 @@ function __stop_begin(stop: __Stop, sig: i32): __Stop {
     return __Stop { ...stop, at: monotonic_ns(), sig: sig };
 }
 
+// __serve_stop_sources(drv, opts) — the loop's stop sources watched:
+// SIGTERM, SIGINT and, when `opts.stop_with_parent`, the parent's exit,
+// which is a SIGTERM already delivered when the parent is gone.
+function __serve_stop_sources(drv: async.RealDriver, opts: ServeOptions): __Stop {
+    drv.watch_signal(15);
+    drv.watch_signal(2);
+    if (opts.stop_with_parent && drv.watch_parent() == 0 - 3) { return __stop_begin(__stop_none(), 15); }
+    return __stop_none();
+}
+
 // __stop_signal(fd) — the signal a wait's event reports, when it is one
 // that stops a server (SIGTERM or SIGINT, reported as -15 and -2), else 0.
 function __stop_signal(fd: i32): i32 {
@@ -1248,9 +1261,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
     var accepting: boolean = true;
-    var stop: __Stop = __stop_none();
-    drv.watch_signal(15);
-    drv.watch_signal(2);
+    var stop: __Stop = __serve_stop_sources(drv, opts);
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
@@ -1333,9 +1344,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
     var watched: i32 = drv.watch(listener, __listener_interest(opts));
     if (watched < 0) { return watched; }
     var accepting: boolean = true;
-    var stop: __Stop = __stop_none();
-    drv.watch_signal(15);
-    drv.watch_signal(2);
+    var stop: __Stop = __serve_stop_sources(drv, opts);
     var plat: Platform = __host_platform(drv.handle());
     var conns: __Conns = __Conns { fds: [], bufs: [], offs: [], pending: [], deadlines: [], keep: [], served: [], backlog: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], tails: [] };
     var scratch: u8[] = __recv_scratch();
@@ -1535,7 +1544,8 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
 // result where there is no fork at all (ENOSYS: the interpreter), which
 // serves single-process instead. The child runs `run` over the
 // inherited listener, or one of its own where `listener` is none
-// (`__worker_listener`), and exits with its code rather than returning
+// (`__worker_listener`), shuts down when the supervisor dies
+// (`stop_with_parent`), and exits with its code rather than returning
 // into a second supervision loop; the reactor is the parent's, shared
 // across the fork, so the child only closes its copy, since an unwatch
 // would take the parent's signals out of the set the parent waits on.
@@ -1556,8 +1566,8 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run:
         drv.close();
         var own: i32 = __worker_listener(port, listener, opts);
         if (own < 0) { exit(__listen_failed(port, own)); }
-        var loop_opts: ServeOptions = opts;
-        if (listener < 0) { loop_opts = ServeOptions { ...opts, workers: 1 }; }
+        var loop_opts: ServeOptions = ServeOptions { ...opts, stop_with_parent: true };
+        if (listener < 0) { loop_opts = ServeOptions { ...loop_opts, workers: 1 }; }
         exit(run(own, loop_opts));
         return (sup, 0);
     }

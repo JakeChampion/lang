@@ -236,6 +236,10 @@ impl async.Driver for Sim {
     function unwatch_signal(self: Self, sig: i32): i32 {
         return self.unwatch(0 - sig);
     }
+    // A simulated process's parent outlives it.
+    function watch_parent(self: Self): i32 {
+        return 0;
+    }
     function close(self: Self): i32 {
         return 0;
     }

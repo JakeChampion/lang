@@ -1373,7 +1373,11 @@ loop and `std/fetch` the client.
   `limits` (`http.http_limits()`) are the parser's caps on each request,
   so `ServeOptions { ...serve_options(), limits: http.HttpLimits {
   ...http.http_limits(), body: 65536 } }` refuses a body past 64 KiB with
-  413 before the handler runs.
+  413 before the handler runs. `stop_with_parent` (false) starts the same
+  shutdown when the process's parent exits, as a SIGTERM would; each
+  worker `tcp_serve_supervised_opts` forks has it set, so a supervisor
+  killed outright (SIGKILL, a crash) takes its workers down rather than
+  leaving them serving as orphans.
   A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
   and the error's text on stderr, and the entry returns 98 (every
   `tcp_serve*` entry, and a supervised worker that binds its own).
@@ -1575,6 +1579,10 @@ old `concurrent { … }` / `await` keyword surface.
   signal a readiness event, reported as the pair (-sig, 1) and no longer
   ending the process (-ENOTSUP on wasm), `unwatch_signal(sig)` restores
   its default; in the sim `ready_at(-sig, at_ms, 1)` scripts a delivery.
+  `watch_parent()` reports the parent's exit the way a watched SIGTERM is
+  reported, (-15, 1): -ESRCH when the parent is already gone, found
+  reparented to init (a subreaper other than init, Linux, hides that),
+  -ENOTSUP on wasm; the sim's parent never exits.
   `std/tcp`'s serve loops run on it.
 
 ### `std/platform`

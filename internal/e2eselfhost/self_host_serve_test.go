@@ -92,6 +92,25 @@ func TestSelfHostSupervisedServeShutsDownAfterBurst(t *testing.T) {
 	e2eharness.CheckShutdownAfterBurst(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
+func TestSelfHostSupervisedServeWorkersStopWithSupervisor(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.OrphanedWorkersServerSource(port))
+	cmd := binCmd(runner, bin)
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckWorkersStopWithSupervisor(t, cmd, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostWatchParentGone(t *testing.T) {
+	bin, runner := selfHostServer(t, e2eharness.ParentGoneProbe())
+	cmd := binCmd(runner, bin)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckParentGone(t, cmd, out)
+}
+
 func TestSelfHostServeResponseRateCutsStalledReader(t *testing.T) {
 	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.DataRateServerSource(port))

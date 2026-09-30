@@ -3196,7 +3196,7 @@ pub function reactor_ctl_func(): string {
     o = o + "      (call $__fern_raw_free (local.get $ents) (i32.mul (local.get $cap) (i32.const 16)))\n";
     o = o + "      (call $__fern_raw_free (local.get $r) (i32.const 12))\n";
     o = o + "      (return (i32.const 0))))\n";
-    o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 2)) (then (return (i32.const -58))))\n";
+    o = o + "    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 4)) (i32.const 3)) (then (return (i32.const -58))))\n";
     o = o + "    (if (i32.ge_u (i32.sub (local.get $op) (i32.const 1)) (i32.const 2)) (then (return (i32.const -28))))\n";
     o = o + "    (if (i32.eq (local.get $op) (i32.const 1)) (then (local.set $interest (i32.and (local.get $arg) (i32.const 3)))))\n";
     o = o + "    (local.set $kind (i32.load offset=12 (local.get $fd)))\n";
