@@ -1355,6 +1355,9 @@ loop and `std/fetch` the client.
   nothing in flight and gives the rest `drain_deadline` (30 s) from the
   signal to finish before closing them; the loop returns 0 once every
   connection is gone and 1 when it cut one off, so `main` exits with it.
+  A listener it cannot bind is `serve: cannot listen on 0.0.0.0:PORT:`
+  and the error's text on stderr, and the entry returns 98 (every
+  `tcp_serve*` entry, and a supervised worker that binds its own).
   A listener the process was started with (`LISTEN_FDS` at least 1,
   descriptor 3) is served instead of a fresh one.
 - `tcp_serve_shutdown(port, opts, handler, shutdown)` and

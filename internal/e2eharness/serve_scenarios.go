@@ -753,3 +753,48 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 		t.Fatalf("/ok was answered %v before /slow finished, so the one worker did not run /slow to completion first", r.done.Sub(okDone))
 	}
 }
+
+// ListenFailureServerSource serves on `port` through the single loop
+// (`tcp_serve_opts`) or the supervisor (`tcp_serve_supervised_opts`).
+func ListenFailureServerSource(port int, supervised bool) string {
+	entry := "tcp_serve_opts"
+	if supervised {
+		entry = "tcp_serve_supervised_opts"
+	}
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    return tcp.%s(%d, tcp.serve_options(), handle);
+}
+`, entry, port)
+}
+
+// CheckListenFailure runs a server built from ListenFailureServerSource
+// on a port something else holds: it exits 98, and stderr names the
+// address and the error in words.
+func CheckListenFailure(t *testing.T, cmd *exec.Cmd, port int) {
+	t.Helper()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	done := make(chan error, 1)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("the server did not exit on a port already in use\n--- stderr ---\n%s", stderr.String())
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 98 {
+		t.Errorf("exit code %d, want 98\n--- stderr ---\n%s", code, stderr.String())
+	}
+	want := fmt.Sprintf("serve: cannot listen on 0.0.0.0:%d: Address already in use", port)
+	if !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr.String())
+	}
+}

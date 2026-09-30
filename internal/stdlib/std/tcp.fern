@@ -7,8 +7,9 @@
 // now) will be plumbed per docs/PLATFORM-RESEARCH.md Rec §1;
 // for Phase 1 it carries a single `version: i32` placeholder
 // and handler code typically ignores it.
-// Returns -errno when the listener can't be bound (e.g.
-// EADDRINUSE); on success the loop runs until SIGTERM, then
+// When the listener can't be bound (EADDRINUSE, say) the address and the
+// error's text go to stderr and the entry returns 98; otherwise the loop
+// runs until SIGTERM, then
 // drains and returns `__stop_code`: 0 when every request in
 // flight was answered, 1 when one was cut off.
 //
@@ -76,6 +77,7 @@
 
 import "std/async";
 import "std/http";
+import "std/net";
 import "std/time";
 import "std/i64";
 // core/int — int_to_string for the supervisor's worker-death log
@@ -159,7 +161,7 @@ pub function tcp_serve_opts(port: i32, opts: ServeOptions, handler: (HttpRequest
 pub function tcp_serve_shutdown(port: i32, opts: ServeOptions, handler: (HttpRequest, Platform) => HttpResponse, shutdown: (string) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
-        return listener;
+        return __listen_failed(port, listener);
     }
     return __serve_loop(listener, handler, opts, shutdown);
 }
@@ -176,6 +178,14 @@ function __serve_listener(port: i32, opts: ServeOptions): i32 {
     // connection, deaf to SIGTERM.
     if (listener >= 0) { tcp_socket_ctl(listener, 3, 1); }
     return listener;
+}
+
+// __listen_failed(port, r) — a listener refused with `r` (-errno): the
+// address and the error's text on stderr, and 98, the exit code a serve
+// entry answers for it.
+function __listen_failed(port: i32, r: i32): i32 {
+    eprint("serve: cannot listen on 0.0.0.0:" + int.int_to_string(port) + ": " + net.error_from_errno(r).message());
+    return 98;
 }
 
 // __listener_of(port, opts) — the listener handed in through LISTEN_FDS,
@@ -247,7 +257,7 @@ pub function tcp_serve_with_opts[S](port: i32, opts: ServeOptions, init: S, hand
 pub function tcp_serve_with_shutdown[S](port: i32, opts: ServeOptions, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), shutdown: (string, S) => void): i32 {
     var listener: i32 = __serve_listener(port, opts);
     if (listener < 0) {
-        return listener;
+        return __listen_failed(port, listener);
     }
     return __serve_loop_with(listener, init, handler, opts, shutdown);
 }
@@ -1444,7 +1454,7 @@ function __supervise(port: i32, opts: ServeOptions, run: (i32, ServeOptions) => 
     if (!__per_worker_listeners(opts)) {
         listener = __serve_listener(port, opts);
         if (listener < 0) {
-            return listener;
+            return __listen_failed(port, listener);
         }
     }
     var workers: i32 = opts.workers;
@@ -1516,17 +1526,14 @@ function __supervisor_fork(drv: async.RealDriver, port: i32, listener: i32, run:
         drv.unwatch_signal(15);
         drv.close();
         var single: i32 = __worker_listener(port, listener, opts);
-        if (single < 0) { return (sup, single); }
+        if (single < 0) { return (sup, __listen_failed(port, single)); }
         return (sup, run(single, ServeOptions { ...opts, workers: 1 }));
     }
     if (pid < 0) { return (sup, pid); }
     if (pid == 0) {
         drv.close();
         var own: i32 = __worker_listener(port, listener, opts);
-        if (own < 0) {
-            eprint("tcp_serve_supervised: worker could not bind port " + int.int_to_string(port) + ": " + int.int_to_string(own));
-            exit(1);
-        }
+        if (own < 0) { exit(__listen_failed(port, own)); }
         var loop_opts: ServeOptions = opts;
         if (listener < 0) { loop_opts = ServeOptions { ...opts, workers: 1 }; }
         exit(run(own, loop_opts));
