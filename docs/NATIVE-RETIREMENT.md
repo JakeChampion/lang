@@ -58,12 +58,12 @@ targets).
 | #10756 (the mechanics landed in #10821; the finalizer timing is open) | typed lowering: `impl mem.Drop` finalizers never run | 8 |
 | #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
 | #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
-| #10763 (closed by this change after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
-| #10757 (closed after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
+| #10763 (closed by #10828 after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
+| #10757 (closed by #10835 after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
 | #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
-| #10759 (closed after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
+| #10759 (closed by #10835 after this measurement) | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10816 (split from #10767) | checker: an impl record names its trait without the trait's module, so same-named traits collide (E021) and `dyn cmp.Display` matches no impl (E034) | 4 |
 | #10764 | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
 | #10765 (the `async` half closed by #10804) | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
@@ -72,7 +72,7 @@ targets).
 | #10761 | typed lowering: reading a `str` map value | 3 |
 | #10769 | wasm: no instruction selection for `raw_store8` and `write_some`; one module fails wasmtime's compile | 3 |
 | #10773 | arm64: the termios round trip fails at step 21 | 2 |
-| #10758 (closed by this change after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
+| #10758 (closed by #10828 after this measurement; the cause was the AST folder, not the typed lowering) | typed lowering: unary minus on u32 | 1 |
 | #10772 | x86-64: the in-process assembler cannot encode an instruction in a string-payload `match`, and names nothing | 1 |
 
 The three fuzz differentials (`TestDifferential_LangsmithMain`,
