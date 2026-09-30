@@ -290,7 +290,7 @@ int main(void){
 func parseStatfsOffsets(t *testing.T, fn string) map[string]int64 {
 	t.Helper()
 	body := fernFunctionBody(t, fn)
-	row := regexp.MustCompile(`if \(name == "([a-z_]+)"\) \{ return "(\d+)"; \}`)
+	row := regexp.MustCompile(`if \(name == "([a-z_]+)"\)\s*\{\s*return "(\d+)";\s*\}`)
 	out := map[string]int64{}
 	for _, m := range row.FindAllStringSubmatch(body, -1) {
 		n, err := strconv.ParseInt(m[2], 10, 64)
