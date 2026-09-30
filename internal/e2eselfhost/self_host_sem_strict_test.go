@@ -92,8 +92,9 @@ function main(): i32 {
 		t.Fatalf("a refused module without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 
-	// A generic struct over a variable no parameter binds keeps the function
-	// erased, and its typed instances build the one `Slot__0_T` (#10824).
+	// A function value whose type no declaration spells (`fs[0]`) keys no
+	// clone, so a generic bound only through a fn-typed parameter stays erased
+	// and its typed instances build the one `Slot__0_T` (#10827).
 	unbound := `struct Slot[T] { v: T }
 
 pub function hold[T](f: () => T): i32 {
@@ -102,11 +103,15 @@ pub function hold[T](f: () => T): i32 {
 }
 
 function main(): i32 {
-    return hold((): i32 => 7) + hold((): string => "ab" + "c");
+    var fs: (() => i32)[] = [(): i32 => 7];
+    return hold(fs[0]) + hold((): string => "x");
 }
 `
 	if code, out := compile(unbound, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") {
-		t.Fatalf("a generic struct over an unbound variable: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+		t.Fatalf("a generic over a variable an unspelled function value carries: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+	}
+	if code, out := compile(unbound, "FERN_SEM_IR_STRICT="); code != 0 {
+		t.Fatalf("the same without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 
 	// A stream handle's `fd` is the handle's own descriptor, read as the i32

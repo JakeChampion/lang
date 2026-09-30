@@ -8033,6 +8033,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
                     if (token_at_paren_depth0(params[dpj].type_name, dn) || token_in_tuple_param(params[dpj].type_name, dn)) { dbind = true; }
                     dpj = dpj + 1;
                 }
+                // A var only a fn-typed param carries binds through infer_inst's
+                // fn-param clauses, from the lambda or function passed for it.
+                if (has_fn_param_arg_var(params, dn) || has_fn_param_ret_var(params, dn)) { dbind = true; }
                 if (!dbind) { all_bindable = false; }
             }
             di = di + 1;
@@ -9577,6 +9580,10 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
             if (et.len() > 0) { return me_fn_ret_spelling(et); }
             return func_ret_of(funcs.decls, fid.name);
         },
+        // A call returning a function, or a function-typed field: the
+        // declaration spells the value's signature in its sidecars.
+        ast.ExprCall(_) => { return callable_ret_spelling(fn_value_spelling(e, env, funcs)); },
+        ast.ExprFieldAccess(_) => { return callable_ret_spelling(fn_value_spelling(e, env, funcs)); },
         _ => { return ""; }
     }
     return "";
@@ -9748,9 +9755,58 @@ function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
             }
             return func_param_types_of(funcs.decls, fid.name);
         },
+        ast.ExprCall(_) => { return callable_param_spellings(fn_value_spelling(e, env, funcs)); },
+        ast.ExprFieldAccess(_) => { return callable_param_spellings(fn_value_spelling(e, env, funcs)); },
         _ => { return none; }
     }
     return none;
+}
+
+// fn_value_spelling is the callable spelling `(P, …) => R` of a function value
+// a call to a top-level function returns, or a function-typed struct field
+// holds, read off the declaration's sidecars; "" for anything else.
+function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
+    if let ast.ExprCall(c) = e {
+        if let ast.ExprIdent(id) = c.callee {
+            if (env.elook(id.name).len() > 0) { return ""; }
+            for fd in funcs.decls {
+                if (fd.name == id.name && fd.receiver_type.len() == 0 && fd.ret_type == "fn" && fd.ret_fn_ret.len() > 0) {
+                    return "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
+                }
+            }
+        }
+    }
+    if let ast.ExprFieldAccess(fa) = e {
+        var owner: string = mono_infer(fa.obj, env, funcs);
+        for sd in funcs.structs {
+            if (sd.name == owner) {
+                for f in sd.fields {
+                    if (f.name == fa.field && f.type_name == "fn" && f.fn_ret.len() > 0) { return "(" + f.fn_param_types + ") => " + f.fn_ret; }
+                }
+            }
+        }
+    }
+    return "";
+}
+
+// callable_ret_spelling is the result of a callable spelling.
+function callable_ret_spelling(t: string): string {
+    if (t.len() == 0) { return ""; }
+    var r: TypeRef = parse_type_ref(t);
+    if (!r.is_fn || r.args.len() == 0) { return ""; }
+    return render_type_ref(r.args[r.args.len() - 1]);
+}
+
+// callable_param_spellings is the parameter list of a callable spelling.
+function callable_param_spellings(t: string): string[] {
+    var none: string[] = [];
+    if (t.len() == 0) { return none; }
+    var r: TypeRef = parse_type_ref(t);
+    if (!r.is_fn) { return none; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i + 1 < r.args.len()) { out = out.append(render_type_ref(r.args[i])); i = i + 1; }
+    return out;
 }
 
 // func_param_types_of reads a top-level function's declared parameter types.
@@ -12038,7 +12094,72 @@ function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean 
 }
 
 pub function monomorphize_module(mod: Module): Module {
-    var funcs: FuncDecl[] = promote_erased_forwarders(mod.funcs);
+    var erased: string[] = [];
+    var out: Module = monomorphize_module_with(mod, erased);
+    var stranded: string[] = stranded_fn_promotions(out.funcs, erased);
+    while (stranded.len() > 0) {
+        erased = util.append_all(erased, stranded);
+        out = monomorphize_module_with(mod, erased);
+        stranded = stranded_fn_promotions(out.funcs, erased);
+    }
+    return out;
+}
+
+// A generic promoted because a fn-typed param binds its var is only as
+// cloneable as its call sites are inferable: a function value whose type no
+// declaration spells (`fs[i]`, a match arm) keys nothing, and the call would
+// name the dropped template. Such a template is left erased, as it was before
+// the fn-param binding promoted it, and the whole pass runs again.
+function stranded_fn_promotions(funcs: FuncDecl[], erased: string[]): string[] {
+    var out: string[] = [];
+    for t in funcs {
+        if (!is_bg_template(t) || !fn_param_promoted(t) || util.has_str(erased, t.name)) { continue; }
+        var scan: NameScan = NameScan { name: t.name, hit: false };
+        for fd in funcs {
+            if (is_bg_template(fd)) { continue; }
+            for st in fd.body { scan = astwalk.fold_stmt_nodes(st, scan, name_scan_stmt, name_scan_expr, astwalk.descend_all); }
+        }
+        if (scan.hit) { out = out.append(t.name); }
+    }
+    return out;
+}
+
+// Every var promoted rather than declared bounded, and one bindable only
+// through a fn-typed param.
+function fn_param_promoted(fd: FuncDecl): boolean {
+    for b in fd.bound_traits { if (b.len() > 0) { return false; } }
+    for v in fd.type_params {
+        var plain: boolean = false;
+        for pd in fd.params { if (token_at_paren_depth0(pd.type_name, v) || token_in_tuple_param(pd.type_name, v)) { plain = true; } }
+        if (!plain) { return true; }
+    }
+    return false;
+}
+
+struct NameScan { name: string, hit: boolean }
+
+function name_scan_stmt(st: ast.Stmt, own acc: NameScan): NameScan { return acc; }
+
+function name_scan_expr(e: ast.Expr, own acc: NameScan): NameScan {
+    if (acc.hit) { return acc; }
+    if let ast.ExprIdent(id) = e {
+        if (id.name == acc.name) { return NameScan { ...acc, hit: true }; }
+    }
+    return acc;
+}
+
+function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
+    if (erased.len() == 0) { return funcs; }
+    var out: FuncDecl[] = [];
+    for fd in funcs {
+        if (util.has_str(erased, fd.name) && is_bg_template(fd)) { out = out.append(FuncDecl { ...fd, type_params: [], bound_traits: [] }); }
+        else { out = out.append(fd); }
+    }
+    return out;
+}
+
+function monomorphize_module_with(mod: Module, erased: string[]): Module {
+    var funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
     // Nothing to do if there are no bounded generics.
     var any_bg: boolean = false;
     var bi: i32 = 0;
@@ -12046,7 +12167,7 @@ pub function monomorphize_module(mod: Module): Module {
         if (funcs[bi].receiver_name.len() == 0 && funcs[bi].type_params.len() > 0) { any_bg = true; }
         bi = bi + 1;
     }
-    if (!any_bg) { return mod; }
+    if (!any_bg) { return Module { ...mod, funcs: funcs }; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var fns: MFns = mfns_of(funcs, mod.structs, mod.enums, mod.impls);

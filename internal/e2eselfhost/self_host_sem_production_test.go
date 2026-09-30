@@ -6102,6 +6102,43 @@ function main(): i32 {
     return apply(7) + nested(2) + s.len() + t.len();
 }
 `},
+	// A variable only a function-typed parameter carries binds from what each
+	// call passes for it: a lambda, a named function, a call returning a
+	// function, a function-typed field. The generic is cloned per binding with
+	// its struct, as a parameter-bound one is (#10824).
+	{name: "a-generic-struct-over-a-function-parameters-result", atLeast: 7, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+struct Maker { f: () => string }
+
+function seven(): i32 { return 7; }
+function pick(): () => string { return (): string => "de" + "f"; }
+
+function main(): i32 {
+    var m: Maker = Maker { f: (): string => "gh" + "i" };
+    return hold((): i32 => 7) + hold(() => "ab" + "c") + hold(seven) + hold(pick()) + hold(m.f);
+}
+`},
+	// The same through a function-typed parameter's parameter.
+	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, noLeak: true, src: `
+struct Slot[T] { v: T[] }
+
+pub function count[T](f: (T) => i32): i32 {
+    var c: Slot[T] = Slot[T] { v: [] };
+    return c.v.len() + 1;
+}
+
+function strlen(s: string): i32 { return s.len(); }
+
+function main(): i32 {
+    return count((x: i32): i32 => x) + count((s: string): i32 => s.len()) + count(strlen);
+}
+`},
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
