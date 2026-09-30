@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,7 +14,9 @@ import (
 // integer column; wasm's key cell is four bytes, so there each key is boxed
 // into a cell the map owns and probes through (the `_k64` helpers). Every key
 // is above 2^32 or below -2^32, so a column that kept 32 bits of it would
-// collide or miss. The interpreter and native answer both programs 42.
+// collide or miss. The interpreter and native answer every program 42, and
+// each test runs every program a second time under FERN_LEAKCHECK, whose
+// census has to balance: the key cells wasm boxes are freed by the map alone.
 var wideMapKeyCases = []struct {
 	name string
 	src  string
@@ -135,6 +138,59 @@ function main(): i32 {
     return 42;
 }
 `},
+	// A wide key beside a value column the map reclaims: strings, string
+	// arrays and struct boxes, each overwritten, aliased before an insert and
+	// deleted, and an f64 column overwritten. On wasm the key is a cell the
+	// map owns and the value column carries its own release flags, so this is
+	// where the two meet.
+	{"wide-keys-counted-values", `import "core/map";
+struct Item { name: string, n: i32 }
+function w(i: i32): string {
+    var t: string = "x";
+    if (i % 2 == 0) { t = "yy"; }
+    return "v-a-wide-payload-past-any-inline-threshold-" + t;
+}
+function main(): i32 {
+    var big: i64 = 4294967296;
+    var s: Map[i64, string] = map_new(2);
+    var i: i32 = 0;
+    while (i < 20) { s = s.insert(big * (i as i64) + 1, w(i)); i = i + 1; }
+    s = s.insert(big + 1, w(3));
+    var s2: Map[i64, string] = s;
+    s = s.insert(big * 99, w(4));
+    if (s2.len() != 20) { return 1; }
+    if (s.len() != 21) { return 2; }
+    s = s.without(big + 1).0;
+    if (s.len() != 20) { return 3; }
+    if (s.get_or(big * 99, "").len() != w(4).len()) { return 4; }
+    var total: i32 = 0;
+    for (k, v) in s { total = total + v.len(); }
+    if (total == 0) { return 5; }
+    var a: Map[i64, string[]] = map_new(2);
+    a = a.insert(big * 3, [w(1), w(2)]);
+    a = a.insert(big * 3, [w(5)]);
+    var a2: Map[i64, string[]] = a;
+    a = a.insert(big * 5, [w(6), w(7), w(8)]);
+    if (a.get_or(big * 3, []).len() != 1) { return 6; }
+    if (a2.len() != 1) { return 7; }
+    a = a.without(big * 3).0;
+    if (a.len() != 1) { return 8; }
+    var t: Map[i64, Item] = map_new(2);
+    t = t.insert(big * 7, Item { name: w(1), n: 1 });
+    t = t.insert(big * 7, Item { name: w(2), n: 2 });
+    var t2: Map[i64, Item] = t;
+    t = t.insert(big * 8, Item { name: w(3), n: 3 });
+    match (t.get(big * 7)) { Some(it) => { if (it.n != 2) { return 9; } }, None => { return 10; } }
+    t = t.without(big * 8).0;
+    if (t.len() != 1) { return 11; }
+    if (t2.len() != 1) { return 12; }
+    var f: Map[i64, f64] = map_new(2);
+    f = f.insert(big * 9, 2.5);
+    f = f.insert(big * 9, 3.5);
+    if (f.get_or(big * 9, 0.0) != 3.5) { return 13; }
+    return 42;
+}
+`},
 }
 
 func TestSelfHostMapWideKeyIRX86_64(t *testing.T) {
@@ -144,6 +200,12 @@ func TestSelfHostMapWideKeyIRX86_64(t *testing.T) {
 			if code, out := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != 42 {
 				t.Errorf("%s: exit %d, want 42 (the code names the failing step); out %q", tc.name, code, out)
 			}
+			bin := buildBin(t, cli.gcc, t.TempDir(), "census", cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1"))
+			stderr, exit := runWithStdin(t, cli.runner, bin, nil)
+			if exit != 42 {
+				t.Fatalf("census run: exit %d, want 42\n%s", exit, stderr)
+			}
+			assertBalancedCensus(t, stderr)
 		})
 	}
 }
@@ -156,6 +218,14 @@ func TestSelfHostMapWideKeyIRArm64(t *testing.T) {
 			if code, out := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != 42 {
 				t.Errorf("%s arm64: exit %d, want 42; out %q", tc.name, code, out)
 			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, gcc, t.TempDir(), "census", cli.emit(t, "arm64-linux", tc.src, "FERN_LEAKCHECK=1")))
+			var eb strings.Builder
+			cmd.Stderr = &eb
+			_ = cmd.Run()
+			if code := cmd.ProcessState.ExitCode(); code != 42 {
+				t.Fatalf("census run: exit %d, want 42\n%s", code, eb.String())
+			}
+			assertBalancedCensus(t, eb.String())
 		})
 	}
 }
@@ -168,6 +238,15 @@ func TestSelfHostMapWideKeyWasmIR(t *testing.T) {
 			if code, out := runWasm(t, wat); code != 42 {
 				t.Errorf("%s wasm: exit %d, want 42; out %q\nstderr:\n%s", tc.name, code, out, wasmStderr(t, wat))
 			}
+			census := filepath.Join(t.TempDir(), "census.wat")
+			if err := os.WriteFile(census, []byte(cli.emit(t, "wasm32-wasi", tc.src, "FERN_LEAKCHECK=1")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			stderr, exit := runWasmCensus(t, census)
+			if exit != 42 {
+				t.Fatalf("census run: exit %d, want 42\n%s", exit, stderr)
+			}
+			assertBalancedCensus(t, stderr)
 		})
 	}
 }
@@ -186,4 +265,24 @@ func wasmStderr(t *testing.T, wat string) string {
 	run.Stderr = &stderr
 	_ = run.Run()
 	return stderr.String()
+}
+
+// A usize key is refused by the map-shape admission, which names the map: it
+// is an 8-byte key on the register targets and a 4-byte one on wasm.
+func TestSelfHostMapUsizeKeyRefusedIR(t *testing.T) {
+	cli := newStrictCLI(t)
+	src := `import "core/map";
+function main(): i32 {
+    var m: Map[usize, i32] = map_new(2);
+    m = m.insert(7 as usize, 3);
+    return m.get_or(7 as usize, 0) + 39;
+}
+`
+	_, diags, err := cli.tryEmit(t, "x86-64-linux", src)
+	if err == nil {
+		t.Fatal("the strict typed lowering accepted a usize-keyed map")
+	}
+	if !strings.Contains(diags, "unsupported map shape: Map[usize, i32]") {
+		t.Errorf("refusal does not name the map shape:\n%s", diags)
+	}
 }

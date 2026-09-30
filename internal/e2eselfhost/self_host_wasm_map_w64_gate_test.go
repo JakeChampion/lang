@@ -37,7 +37,7 @@ function main(): i32 {
         ir.op_map_get(1, "", 1),
         ir.op_map_get_or(1, "", 1),
         ir.op_map_values(0, 1),
-        ir.op_map_iter(1),
+        ir.op_map_iter(1, 0),
         ir.op_mapiter_value(1),
         ir.op_mapiter_value(2),
     ];
@@ -85,4 +85,67 @@ func TestSelfHostWasmMapW64GateCountsEveryWideOp(t *testing.T) {
 		t.Fatalf("gate driver exited %d", code)
 	}
 	t.Error(strings.Join(bad, "; "))
+}
+
+// mapK64GateDriver is mapW64GateDriver for an 8-byte KEY column (#10005):
+// every op that can reach a `_k64` helper — key kind 3 on the keyed ops, the
+// key-wide flag on keys, iter and the iterator's key read — has to record
+// @uses_map_k64 on its own unit, and a narrow-keyed get must not.
+const mapK64GateDriver = `import "./ir";
+import "./irlower";
+import "./util";
+import "./wasm_ir";
+
+function unit(o: ir.Op): irlower.LowerResult[] {
+    return [irlower.LowerResult { ok: true, why: "", ops: [o], n_locals: 0,
+        n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
+        f64_slots: [], str_slots: [], alias_incs: [], name: "", result_kind: irlower.result_i32() }];
+}
+
+function records(o: ir.Op): boolean {
+    return util.index_of_str(wasm_ir.needs_of(unit(o)), "@uses_map_k64") >= 0;
+}
+
+function main(): i32 {
+    var wide: ir.Op[] = [
+        ir.op_map_new(3, ""),
+        ir.op_map_set(3, false, false, false, false, false, "", 0, 0),
+        ir.op_map_get(3, "", 0),
+        ir.op_map_has(3, ""),
+        ir.op_map_get_or(3, "", 0),
+        ir.op_map_delete(3, "", false, 0),
+        ir.op_map_keys(0, 1),
+        ir.op_map_iter(0, 1),
+        ir.op_mapiter_key(1),
+    ];
+    var names: string[] = ["map_new", "map_set", "map_get", "map_has", "map_get_or", "map_delete", "map_keys", "map_iter", "mapiter_key"];
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < wide.len()) {
+        if (!records(wide[i])) { print("wide-key " + names[i] + " does not record @uses_map_k64"); bad = 1; }
+        i = i + 1;
+    }
+    if (records(ir.op_map_get(1, "", 0))) { print("a narrow-keyed map_get records @uses_map_k64"); bad = 1; }
+    return bad;
+}
+`
+
+func TestSelfHostWasmMapK64GateCountsEveryWideKeyOp(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
+	if err := os.WriteFile(filepath.Join(dir, "map_k64_gate.fern"), []byte(mapK64GateDriver), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "map_k64_gate.fern", "map_k64_gate")
+	var cmd *exec.Cmd
+	if len(runner) == 0 {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+	}
+	out, _ := cmd.Output()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("gate driver exited %d:\n%s", code, out)
+	}
 }

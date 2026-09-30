@@ -411,7 +411,7 @@ pub function map_value(t: typeinfo.Type): typeinfo.Type {
 // freed whole.
 pub function is_supported_map(t: typeinfo.Type): boolean {
     if (!is_map(t)) { return false; }
-    if (!is_string(map_key(t)) && !narrow_map_value(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) { return false; }
+    if (!is_string(map_key(t)) && !narrow_map_key(map_key(t)) && !wide_map_key(map_key(t)) && !keyed_map_key(map_key(t))) { return false; }
     return narrow_map_value(map_value(t)) || wide_map_value(map_value(t)) || float_map_value(map_value(t)) || counted_map_value(map_value(t));
 }
 
@@ -421,13 +421,17 @@ pub function wide_map_value(v: typeinfo.Type): boolean {
     return is_integer(v) && is_wide(v);
 }
 
+// A boolean or 32-bit integer key column. A usize key is refused here: it is
+// pointer-width, an 8-byte key on the natives and a 4-byte one on wasm, and a
+// map keyed by raw addresses is not a shape the language commits to.
+pub function narrow_map_key(k: typeinfo.Type): boolean {
+    return narrow_map_value(k) && !is_usize(k);
+}
+
 // An i64 or u64 key column (#10005). The register runtimes' integer column is
 // eight bytes wide, so it takes the key as it takes an i32; wasm boxes each
 // key into a cell of its own, hashed and compared through the cell (the
-// `_k64` helpers). A usize key is not admitted: it is pointer-width, an
-// 8-byte key on the natives and a 4-byte one on wasm, and a map keyed by
-// raw addresses is not a shape the language commits to. A float key is
-// refused by the checker (E045).
+// `_k64` helpers). A float key is refused by the checker (E045).
 pub function wide_map_key(k: typeinfo.Type): boolean {
     return is_integer(k) && is_wide(k);
 }
