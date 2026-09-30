@@ -230,16 +230,20 @@ posted comment cannot be edited; only a follow-up can correct it.
 2. **DONE by its criterion (2026-09-28) — the native Perceus implementation
    ported to the self-hosted compiler.** `make distcheck` is green: the
    self-built compiler recompiles the compiler at 5.7 GB and reproduces itself
-   byte for byte, in CI on all three hosts (`docs/BOOTSTRAP.md`). Leaks the
-   AST lowering (`FERN_SEM_IR=`) still has are closed as bug fixes; the live
-   list and the traps this area sets: `docs/rc-log/` (newest file) — its §9
+   byte for byte, in CI on all three hosts (`docs/BOOTSTRAP.md`). The AST
+   lowering (`irlower`, `FERN_SEM_IR=`) is being retired ("Retiring the AST
+   lowering" in `docs/SELFHOST-SEMANTIC-SOURCE.md`): a bug only it has is
+   closed by the retirement, not fixed; check the typed lowering has it before
+   filing. The live list and the traps this area sets: `docs/rc-log/` (newest
+   file) — its §9
    predecessor in `docs/RC-PERCEUS-SELF-HOST-PORT.md` holds everything before
    2026-08-20 — and `docs/SELFHOST-PERCEUS-REUSE.md`.
 3. **Retire the native backends.** The prerequisites, and which are open, are
    `docs/NATIVE-CONVERGENCE.md §3a` and `docs/NATIVE-FREEZE.md`.
 
 When a PR merges with no more specific instruction, the default next task is the
-next open prerequisite of goal 3, or the next self-host leak in `docs/rc-log/`.
+next open step of the AST-lowering retirement, then the next open prerequisite of
+goal 3, or the next self-host leak in `docs/rc-log/`.
 
 **The self-host compiler is becoming the default, so its output wins performance
 ties.** A change that makes self-host-built code faster and native-built code
