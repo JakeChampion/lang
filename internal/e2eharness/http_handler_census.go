@@ -90,7 +90,7 @@ function main(): i32 {
 
 // KeepAliveCycle is how many requests one pass of HTTPKeepAliveRequests
 // sends; a bounded loop driven by it is bounded to a multiple.
-const KeepAliveCycle = 285
+const KeepAliveCycle = 315
 
 // HTTPKeepAliveRequests drives `rounds` requests through one bounded serve
 // loop whose per-connection cap is 200, whose request read deadline is
@@ -105,9 +105,9 @@ const KeepAliveCycle = 285
 // closes; a pipeline of 33 requests whose handlers together outlast that
 // deadline, all of which must be answered, and whose peer half-closes
 // behind them, so the last, answered after the end of stream has been
-// read, must say close; a pipelined request answered to a peer that has
-// reset the connection, whose failed write must close it before the
-// request behind it is answered; a request with a malformed one pipelined
+// read, must say close; a full burst whose corked responses are written
+// to a peer that has reset the connection, whose failed write must close
+// it before the request behind the burst is answered; a request with a malformed one pipelined
 // behind it, answered with close and then closed with no response to the
 // second; a request of 101 header fields, answered 431 and closed before
 // any handler sees it, an HTTP/1.1 request without a Host, answered 400,
@@ -356,16 +356,16 @@ func HTTPKeepAliveRequests(t *testing.T, addr string, rounds int) {
 		}
 		read(conn, r, "slow pipeline, last", "close")
 		eof(conn, r, "after the slow pipeline")
-		// A request, a slow one and a third behind it in one write; the
-		// peer resets the connection once the first is answered, so the
-		// second response is written to a peer that is gone. That write
-		// fails, and the loop must close the connection rather than record
-		// the response as delivered and answer the third: the handler
-		// reports the third on stderr, which RunHTTPKeepAlive refuses.
+		// A full burst, 28 requests and four slow ones, and a 33rd behind
+		// it in one write. The burst's responses are corked into one write
+		// at its end, and the peer resets the connection while the slow
+		// ones run, so that write goes to a peer that is gone. It fails,
+		// and the loop must close the connection rather than keep the 33rd
+		// as the backlog and answer it: the handler reports the 33rd on
+		// stderr, which RunHTTPKeepAlive refuses.
 		conn = dial()
-		r = bufio.NewReader(conn)
-		write(conn, "GET /n HTTP/1.1\r\nHost: localhost\r\n\r\nGET /gone HTTP/1.1\r\nHost: localhost\r\n\r\nGET /behind-a-failed-write HTTP/1.1\r\nHost: localhost\r\n\r\n")
-		read(conn, r, "before the reset", "keep-alive")
+		write(conn, strings.Repeat("GET /n HTTP/1.1\r\nHost: localhost\r\n\r\n", 28)+strings.Repeat("GET /gone HTTP/1.1\r\nHost: localhost\r\n\r\n", 4)+"GET /behind-a-failed-write HTTP/1.1\r\nHost: localhost\r\n\r\n")
+		time.Sleep(50 * time.Millisecond)
 		if err := conn.(*net.TCPConn).SetLinger(0); err != nil {
 			conn.Close()
 			t.Fatal(err)

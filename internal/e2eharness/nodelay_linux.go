@@ -4,6 +4,7 @@ package e2eharness
 
 import (
 	"bufio"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -24,12 +26,10 @@ const (
 	sysPidfdGetfd = 438
 )
 
-// ConnectedTCPNoDelay reads TCP_NODELAY on every connected TCP socket the
-// process `pid` holds, through copies of its descriptors taken with
-// pidfd_getfd: the count of sockets with the option on, and the count
-// with it off. A listener and anything that is not a TCP socket are not
-// counted.
-func ConnectedTCPNoDelay(t *testing.T, pid int) (on, off int) {
+// eachConnectedTCP calls f with a copy, taken with pidfd_getfd, of every
+// connected TCP socket the process `pid` holds. A listener and anything
+// that is not a TCP socket are skipped.
+func eachConnectedTCP(t *testing.T, pid int, f func(fd int)) {
 	t.Helper()
 	pidfd, _, errno := syscall.Syscall(sysPidfdOpen, uintptr(pid), 0, 0)
 	if errno != 0 {
@@ -53,39 +53,64 @@ func ConnectedTCPNoDelay(t *testing.T, pid int) (on, off int) {
 		if errno != 0 {
 			t.Fatalf("pidfd_getfd(%d): %v", target, errno)
 		}
-		nodelay, counted := tcpNoDelay(int(fd))
-		syscall.Close(int(fd))
-		if !counted {
-			continue
+		if connectedTCP(int(fd)) {
+			f(int(fd))
 		}
-		if nodelay {
+		syscall.Close(int(fd))
+	}
+}
+
+// connectedTCP is whether the socket is a connected TCP socket.
+func connectedTCP(fd int) bool {
+	if ty, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE); err != nil || ty != syscall.SOCK_STREAM {
+		return false
+	}
+	if proto, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL); err != nil || proto != syscall.IPPROTO_TCP {
+		return false
+	}
+	var sa [128]byte
+	salen := uint32(len(sa))
+	_, _, errno := syscall.Syscall(syscall.SYS_GETPEERNAME, uintptr(fd), uintptr(unsafe.Pointer(&sa[0])), uintptr(unsafe.Pointer(&salen)))
+	return errno == 0
+}
+
+// ConnectedTCPNoDelay reads TCP_NODELAY on every connected TCP socket the
+// process `pid` holds: the count of sockets with the option on, and the
+// count with it off.
+func ConnectedTCPNoDelay(t *testing.T, pid int) (on, off int) {
+	t.Helper()
+	eachConnectedTCP(t, pid, func(fd int) {
+		v, err := syscall.GetsockoptInt(fd, syscall.IPPROTO_TCP, syscall.TCP_NODELAY)
+		if err != nil {
+			t.Fatalf("read TCP_NODELAY: %v", err)
+		}
+		if v != 0 {
 			on++
 		} else {
 			off++
 		}
-	}
+	})
 	return on, off
 }
 
-// tcpNoDelay is the socket's TCP_NODELAY, and whether it is a connected
-// TCP socket at all.
-func tcpNoDelay(fd int) (nodelay, counted bool) {
-	if ty, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_TYPE); err != nil || ty != syscall.SOCK_STREAM {
-		return false, false
-	}
-	if proto, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_PROTOCOL); err != nil || proto != syscall.IPPROTO_TCP {
-		return false, false
-	}
-	var sa [128]byte
-	salen := uint32(len(sa))
-	if _, _, errno := syscall.Syscall(syscall.SYS_GETPEERNAME, uintptr(fd), uintptr(unsafe.Pointer(&sa[0])), uintptr(unsafe.Pointer(&salen))); errno != 0 {
-		return false, false
-	}
-	v, err := syscall.GetsockoptInt(fd, syscall.IPPROTO_TCP, syscall.TCP_NODELAY)
-	if err != nil {
-		return false, false
-	}
-	return v != 0, true
+// ConnectedTCPSegmentsOut is the segments sent over every connected TCP
+// socket the process `pid` holds, summed: TCP_INFO's tcpi_segs_out, the
+// u32 at offset 136.
+func ConnectedTCPSegmentsOut(t *testing.T, pid int) uint64 {
+	t.Helper()
+	var total uint64
+	eachConnectedTCP(t, pid, func(fd int) {
+		var info [256]byte
+		n := uint32(len(info))
+		if _, _, errno := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(fd), syscall.IPPROTO_TCP, syscall.TCP_INFO, uintptr(unsafe.Pointer(&info[0])), uintptr(unsafe.Pointer(&n)), 0); errno != 0 {
+			t.Fatalf("read TCP_INFO: %v", errno)
+		}
+		if n < 140 {
+			t.Fatalf("TCP_INFO is %d bytes, too short for tcpi_segs_out", n)
+		}
+		total += uint64(binary.LittleEndian.Uint32(info[136:140]))
+	})
+	return total
 }
 
 // NoDelayServerSource is a single-loop server answering "ok".
@@ -167,5 +192,50 @@ func CheckNetNoDelay(t *testing.T, cmd *exec.Cmd, out io.Reader) {
 	on, off := ConnectedTCPNoDelay(t, cmd.Process.Pid)
 	if on != 2 || off != 0 {
 		t.Fatalf("the probe's connected sockets: %d with TCP_NODELAY, %d without; want both ends with it", on, off)
+	}
+}
+
+// CheckServeCorksBurst drives NoDelayServerSource: 32 requests pipelined
+// in one write on a keep-alive connection are answered by one readable
+// event, whose 32 responses the loop corks into one write. With
+// TCP_NODELAY on, every write is at least a segment, so the server's
+// segments out across the burst are few, where a write per response would
+// be 32.
+func CheckServeCorksBurst(t *testing.T, cmd *exec.Cmd, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	r := bufio.NewReader(conn)
+	const request = "GET /ok HTTP/1.1\r\nHost: x\r\n\r\n"
+	readOK := func(label string) {
+		t.Helper()
+		resp, err := http.ReadResponse(r, nil)
+		if err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 200 || string(body) != "ok" {
+			t.Fatalf("%s: status %d body %q (%v), want 200 ok", label, resp.StatusCode, body, err)
+		}
+	}
+	if _, err := io.WriteString(conn, request); err != nil {
+		t.Fatal(err)
+	}
+	readOK("the first request")
+	before := ConnectedTCPSegmentsOut(t, cmd.Process.Pid)
+	if _, err := io.WriteString(conn, strings.Repeat(request, 32)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 32; i++ {
+		readOK(fmt.Sprintf("pipelined request %d", i))
+	}
+	if sent := ConnectedTCPSegmentsOut(t, cmd.Process.Pid) - before; sent > 4 {
+		t.Fatalf("the server sent %d segments answering 32 pipelined requests, want the burst corked into one write", sent)
 	}
 }

@@ -1315,7 +1315,10 @@ loop and `std/fetch` the client.
   pipelined on one connection are answered in order, 32 per readiness
   event before the loop returns to the wait (the rest are answered on
   the next wait, which returns at once, so one pipeline cannot hold
-  the other connections off the reactor), and every response names
+  the other connections off the reactor), the responses to one event
+  corked into a single write (a response with a streamed or file body,
+  or one behind which no complete request is buffered, ends the cork),
+  and every response names
   the outcome in its `Connection` header: once the peer's end of
   stream has been read, the last buffered request's response says
   `close`, since the close follows it. A partial request behind a

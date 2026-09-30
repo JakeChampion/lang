@@ -50,7 +50,8 @@
 //      keep-alive`) until the keep-alive idle span passes with no request
 //      or it has answered `keep_alive_requests`; the request's bytes are
 //      dropped from its buffer, so requests pipelined behind them are
-//      answered from the same readable event → unwatch → tcp_close.
+//      answered from the same readable event, their responses corked
+//      into one write (`__corks`) → unwatch → tcp_close.
 //   7. SIGTERM or SIGINT, a readiness event on the reactor, starts the
 //      shutdown:
 //      the loop keeps accepting for `shutdown_grace` (whoever routes to
@@ -825,40 +826,66 @@ function __serve_refuse[D: async.Driver](drv: D, c: __Conns, at: i32, status: i3
     return sent.0;
 }
 
-// __serve_respond(drv, c, at, wire, opts, answered, tail) — the response
-// sent and the connection's next state, given the framing of the bytes
-// behind the answered request: `(conns, more)`, where `more` says the
+// __serve_respond(drv, c, at, wire, opts, answered, tail, clk, corked) —
+// the response sent and the connection's next state, given the framing of
+// the bytes behind the answered request: `(conns, more, corked)`, where
+// `more` says the
 // connection persists with its next request already buffered, so the
 // loop answers it now. A short write leaves the rest pending, to be
 // finished by a later wait (`__serve_drain`); a write the kernel refuses
 // closes the connection; a finished write closes a connection that does
 // not persist; and the `answered`th response of one event ends the
 // event's burst, leaving a request still buffered as the connection's
-// backlog.
-function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: ServeOptions, answered: i32, tail: http.HttpFraming, clk: __Clock): (__Conns, boolean) {
+// backlog. The responses of one burst are corked: `corked` is what the
+// burst has answered and not yet written, which goes out in front of this
+// response, and the third result is what is left corked, so one readable
+// event's answers leave in one write (`__corks`).
+function __serve_respond[D: async.Driver](drv: D, c: __Conns, at: i32, wire: __Wire, opts: ServeOptions, answered: i32, tail: http.HttpFraming, clk: __Clock, corked: string): (__Conns, boolean, string) {
     c = __Conns { ...c, tails: c.tails.with(at, wire.tail), keep: c.keep.with(at, c.keep[at] && wire.keep) };
-    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, wire.head, opts);
+    var payload: string = wire.head;
+    if (corked.len() > 0) { payload = corked + wire.head; }
+    if (__corks(wire, c.keep[at], answered, tail)) { return (c, true, payload); }
+    var sent: (__Conns, __Sent) = __serve_send(drv, c, at, payload, opts);
     c = sent.0;
     match (sent.1) {
-        Partial => { return (c, false); },
-        Failed => { return (__serve_close(drv, c, at), false); },
+        Partial => { return (c, false, ""); },
+        Failed => { return (__serve_close(drv, c, at), false, ""); },
         Whole => { }
     }
     var produced: (__Conns, __Sent) = __serve_produce(drv, c, at, opts);
     c = produced.0;
     match (produced.1) {
-        Partial => { return (c, false); },
-        Failed => { return (__serve_close(drv, c, at), false); },
+        Partial => { return (c, false, ""); },
+        Failed => { return (__serve_close(drv, c, at), false, ""); },
         Whole => { }
     }
-    if (!c.keep[at]) { return (__serve_close(drv, c, at), false); }
+    if (!c.keep[at]) { return (__serve_close(drv, c, at), false, ""); }
     var ready: (__Conns, boolean) = __serve_ready(drv, c, at, opts, tail, clk);
     c = ready.0;
-    if (!ready.1) { return (c, false); }
+    if (!ready.1) { return (c, false, ""); }
     if (answered >= __pipeline_burst()) {
-        return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false);
+        return (__Conns { ...c, backlog: c.backlog.with(at, true) }, false, "");
     }
-    return (c, true);
+    return (c, true, "");
+}
+
+// __corks(wire, persists, answered, tail) — whether a response waits to
+// go out with the next one: a whole response (no tail to produce) on a
+// persisting connection whose next request is already framed and inside
+// the burst. That request's response is then written by this burst, so
+// nothing corked outlives the event, and no other write (an interim
+// `100 Continue`, a refusal) can come between.
+function __corks(wire: __Wire, persists: boolean, answered: i32, tail: http.HttpFraming): boolean {
+    if (!persists || answered >= __pipeline_burst()) { return false; }
+    match (wire.tail) {
+        NoTail => { },
+        _ => { return false; }
+    }
+    match (tail) {
+        http.Framed(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // __serve_drain(drv, c, at, opts) — a writable connection with a response
@@ -1288,6 +1315,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             if (at < 0) { continue; }
             var more: boolean = true;
             var count: i32 = 0;
+            var corked: string = "";
             var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
             while (more) {
                 var next: http.HttpFraming = http.Incomplete;
@@ -1298,9 +1326,10 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                         count = count + 1;
                         var resp: HttpResponse = http.text(503, "");
                         if (!__serve_not_ready(f, opts, stop)) { resp = handler(f.request, plat); }
-                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk);
+                        var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, resp, took.1, clk), opts, count, took.2, clk, corked);
                         conns = answered.0;
                         more = answered.1;
+                        corked = answered.2;
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
@@ -1371,6 +1400,7 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
             if (at < 0) { continue; }
             var more: boolean = true;
             var count: i32 = 0;
+            var corked: string = "";
             var framing: http.HttpFraming = http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits);
             while (more) {
                 var next: http.HttpFraming = http.Incomplete;
@@ -1382,9 +1412,10 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
                         var stepped: (S, HttpResponse) = (st, http.text(503, ""));
                         if (!__serve_not_ready(f, opts, stop)) { stepped = handler(st, f.request, plat); }
                         st = stepped.0;
-                        var answered: (__Conns, boolean) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk);
+                        var answered: (__Conns, boolean, string) = __serve_respond(drv, conns, at, __serve_wire(f.request.method, f.version, stepped.1, took.1, clk), opts, count, took.2, clk, corked);
                         conns = answered.0;
                         more = answered.1;
+                        corked = answered.2;
                         next = took.2;
                     },
                     http.Incomplete => { more = false; },
