@@ -105,6 +105,27 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: nil,
 		},
 		{
+			name: "a local named like a function",
+			src: `import "std/http";
+function noisy(): i32 { eprint("hit"); return 1; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var noisy: i32 = 2;
+    var n: i32 = noisy + 1;` + tail,
+			want: nil,
+		},
+		{
+			// std/unicode's case mapping has a `var mid`, which std/http's own
+			// handlers reach through HeaderMap.set.
+			name: "a std local named like an entry function",
+			src: `import "std/http";
+function mid(): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var h: HttpResponse = http.ok("");
+    h.headers.set("X-Mode", "Plain");` + tail + `function run(): void { mid(); }
+`,
+			want: nil,
+		},
+		{
 			name: "a function without a bag",
 			src: `function helper(): i32 { eprint("hit"); return 0; }
 function main(): i32 { return helper(); }

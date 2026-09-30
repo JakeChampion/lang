@@ -2132,6 +2132,10 @@ type Ident struct {
 	// keeps variant resolution deterministic when two enums
 	// declare the same variant name.
 	EnumName string
+	// Local is set by the checker when the name resolved to a parameter,
+	// local or captured binding, so a pass that reads function references
+	// by name knows this one shadows any top-level function it spells.
+	Local bool
 }
 type ArrayLit struct {
 	P     Position

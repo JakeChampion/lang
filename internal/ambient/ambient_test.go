@@ -113,6 +113,24 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 			want: []string{"eprint@log"},
 		},
 		{
+			name: "a local spelled like an effectful function is not that function",
+			src: `import "std/http";
+function noisy(): i32 { eprint("hit"); return 1; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var noisy: i32 = 2;
+    var y: i32 = noisy + 1;` + handlerTail,
+			want: nil,
+		},
+		{
+			name: "a local closure spelled like an effectful function is not that function",
+			src: `import "std/http";
+function noisy(): void { eprint("hit"); }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    var noisy: () => void = (): void => {};
+    noisy();` + handlerTail,
+			want: nil,
+		},
+		{
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {

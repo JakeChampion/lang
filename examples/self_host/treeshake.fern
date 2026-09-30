@@ -290,13 +290,24 @@ pub struct RefSet { names: string[], head: i32[], next: i32[] }
 // a call graph function by function (ambient.fern). A method is reached only by
 // a method or operator spelling: a bare name is a local or a free function, as
 // native's call graph reads it, so `var close` does not reach a `close` method.
+// A bare name `fd`'s own parameters, receiver or declarations bind reaches
+// nothing: a local spelled like a free function is not a reference to it.
 pub struct BodyRefs { any: RefSet, methods: RefSet }
 
 pub function body_refs(fd: parser.FuncDecl): BodyRefs {
     var methods: string[] = [];
     var i: i32 = 0;
     while (i < fd.body.len()) { methods = astwalk.fold_stmt(fd.body[i], methods, ts_method_name_of); i = i + 1; }
-    return BodyRefs { any: refset_of(ts_func_names(fd, [])), methods: refset_of(methods) };
+    var bound: string[] = [];
+    if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) { bound = bound.append(fd.params[pi].name); pi = pi + 1; }
+    var any: string[] = [];
+    any = util.append_all(any, methods);
+    var free: string[] = astwalk.collect_free_idents(bound, fd.body, []);
+    var fi: i32 = 0;
+    while (fi < free.len()) { any = any.append(ts_free_root(free[fi])); fi = fi + 1; }
+    return BodyRefs { any: refset_of(any), methods: refset_of(methods) };
 }
 
 pub function refs_name(br: BodyRefs, fd: parser.FuncDecl): boolean {

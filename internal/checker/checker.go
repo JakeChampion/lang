@@ -16694,6 +16694,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return ast.FloatType{Polymorphic: true}
 	case *ast.Ident:
 		if t, ok := s.lookup(n.Name); ok {
+			n.Local = true
 			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
 			return t
 		}
@@ -16721,6 +16722,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					continue
 				}
 				if t, ok := ent.scope.lookup(n.Name); ok {
+					n.Local = true
 					// Record the capture in this entry's sink AND
 					// in every deeper sink (so each intermediate
 					// closure forwards the slot through).

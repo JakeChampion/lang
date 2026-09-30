@@ -855,6 +855,15 @@ pub function collect_lambda_idents(lm: ast.ExprLambda, own acc: string[]): strin
     return used;
 }
 
+// collect_free_idents appends every identifier `body` reads that neither
+// `params` nor a declaration inside the body binds.
+pub function collect_free_idents(params: string[], body: ast.Stmt[], own acc: string[]): string[] {
+    var bound: string[] = [];
+    for p in params { bound = append_bound_name(bound, p); }
+    var (used, final_bound) = scoped_stmts_reads(body, bound, acc, collect_idents_expr);
+    return used;
+}
+
 // subst_ident_expr returns `e` with every identifier READ named `from`
 // rewritten to `to`. Used to rewrite an `@`-binding reference (`n`) to the
 // cached scrutinee local in a match-arm guard, where the whole-value binding
