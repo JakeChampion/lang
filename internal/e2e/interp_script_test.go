@@ -2292,7 +2292,7 @@ function main(): i32 {
     w = w.write_string("HTTP/1.1 200 OK\r\n");
     w = w.write_string("\r\nhello");
     print(w.len().to_string());
-    print(w.into_string());
+    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "24\nHTTP/1.1 200 OK\r\n\r\nhello\n",
@@ -2304,7 +2304,7 @@ function main(): i32 {
     var w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_byte(72);  // 'H'
     w = w.write_byte(105); // 'i'
-    print(w.into_string());
+    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "Hi\n",
@@ -2320,7 +2320,7 @@ function main(): i32 {
     if (w.len() != 0) { return 2; }
     if (!w.is_empty()) { return 3; }
     w = w.write_string("second");
-    print(w.into_string());
+    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "second\n",
@@ -2333,7 +2333,7 @@ function main(): i32 {
     var bs: u8[] = "binary".bytes();
     w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }
-    print(w.into_string());
+    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "binary\n",

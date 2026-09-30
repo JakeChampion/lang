@@ -1594,13 +1594,16 @@ in-memory buffer-backed `Stream`.
 
 ### `std/io_buffered`
 
-In-memory buffered `BytesWriter` — accumulate bytes / strings,
-then drain once.
+In-memory `BytesWriter`: accumulate bytes and strings, then extract the
+buffer as bytes or validate it as text. Extraction leaves the writer usable.
 
 - `bytes_writer_new()`; `(w).write_string(s)`, `(w).write_bytes(bs)`,
   `(w).write_byte(b)`.
-- `(w).into_bytes()` / `(w).into_string()` to drain; `(w).len()`,
-  `(w).is_empty()`, `(w).reset()`.
+- `(w).into_bytes(): u8[]` preserves arbitrary bytes.
+- `(w).into_string(): Option[string]` yields `Some` for valid UTF-8, including
+  an empty buffer, or `None` for malformed bytes. Validation happens after all
+  writes, so one scalar may span multiple writes.
+- `(w).len()`, `(w).is_empty()`, `(w).reset()`.
 
 ### `std/time`
 
