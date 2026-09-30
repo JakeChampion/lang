@@ -68,7 +68,7 @@ func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 		// literal + indexed read: 1.5 + 2.5 = 4.0 > 3.0 -> 7
 		{"read", `function main(): i32 { var a: f64[] = [1.5, 2.5]; var x: f64 = a[0] + a[1]; if (x > 3.0) { return 7; } return 0; }`, 7},
 		// indexed write: a[1] = 5.5; 1.0 + 5.5 = 6.5 > 6.0 -> 8
-		{"write", `function main(): i32 { var a: f64[] = [1.0, 2.0]; a[1] = 5.5; var x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }`, 8},
+		{"write", `function main(): i32 { var a: f64[] = [1.0, 2.0]; a = a.with(1, 5.5); var x: f64 = a[0] + a[1]; if (x > 6.0) { return 8; } return 0; }`, 8},
 		// counted read loop: 1.5 + 2.5 + 3.0 = 7.0 > 6.0 -> 9
 		{"loop", `function main(): i32 { var a: f64[] = [1.5, 2.5, 3.0]; var s: f64 = 0.0; var i = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } if (s > 6.0) { return 9; } return 0; }`, 9},
 		// for-in iteration: the element binding x is an 8-byte f64. 1.5+2.5+3.0 = 7.0 > 6.0 -> 9
