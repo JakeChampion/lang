@@ -16,6 +16,7 @@ function tag(n: i32): f32 { return match (n) { 0 => 0.25f32, _ => id(1.5f32) }; 
 function main(): i32 {
     var neg: f32 = 0.0 - 1.0;
     if (f32_from_bits(f32_bits(neg)) != neg) { return 1; }
+    if (f32_bits(0.1) != 1036831949) { return 3; }
     var p: i32 = 3;
     var q: i32 = 4;
     var from_vars: f32 = (p - q) as f32;

@@ -71,6 +71,25 @@ function main(): i32 {
 		}
 	})
 
+	// The checker stage 1 lowered read a freed Map type here (#10832).
+	t.Run("check-map-literal-branches", func(t *testing.T) {
+		src := filepath.Join(dir, "stage2_check.fern")
+		prog := `import "core/map";
+function id[T](x: T): T { return x; }
+function main(): i32 {
+    var a: i32 = 1;
+    var v3: Map[i32, i32] = if (false) { Map { a: 1 } } else { Map { id(a): 2 } };
+    return 0;
+}
+`
+		if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if b, err := exec.Command(stage2, "-check", src, stdlibRoot).CombinedOutput(); err != nil {
+			t.Fatalf("stage 2 -check: %v\n%s", err, b)
+		}
+	})
+
 	t.Run("stage3", func(t *testing.T) {
 		// CI-DARK: FERN_STAGE3 — doubles a job already ~4 minutes long; stage 2
 		// compiling lexer.fern and a program is what runs on every push.

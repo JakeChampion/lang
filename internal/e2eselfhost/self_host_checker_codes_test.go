@@ -3277,6 +3277,18 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-bare-with-cmp-imported", "import \"core/cmp\";\n@derive(Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-qualified-ok", "import \"core/cmp\";\n@derive(cmp.Eq, cmp.Hash)\nstruct P { n: i32, s: string }\nfunction main(): i32 { var p: P = P { n: 1, s: \"x\" }; if (p.eq(p)) { return 3; } return 0; }\n"},
 		{"derive-aliased-import-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// An impl names its trait by the module that declares it (#10816): a
+		// program's own `Ord` is not core/cmp's, whose impls for i32 do not
+		// answer its requirement; `dyn cmp.Display`, qualified directly or
+		// through an alias, takes what implements core/cmp's; and a program's
+		// own `Display` takes nothing core/cmp's impls cover. A bare bound names
+		// the trait of the module that wrote it, so `rank[T: Ord]` here reaches
+		// the program's `Ord` and core/cmp's generics still reach their own.
+		{"trait-same-name-as-imported-trait", "import \"std/i32\";\ntrait Eq { function eq(self: Self, other: Self): boolean; }\ntrait Ord: Eq { function lt(self: Self, other: Self): boolean; }\nstruct P { x: i32 }\nimpl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }\nimpl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }\nfunction main(): i32 { var p: P = P { x: 3 }; if (p.lt(P { x: 5 }) && !p.eq(P { x: 5 })) { return 0; } return 1; }\n"},
+		{"trait-bound-same-name-as-imported-trait", "import \"std/i32\";\ntrait Eq { function eq(self: Self, other: Self): boolean; }\ntrait Ord: Eq { function lt(self: Self, other: Self): boolean; }\nstruct P { x: i32 }\nimpl Eq for P { function eq(self: Self, other: Self): boolean { return self.x == other.x; } }\nimpl Ord for P { function lt(self: Self, other: Self): boolean { return self.x < other.x; } }\nfunction rank[T: Ord](a: T, b: T): string { if (a.eq(b)) { return \"eq\"; } if (a.lt(b)) { return \"lt\"; } return \"gt\"; }\nfunction main(): i32 { print(rank(P { x: 3 }, P { x: 5 })); return 0; }\n"},
+		{"dyn-qualified-imported-trait", "import \"core/cmp\";\nimport \"std/i32\";\nstruct Q { x: i32 }\nimpl cmp.Display for Q { function to_string(self: Self): string { return \"Q\"; } }\nfunction show(d: dyn cmp.Display): i32 { return d.to_string().len(); }\nfunction main(): i32 { var xs: dyn cmp.Display[] = [42, \"hi\", true]; var d: dyn cmp.Display = 42; var e: dyn cmp.Display = Q { x: 1 }; return show(42) + show(e) + xs.len() + d.to_string().len(); }\n"},
+		{"dyn-aliased-imported-trait", "import \"core/cmp\" as c;\nimport \"std/i32\";\nstruct Q { x: i32 }\nimpl c.Display for Q { function to_string(self: Self): string { return \"Q\"; } }\nfunction main(): i32 { var xs: dyn c.Display[] = [Q { x: 7 }, 42]; return xs.len(); }\n"},
+		{"dyn-own-trait-named-like-imported", "import \"core/cmp\";\nimport \"std/i32\";\ntrait Display { function show(self: Self): string; }\nfunction main(): i32 { var d: dyn Display = 42; return 0; }\n"},
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { var p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
