@@ -1604,6 +1604,49 @@ function f(): i32 {
 	}
 }
 
+// A binary chain written across lines keeps its breaks (#8475), printed with
+// the operator leading the continuation line whichever side of it the source
+// broke; a chain written on one line stays on one line.
+func TestFormatKeepsBinaryLineBreaks(t *testing.T) {
+	src := `function f(a: i32, b: i32): boolean {
+  var s: string = "x"
+      + "y" + a.to_string()
+      + "z";
+  var t: i32 = a +
+      b;
+  var u: i32 = a + b;
+  if (a > 0 &&
+      b > 0) { return s.len() > t + u; }
+  return g(a,
+    a == 1
+      || b == 2);
+}
+`
+	want := `  var s: string = "x"
+    + "y" + a.to_string()
+    + "z";
+  var t: i32 = a
+    + b;
+  var u: i32 = a + b;
+  if (a > 0
+    && b > 0) {
+    return s.len() > t + u;
+  }
+  return g(
+    a,
+    a == 1
+      || b == 2,
+  );
+`
+	got := formatSrc(t, src)
+	if !strings.Contains(got, want) {
+		t.Fatalf("want\n%s\nin:\n%s", want, got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
 func TestFormatKeepsBlockEndComments(t *testing.T) {
 	src := `function f(x: i32): i32 {
   if (x > 0) {

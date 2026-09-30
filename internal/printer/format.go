@@ -259,6 +259,111 @@ func (f *formatter) keepListLines(open, last int) bool {
 	return open > 0 && last > open || f.innerCommentPending(open, last)
 }
 
+// writtenBreak reports whether the source broke the line between a binary's
+// operands, before its operator or after it. The formatter keeps that break,
+// printing the operator at the start of the continuation line.
+func writtenBreak(b *ast.Binary) bool {
+	op := b.P.Line
+	if op == 0 {
+		return false
+	}
+	left := lastLine(b.Left)
+	right := firstLine(b.Right)
+	return left > 0 && op > left || right > op
+}
+
+// firstLine is the line of an expression's first token, as far as the AST
+// records one: a postfix or infix node starts where its leftmost operand does.
+func firstLine(e ast.Expr) int {
+	switch x := e.(type) {
+	case *ast.Binary:
+		return firstLine(x.Left)
+	case *ast.Call:
+		if x.IsPipe && len(x.Args) > 0 {
+			return firstLine(x.Args[0])
+		}
+		return firstLine(x.Callee)
+	case *ast.Index:
+		return firstLine(x.Array)
+	case *ast.SliceExpr:
+		return firstLine(x.Source)
+	case *ast.FieldAccess:
+		return firstLine(x.Target)
+	case *ast.CastExpr:
+		return firstLine(x.Inner)
+	case *ast.TryOp:
+		return firstLine(x.Inner)
+	}
+	return e.Pos().Line
+}
+
+// lastLine is the line an expression ends on, as far as the AST records it. A
+// closing bracket carries no position, so a list ends at its last element, or on
+// the line below it when the list prints as written (keepListLines), since that
+// form puts the closer on a line of its own. A lambda, block or conditional
+// counts as its first line: its body is laid out by the statement printer.
+func lastLine(e ast.Expr) int {
+	ln := e.Pos().Line
+	more := func(es ...ast.Expr) {
+		for _, x := range es {
+			if x != nil {
+				ln = max(ln, lastLine(x))
+			}
+		}
+	}
+	closer := func(open, lastElem int) {
+		if open > 0 && lastElem > open {
+			ln++
+		}
+	}
+	switch x := e.(type) {
+	case *ast.Binary:
+		more(x.Left, x.Right)
+	case *ast.Unary:
+		more(x.Operand)
+	case *ast.Assign:
+		more(x.Target, x.Value)
+	case *ast.Call:
+		more(x.Callee)
+		more(x.Args...)
+		if n := len(x.Args); n > 0 && !x.IsPipe {
+			closer(x.P.Line, firstLine(x.Args[n-1]))
+		}
+	case *ast.ArrayLit:
+		more(x.Elems...)
+		if n := len(x.Elems); n > 0 {
+			closer(x.P.Line, firstLine(x.Elems[n-1]))
+		}
+	case *ast.TupleLit:
+		more(x.Elems...)
+	case *ast.Index:
+		more(x.Array, x.Idx)
+	case *ast.SliceExpr:
+		more(x.Source, x.Low, x.High)
+	case *ast.StructLit:
+		more(x.Base)
+		for _, fld := range x.Fields {
+			more(fld.Value)
+		}
+		if n := len(x.Fields); n > 0 {
+			closer(x.P.Line, x.Fields[n-1].NamePos.Line)
+		} else if x.Base != nil {
+			closer(x.P.Line, firstLine(x.Base))
+		}
+	case *ast.FieldAccess:
+		more(x.Target)
+	case *ast.MapLit:
+		for _, en := range x.Entries {
+			more(en.Key, en.Value)
+		}
+	case *ast.CastExpr:
+		more(x.Inner)
+	case *ast.TryOp:
+		more(x.Inner)
+	}
+	return ln
+}
+
 // writeListLines prints the n elements of a bracketed list one SOURCE line per
 // output line: elements that shared a line in the source share one here, each
 // line's leading comments go above it and its trailing comment after its comma.
@@ -983,7 +1088,26 @@ func (f *formatter) formatStmtLine(s ast.Stmt, depth int) {
 	// queued comment shares its source line, emit it inline.
 	if isSingleLineStmt(s) {
 		f.emitTrailing(s.Pos().Line)
+		f.emitTrailing(stmtLastLine(s))
 	}
+}
+
+// stmtLastLine is the line a single-line statement's expression ends on, which
+// is where a comment trailing a statement written across lines sits.
+func stmtLastLine(s ast.Stmt) int {
+	switch x := s.(type) {
+	case *ast.Return:
+		if x.Value != nil {
+			return lastLine(x.Value)
+		}
+	case *ast.Var:
+		if x.Init != nil {
+			return lastLine(x.Init)
+		}
+	case *ast.ExprStmt:
+		return lastLine(x.Expr)
+	}
+	return s.Pos().Line
 }
 
 // isSingleLineStmt reports whether s emits as a single source line
@@ -1783,7 +1907,14 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteByte('(')
 		}
 		f.formatExpr(x.Left, p)
-		f.b.WriteByte(' ')
+		if writtenBreak(x) {
+			f.emitTrailing(lastLine(x.Left))
+			f.b.WriteByte('\n')
+			f.drainLeading(x.P.Line, f.depth+1)
+			f.indent(f.depth + 1)
+		} else {
+			f.b.WriteByte(' ')
+		}
 		f.b.WriteString(x.Op)
 		f.b.WriteByte(' ')
 		f.formatExpr(x.Right, p+1)
@@ -1859,8 +1990,8 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Callee, precPrimary)
 		f.writeCallTypeArgs(x)
 		f.b.WriteByte('(')
-		if n := len(x.Args); n > 0 && f.keepListLines(x.P.Line, x.Args[n-1].Pos().Line) {
-			f.writeListLines(n, func(i int) int { return x.Args[i].Pos().Line },
+		if n := len(x.Args); n > 0 && f.keepListLines(x.P.Line, firstLine(x.Args[n-1])) {
+			f.writeListLines(n, func(i int) int { return firstLine(x.Args[i]) },
 				func(i int) { f.writeCallArg(x, i, x.Args[i]) }, ")")
 			break
 		}
@@ -1889,8 +2020,8 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(']')
 	case *ast.ArrayLit:
 		f.b.WriteByte('[')
-		if n := len(x.Elems); n > 0 && f.keepListLines(x.P.Line, x.Elems[n-1].Pos().Line) {
-			f.writeListLines(n, func(i int) int { return x.Elems[i].Pos().Line },
+		if n := len(x.Elems); n > 0 && f.keepListLines(x.P.Line, firstLine(x.Elems[n-1])) {
+			f.writeListLines(n, func(i int) int { return firstLine(x.Elems[i]) },
 				func(i int) { f.formatExpr(x.Elems[i], precLowest) }, "]")
 			break
 		}
@@ -1973,7 +2104,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		}
 		elemLine := func(i int) int {
 			if i < nb {
-				return x.Base.Pos().Line
+				return firstLine(x.Base)
 			}
 			return x.Fields[i-nb].NamePos.Line
 		}

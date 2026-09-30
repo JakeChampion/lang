@@ -623,8 +623,15 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
             }
             var p: i32 = binary_prec(b.op);
             var (bl, bf) = print_expr_c(b.left, p, depth, f);
+            var gap: string = " ";
+            if (written_break(b)) {
+                let (tr, tf) = emit_trailing(bf, last_line(b.left));
+                let (lead, lf) = drain_leading(tf, b.line, depth + 1);
+                gap = tr + "\n" + lead + indent_str(depth + 1);
+                bf = lf;
+            }
             var (br, bf2) = print_expr_c(b.right, p + 1, depth, bf);
-            var inner: string = bl + " " + b.op + " " + br;
+            var inner: string = bl + gap + b.op + " " + br;
             if (p < parent_prec) { return ("(" + inner + ")", bf2); }
             return (inner, bf2);
         },
@@ -792,16 +799,11 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
     return ("/*unhandled-expr*/", f);
 }
 
-// elem_line is the source line a list element starts on. An index or slice
-// takes its base's, and a node that records no line (a boolean literal) takes
-// `prev`, the line of the element before it.
+// elem_line is the source line a list element starts on (first_line), and for a
+// node that records no line (a boolean literal) `prev`, the line of the element
+// before it.
 function elem_line(e: ast.Expr, prev: i32): i32 {
-    var ln: i32 = 0;
-    match (e) {
-        ast.ExprIndex(ix) => { ln = elem_line(ix.array, prev); },
-        ast.ExprSlice(sl) => { ln = elem_line(sl.array, prev); },
-        _ => { ln = ast.expr_line(e); }
-    }
+    var ln: i32 = first_line(e);
     if (ln == 0) { return prev; }
     return ln;
 }
@@ -960,6 +962,77 @@ function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
         return ("  //" + f.comments[f.ci].text, Fmt { ...f, ci: f.ci + 1 });
     }
     return ("", f);
+}
+
+// written_break: did the source break the line between a binary's operands,
+// before its operator or after it? The formatter keeps that break, printing the
+// operator at the start of the continuation line.
+function written_break(b: ast.ExprBinary): boolean {
+    if (b.line == 0) { return false; }
+    var left: i32 = last_line(b.left);
+    return left > 0 && b.line > left || first_line(b.right) > b.line;
+}
+
+// first_line is the line of an expression's first token, as far as the AST
+// records one: a postfix or infix node starts where its leftmost operand does.
+function first_line(e: ast.Expr): i32 {
+    match (e) {
+        ast.ExprBinary(b) => { return first_line(b.left); },
+        ast.ExprCall(c) => { return first_line(c.callee); },
+        ast.ExprIndex(ix) => { return first_line(ix.array); },
+        ast.ExprSlice(sl) => { return first_line(sl.array); },
+        ast.ExprFieldAccess(fa) => { return first_line(fa.obj); },
+        ast.ExprUnary(u) => {
+            if (is_postfix_unary(u.op)) { return first_line(u.operand); }
+            return u.line;
+        },
+        _ => { return ast.expr_line(e); }
+    }
+    return ast.expr_line(e);
+}
+
+// is_postfix_unary: a cast or a `?` is a unary node written after its operand.
+function is_postfix_unary(op: string): boolean {
+    return util.str_has_prefix(op, "as_") || util.str_has_prefix(op, "as?_") || op == "try_";
+}
+
+// last_line is the line of the last operand an expression records a position
+// for. Closing brackets carry no position, so a call ends at its last argument.
+// A lambda counts as its first line: its body is laid out by the statement
+// printer, not by the line it happened to end on.
+function last_line(e: ast.Expr): i32 {
+    var ln: i32 = ast.expr_line(e);
+    match (e) {
+        ast.ExprBinary(b) => { return max_line(max_line(ln, last_line(b.left)), last_line(b.right)); },
+        ast.ExprUnary(u) => { return max_line(ln, last_line(u.operand)); },
+        ast.ExprCall(c) => { return max_line(max_line(ln, last_line(c.callee)), last_line_of(c.args)); },
+        ast.ExprArray(a) => { return max_line(ln, last_line_of(a.elements)); },
+        ast.ExprTuple(t) => { return max_line(ln, last_line_of(t.elements)); },
+        ast.ExprIndex(ix) => { return max_line(max_line(ln, last_line(ix.array)), last_line(ix.index)); },
+        ast.ExprSlice(sl) => { return max_line(max_line(max_line(ln, last_line(sl.array)), last_line(sl.start)), last_line(sl.end)); },
+        ast.ExprStructLit(st) => {
+            var m: i32 = max_line(ln, last_line_of(st.field_values));
+            if (st.has_base) { m = max_line(m, last_line(st.base)); }
+            return m;
+        },
+        ast.ExprFieldAccess(fa) => { return max_line(ln, last_line(fa.obj)); },
+        ast.ExprMapLit(ml) => { return max_line(max_line(ln, last_line_of(ml.keys)), last_line_of(ml.vals)); },
+        _ => { return ln; }
+    }
+    return ln;
+}
+
+function last_line_of(es: ast.Expr[]): i32 {
+    var m: i32 = 0;
+    for x in es {
+        m = max_line(m, last_line(x));
+    }
+    return m;
+}
+
+function max_line(a: i32, b: i32): i32 {
+    if (a > b) { return a; }
+    return b;
 }
 
 // keep_list_lines: does a list opened on line `open`, whose last element is on
@@ -1956,10 +2029,24 @@ function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         var ln: i32 = ast.stmt_line(st);
         if (ln > 0) {
             var (tr, g2) = emit_trailing(g, ln);
-            return (out + tr, g2);
+            var (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln));
+            return (out + tr + tr2, g3);
         }
     }
     return (out, g);
+}
+
+// stmt_last_line is the line a single-line statement's expression ends on,
+// which is where a comment trailing a statement written across lines sits.
+function stmt_last_line(st: ast.Stmt, ln: i32): i32 {
+    match (st) {
+        ast.StmtReturn(r) => { return max_line(ln, last_line(r.value)); },
+        ast.StmtVar(v) => { return max_line(ln, last_line(v.init)); },
+        ast.StmtExpr(x) => { return max_line(ln, last_line(x.value)); },
+        ast.StmtAssign(a) => { return max_line(ln, last_line(a.value)); },
+        _ => { return ln; }
+    }
+    return ln;
 }
 
 // split_commas splits a comma-joined binding / field list. Destructure names

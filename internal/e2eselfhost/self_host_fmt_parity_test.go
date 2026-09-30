@@ -1476,6 +1476,28 @@ function main(): i32 {
     .len();
 }
 `},
+	// A binary chain written across lines keeps its breaks (#8475), with the
+	// operator leading each continuation line, whether the source broke
+	// before the operator or after it.
+	{"binary-written-across-lines", `function g(a: i32, b: boolean): i32 {
+  if (b) { return a; }
+  return 0;
+}
+function main(): i32 {
+  var a: i32 = 1;
+  var s: string = "x"
+    + "y" + a.to_string()
+    + "z";
+  var t: i32 = a +
+    2;
+  var u: i32 = a + t;
+  if (a > 0 &&
+      t > 0) { u = u + 1; }
+  return g(a,
+    a == 1
+      || t == 2) + s.len() + u;
+}
+`},
 	{"list-interior-comments", `struct S { a: i32, b: i32 }
 const NAMES: string[] = [
   // group one
