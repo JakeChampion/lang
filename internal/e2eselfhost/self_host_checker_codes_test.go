@@ -1936,6 +1936,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"cap-assign-unann-array", "function main(): i32 { var a = [1]; var f = (): i32 => { a = [2]; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-struct", "struct P { x: i32 }\nfunction main(): i32 { var p = P { x: 1 }; var f = (): i32 => { p = P { x: 2 }; return 0; }; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-tuple", "function main(): i32 { var t = (1, 2); var f = (): i32 => { t = (3, 4); return 0; }; return f(); }\n", []string{"E049"}},
+		// An injected enum's variant payload is checked like a declared one:
+		// JsonValue and IoError have no union declaration to find it by.
+		{"injected-variant-payload-json", "function main(): i32 { var j: JsonValue = JNumber(1.0); return 0; }\n", []string{"E036"}},
+		{"injected-variant-payload-ioerror", "function main(): i32 { var e: IoError = NotFound(3); return 0; }\n", []string{"E036"}},
+		{"injected-variant-payload-ok", "function main(): i32 { var j: JsonValue = JNumber(\"1.0\"); var e: IoError = NotFound(\"p\"); return 0; }\n", nil},
+		// The enclosing scope's store is judged on the VALUE's type, as native
+		// judges it: a struct that reaches no function may be stored into a
+		// captured `dyn`, a `dyn`-typed value may not (#8440).
+		{"cap-dyn-outer-store-struct", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction main(): i32 { var d: dyn Shape = Sq { s: 3 }; var f: () => i32 = (): i32 => { return d.area(); }; d = Sq { s: 5 }; return f(); }\n", nil},
+		{"cap-dyn-outer-store-dyn", "trait Shape { function area(self: Self): i32; }\nstruct Sq { s: i32 }\nimpl Shape for Sq { function area(self: Self): i32 { return self.s; } }\nfunction main(): i32 { var d: dyn Shape = Sq { s: 3 }; var e: dyn Shape = Sq { s: 4 }; var f: () => i32 = (): i32 => { return d.area(); }; d = e; return f(); }\n", []string{"E049"}},
 		{"cap-assign-unann-scalar-ok", "function main(): i32 { var n = 5; var f = (): i32 => { n = 7; return 0; }; return f(); }\n", nil},
 		// E002 inside lambda bodies: a lambda's `return` is checked against
 		// the lambda's OWN declared return type, not the enclosing function's
