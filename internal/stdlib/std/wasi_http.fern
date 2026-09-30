@@ -23,7 +23,6 @@
 // than through `own` resource types because the export has to live in the
 // program's module (it names `handle`) while the externs live here, and a
 // resource type is module-local.
-
 import "std/http";
 import "std/platform";
 
@@ -33,46 +32,67 @@ enum WasiHttpMethod { Get, Head, Post, Put, Delete, Connect, Options, Trace, Pat
 
 @import("wasi:http/types@0.2.0", "[method]incoming-request.method")
 function req_method(req: i32): WasiHttpMethod;
+
 @import("wasi:http/types@0.2.0", "[method]incoming-request.path-with-query")
 function req_path(req: i32): Option[string];
+
 @import("wasi:http/types@0.2.0", "[method]incoming-request.headers")
 function req_headers(req: i32): i32;
+
 @import("wasi:http/types@0.2.0", "[method]incoming-request.consume")
 function req_consume(req: i32): Result[i32, i32];
+
 @import("wasi:http/types@0.2.0", "[resource-drop]incoming-request")
 function req_drop(req: i32): void;
+
 @import("wasi:http/types@0.2.0", "[method]incoming-body.stream")
 function body_stream(body: i32): Result[i32, i32];
+
 @import("wasi:http/types@0.2.0", "[static]incoming-body.finish")
 function body_finish(body: i32): i32;
+
 @import("wasi:http/types@0.2.0", "[resource-drop]future-trailers")
 function trailers_drop(trailers: i32): void;
+
 @import("wasi:io/streams@0.2.0", "[method]input-stream.blocking-read")
 function stream_read(stream: i32, len: i64): Result[u8[], i32];
+
 @import("wasi:io/streams@0.2.0", "[resource-drop]input-stream")
 function input_stream_drop(stream: i32): void;
+
 @import("wasi:http/types@0.2.0", "[method]fields.entries")
 function fields_entries(fields: i32): (string, string)[];
+
 @import("wasi:http/types@0.2.0", "[constructor]fields")
 function fields_new(): i32;
+
 @import("wasi:http/types@0.2.0", "[method]fields.append")
 function fields_append(fields: i32, name: string, value: string): Result[i32, i32];
+
 @import("wasi:http/types@0.2.0", "[resource-drop]fields")
 function fields_drop(fields: i32): void;
+
 @import("wasi:http/types@0.2.0", "[constructor]outgoing-response")
 function response_new(headers: i32): i32;
+
 @import("wasi:http/types@0.2.0", "[method]outgoing-response.set-status-code")
 function response_set_status(resp: i32, status: i32): i32;
+
 @import("wasi:http/types@0.2.0", "[method]outgoing-response.body")
 function response_body(resp: i32): Result[i32, i32];
+
 @import("wasi:http/types@0.2.0", "[method]outgoing-body.write")
 function body_write(body: i32): Result[i32, i32];
+
 @import("wasi:io/streams@0.2.0", "[method]output-stream.blocking-write-and-flush")
 function stream_write(stream: i32, bytes: string): Result[i32, i32];
+
 @import("wasi:io/streams@0.2.0", "[resource-drop]output-stream")
 function output_stream_drop(stream: i32): void;
+
 @import("wasi:http/types@0.2.0", "[static]outgoing-body.finish")
 function body_finish_out(body: i32, trailers: Option[i32]): Result[i32, i32];
+
 // `result<own<outgoing-response>, error-code>` flattens to nine core values
 // after the outparam: the discriminant, the response handle, and the
 // error-code arm's slots (the i64 from its option<u64>), zero for `ok`.
@@ -85,146 +105,180 @@ const WRITE_CHUNK: i32 = 4096;
 // `serve(request, response_out, handle)` — answer one request: the body of
 // the component's incoming-handler export, with the program's `handle`.
 pub function serve(request: i32, response_out: i32, handle: (HttpRequest, Platform) => HttpResponse): void {
-    var method: string = method_name(req_method(request));
-    var target: string = "/";
-    match (req_path(request)) {
-        Some(p) => { target = p; },
-        None => { target = "/"; }
+  var method: string = method_name(req_method(request));
+  var target: string = "/";
+  match (req_path(request)) {
+    Some(p) => {
+      target = p;
+    },
+    None => {
+      target = "/";
     }
-    // The path a handler sees is the same on every target: decoded once,
-    // its dot segments removed, or refused.
-    var path: string = "";
-    match (http.http_request_target(method, target)) {
-        Ok(p) => { path = p; },
-        Err(status) => {
-            req_drop(request);
-            send(response_out, http.text(status, ""));
-            return;
-        }
+  }
+  // The path a handler sees is the same on every target: decoded once,
+  // its dot segments removed, or refused.
+  var path: string = "";
+  match (http.http_request_target(method, target)) {
+    Ok(p) => {
+      path = p;
+    },
+    Err(status) => {
+      req_drop(request);
+      send(response_out, http.text(status, ""));
+      return;
     }
-    // The header snapshot is taken before the body is consumed; its entries
-    // are read after, and the request is dropped last, once its children —
-    // the fields and the finished body — are gone.
-    var fields: i32 = req_headers(request);
-    var data: u8[] = read_body(request);
-    var headers: HeaderMap = headers_of(fields);
-    req_drop(request);
-    // The body's trailers are a future the host settles after the body is
-    // finished; nothing reads it yet, so the request's are empty.
-    var req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
-    var resp: HttpResponse = handle(req, platform.platform_new());
-    send(response_out, resp);
+  }
+  // The header snapshot is taken before the body is consumed; its entries
+  // are read after, and the request is dropped last, once its children —
+  // the fields and the finished body — are gone.
+  var fields: i32 = req_headers(request);
+  var data: u8[] = read_body(request);
+  var headers: HeaderMap = headers_of(fields);
+  req_drop(request);
+  // The body's trailers are a future the host settles after the body is
+  // finished; nothing reads it yet, so the request's are empty.
+  var req: HttpRequest = HttpRequest { method: method, path: path, body: Stream { data: data, pos: 0 }, headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  var resp: HttpResponse = handle(req, platform.platform_new());
+  send(response_out, resp);
 }
 
 function method_name(m: WasiHttpMethod): string {
-    match (m) {
-        Get => { return "GET"; },
-        Head => { return "HEAD"; },
-        Post => { return "POST"; },
-        Put => { return "PUT"; },
-        Delete => { return "DELETE"; },
-        Connect => { return "CONNECT"; },
-        Options => { return "OPTIONS"; },
-        Trace => { return "TRACE"; },
-        Patch => { return "PATCH"; },
-        Other(s) => { return s; }
+  match (m) {
+    Get => {
+      return "GET";
+    },
+    Head => {
+      return "HEAD";
+    },
+    Post => {
+      return "POST";
+    },
+    Put => {
+      return "PUT";
+    },
+    Delete => {
+      return "DELETE";
+    },
+    Connect => {
+      return "CONNECT";
+    },
+    Options => {
+      return "OPTIONS";
+    },
+    Trace => {
+      return "TRACE";
+    },
+    Patch => {
+      return "PATCH";
+    },
+    Other(s) => {
+      return s;
     }
-    return "";
+  }
+  return "";
 }
 
 // read_body drains the request body: consume, stream, read until the stream
 // closes or errs, drop the stream, then finish the body (its trailers
 // dropped unread). A request the host refuses to consume reads as empty.
 function read_body(request: i32): u8[] {
-    var data: u8[] = [];
-    match (req_consume(request)) {
-        Ok(body) => {
-            match (body_stream(body)) {
-                Ok(stream) => {
-                    var reading: boolean = true;
-                    while (reading) {
-                        match (stream_read(stream, WRITE_CHUNK as i64)) {
-                            Ok(chunk) => {
-                                if (chunk.len() == 0) {
-                                    reading = false;
-                                } else {
-                                    var i: i32 = 0;
-                                    while (i < chunk.len()) {
-                                        data = data.append(chunk[i]);
-                                        i = i + 1;
-                                    }
-                                }
-                            },
-                            Err(e) => { reading = false; }
-                        }
-                    }
-                    input_stream_drop(stream);
-                },
-                Err(e) => {}
+  var data: u8[] = [];
+  match (req_consume(request)) {
+    Ok(body) => {
+      match (body_stream(body)) {
+        Ok(stream) => {
+          var reading: boolean = true;
+          while (reading) {
+            match (stream_read(stream, WRITE_CHUNK as i64)) {
+              Ok(chunk) => {
+                if (chunk.len() == 0) {
+                  reading = false;
+                } else {
+                  var i: i32 = 0;
+                  while (i < chunk.len()) {
+                    data = data.append(chunk[i]);
+                    i = i + 1;
+                  }
+                }
+              },
+              Err(e) => {
+                reading = false;
+              }
             }
-            trailers_drop(body_finish(body));
+          }
+          input_stream_drop(stream);
         },
         Err(e) => {}
-    }
-    return data;
+      }
+      trailers_drop(body_finish(body));
+    },
+    Err(e) => {}
+  }
+  return data;
 }
 
 // headers_of reads a fields snapshot into a HeaderMap and drops it.
 function headers_of(fields: i32): HeaderMap {
-    var names: string[] = [];
-    var values: string[] = [];
-    for entry in fields_entries(fields) {
-        var (name, value) = entry;
-        names = names.append(name);
-        values = values.append(value);
-    }
-    fields_drop(fields);
-    return HeaderMap { names: names, values: values };
+  var names: string[] = [];
+  var values: string[] = [];
+  for entry in fields_entries(fields) {
+    let (name, value) = entry;
+    names = names.append(name);
+    values = values.append(value);
+  }
+  fields_drop(fields);
+  return HeaderMap { names: names, values: values };
 }
 
 // send writes the response to the host. The output stream is dropped
 // before the body is finished, and the body finished before the response
 // is set: each is the child the next step's resource must no longer have.
 function send(response_out: i32, resp: HttpResponse): void {
-    var fields: i32 = fields_new();
-    var i: i32 = 0;
-    while (i < resp.headers.names.len()) {
-        match (fields_append(fields, resp.headers.names[i], resp.headers.values[i])) {
-            Ok(v) => {},
-            Err(e) => {}
-        }
-        i = i + 1;
+  var fields: i32 = fields_new();
+  var i: i32 = 0;
+  while (i < resp.headers.names.len()) {
+    match (fields_append(fields, resp.headers.names[i], resp.headers.values[i])) {
+      Ok(v) => {},
+      Err(e) => {}
     }
-    var response: i32 = response_new(fields);
-    response_set_status(response, resp.status);
-    match (response_body(response)) {
-        Ok(body) => {
-            match (body_write(body)) {
-                Ok(stream) => {
-                    write_all(stream, resp.body_string());
-                    output_stream_drop(stream);
-                },
-                Err(e) => {}
-            }
-            match (body_finish_out(body, None)) {
-                Ok(v) => {},
-                Err(e) => {}
-            }
+    i = i + 1;
+  }
+  var response: i32 = response_new(fields);
+  response_set_status(response, resp.status);
+  match (response_body(response)) {
+    Ok(body) => {
+      match (body_write(body)) {
+        Ok(stream) => {
+          write_all(stream, resp.body_string());
+          output_stream_drop(stream);
         },
         Err(e) => {}
-    }
-    outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
+      }
+      match (body_finish_out(body, None)) {
+        Ok(v) => {},
+        Err(e) => {}
+      }
+    },
+    Err(e) => {}
+  }
+  outparam_set(response_out, 0, response, 0, 0 as i64, 0, 0, 0, 0);
 }
 
 function write_all(stream: i32, body: string): void {
-    var off: i32 = 0;
-    var n: i32 = body.len();
-    while (off < n) {
-        var end: i32 = off + WRITE_CHUNK;
-        if (end > n) { end = n; }
-        match (stream_write(stream, slice_unchecked(body, off, end) + "")) {
-            Ok(v) => { off = end; },
-            Err(e) => { off = n; }
-        }
+  var off: i32 = 0;
+  var n: i32 = body.len();
+  while (off < n) {
+    var end: i32 = off + WRITE_CHUNK;
+    if (end > n) {
+      end = n;
     }
+    match (stream_write(stream, slice_unchecked(body, off, end) + "")) {
+      Ok(v) => {
+        off = end;
+      },
+      Err(e) => {
+        off = n;
+      }
+    }
+  }
 }

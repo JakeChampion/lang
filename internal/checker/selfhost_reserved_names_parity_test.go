@@ -32,7 +32,7 @@ var (
 	fernStringRE              = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 	selfHostReservedTParamsRE = regexp.MustCompile(
 		`(?s)function reserved_struct_tparams\(name: string\): string\[\] \{(.*?)\n\}`)
-	fernTParamsArmRE = regexp.MustCompile(`if \(name == "(\w+)"\) \{ return \[(.*?)\]; \}`)
+	fernTParamsArmRE = regexp.MustCompile(`if \(name == "(\w+)"\) \{\s*return \[(.*?)\];\s*\}`)
 )
 
 func selfHostReservedNamesSource(t *testing.T) string {

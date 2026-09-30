@@ -35,7 +35,6 @@
 // same sink, `canned`, tab, the capability's key, tab, the value, which
 // the log's reader skips; the sink is the mock's whole state, since the
 // bag's layout is frozen and a cell holds one string.
-
 import "std/string";
 
 // PLATFORM_MODE_HOST / PLATFORM_MODE_MOCK — what the bag's `mode` field
@@ -45,6 +44,7 @@ import "std/string";
 // and `platform_mock` below are the only two ways to build a bag, so no
 // caller has to name a mode.
 const PLATFORM_MODE_HOST: i32 = 0;
+
 const PLATFORM_MODE_MOCK: i32 = 1;
 
 // `platform_new()` — the bag as the host serves it, for code that has
@@ -66,21 +66,21 @@ const PLATFORM_MODE_MOCK: i32 = 1;
 // connections, timers, the sim's driver — lives behind the handle rather
 // than in the bag.
 pub function platform_new(): Platform {
-    return Platform { version: 3, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
+  return Platform { version: 3, mode: PLATFORM_MODE_HOST, sink: cell_new(""), handle: 0 };
 }
 
 // `platform_mock(sink)` — a bag that records into `sink` instead of reaching
 // the host. std/mock_platform is the caller: it passes its own cell, so the
 // mock and the handler write one log through two views.
 pub function platform_mock(sink: Cell[string]): Platform {
-    return Platform { version: 3, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
+  return Platform { version: 3, mode: PLATFORM_MODE_MOCK, sink: sink, handle: 0 };
 }
 
 // `.is_mock()` — is this a recording bag? Each capability method below asks
 // before performing its effect, and so does `.fetch`, the one capability that
 // lives next to the socket machinery in std/fetch rather than here.
 pub function (plat: Platform) is_mock(): boolean {
-    return plat.mode == PLATFORM_MODE_MOCK;
+  return plat.mode == PLATFORM_MODE_MOCK;
 }
 
 // `.record(name, args)` — append one call to a recording bag's log; a no-op
@@ -90,8 +90,10 @@ pub function (plat: Platform) is_mock(): boolean {
 // newline inside `args` splits it, which is why what gets recorded is a
 // summary of the arguments rather than a payload.
 pub function (plat: Platform) record(name: string, args: string): void {
-    if (plat.mode != PLATFORM_MODE_MOCK) { return; }
-    plat.sink.set(plat.sink.get() + name + "\t" + args + "\n");
+  if (plat.mode != PLATFORM_MODE_MOCK) {
+    return;
+  }
+  plat.sink.set(plat.sink.get() + name + "\t" + args + "\n");
 }
 
 // `.can(key, value)` — on a recording bag, answer `key` with `value` from
@@ -100,79 +102,103 @@ pub function (plat: Platform) record(name: string, args: string): void {
 // and `fetch HOST:PORT PATH`; std/mock_platform's setters spell them. A
 // tab, newline or backslash in the value is escaped into the row.
 pub function (plat: Platform) can(key: string, value: string): void {
-    if (plat.mode != PLATFORM_MODE_MOCK) { return; }
-    plat.sink.set(plat.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
+  if (plat.mode != PLATFORM_MODE_MOCK) {
+    return;
+  }
+  plat.sink.set(plat.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
 }
 
 // `.canned(key)` — the value `.can` recorded for `key`, the last one when
 // several were, or `None`.
 pub function (plat: Platform) canned(key: string): Option[string] {
-    if (plat.mode != PLATFORM_MODE_MOCK) { return None; }
-    var found: Option[string] = None;
-    var prefix: string = "canned\t" + key + "\t";
-    for line in plat.sink.get().split("\n") {
-        if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
-            found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
-        }
+  if (plat.mode != PLATFORM_MODE_MOCK) {
+    return None;
+  }
+  var found: Option[string] = None;
+  var prefix: string = "canned\t" + key + "\t";
+  for line in plat.sink.get().split("\n") {
+    if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
+      found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
     }
-    return found;
+  }
+  return found;
 }
 
 function __canned_escape(v: string): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < v.len()) {
-        var b: u8 = v[i];
-        if (b == (92 as u8)) { out = out + "\\\\"; }
-        else if (b == (9 as u8)) { out = out + "\\t"; }
-        else if (b == (10 as u8)) { out = out + "\\n"; }
-        else { out = out + slice_unchecked(v, i, i + 1); }
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < v.len()) {
+    var b: u8 = v[i];
+    if (b == 92 as u8) {
+      out = out + "\\\\";
+    } else if (b == 9 as u8) {
+      out = out + "\\t";
+    } else if (b == 10 as u8) {
+      out = out + "\\n";
+    } else {
+      out = out + slice_unchecked(v, i, i + 1);
     }
-    return out;
+    i = i + 1;
+  }
+  return out;
 }
 
 function __canned_unescape(v: string): string {
-    var out: string = "";
-    var i: i32 = 0;
-    while (i < v.len()) {
-        var b: u8 = v[i];
-        if (b == (92 as u8) && i + 1 < v.len()) {
-            var n: u8 = v[i + 1];
-            if (n == (116 as u8)) { out = out + "\t"; }
-            else if (n == (110 as u8)) { out = out + "\n"; }
-            else { out = out + slice_unchecked(v, i + 1, i + 2); }
-            i = i + 2;
-            continue;
-        }
-        out = out + slice_unchecked(v, i, i + 1);
-        i = i + 1;
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < v.len()) {
+    var b: u8 = v[i];
+    if (b == 92 as u8 && i + 1 < v.len()) {
+      var n: u8 = v[i + 1];
+      if (n == 116 as u8) {
+        out = out + "\t";
+      } else if (n == 110 as u8) {
+        out = out + "\n";
+      } else {
+        out = out + slice_unchecked(v, i + 1, i + 2);
+      }
+      i = i + 2;
+      continue;
     }
-    return out;
+    out = out + slice_unchecked(v, i, i + 1);
+    i = i + 1;
+  }
+  return out;
 }
 
 // __canned_i64(plat, key, fallback) — a canned number, or `fallback`.
 function __canned_i64(plat: Platform, key: string, fallback: i64): i64 {
-    match (plat.canned(key)) {
-        Some(v) => { return __parse_i64(v); },
-        None => { return fallback; }
+  match (plat.canned(key)) {
+    Some(v) => {
+      return __parse_i64(v);
+    },
+    None => {
+      return fallback;
     }
-    return fallback;
+  }
+  return fallback;
 }
 
 function __parse_i64(s: string): i64 {
-    var n: i64 = 0 as i64;
-    var neg: boolean = false;
-    var i: i32 = 0;
-    if (s.len() > 0 && s[0] == (45 as u8)) { neg = true; i = 1; }
-    while (i < s.len()) {
-        var d: i32 = (s[i] as i32) - 48;
-        if (d < 0 || d > 9) { break; }
-        n = n * (10 as i64) + (d as i64);
-        i = i + 1;
+  var n: i64 = 0 as i64;
+  var neg: boolean = false;
+  var i: i32 = 0;
+  if (s.len() > 0 && s[0] == 45 as u8) {
+    neg = true;
+    i = 1;
+  }
+  while (i < s.len()) {
+    var d: i32 = s[i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      break;
     }
-    if (neg) { return 0 as i64 - n; }
-    return n;
+    n = n * (10 as i64) + d as i64;
+    i = i + 1;
+  }
+  if (neg) {
+    return 0 as i64 - n;
+  }
+  return n;
 }
 
 // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -180,22 +206,22 @@ function __parse_i64(s: string): i64 {
 // every target that has one (a proxy-world component has no stdout, so
 // this is the only output a handler gets).
 pub function (plat: Platform) log(msg: string): void {
-    if (plat.is_mock()) {
-        plat.record("log", msg);
-        return;
-    }
-    eprint(msg);
+  if (plat.is_mock()) {
+    plat.record("log", msg);
+    return;
+  }
+  eprint(msg);
 }
 
 // `.now_ms()` — wall-clock milliseconds since the Unix epoch. Needs the
 // `now` capability. Subject to clock adjustment: stamp a response with
 // it, don't time anything with it — that's `.elapsed_ns()`.
 pub function (plat: Platform) now_ms(): i64 {
-    if (plat.is_mock()) {
-        plat.record("now_ms", "");
-        return __canned_i64(plat, "now_ms", 0i64);
-    }
-    return now_unix_ms();
+  if (plat.is_mock()) {
+    plat.record("now_ms", "");
+    return __canned_i64(plat, "now_ms", 0i64);
+  }
+  return now_unix_ms();
 }
 
 // `.elapsed_ns()` — monotonically non-decreasing nanoseconds from an
@@ -203,11 +229,11 @@ pub function (plat: Platform) now_ms(): i64 {
 // between two readings is an elapsed time regardless of what the wall
 // clock did in between, which is what a handler's latency budget wants.
 pub function (plat: Platform) elapsed_ns(): i64 {
-    if (plat.is_mock()) {
-        plat.record("elapsed_ns", "");
-        return __canned_i64(plat, "elapsed_ns", 0i64);
-    }
-    return monotonic_ns();
+  if (plat.is_mock()) {
+    plat.record("elapsed_ns", "");
+    return __canned_i64(plat, "elapsed_ns", 0i64);
+  }
+  return monotonic_ns();
 }
 
 // `.env(name)` — one variable from the invocation environment. Needs
@@ -217,19 +243,19 @@ pub function (plat: Platform) elapsed_ns(): i64 {
 // (docs/PLATFORM-RESEARCH.md Rec §7). `Some("")` for a variable set to
 // the empty string, `None` for one that is not set.
 pub function (plat: Platform) env(name: string): Option[string] {
-    if (plat.is_mock()) {
-        plat.record("env", name);
-        return plat.canned("env " + name);
-    }
-    return env(name);
+  if (plat.is_mock()) {
+    plat.record("env", name);
+    return plat.canned("env " + name);
+  }
+  return env(name);
 }
 
 // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
 // Needs the `random` capability.
 pub function (plat: Platform) random_i32(): i32 {
-    if (plat.is_mock()) {
-        plat.record("random_i32", "");
-        return __canned_i64(plat, "random_i32", 0 as i64) as i32;
-    }
-    return random_i32();
+  if (plat.is_mock()) {
+    plat.record("random_i32", "");
+    return __canned_i64(plat, "random_i32", 0 as i64) as i32;
+  }
+  return random_i32();
 }

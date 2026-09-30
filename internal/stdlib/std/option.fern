@@ -16,70 +16,146 @@
 // indirect-call seam on the native + wasm backends (#2753) — keep
 // `string`-typed callbacks out of these for now. Non-callback
 // combinators work for every `T` on every backend.
-
 import "core/cmp";
 
 // is_some reports whether the option holds a value.
 pub function (o: Option[T]) is_some(): boolean {
-    match (o) { Some(x) => { return true; }, None => { return false; } }
+  match (o) {
+    Some(x) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 // is_none reports whether the option is empty.
 pub function (o: Option[T]) is_none(): boolean {
-    match (o) { Some(x) => { return false; }, None => { return true; } }
+  match (o) {
+    Some(x) => {
+      return false;
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 // unwrap_or returns the contained value, or `fallback` if empty.
 pub function (o: Option[T]) unwrap_or(fallback: T): T {
-    match (o) { Some(x) => { return x; }, None => { return fallback; } }
+  match (o) {
+    Some(x) => {
+      return x;
+    },
+    None => {
+      return fallback;
+    }
+  }
 }
 
 // unwrap_or_else returns the contained value, or the result of `f` if
 // empty (use when the fallback is expensive to compute).
 pub function (o: Option[T]) unwrap_or_else(f: () => T): T {
-    match (o) { Some(x) => { return x; }, None => { return f(); } }
+  match (o) {
+    Some(x) => {
+      return x;
+    },
+    None => {
+      return f();
+    }
+  }
 }
 
 // map applies `f` to the contained value, or propagates `None`.
 pub function (o: Option[T]) map[U](f: (T) => U): Option[U] {
-    match (o) { Some(x) => { return Some(f(x)); }, None => { return None; } }
+  match (o) {
+    Some(x) => {
+      return Some(f(x));
+    },
+    None => {
+      return None;
+    }
+  }
 }
 
 // and_then chains an option-returning function (flat-map / `?`-style),
 // short-circuiting on `None`.
 pub function (o: Option[T]) and_then[U](f: (T) => Option[U]): Option[U] {
-    match (o) { Some(x) => { return f(x); }, None => { return None; } }
+  match (o) {
+    Some(x) => {
+      return f(x);
+    },
+    None => {
+      return None;
+    }
+  }
 }
 
 // or_else returns this option if present, else the result of `f`.
 pub function (o: Option[T]) or_else(f: () => Option[T]): Option[T] {
-    match (o) { Some(x) => { return Some(x); }, None => { return f(); } }
+  match (o) {
+    Some(x) => {
+      return Some(x);
+    },
+    None => {
+      return f();
+    }
+  }
 }
 
 // filter keeps the value only when `pred` holds, else yields `None`.
 pub function (o: Option[T]) filter(pred: (T) => boolean): Option[T] {
-    match (o) {
-        Some(x) => { if (pred(x)) { return Some(x); } return None; },
-        None => { return None; }
+  match (o) {
+    Some(x) => {
+      if (pred(x)) {
+        return Some(x);
+      }
+      return None;
+    },
+    None => {
+      return None;
     }
+  }
 }
 
 // ok_or converts to a `Result`: `Some(v)` -> `Ok(v)`, `None` -> `Err(e)`.
 pub function (o: Option[T]) ok_or[E](e: E): Result[T, E] {
-    match (o) { Some(x) => { return Ok(x); }, None => { return Err(e); } }
+  match (o) {
+    Some(x) => {
+      return Ok(x);
+    },
+    None => {
+      return Err(e);
+    }
+  }
 }
 
 // map_or applies `f` to the contained value, or returns `fallback` when
 // empty — `o.map(f).unwrap_or(fallback)` in one step (and without
 // building the intermediate `Option`).
 pub function (o: Option[T]) map_or[U](fallback: U, f: (T) => U): U {
-    match (o) { Some(x) => { return f(x); }, None => { return fallback; } }
+  match (o) {
+    Some(x) => {
+      return f(x);
+    },
+    None => {
+      return fallback;
+    }
+  }
 }
 
 // is_some_and reports whether the option holds a value AND that value
 // satisfies `pred`. Empty short-circuits to false (pred is not called).
 pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
-    match (o) { Some(x) => { return pred(x); }, None => { return false; } }
+  match (o) {
+    Some(x) => {
+      return pred(x);
+    },
+    None => {
+      return false;
+    }
+  }
 }
 
 // is_none_or reports whether the option is empty OR its value satisfies
@@ -88,20 +164,41 @@ pub function (o: Option[T]) is_some_and(pred: (T) => boolean): boolean {
 // when no port was supplied and when the supplied one is in range. `None`
 // short-circuits to true (pred is not called).
 pub function (o: Option[T]) is_none_or(pred: (T) => boolean): boolean {
-    match (o) { Some(x) => { return pred(x); }, None => { return true; } }
+  match (o) {
+    Some(x) => {
+      return pred(x);
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 // or returns this option if present, else `other` (the eagerly-evaluated
 // counterpart of `or_else`).
 pub function (o: Option[T]) or(other: Option[T]): Option[T] {
-    match (o) { Some(x) => { return Some(x); }, None => { return other; } }
+  match (o) {
+    Some(x) => {
+      return Some(x);
+    },
+    None => {
+      return other;
+    }
+  }
 }
 
 // and returns `other` if this option is present, else `None` — useful
 // for gating one optional on the presence of another. The value type may
 // change (`Option[T]` -> `Option[U]`).
 pub function (o: Option[T]) and[U](other: Option[U]): Option[U] {
-    match (o) { Some(x) => { return other; }, None => { return None; } }
+  match (o) {
+    Some(x) => {
+      return other;
+    },
+    None => {
+      return None;
+    }
+  }
 }
 
 // ok_or_else converts to a `Result`, building the error lazily:
@@ -109,49 +206,82 @@ pub function (o: Option[T]) and[U](other: Option[U]): Option[U] {
 // `ok_or` (use when the error is expensive to construct — `f` is only
 // called on the `None` path).
 pub function (o: Option[T]) ok_or_else[E](f: () => E): Result[T, E] {
-    match (o) { Some(x) => { return Ok(x); }, None => { return Err(f()); } }
+  match (o) {
+    Some(x) => {
+      return Ok(x);
+    },
+    None => {
+      return Err(f());
+    }
+  }
 }
 
 // map_or_else applies `f` to the contained value, or computes a fallback
 // from `default_fn` when empty — the lazy counterpart of `map_or`, so
 // the fallback is built only on the `None` path.
 pub function (o: Option[T]) map_or_else[U](default_fn: () => U, f: (T) => U): U {
-    match (o) { Some(x) => { return f(x); }, None => { return default_fn(); } }
+  match (o) {
+    Some(x) => {
+      return f(x);
+    },
+    None => {
+      return default_fn();
+    }
+  }
 }
 
 // zip pairs this option with `other`: `Some(a).zip(Some(b))` ->
 // `Some((a, b))`; if either side is `None`, the result is `None`.
 pub function (o: Option[T]) zip[U](other: Option[U]): Option[(T, U)] {
-    match (o) {
-        Some(a) => {
-            match (other) {
-                Some(b) => { return Some((a, b)); },
-                None => { return None; }
-            }
+  match (o) {
+    Some(a) => {
+      match (other) {
+        Some(b) => {
+          return Some((a, b));
         },
-        None => { return None; }
+        None => {
+          return None;
+        }
+      }
+    },
+    None => {
+      return None;
     }
+  }
 }
 
 // unzip is the inverse of zip: split an option of a pair into a pair of
 // options. `Some((a, b))` -> `(Some(a), Some(b))`; `None` -> `(None, None)`.
 pub function (o: Option[(T, U)]) unzip[T, U](): (Option[T], Option[U]) {
-    match (o) {
-        Some(p) => { return (Some(p.0), Some(p.1)); },
-        None => { return (None, None); }
+  match (o) {
+    Some(p) => {
+      return (Some(p.0), Some(p.1));
+    },
+    None => {
+      return (None, None);
     }
+  }
 }
 
 // xor yields a value only when EXACTLY one of the two options is
 // present: `Some` xor `None` (either order) -> that `Some`; two `Some`s
 // or two `None`s -> `None`.
 pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
-    match (o) {
-        Some(x) => {
-            match (other) { Some(y) => { return None; }, None => { return Some(x); } }
+  match (o) {
+    Some(x) => {
+      match (other) {
+        Some(y) => {
+          return None;
         },
-        None => { return other; }
+        None => {
+          return Some(x);
+        }
+      }
+    },
+    None => {
+      return other;
     }
+  }
 }
 
 // flatten collapses one level of nesting: `Option[Option[T]]` ->
@@ -159,7 +289,14 @@ pub function (o: Option[T]) xor(other: Option[T]): Option[T] {
 // `None`. Equivalent to `and_then(x => x)` but takes no callback, so
 // it sidesteps the indirect-call seam entirely.
 pub function (o: Option[Option[T]]) flatten(): Option[T] {
-    match (o) { Some(inner) => { return inner; }, None => { return None; } }
+  match (o) {
+    Some(inner) => {
+      return inner;
+    },
+    None => {
+      return None;
+    }
+  }
 }
 
 // transpose swaps an `Option` of a `Result` into a `Result` of an
@@ -168,13 +305,19 @@ pub function (o: Option[Option[T]]) flatten(): Option[T] {
 // is the exact inverse. Callback-free (a nested `match`), so it lowers
 // on every backend without touching the indirect-call seam.
 pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
-    match (o) {
-        Some(r) => {
-            match (r) {
-                Ok(x) => { return Ok(Some(x)); },
-                Err(e) => { return Err(e); }
-            }
+  match (o) {
+    Some(r) => {
+      match (r) {
+        Ok(x) => {
+          return Ok(Some(x));
         },
-        None => { return Ok(None); }
+        Err(e) => {
+          return Err(e);
+        }
+      }
+    },
+    None => {
+      return Ok(None);
     }
+  }
 }

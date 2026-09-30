@@ -251,10 +251,10 @@ func selfHostIntrinsicContracts(t *testing.T) map[string]bool {
 	body := selfHostSection(t, "semsource.fern",
 		regexp.MustCompile(`(?s)function intrinsic_contracts\(.*?\n// The builtins whose result is one of`))
 	out := map[string]bool{}
-	for _, m := range regexp.MustCompile(`ssasem\.Contract \{ name: "(__[A-Za-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
+	for _, m := range regexp.MustCompile(`ssasem\.Contract \{\s*name: "(__[A-Za-z0-9_]+)"`).FindAllStringSubmatch(body, -1) {
 		out[m[1]] = true
 	}
-	for _, m := range regexp.MustCompile(`\[((?:"__[A-Za-z0-9_]+",?\s*)+)\]`).FindAllStringSubmatch(body, -1) {
+	for _, m := range regexp.MustCompile(`\[\s*((?:"__[A-Za-z0-9_]+",?\s*)+)\]`).FindAllStringSubmatch(body, -1) {
 		for _, n := range regexp.MustCompile(`"(__[A-Za-z0-9_]+)"`).FindAllStringSubmatch(m[1], -1) {
 			out[n[1]] = true
 		}
@@ -338,11 +338,11 @@ func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[strin
 	t.Helper()
 	body := selfHostSection(t, "checker.fern", regexp.MustCompile(section))
 	if members {
+		// A row is one `if (COND) { return (…, true); }` clause, however it
+		// is laid out; its names are the ones COND tests.
 		var claiming []string
-		for _, line := range strings.Split(body, "\n") {
-			if strings.Contains(line, ", true)") {
-				claiming = append(claiming, line)
-			}
+		for _, m := range regexp.MustCompile(`(?s)if \(([^{]*)\) \{\s*return [^;]*, true\);`).FindAllStringSubmatch(body, -1) {
+			claiming = append(claiming, m[1])
 		}
 		body = strings.Join(claiming, "\n")
 	}

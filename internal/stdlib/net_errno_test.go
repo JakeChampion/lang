@@ -136,11 +136,11 @@ func TestNetErrorVariantsFollowErrnoList(t *testing.T) {
 	// The index ladders that map between the two must name every variant
 	// once each, in the same order.
 	for i, name := range names {
-		if !strings.Contains(s, "if (i == "+strconv.Itoa(i)+") { return "+strings.TrimPrefix(netVariants[name], "NetError.")) &&
-			!strings.Contains(s, "if (i == "+strconv.Itoa(i)+") { return NetError."+netVariants[name]) {
+		v, n := regexp.QuoteMeta(netVariants[name]), strconv.Itoa(i)
+		if !regexp.MustCompile(`if \(i == ` + n + `\) \{\s*return (NetError\.)?` + v + `\b`).MatchString(s) {
 			t.Errorf("__net_error_at has no arm returning %s at index %d", netVariants[name], i)
 		}
-		if !strings.Contains(s, netVariants[name]+" => { return "+strconv.Itoa(i)+"; }") {
+		if !regexp.MustCompile(`\b` + v + ` => \{\s*return ` + n + `;\s*\}`).MatchString(s) {
 			t.Errorf("__net_error_index has no arm mapping %s to %d", netVariants[name], i)
 		}
 	}

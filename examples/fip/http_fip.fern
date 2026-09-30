@@ -33,328 +33,435 @@ import "std/i64";
 //   4      class: 0 served, 1..6 the rejection (below)
 //   5..7   reserved
 //   8..    the response bytes
-fip function out_base(): i32 { return 8; }
-fip function max_wire(): i32 { return 1024; }
-fip function max_out(): i32 { return 1024; }
+fip function out_base(): i32 {
+  return 8;
+}
 
-fip function cl_ok(): i32 { return 0; }
-fip function cl_bad_request_line(): i32 { return 1; }
-fip function cl_no_version(): i32 { return 2; }
-fip function cl_transfer_encoding(): i32 { return 3; }
-fip function cl_duplicate_length(): i32 { return 4; }
-fip function cl_bad_length(): i32 { return 5; }
-fip function cl_truncated(): i32 { return 6; }
+fip function max_wire(): i32 {
+  return 1024;
+}
 
-fip function cr(): u8 { return 13 as u8; }
-fip function lf(): u8 { return 10 as u8; }
-fip function sp(): u8 { return 32 as u8; }
-fip function colon(): u8 { return 58 as u8; }
+fip function max_out(): i32 {
+  return 1024;
+}
+
+fip function cl_ok(): i32 {
+  return 0;
+}
+
+fip function cl_bad_request_line(): i32 {
+  return 1;
+}
+
+fip function cl_no_version(): i32 {
+  return 2;
+}
+
+fip function cl_transfer_encoding(): i32 {
+  return 3;
+}
+
+fip function cl_duplicate_length(): i32 {
+  return 4;
+}
+
+fip function cl_bad_length(): i32 {
+  return 5;
+}
+
+fip function cl_truncated(): i32 {
+  return 6;
+}
+
+fip function cr(): u8 {
+  return 13 as u8;
+}
+
+fip function lf(): u8 {
+  return 10 as u8;
+}
+
+fip function sp(): u8 {
+  return 32 as u8;
+}
+
+fip function colon(): u8 {
+  return 58 as u8;
+}
 
 // lower folds one ASCII byte to lower case, the fold HeaderMap applies to a
 // name on insert.
 fip function lower(b: u8): u8 {
-    if (b >= (65 as u8) && b <= (90 as u8)) { return ((b as i32) + 32) as u8; }
-    return b;
+  if (b >= 65 as u8 && b <= 90 as u8) {
+    return (b as i32 + 32) as u8;
+  }
+  return b;
 }
 
 // find_crlf is the index of the first CRLF at or after `from` and before
 // `end`, or -1.
 fip function find_crlf(buf: u8[], from: i32, end: i32): i32 {
-    var i: i32 = from;
-    while (i + 1 < end) {
-        if (buf[i] == cr() && buf[i + 1] == lf()) { return i; }
-        i = i + 1;
+  var i: i32 = from;
+  while (i + 1 < end) {
+    if (buf[i] == cr() && buf[i + 1] == lf()) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // find_byte is the index of the first `b` in [from, end), or -1.
 fip function find_byte(buf: u8[], from: i32, end: i32, b: u8): i32 {
-    var i: i32 = from;
-    while (i < end) {
-        if (buf[i] == b) { return i; }
-        i = i + 1;
+  var i: i32 = from;
+  while (i < end) {
+    if (buf[i] == b) {
+      return i;
     }
-    return 0 - 1;
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 // name_is reports whether the header name in buf[from, end) is `lit`,
 // case-insensitively; `lit` is spelled in lower case.
 fip function name_is(buf: u8[], from: i32, end: i32, lit: string): boolean {
-    if (end - from != lit.len()) { return false; }
-    var i: i32 = 0;
-    while (i < lit.len()) {
-        if (lower(buf[from + i]) != lit[i]) { return false; }
-        i = i + 1;
+  if (end - from != lit.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < lit.len()) {
+    if (lower(buf[from + i]) != lit[i]) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // bytes_are reports whether buf[from, end) spells `lit` exactly.
 fip function bytes_are(buf: u8[], from: i32, end: i32, lit: string): boolean {
-    if (end - from != lit.len()) { return false; }
-    var i: i32 = 0;
-    while (i < lit.len()) {
-        if (buf[from + i] != lit[i]) { return false; }
-        i = i + 1;
+  if (end - from != lit.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < lit.len()) {
+    if (buf[from + i] != lit[i]) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // starts_with reports whether buf[from, end) begins with `lit`.
 fip function starts_with(buf: u8[], from: i32, end: i32, lit: string): boolean {
-    if (end - from < lit.len()) { return false; }
-    var i: i32 = 0;
-    while (i < lit.len()) {
-        if (buf[from + i] != lit[i]) { return false; }
-        i = i + 1;
+  if (end - from < lit.len()) {
+    return false;
+  }
+  var i: i32 = 0;
+  while (i < lit.len()) {
+    if (buf[from + i] != lit[i]) {
+      return false;
     }
-    return true;
+    i = i + 1;
+  }
+  return true;
 }
 
 // trim_start / trim_end move a value's bounds past the spaces and tabs
 // `.trim()` strips.
 fip function is_space(b: u8): boolean {
-    return b == sp() || b == (9 as u8);
+  return b == sp() || b == 9 as u8;
 }
 
 fip function trim_start(buf: u8[], from: i32, end: i32): i32 {
-    var i: i32 = from;
-    while (i < end && is_space(buf[i])) { i = i + 1; }
-    return i;
+  var i: i32 = from;
+  while (i < end && is_space(buf[i])) {
+    i = i + 1;
+  }
+  return i;
 }
 
 fip function trim_end(buf: u8[], from: i32, end: i32): i32 {
-    var e: i32 = end;
-    while (e > from && is_space(buf[e - 1])) { e = e - 1; }
-    return e;
+  var e: i32 = end;
+  while (e > from && is_space(buf[e - 1])) {
+    e = e - 1;
+  }
+  return e;
 }
 
 // parse_length is the value of a Content-Length in buf[from, end) with the
 // same acceptance as std/http: digits only, non-empty, no i32 overflow;
 // -1 refuses.
 fip function parse_length(buf: u8[], from: i32, end: i32): i32 {
-    var s: i32 = trim_start(buf, from, end);
-    var e: i32 = trim_end(buf, s, end);
-    if (e <= s) { return 0 - 1; }
-    var acc: i32 = 0;
-    var i: i32 = s;
-    while (i < e) {
-        var b: i32 = buf[i] as i32;
-        if (b < 48 || b > 57) { return 0 - 1; }
-        var digit: i32 = b - 48;
-        if (acc > 214748364 || (acc == 214748364 && digit > 7)) { return 0 - 1; }
-        acc = acc * 10 + digit;
-        i = i + 1;
+  var s: i32 = trim_start(buf, from, end);
+  var e: i32 = trim_end(buf, s, end);
+  if (e <= s) {
+    return 0 - 1;
+  }
+  var acc: i32 = 0;
+  var i: i32 = s;
+  while (i < e) {
+    var b: i32 = buf[i] as i32;
+    if (b < 48 || b > 57) {
+      return 0 - 1;
     }
-    return acc;
+    var digit: i32 = b - 48;
+    if (acc > 214748364 || acc == 214748364 && digit > 7) {
+      return 0 - 1;
+    }
+    acc = acc * 10 + digit;
+    i = i + 1;
+  }
+  return acc;
 }
 
 // put_str writes `lit` at `at` and returns the position after it.
 fip function put_str(own out: u8[], at: i32, lit: string): u8[] {
-    var i: i32 = 0;
-    while (i < lit.len()) {
-        out = out.with(at + i, lit[i]);
-        i = i + 1;
-    }
-    return out;
+  var i: i32 = 0;
+  while (i < lit.len()) {
+    out = out.with(at + i, lit[i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // put_bytes copies src[from, from + n) to `at`.
 fip function put_bytes(own out: u8[], at: i32, src: u8[], from: i32, n: i32): u8[] {
-    var i: i32 = 0;
-    while (i < n) {
-        out = out.with(at + i, src[from + i]);
-        i = i + 1;
-    }
-    return out;
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.with(at + i, src[from + i]);
+    i = i + 1;
+  }
+  return out;
 }
 
 // digits is how many decimal digits `n` prints as.
 fip function digits(n: i32): i32 {
-    var d: i32 = 1;
-    var v: i32 = n;
-    while (v >= 10) { v = v / 10; d = d + 1; }
-    return d;
+  var d: i32 = 1;
+  var v: i32 = n;
+  while (v >= 10) {
+    v = v / 10;
+    d = d + 1;
+  }
+  return d;
 }
 
 // put_int writes `n` in decimal at `at`, `digits(n)` bytes.
 fip function put_int(own out: u8[], at: i32, n: i32): u8[] {
-    var d: i32 = digits(n);
-    var v: i32 = n;
-    var i: i32 = d - 1;
-    while (i >= 0) {
-        out = out.with(at + i, (48 + v % 10) as u8);
-        v = v / 10;
-        i = i - 1;
-    }
-    return out;
+  var d: i32 = digits(n);
+  var v: i32 = n;
+  var i: i32 = d - 1;
+  while (i >= 0) {
+    out = out.with(at + i, (48 + v % 10) as u8);
+    v = v / 10;
+    i = i - 1;
+  }
+  return out;
 }
 
 fip function reason_len(status: i32): i32 {
-    if (status == 200) { return 2; }
-    if (status == 404) { return 9; }
-    return 11;
+  if (status == 200) {
+    return 2;
+  }
+  if (status == 404) {
+    return 9;
+  }
+  return 11;
 }
 
 fip function put_reason(own out: u8[], at: i32, status: i32): u8[] {
-    if (status == 200) { return put_str(out, at, "OK"); }
-    if (status == 404) { return put_str(out, at, "Not Found"); }
-    return put_str(out, at, "Bad Request");
+  if (status == 200) {
+    return put_str(out, at, "OK");
+  }
+  if (status == 404) {
+    return put_str(out, at, "Not Found");
+  }
+  return put_str(out, at, "Bad Request");
 }
 
 // head_len is how many bytes the response head takes: the status line, the
 // request id header when there is one, the length, `Connection: close` and
 // the blank line.
 fip function head_len(status: i32, rid_len: i32, body_len: i32): i32 {
-    var n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(body_len) + 23;
-    if (rid_len > 0) { n = n + 14 + rid_len + 2; }
-    return n;
+  var n: i32 = 9 + 3 + 1 + reason_len(status) + 2 + 16 + digits(body_len) + 23;
+  if (rid_len > 0) {
+    n = n + 14 + rid_len + 2;
+  }
+  return n;
 }
 
 // put_head writes the response head std/http would serialise: the status
 // line, the request id header when the request carried one (HeaderMap
 // folds the name to lower case), the length and `Connection: close`.
 fip function put_head(own out: u8[], status: i32, src: u8[], rid_at: i32, rid_len: i32, body_len: i32): u8[] {
-    var at: i32 = out_base();
-    out = put_str(out, at, "HTTP/1.1 ");
-    at = at + 9;
-    out = put_int(out, at, status);
-    at = at + 3;
-    out = out.with(at, sp());
-    at = at + 1;
-    out = put_reason(out, at, status);
-    at = at + reason_len(status);
+  var at: i32 = out_base();
+  out = put_str(out, at, "HTTP/1.1 ");
+  at = at + 9;
+  out = put_int(out, at, status);
+  at = at + 3;
+  out = out.with(at, sp());
+  at = at + 1;
+  out = put_reason(out, at, status);
+  at = at + reason_len(status);
+  out = out.with(at, cr());
+  out = out.with(at + 1, lf());
+  at = at + 2;
+  if (rid_len > 0) {
+    out = put_str(out, at, "x-request-id: ");
+    at = at + 14;
+    out = put_bytes(out, at, src, rid_at, rid_len);
+    at = at + rid_len;
     out = out.with(at, cr());
     out = out.with(at + 1, lf());
     at = at + 2;
-    if (rid_len > 0) {
-        out = put_str(out, at, "x-request-id: ");
-        at = at + 14;
-        out = put_bytes(out, at, src, rid_at, rid_len);
-        at = at + rid_len;
-        out = out.with(at, cr());
-        out = out.with(at + 1, lf());
-        at = at + 2;
-    }
-    out = put_str(out, at, "Content-Length: ");
-    at = at + 16;
-    out = put_int(out, at, body_len);
-    at = at + digits(body_len);
-    return put_str(out, at, "\r\nConnection: close\r\n\r\n");
+  }
+  out = put_str(out, at, "Content-Length: ");
+  at = at + 16;
+  out = put_int(out, at, body_len);
+  at = at + digits(body_len);
+  return put_str(out, at, "\r\nConnection: close\r\n\r\n");
 }
 
 // seal records the response length and the class in the buffer's header.
 fip function seal(own out: u8[], class: i32, n: i32): u8[] {
-    out = out.with(0, (n % 256) as u8);
-    out = out.with(1, ((n / 256) % 256) as u8);
-    out = out.with(2, ((n / 65536) % 256) as u8);
-    out = out.with(3, 0 as u8);
-    out = out.with(4, class as u8);
-    out = out.with(5, 0 as u8);
-    out = out.with(6, 0 as u8);
-    return out.with(7, 0 as u8);
+  out = out.with(0, (n % 256) as u8);
+  out = out.with(1, (n / 256 % 256) as u8);
+  out = out.with(2, (n / 65536 % 256) as u8);
+  out = out.with(3, 0 as u8);
+  out = out.with(4, class as u8);
+  out = out.with(5, 0 as u8);
+  out = out.with(6, 0 as u8);
+  return out.with(7, 0 as u8);
 }
 
 // frame is a response whose body is copied from src[body_from, body_from +
 // body_len): the echo and the user id.
 fip function frame(own out: u8[], class: i32, status: i32, src: u8[], rid_at: i32, rid_len: i32, body_from: i32, body_len: i32): u8[] {
-    var h: i32 = head_len(status, rid_len, body_len);
-    out = put_head(out, status, src, rid_at, rid_len, body_len);
-    out = put_bytes(out, out_base() + h, src, body_from, body_len);
-    return seal(out, class, h + body_len);
+  var h: i32 = head_len(status, rid_len, body_len);
+  out = put_head(out, status, src, rid_at, rid_len, body_len);
+  out = put_bytes(out, out_base() + h, src, body_from, body_len);
+  return seal(out, class, h + body_len);
 }
 
 // frame_lit is a response whose body is a literal: `ok`, `not found`,
 // `bad request`.
 fip function frame_lit(own out: u8[], class: i32, status: i32, src: u8[], rid_at: i32, rid_len: i32, body: string): u8[] {
-    var h: i32 = head_len(status, rid_len, body.len());
-    out = put_head(out, status, src, rid_at, rid_len, body.len());
-    out = put_str(out, out_base() + h, body);
-    return seal(out, class, h + body.len());
+  var h: i32 = head_len(status, rid_len, body.len());
+  out = put_head(out, status, src, rid_at, rid_len, body.len());
+  out = put_str(out, out_base() + h, body);
+  return seal(out, class, h + body.len());
 }
 
 // reject frames the 400 every refused request gets: no request id, since
 // the request was never parsed far enough to have one.
 fip function reject(own out: u8[], class: i32, src: u8[]): u8[] {
-    return frame_lit(out, class, 400, src, 0, 0, "bad request");
+  return frame_lit(out, class, 400, src, 0, 0, "bad request");
 }
 
 // serve parses the request in wire[0, wire_len), routes it and frames the
 // answer into `out`. The parse walks the header block once, keeping what
 // the route needs — the request id's bounds and the body's — as scalars.
 fip function serve(own out: u8[], wire: u8[], wire_len: i32): u8[] {
-    // The header block ends at the first CRLFCRLF; the generator always
-    // terminates one, and a request without it cannot be framed yet.
-    var hend: i32 = 0 - 1;
-    var i: i32 = 0;
-    while (i + 3 < wire_len) {
-        if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) { hend = i; i = wire_len; }
-        i = i + 1;
+  // The header block ends at the first CRLFCRLF; the generator always
+  // terminates one, and a request without it cannot be framed yet.
+  var hend: i32 = 0 - 1;
+  var i: i32 = 0;
+  while (i + 3 < wire_len) {
+    if (wire[i] == cr() && wire[i + 1] == lf() && wire[i + 2] == cr() && wire[i + 3] == lf()) {
+      hend = i;
+      i = wire_len;
     }
-    if (hend < 0) { return reject(out, cl_truncated(), wire); }
-    var body_at: i32 = hend + 4;
-    var line_end: i32 = find_crlf(wire, 0, wire_len);
+    i = i + 1;
+  }
+  if (hend < 0) {
+    return reject(out, cl_truncated(), wire);
+  }
+  var body_at: i32 = hend + 4;
+  var line_end: i32 = find_crlf(wire, 0, wire_len);
 
-    // The headers first, as std/http does: a Content-Length problem is
-    // refused before the request line is looked at.
-    var cl: i32 = 0;
-    var cl_seen: i32 = 0;
-    var te_seen: boolean = false;
-    var bad_cl: boolean = false;
-    var rid_at: i32 = 0;
-    var rid_len: i32 = 0;
-    var rid_seen: boolean = false;
-    var at: i32 = line_end + 2;
-    if (at > hend) { at = hend; }
-    while (at < hend) {
-        var e: i32 = find_crlf(wire, at, hend);
-        if (e < 0) { e = hend; }
-        var c: i32 = find_byte(wire, at, e, colon());
-        if (c > at) {
-            if (name_is(wire, at, c, "content-length")) {
-                cl_seen = cl_seen + 1;
-                var v: i32 = parse_length(wire, c + 1, e);
-                if (v < 0) { bad_cl = true; }
-                cl = v;
-            }
-            if (name_is(wire, at, c, "transfer-encoding")) { te_seen = true; }
-            if (!rid_seen && name_is(wire, at, c, "x-request-id")) {
-                rid_seen = true;
-                rid_at = trim_start(wire, c + 1, e);
-                rid_len = trim_end(wire, rid_at, e) - rid_at;
-            }
+  // The headers first, as std/http does: a Content-Length problem is
+  // refused before the request line is looked at.
+  var cl: i32 = 0;
+  var cl_seen: i32 = 0;
+  var te_seen: boolean = false;
+  var bad_cl: boolean = false;
+  var rid_at: i32 = 0;
+  var rid_len: i32 = 0;
+  var rid_seen: boolean = false;
+  var at: i32 = line_end + 2;
+  if (at > hend) {
+    at = hend;
+  }
+  while (at < hend) {
+    var e: i32 = find_crlf(wire, at, hend);
+    if (e < 0) {
+      e = hend;
+    }
+    var c: i32 = find_byte(wire, at, e, colon());
+    if (c > at) {
+      if (name_is(wire, at, c, "content-length")) {
+        cl_seen = cl_seen + 1;
+        var v: i32 = parse_length(wire, c + 1, e);
+        if (v < 0) {
+          bad_cl = true;
         }
-        at = e + 2;
+        cl = v;
+      }
+      if (name_is(wire, at, c, "transfer-encoding")) {
+        te_seen = true;
+      }
+      if (!rid_seen && name_is(wire, at, c, "x-request-id")) {
+        rid_seen = true;
+        rid_at = trim_start(wire, c + 1, e);
+        rid_len = trim_end(wire, rid_at, e) - rid_at;
+      }
     }
-    if (te_seen) { return reject(out, cl_transfer_encoding(), wire); }
-    if (cl_seen > 1) { return reject(out, cl_duplicate_length(), wire); }
-    if (cl_seen == 1 && bad_cl) { return reject(out, cl_bad_length(), wire); }
-    if (cl_seen == 0) { cl = 0; }
-    if (body_at + cl > wire_len) { return reject(out, cl_truncated(), wire); }
+    at = e + 2;
+  }
+  if (te_seen) {
+    return reject(out, cl_transfer_encoding(), wire);
+  }
+  if (cl_seen > 1) {
+    return reject(out, cl_duplicate_length(), wire);
+  }
+  if (cl_seen == 1 && bad_cl) {
+    return reject(out, cl_bad_length(), wire);
+  }
+  if (cl_seen == 0) {
+    cl = 0;
+  }
+  if (body_at + cl > wire_len) {
+    return reject(out, cl_truncated(), wire);
+  }
 
-    // The request line: method, a space, the path, a space, the rest.
-    var sp1: i32 = find_byte(wire, 0, line_end, sp());
-    if (sp1 < 0) { return reject(out, cl_bad_request_line(), wire); }
-    var sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
-    if (sp2 < 0) { return reject(out, cl_no_version(), wire); }
-    return route(out, wire, sp1, sp1 + 1, sp2, rid_at, rid_len, body_at, cl);
+  // The request line: method, a space, the path, a space, the rest.
+  var sp1: i32 = find_byte(wire, 0, line_end, sp());
+  if (sp1 < 0) {
+    return reject(out, cl_bad_request_line(), wire);
+  }
+  var sp2: i32 = find_byte(wire, sp1 + 1, line_end, sp());
+  if (sp2 < 0) {
+    return reject(out, cl_no_version(), wire);
+  }
+  return route(out, wire, sp1, sp1 + 1, sp2, rid_at, rid_len, body_at, cl);
 }
 
 // route is the handler, spelled the same way in the baseline: `/` answers
 // `ok`, `/echo` on a POST echoes the body, `/users/<id>` answers the id,
 // anything else is a 404; a served response carries the request id back.
 fip function route(own out: u8[], wire: u8[], sp1: i32, path_at: i32, path_end: i32, rid_at: i32, rid_len: i32, body_at: i32, cl: i32): u8[] {
-    if (bytes_are(wire, path_at, path_end, "/")) {
-        return frame_lit(out, cl_ok(), 200, wire, rid_at, rid_len, "ok");
-    }
-    if (bytes_are(wire, path_at, path_end, "/echo") && bytes_are(wire, 0, sp1, "POST")) {
-        return frame(out, cl_ok(), 200, wire, rid_at, rid_len, body_at, cl);
-    }
-    if (starts_with(wire, path_at, path_end, "/users/")) {
-        return frame(out, cl_ok(), 200, wire, rid_at, rid_len, path_at + 7, path_end - path_at - 7);
-    }
-    return frame_lit(out, cl_ok(), 404, wire, rid_at, rid_len, "not found");
+  if (bytes_are(wire, path_at, path_end, "/")) {
+    return frame_lit(out, cl_ok(), 200, wire, rid_at, rid_len, "ok");
+  }
+  if (bytes_are(wire, path_at, path_end, "/echo") && bytes_are(wire, 0, sp1, "POST")) {
+    return frame(out, cl_ok(), 200, wire, rid_at, rid_len, body_at, cl);
+  }
+  if (starts_with(wire, path_at, path_end, "/users/")) {
+    return frame(out, cl_ok(), 200, wire, rid_at, rid_len, path_at + 7, path_end - path_at - 7);
+  }
+  return frame_lit(out, cl_ok(), 404, wire, rid_at, rid_len, "not found");
 }
 
 // ===================== THE WORKLOAD =====================
@@ -365,158 +472,216 @@ fip function route(own out: u8[], wire: u8[], sp1: i32, path_at: i32, path_end: 
 // steady state rather than in a separate test that proves nothing about
 // throughput. The request's length is left in the wire buffer's last four
 // bytes, past anything a request can reach.
-
-fip function wire_len_at(): i32 { return max_wire() - 4; }
+fip function wire_len_at(): i32 {
+  return max_wire() - 4;
+}
 
 fip function gen_body_len(n: i64): i32 {
-    return ((n * (37 as i64)) % (241 as i64)) as i32;
+  return (n * (37 as i64) % (241 as i64)) as i32;
 }
 
 fip function gen_byte(n: i64, j: i32): u8 {
-    return ((((n + (j as i64)) % (26 as i64)) as i32) + 97) as u8;
+  return (((n + j as i64) % (26 as i64)) as i32 + 97) as u8;
 }
 
 fip function corruption(n: i64): i32 {
-    if (n % (17 as i64) != (0 as i64)) { return 0 - 1; }
-    return ((n / (17 as i64)) % (6 as i64)) as i32;
+  if (n % (17 as i64) != 0 as i64) {
+    return 0 - 1;
+  }
+  return (n / (17 as i64) % (6 as i64)) as i32;
 }
 
 // Methods 0..3: GET, POST, PUT, DELETE. Only POST and PUT carry a body.
-fip function method_of(n: i64): i32 { return (n % (4 as i64)) as i32; }
+fip function method_of(n: i64): i32 {
+  return (n % (4 as i64)) as i32;
+}
 
 fip function method_len(m: i32): i32 {
-    if (m == 0) { return 3; }
-    if (m == 1) { return 4; }
-    if (m == 2) { return 3; }
-    return 6;
+  if (m == 0) {
+    return 3;
+  }
+  if (m == 1) {
+    return 4;
+  }
+  if (m == 2) {
+    return 3;
+  }
+  return 6;
 }
 
 fip function put_method(own w: u8[], at: i32, m: i32): u8[] {
-    if (m == 0) { return put_str(w, at, "GET"); }
-    if (m == 1) { return put_str(w, at, "POST"); }
-    if (m == 2) { return put_str(w, at, "PUT"); }
-    return put_str(w, at, "DELETE");
+  if (m == 0) {
+    return put_str(w, at, "GET");
+  }
+  if (m == 1) {
+    return put_str(w, at, "POST");
+  }
+  if (m == 2) {
+    return put_str(w, at, "PUT");
+  }
+  return put_str(w, at, "DELETE");
 }
 
 // Paths 0..4: `/`, `/echo`, `/users/<n>`, `/missing/<n>`, `/echo` again
 // (so a GET reaches it and is a 404).
-fip function path_of(n: i64): i32 { return (n % (5 as i64)) as i32; }
+fip function path_of(n: i64): i32 {
+  return (n % (5 as i64)) as i32;
+}
 
 fip function path_len(p: i32, id: i32): i32 {
-    if (p == 0) { return 1; }
-    if (p == 1 || p == 4) { return 5; }
-    if (p == 2) { return 7 + digits(id); }
-    return 9 + digits(id);
+  if (p == 0) {
+    return 1;
+  }
+  if (p == 1 || p == 4) {
+    return 5;
+  }
+  if (p == 2) {
+    return 7 + digits(id);
+  }
+  return 9 + digits(id);
 }
 
 fip function put_path(own w: u8[], at: i32, p: i32, id: i32): u8[] {
-    if (p == 0) { return put_str(w, at, "/"); }
-    if (p == 1 || p == 4) { return put_str(w, at, "/echo"); }
-    if (p == 2) {
-        w = put_str(w, at, "/users/");
-        return put_int(w, at + 7, id);
-    }
-    w = put_str(w, at, "/missing/");
-    return put_int(w, at + 9, id);
+  if (p == 0) {
+    return put_str(w, at, "/");
+  }
+  if (p == 1 || p == 4) {
+    return put_str(w, at, "/echo");
+  }
+  if (p == 2) {
+    w = put_str(w, at, "/users/");
+    return put_int(w, at + 7, id);
+  }
+  w = put_str(w, at, "/missing/");
+  return put_int(w, at + 9, id);
 }
 
 fip function put_crlf(own w: u8[], at: i32): u8[] {
-    w = w.with(at, cr());
-    return w.with(at + 1, lf());
+  w = w.with(at, cr());
+  return w.with(at + 1, lf());
 }
 
 // put_length writes a Content-Length header line for `cl` at `at` and
 // returns the position after it.
-fip function length_line_len(cl: i32): i32 { return 16 + digits(cl) + 2; }
+fip function length_line_len(cl: i32): i32 {
+  return 16 + digits(cl) + 2;
+}
 
 fip function put_length(own w: u8[], at: i32, cl: i32): u8[] {
-    w = put_str(w, at, "Content-Length: ");
-    w = put_int(w, at + 16, cl);
-    return put_crlf(w, at + 16 + digits(cl));
+  w = put_str(w, at, "Content-Length: ");
+  w = put_int(w, at + 16, cl);
+  return put_crlf(w, at + 16 + digits(cl));
 }
 
 // build_request writes request `n` into the buffer it is handed and gives
 // it back with the length in its last four bytes. It takes the buffer `own`
 // in both variants: generating the input is the harness, not the codec.
 fip function build_request(own w: u8[], n: i64): u8[] {
-    var id: i32 = n as i32;
-    var m: i32 = method_of(n);
-    var p: i32 = path_of(n);
-    var corrupt: i32 = corruption(n);
-    var has_body: boolean = m == 1 || m == 2;
-    var blen: i32 = 0;
-    if (has_body) { blen = gen_body_len(n); }
-    var at: i32 = 0;
-    w = put_method(w, at, m);
-    at = at + method_len(m);
-    if (corrupt != 0) { w = w.with(at, sp()); at = at + 1; }
-    w = put_path(w, at, p, id);
-    at = at + path_len(p, id);
-    if (corrupt != 0 && corrupt != 1) { w = w.with(at, sp()); at = at + 1; }
-    if (corrupt != 1) { w = put_str(w, at, "HTTP/1.1"); at = at + 8; }
-    w = put_crlf(w, at);
-    at = at + 2;
-    w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
-    at = at + 38;
-    var ua: i32 = (n % (61 as i64)) as i32;
-    var j: i32 = 0;
-    while (j < ua) { w = w.with(at + j, 97 as u8); j = j + 1; }
-    at = at + ua;
-    w = put_str(w, at, "\r\nAccept: */*\r\nX-Request-Id: ");
-    at = at + 29;
-    w = put_int(w, at, id);
-    at = at + digits(id);
-    w = put_crlf(w, at);
-    at = at + 2;
-    if (corrupt == 2) { w = put_str(w, at, "Transfer-Encoding: chunked\r\n"); at = at + 28; }
-    if (corrupt == 4) {
-        w = put_str(w, at, "Content-Length: 12a\r\n");
-        at = at + 21;
-    } else if (has_body || corrupt == 3 || corrupt == 5) {
-        var declared: i32 = blen;
-        if (corrupt == 5) { declared = blen + 7; }
-        w = put_length(w, at, declared);
-        at = at + length_line_len(declared);
-        if (corrupt == 3) {
-            w = put_length(w, at, declared);
-            at = at + length_line_len(declared);
-        }
+  var id: i32 = n as i32;
+  var m: i32 = method_of(n);
+  var p: i32 = path_of(n);
+  var corrupt: i32 = corruption(n);
+  var has_body: boolean = m == 1 || m == 2;
+  var blen: i32 = 0;
+  if (has_body) {
+    blen = gen_body_len(n);
+  }
+  var at: i32 = 0;
+  w = put_method(w, at, m);
+  at = at + method_len(m);
+  if (corrupt != 0) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  w = put_path(w, at, p, id);
+  at = at + path_len(p, id);
+  if (corrupt != 0 && corrupt != 1) {
+    w = w.with(at, sp());
+    at = at + 1;
+  }
+  if (corrupt != 1) {
+    w = put_str(w, at, "HTTP/1.1");
+    at = at + 8;
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  w = put_str(w, at, "Host: example.test\r\nUser-Agent: bench/");
+  at = at + 38;
+  var ua: i32 = (n % (61 as i64)) as i32;
+  var j: i32 = 0;
+  while (j < ua) {
+    w = w.with(at + j, 97 as u8);
+    j = j + 1;
+  }
+  at = at + ua;
+  w = put_str(w, at, "\r\nAccept: */*\r\nX-Request-Id: ");
+  at = at + 29;
+  w = put_int(w, at, id);
+  at = at + digits(id);
+  w = put_crlf(w, at);
+  at = at + 2;
+  if (corrupt == 2) {
+    w = put_str(w, at, "Transfer-Encoding: chunked\r\n");
+    at = at + 28;
+  }
+  if (corrupt == 4) {
+    w = put_str(w, at, "Content-Length: 12a\r\n");
+    at = at + 21;
+  } else if (has_body || corrupt == 3 || corrupt == 5) {
+    var declared: i32 = blen;
+    if (corrupt == 5) {
+      declared = blen + 7;
     }
-    w = put_crlf(w, at);
-    at = at + 2;
-    var k: i32 = 0;
-    while (k < blen) { w = w.with(at + k, gen_byte(n, k)); k = k + 1; }
-    at = at + blen;
-    w = w.with(wire_len_at(), (at % 256) as u8);
-    w = w.with(wire_len_at() + 1, ((at / 256) % 256) as u8);
-    w = w.with(wire_len_at() + 2, 0 as u8);
-    return w.with(wire_len_at() + 3, 0 as u8);
+    w = put_length(w, at, declared);
+    at = at + length_line_len(declared);
+    if (corrupt == 3) {
+      w = put_length(w, at, declared);
+      at = at + length_line_len(declared);
+    }
+  }
+  w = put_crlf(w, at);
+  at = at + 2;
+  var k: i32 = 0;
+  while (k < blen) {
+    w = w.with(at + k, gen_byte(n, k));
+    k = k + 1;
+  }
+  at = at + blen;
+  w = w.with(wire_len_at(), (at % 256) as u8);
+  w = w.with(wire_len_at() + 1, (at / 256 % 256) as u8);
+  w = w.with(wire_len_at() + 2, 0 as u8);
+  return w.with(wire_len_at() + 3, 0 as u8);
 }
 
 fip function wire_len_of(w: u8[]): i32 {
-    return (w[wire_len_at()] as i32) + (w[wire_len_at() + 1] as i32) * 256;
+  return w[wire_len_at()] as i32 + w[wire_len_at() + 1] as i32 * 256;
 }
 
 fip function out_len_of(o: u8[]): i32 {
-    return (o[0] as i32) + (o[1] as i32) * 256 + (o[2] as i32) * 65536;
+  return o[0] as i32 + o[1] as i32 * 256 + o[2] as i32 * 65536;
 }
 
 // A running digest over every response byte. Two implementations of one
 // codec agree only if this agrees, which is what makes the comparison a
 // differential test rather than two unrelated benchmarks.
 fip function mix(d: i64, b: i32): i64 {
-    var x: i64 = d ^ (b as i64);
-    x = x * (1099511628211 as i64);
-    x = x ^ (x >> (29 as i64));
-    if (x < (0 as i64)) { x = 0 - x; }
-    return x % (1000000007 as i64);
+  var x: i64 = d ^ b as i64;
+  x = x * (1099511628211 as i64);
+  x = x ^ x >> 29 as i64;
+  if (x < 0 as i64) {
+    x = 0 - x;
+  }
+  return x % (1000000007 as i64);
 }
 
 function zeros_u8(n: i32): u8[] {
-    var xs: u8[] = __alloc_u8(n);
-    var i: i32 = 0;
-    while (i < n) { xs = xs.with(i, 0 as u8); i = i + 1; }
-    return xs;
+  var xs: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, 0 as u8);
+    i = i + 1;
+  }
+  return xs;
 }
 
 // ===================== DRIVER =====================
@@ -524,96 +689,119 @@ function zeros_u8(n: i32): u8[] {
 // The driver is NOT `fip`: it owns the buffers, tallies and prints. The
 // class and the response length come back in the output buffer's header,
 // where a caller would read them anyway.
-
 function main(): i32 {
-    var batch: i32 = 64;
-    var rounds: i32 = 2000;
-    var wire: u8[] = zeros_u8(max_wire());
-    var out: u8[] = zeros_u8(max_out());
+  var batch: i32 = 64;
+  var rounds: i32 = 2000;
+  var wire: u8[] = zeros_u8(max_wire());
+  var out: u8[] = zeros_u8(max_out());
 
-    var ok: i64 = 0 as i64;
-    var c1: i64 = 0 as i64; var c2: i64 = 0 as i64; var c3: i64 = 0 as i64;
-    var c4: i64 = 0 as i64; var c5: i64 = 0 as i64; var c6: i64 = 0 as i64;
-    var digest: i64 = 1469598103934665603 as i64;
-    var written: i64 = 0 as i64;
+  var ok: i64 = 0 as i64;
+  var c1: i64 = 0 as i64;
+  var c2: i64 = 0 as i64;
+  var c3: i64 = 0 as i64;
+  var c4: i64 = 0 as i64;
+  var c5: i64 = 0 as i64;
+  var c6: i64 = 0 as i64;
+  var digest: i64 = 1469598103934665603 as i64;
+  var written: i64 = 0 as i64;
 
-    var samples: i64[] = [];
-    var p: i32 = 0;
-    while (p < rounds) { samples = samples.append(0 as i64); p = p + 1; }
+  var samples: i64[] = [];
+  var p: i32 = 0;
+  while (p < rounds) {
+    samples = samples.append(0 as i64);
+    p = p + 1;
+  }
 
-    // One warm round before the mark.
-    var w: i32 = 0;
-    while (w < batch) {
-        wire = build_request(wire, w as i64);
-        out = serve(out, wire, wire_len_of(wire));
-        w = w + 1;
+  // One warm round before the mark.
+  var w: i32 = 0;
+  while (w < batch) {
+    wire = build_request(wire, w as i64);
+    out = serve(out, wire, wire_len_of(wire));
+    w = w + 1;
+  }
+
+  var at_allocs: i64 = bench.alloc_count();
+  var at_fresh: i64 = bench.bump_bytes();
+  var started_ns: i64 = monotonic_ns();
+  var r: i32 = 0;
+  while (r < rounds) {
+    var t0: i64 = monotonic_ns();
+    var k: i32 = 0;
+    while (k < batch) {
+      var n: i64 = r as i64 * (batch as i64) + k as i64;
+      wire = build_request(wire, n);
+      out = serve(out, wire, wire_len_of(wire));
+      var len: i32 = out_len_of(out);
+      var class: i32 = out[4] as i32;
+      var i: i32 = 0;
+      while (i < len) {
+        digest = mix(digest, out[out_base() + i] as i32);
+        i = i + 1;
+      }
+      written = written + len as i64;
+      if (class == 0) {
+        ok = ok + 1 as i64;
+      }
+      if (class == 1) {
+        c1 = c1 + 1 as i64;
+      }
+      if (class == 2) {
+        c2 = c2 + 1 as i64;
+      }
+      if (class == 3) {
+        c3 = c3 + 1 as i64;
+      }
+      if (class == 4) {
+        c4 = c4 + 1 as i64;
+      }
+      if (class == 5) {
+        c5 = c5 + 1 as i64;
+      }
+      if (class == 6) {
+        c6 = c6 + 1 as i64;
+      }
+      k = k + 1;
     }
-
-    var at_allocs: i64 = bench.alloc_count();
-    var at_fresh: i64 = bench.bump_bytes();
-    var started_ns: i64 = monotonic_ns();
-    var r: i32 = 0;
-    while (r < rounds) {
-        var t0: i64 = monotonic_ns();
-        var k: i32 = 0;
-        while (k < batch) {
-            var n: i64 = (r as i64) * (batch as i64) + (k as i64);
-            wire = build_request(wire, n);
-            out = serve(out, wire, wire_len_of(wire));
-            var len: i32 = out_len_of(out);
-            var class: i32 = out[4] as i32;
-            var i: i32 = 0;
-            while (i < len) { digest = mix(digest, out[out_base() + i] as i32); i = i + 1; }
-            written = written + (len as i64);
-            if (class == 0) { ok = ok + (1 as i64); }
-            if (class == 1) { c1 = c1 + (1 as i64); }
-            if (class == 2) { c2 = c2 + (1 as i64); }
-            if (class == 3) { c3 = c3 + (1 as i64); }
-            if (class == 4) { c4 = c4 + (1 as i64); }
-            if (class == 5) { c5 = c5 + (1 as i64); }
-            if (class == 6) { c6 = c6 + (1 as i64); }
-            k = k + 1;
-        }
-        samples = samples.with(r, monotonic_ns() - t0);
-        r = r + 1;
-    }
-    var elapsed_ns: i64 = monotonic_ns() - started_ns;
-    var allocs: i64 = bench.allocs_after(at_allocs);
-    var fresh: i64 = bench.fresh_bytes_after(at_fresh);
-    var requests: i64 = (rounds as i64) * (batch as i64);
-    var rep: bench.Report = bench.Report {
-        name: "fip",
-        iterations: rounds,
-        wall_ns: elapsed_ns,
-        samples_ns: cmp.sort(samples),
-        allocs: allocs,
-        fresh_bytes: fresh,
-    };
-    print("{\"variant\":\"fip\""
-        + ",\"requests\":" + requests.to_string()
-        + ",\"requests_per_round\":" + batch.to_string()
-        + ",\"ok\":" + ok.to_string()
-        + ",\"rejected\":" + (c1 + c2 + c3 + c4 + c5 + c6).to_string()
-        + ",\"bad_request_line\":" + c1.to_string()
-        + ",\"no_version\":" + c2.to_string()
-        + ",\"transfer_encoding\":" + c3.to_string()
-        + ",\"duplicate_length\":" + c4.to_string()
-        + ",\"bad_length\":" + c5.to_string()
-        + ",\"truncated\":" + c6.to_string()
-        + ",\"digest\":" + digest.to_string()
-        + ",\"response_bytes\":" + written.to_string()
-        + ",\"response_bytes_per_request\":" + (written / requests).to_string()
-        + ",\"steady_allocs\":" + allocs.to_string()
-        + ",\"steady_fresh_bytes\":" + fresh.to_string()
-        + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
-        + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
-        + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
-        + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
-        + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
-        + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
-        + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
-        + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
-        + ",\"round_max_ns\":" + rep.max_ns().to_string()
-        + "}");
-    return 0;
+    samples = samples.with(r, monotonic_ns() - t0);
+    r = r + 1;
+  }
+  var elapsed_ns: i64 = monotonic_ns() - started_ns;
+  var allocs: i64 = bench.allocs_after(at_allocs);
+  var fresh: i64 = bench.fresh_bytes_after(at_fresh);
+  var requests: i64 = rounds as i64 * (batch as i64);
+  var rep: bench.Report = bench.Report {
+    name: "fip",
+    iterations: rounds,
+    wall_ns: elapsed_ns,
+    samples_ns: cmp.sort(samples),
+    allocs: allocs,
+    fresh_bytes: fresh,
+  };
+  print("{\"variant\":\"fip\""
+    + ",\"requests\":" + requests.to_string()
+    + ",\"requests_per_round\":" + batch.to_string()
+    + ",\"ok\":" + ok.to_string()
+    + ",\"rejected\":" + (c1 + c2 + c3 + c4 + c5 + c6).to_string()
+    + ",\"bad_request_line\":" + c1.to_string()
+    + ",\"no_version\":" + c2.to_string()
+    + ",\"transfer_encoding\":" + c3.to_string()
+    + ",\"duplicate_length\":" + c4.to_string()
+    + ",\"bad_length\":" + c5.to_string()
+    + ",\"truncated\":" + c6.to_string()
+    + ",\"digest\":" + digest.to_string()
+    + ",\"response_bytes\":" + written.to_string()
+    + ",\"response_bytes_per_request\":" + (written / requests).to_string()
+    + ",\"steady_allocs\":" + allocs.to_string()
+    + ",\"steady_fresh_bytes\":" + fresh.to_string()
+    + ",\"allocs_per_request_milli\":" + (allocs * (1000 as i64) / requests).to_string()
+    + ",\"fresh_bytes_per_request\":" + (fresh / requests).to_string()
+    + ",\"ns_per_request\":" + (elapsed_ns / requests).to_string()
+    + ",\"requests_per_sec\":" + (requests * 1000000000i64 / elapsed_ns).to_string()
+    + ",\"round_p50_ns\":" + rep.p50_ns().to_string()
+    + ",\"round_p95_ns\":" + rep.p95_ns().to_string()
+    + ",\"round_p99_ns\":" + rep.p99_ns().to_string()
+    + ",\"round_p999_ns\":" + rep.p999_ns().to_string()
+    + ",\"round_max_ns\":" + rep.max_ns().to_string()
+    + "}");
+  return 0;
 }

@@ -21,13 +21,12 @@
 // Then drop libfern.so into the APK under lib/arm64-v8a/ and load it from a
 // `Native` class with matching `external fun` declarations. See README.md
 // for the full aapt2 / zipalign / apksigner (or Gradle) packaging recipe.
-
 import "std/jni";
 
 // jint Java_dev_fern_demo_Native_answer(JNIEnv* env, jobject thiz)
 // The classic "native method returns 42" — Fern code invoked by the JVM.
 pub function Java_dev_fern_demo_Native_answer(env: usize, thiz: usize): i32 {
-    return 42;
+  return 42;
 }
 
 // jint Java_dev_fern_demo_Native_jniVersion(JNIEnv* env, jobject thiz)
@@ -35,7 +34,7 @@ pub function Java_dev_fern_demo_Native_answer(env: usize, thiz: usize): i32 {
 // env) via the typed std/jni wrapper. Demonstrates the outbound path (the
 // return is the JNI version, e.g. 0x00010006 for JNI 1.6).
 pub function Java_dev_fern_demo_Native_jniVersion(env: usize, thiz: usize): i32 {
-    return jni.get_version(env);
+  return jni.get_version(env);
 }
 
 // jstring Java_dev_fern_demo_Native_greeting(JNIEnv* env, jobject thiz)
@@ -44,7 +43,7 @@ pub function Java_dev_fern_demo_Native_jniVersion(env: usize, thiz: usize): i32 
 // jstring (an opaque handle, here a `usize`) is handed straight back to the
 // JVM. Kotlin side: `external fun greeting(): String`.
 pub function Java_dev_fern_demo_Native_greeting(env: usize, thiz: usize): usize {
-    return jni.new_string_utf(env, jni.cstr("Hello from Fern!"));
+  return jni.new_string_utf(env, jni.cstr("Hello from Fern!"));
 }
 
 // jint Java_dev_fern_demo_Native_utf8Length(JNIEnv* env, jobject thiz, jstring s)
@@ -52,7 +51,7 @@ pub function Java_dev_fern_demo_Native_greeting(env: usize, thiz: usize): usize 
 // `usize` parameter (3rd integer register); GetStringUTFLength reports its
 // UTF-8 byte length. Kotlin: `external fun utf8Length(s: String): Int`.
 pub function Java_dev_fern_demo_Native_utf8Length(env: usize, thiz: usize, s: usize): i32 {
-    return jni.get_string_utf_length(env, s);
+  return jni.get_string_utf_length(env, s);
 }
 
 // jboolean Java_dev_fern_demo_Native_isString(JNIEnv* env, jobject thiz, jobject obj)
@@ -60,8 +59,8 @@ pub function Java_dev_fern_demo_Native_utf8Length(env: usize, thiz: usize, s: us
 // '/' separators, built with cstr) and asks IsInstanceOf whether `obj` is
 // one. Kotlin: `external fun isString(obj: Any): Boolean`.
 pub function Java_dev_fern_demo_Native_isString(env: usize, thiz: usize, obj: usize): i32 {
-    var strCls: usize = jni.find_class(env, jni.cstr("java/lang/String"));
-    return jni.is_instance_of(env, obj, strCls);
+  var strCls: usize = jni.find_class(env, jni.cstr("java/lang/String"));
+  return jni.is_instance_of(env, obj, strCls);
 }
 
 // jint Java_dev_fern_demo_Native_objectHashCode(JNIEnv* env, jobject thiz, jobject obj)
@@ -70,9 +69,9 @@ pub function Java_dev_fern_demo_Native_isString(env: usize, thiz: usize, obj: us
 // array. The full no-arg call chain. Kotlin: `external fun
 // objectHashCode(obj: Any): Int`.
 pub function Java_dev_fern_demo_Native_objectHashCode(env: usize, thiz: usize, obj: usize): i32 {
-    var cls: usize = jni.get_object_class(env, obj);
-    var mid: usize = jni.get_method_id(env, cls, jni.cstr("hashCode"), jni.cstr("()I"));
-    return jni.call_int_method_a(env, obj, mid, jni.jvalues([]));
+  var cls: usize = jni.get_object_class(env, obj);
+  var mid: usize = jni.get_method_id(env, cls, jni.cstr("hashCode"), jni.cstr("()I"));
+  return jni.call_int_method_a(env, obj, mid, jni.jvalues([]));
 }
 
 // jint Java_dev_fern_demo_Native_charCodeAt(JNIEnv* env, jobject thiz, jstring s, jint i)
@@ -80,11 +79,13 @@ pub function Java_dev_fern_demo_Native_objectHashCode(env: usize, thiz: usize, o
 // packing the index into a one-element jvalue array. Returns the UTF-16 code
 // unit. Kotlin: `external fun charCodeAt(s: String, i: Int): Int`.
 pub function Java_dev_fern_demo_Native_charCodeAt(env: usize, thiz: usize, s: usize, i: usize): i32 {
-    var cls: usize = jni.get_object_class(env, s);
-    var mid: usize = jni.get_method_id(env, cls, jni.cstr("charAt"), jni.cstr("(I)C"));
-    return jni.call_int_method_a(env, s, mid, jni.jvalues([i]));
+  var cls: usize = jni.get_object_class(env, s);
+  var mid: usize = jni.get_method_id(env, cls, jni.cstr("charAt"), jni.cstr("(I)C"));
+  return jni.call_int_method_a(env, s, mid, jni.jvalues([i]));
 }
 
 // A .so has no entry point, but the compiler still wants a `main`; it is
 // never called when the library is loaded via dlopen / System.loadLibrary.
-function main(): i32 { return 0; }
+function main(): i32 {
+  return 0;
+}

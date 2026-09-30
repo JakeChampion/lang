@@ -14,19 +14,22 @@ import "std/string";
 // The needle is the only '!' in the string, so every call scans the whole
 // haystack; a hit early on would measure the call overhead instead.
 function haystack(): string {
-    var s: string = "abcdefghijklmnopqrstuvwxyz012345";
-    var k: i32 = 0;
-    while (k < 10) { s = s + s; k = k + 1; }   // 32 B -> 32 KiB
-    return s + "!";
+  var s: string = "abcdefghijklmnopqrstuvwxyz012345";
+  var k: i32 = 0;
+  while (k < 10) {  // 32 B -> 32 KiB
+    s = s + s;
+    k = k + 1;
+  }
+  return s + "!";
 }
 
 function main(): i32 {
-    var hay: string = haystack();
-    var acc: i32 = 0;
-    var r: i32 = 0;
-    while (r < 6000) {
-        acc = acc + hay.index_of("!");
-        r = r + 1;
-    }
-    return acc % 97;
+  var hay: string = haystack();
+  var acc: i32 = 0;
+  var r: i32 = 0;
+  while (r < 6000) {
+    acc = acc + hay.index_of("!");
+    r = r + 1;
+  }
+  return acc % 97;
 }

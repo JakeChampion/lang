@@ -31,6 +31,8 @@ func (p Position) String() string { return fmt.Sprintf("%d:%d", p.Line, p.Col) }
 type Comment struct {
 	Pos  Position
 	Text string
+	// Trailing is set when code precedes the comment on its line.
+	Trailing bool
 }
 
 // ---------- Types ----------

@@ -98,7 +98,7 @@ func nativeBuiltinNames(t *testing.T) []string {
 }
 
 var selfHostBuiltinNamesRE = regexp.MustCompile(
-	`(?s)function builtin_function_names\(\): string\[\] \{.*?return \[(.*?)\n    \];`)
+	`(?s)function builtin_function_names\(\): string\[\] \{.*?return \[(.*?)\n\s*\];`)
 
 // selfHostBuiltinNames reads builtin_function_names() out of the self-hosted
 // parser. Reading the declaration rather than running the compiler is the
