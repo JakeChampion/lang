@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// The self-host checker carries its own copy of "which type names are
-// reserved", because it has no access to builtinStructDecls /
+// The self-host front end (parser.fern) carries its own copy of "which type
+// names are reserved", because it has no access to builtinStructDecls /
 // builtinEnumDecls. Two copies of one list drift, and the drift is silent in
 // the direction that matters: a name added here and not there means the
 // self-host quietly ACCEPTS a redeclaration native refuses, which is how the
@@ -32,11 +32,11 @@ var (
 	fernStringRE = regexp.MustCompile(`"([A-Za-z_][A-Za-z0-9_]*)"`)
 )
 
-func selfHostCheckerSource(t *testing.T) string {
+func selfHostReservedNamesSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "checker.fern"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "examples", "self_host", "parser.fern"))
 	if err != nil {
-		t.Fatalf("read self-host checker.fern: %v", err)
+		t.Fatalf("read self-host parser.fern: %v", err)
 	}
 	return string(b)
 }
@@ -59,7 +59,7 @@ func namesIn(t *testing.T, src string, re *regexp.Regexp, what string) []string 
 }
 
 func TestSelfHostReservedTypeNamesMatchBuiltins(t *testing.T) {
-	src := selfHostCheckerSource(t)
+	src := selfHostReservedNamesSource(t)
 
 	t.Run("structs", func(t *testing.T) {
 		var want []string

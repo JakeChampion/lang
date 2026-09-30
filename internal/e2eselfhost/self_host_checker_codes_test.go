@@ -2516,6 +2516,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"resource-beside-an-enum", "@import(\"wasi:io/poll@0.2.0\", \"pollable\")\nresource Pollable;\nenum Pollable { A, B }\nfunction main(): i32 { var p: Pollable = Pollable.A; return 0; }\n", []string{"E006"}},
 		{"resource-beside-a-generic-struct", "@import(\"local:test/res@0.1.0\", \"box\")\nresource Box;\nstruct Box[T] { v: T }\nfunction main(): i32 { var b: Box[i32] = Box { v: 1 }; return b.v; }\n", []string{"E006"}},
 		{"resource-beside-a-union-alias", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E006"}},
+		// A built-in struct or enum name is taken before any resource.
+		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-cell", "@import(\"local:test/res@0.1.0\", \"cell\")\nresource Cell;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-option", "@import(\"local:test/res@0.1.0\", \"option\")\nresource Option;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"resource-named-like-builtin-map", "@import(\"local:test/res@0.1.0\", \"map\")\nresource Map;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"tuple-match-exhausts-the-function", "function f(t: (i32, i32)): i32 { match (t) { (0, b) => { return b; }, (a, _) => { return a; } } }\nfunction main(): i32 { return f((0, 7)); }\n", nil},
 	}
 	for _, tc := range cases {

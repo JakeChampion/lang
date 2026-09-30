@@ -1919,32 +1919,6 @@ function is_builtin_variant(name: string): boolean {
   return mx_builtin_enum_of(name).len() > 0;
 }
 
-// is_reserved_enum_name reports whether `name` is one of the enums the
-// front-end injects as built-ins (see checker.go's builtinEnumDecls). A
-// user `enum` declaration shadowing one of these is E010.
-function is_reserved_enum_name(name: string): boolean {
-  return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
-}
-
-// is_reserved_struct_name reports whether `name` is one of the structs the
-// front end injects as built-ins (checker.go's builtinStructDecls). A user
-// `struct` declaration shadowing one of these is E010, the struct half of the
-// rule is_reserved_enum_name above carries for enums.
-//
-// A LIST rather than an `||` chain: 25 names is where the chain stops reading,
-// and it gives the parity test in internal/checker one thing to compare
-// against builtinStructDecls() so the two cannot drift.
-function is_reserved_struct_name(name: string): boolean {
-  var reserved: string[] = [
-    "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
-    "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
-    "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
-    "Zoned"
-  ];
-  return util.index_of_str(reserved, name) >= 0;
-}
-
 // variant_in_unions reports whether `name` is a variant of ANY declared
 // enum/union in scope.
 function variant_in_unions(name: string, unions: UnionTable): boolean {
@@ -6311,7 +6285,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // both `Option` and `Option[i32]` land here. Without this the full
   // spelling `Option[i32]` matches no struct/union below and the annotation
   // collapsed to unknown, over-rejecting every `var o: Option[i32] = …`.
-  if (is_reserved_enum_name(r.base)) {
+  if (parser.is_reserved_enum_name(r.base)) {
     // Capture the instantiation args (Option[i32] → args [i32]) so the
     // typed-IR annotation can reconstruct the full "Option[T]"/"Result[T,E]"
     // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
@@ -6372,7 +6346,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   // an argless spelling of either names no layout. Resolving those two here
   // would make `var m: Map = map_new(4)` — which native accepts — an E003
   // against a nominal nothing produces.
-  if (is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
+  if (parser.is_reserved_struct_name(name) && name != "Map" && name != "Cell") {
     return t_struct(name);
   }
   // Unknown-BASE generic `Foo[T]` (non-tuple, non-Map, base declared
@@ -10397,7 +10371,7 @@ function qual_enum_name(obj: ast.Expr, s: Scope): string {
       if (s.lookup_union(oid.name).name.len() > 0) {
         return oid.name;
       }
-      if (is_reserved_enum_name(oid.name)) {
+      if (parser.is_reserved_enum_name(oid.name)) {
         return oid.name;
       }
       return "";
@@ -12423,7 +12397,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               // E023 at the source and skips the binding checks.
               // Reserved builtin enums (Option/Result/…) are
               // always known to the Go checker — never E023.
-              if (cur.lookup_union(su.name).name.len() == 0 && !is_reserved_enum_name(su.name)) {
+              if (cur.lookup_union(su.name).name.len() == 0 && !parser.is_reserved_enum_name(su.name)) {
                 src_unknown_enum = true;
                 out = out.append(dg_at("E023", "unknown enum \"" + su.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
               }
@@ -12490,7 +12464,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // checkMatch/checkMatchExpr; the arm checks below are
             // skipped (usig missed). if-let / let-else report
             // theirs in the origin block above — don't double up.
-            if (usig.name.len() == 0 && !is_reserved_enum_name(mun.name) && m.origin == "") {
+            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && m.origin == "") {
               out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
             }
             if (usig.name.len() > 0) {
@@ -13062,7 +13036,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
     return true;
   }
   var base: string = util.base_type_name(rt);
-  if (is_reserved_struct_name(base)) {
+  if (parser.is_reserved_struct_name(base)) {
     return true;
   }
   for sd in mod.structs {
@@ -13472,7 +13446,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       // line guard is native's `existing.P == ast.Position{}` check: a
       // synthetic re-entry carries no position and is the compiler's own
       // injection, not a user redeclaration.
-      if (s2.line > 0 && is_reserved_struct_name(s2.name)) {
+      if (s2.line > 0 && parser.is_reserved_struct_name(s2.name)) {
         out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
       }
     }
@@ -13496,7 +13470,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     // E010: a user enum shadowing a reserved built-in enum name.
-    if (is_reserved_enum_name(mod.enums[en].name)) {
+    if (parser.is_reserved_enum_name(mod.enums[en].name)) {
       out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     var vn: string[] = mod.enums[en].variant_names;
@@ -14912,7 +14886,7 @@ function ow_type_is_pointer_name(tn: string, structs: parser.StructDecl[]): bool
   if (tn[0] == b'(') { return true; }
   if (tn.len() >= 4 && slice_unchecked(tn, 0, 4) == "dyn ") { return true; }
   var base: string = util.base_type_name(tn);
-  if (is_reserved_struct_name(base) || is_reserved_enum_name(base)) { return true; }
+  if (parser.is_reserved_struct_name(base) || parser.is_reserved_enum_name(base)) { return true; }
   for sd in structs {
     if (sd.name == base || sd.enum_owner == base) { return true; }
   }
@@ -15777,7 +15751,7 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   // carrying the injected decls: they are opaque handles whose methods the
   // checker resolves as builtins, so declaring them would turn every
   // `r.read_line()` into a field read (E043).
-  if (is_reserved_struct_name(type_name) || is_reserved_enum_name(type_name)) {
+  if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
   for byte in type_name {
@@ -15835,7 +15809,7 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
   // allowlisted here; declared traits and resources arrive via extra_known
   // (they aren't in the struct/union name sets this resolver models).
   if (tr.args.len() > 0) {
-    if (!is_reserved_struct_name(tr.base) && !is_reserved_enum_name(tr.base)) {
+    if (!parser.is_reserved_struct_name(tr.base) && !parser.is_reserved_enum_name(tr.base)) {
       var kx: boolean = false;
       for elem in extra_known {
         if (elem == tr.base) {

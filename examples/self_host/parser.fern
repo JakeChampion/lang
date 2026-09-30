@@ -16106,9 +16106,35 @@ function handle_resource_of(type_name: string, resources: ResourceDecl[]): strin
     return "";
 }
 
+// is_reserved_enum_name reports whether `name` is one of the enums the
+// front-end injects as built-ins (see checker.go's builtinEnumDecls). A
+// user `enum` declaration shadowing one of these is E010.
+pub function is_reserved_enum_name(name: string): boolean {
+    return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue" || name == "Body";
+}
+
+// is_reserved_struct_name reports whether `name` is one of the structs the
+// front end injects as built-ins (checker.go's builtinStructDecls). A user
+// `struct` declaration shadowing one of these is E010, the struct half of the
+// rule is_reserved_enum_name above carries for enums.
+//
+// A LIST rather than an `||` chain: 25 names is where the chain stops reading,
+// and it gives the parity test in internal/checker one thing to compare
+// against builtinStructDecls() so the two cannot drift.
+pub function is_reserved_struct_name(name: string): boolean {
+    var reserved: string[] = [
+        "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Duration", "FileStat",
+        "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
+        "MapIter", "MockCall", "MockPlatform", "Platform", "ProcessResult",
+        "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
+        "Zoned"
+    ];
+    return util.index_of_str(reserved, name) >= 0;
+}
+
 // resource_collision names what an earlier declaration makes resources[idx]'s
-// name already mean — "resource", "struct" or "enum" (a union alias is an enum)
-// — or "" when the name is free. The Go checker registers only the free ones.
+// name already mean — "resource", "struct" or "enum" (a union alias is an enum,
+// and a built-in counts as declared) — or "" when the name is free. The Go checker registers only the free ones.
 pub function resource_collision(mod: Module, idx: i32): string {
     var name: string = mod.resources[idx].name;
     var j: i32 = 0;
@@ -16116,9 +16142,11 @@ pub function resource_collision(mod: Module, idx: i32): string {
         if (mod.resources[j].name == name) { return "resource"; }
         j = j + 1;
     }
+    if (is_reserved_struct_name(name)) { return "struct"; }
     for sd in mod.structs {
         if (sd.name == name && sd.enum_owner.len() == 0) { return "struct"; }
     }
+    if (is_reserved_enum_name(name)) { return "enum"; }
     for ed in mod.enums {
         if (ed.name == name) { return "enum"; }
     }
