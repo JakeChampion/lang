@@ -16132,6 +16132,16 @@ pub function is_reserved_struct_name(name: string): boolean {
     return util.index_of_str(reserved, name) >= 0;
 }
 
+// reserved_struct_tparams is the type parameters of a generic built-in struct
+// (builtinStructDecls again, pinned by the same parity test); empty otherwise.
+pub function reserved_struct_tparams(name: string): string[] {
+    if (name == "Cell") { return ["T"]; }
+    if (name == "Map") { return ["K", "V"]; }
+    if (name == "MapIter") { return ["K", "V"]; }
+    var none: string[] = [];
+    return none;
+}
+
 // user_struct_tparams is the type parameters of the user struct `name` (an
 // enum variant is not one); `found` is false when there is none.
 function user_struct_tparams(mod: Module, name: string): (boolean, string[]) {
@@ -16144,7 +16154,7 @@ function user_struct_tparams(mod: Module, name: string): (boolean, string[]) {
 
 // union_alias_errors lists the E016 messages the Go checker reports while
 // desugaring a union alias into an enum. The alias is registered only when
-// the list is empty. A built-in struct member is taken as non-generic.
+// the list is empty.
 pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
     var out: string[] = [];
     var (named_struct, _) = user_struct_tparams(mod, al.name);
@@ -16159,7 +16169,11 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
         }
         seen = seen.append(m);
         var (found, tps) = user_struct_tparams(mod, m);
-        if (!found && !is_reserved_struct_name(m)) {
+        if (!found && is_reserved_struct_name(m)) {
+            found = true;
+            tps = reserved_struct_tparams(m);
+        }
+        if (!found) {
             out = out.append("union " + al.name + " member \"" + m + "\" does not name a struct in scope");
         } else if (tps.len() > 0) {
             var params: string = "";

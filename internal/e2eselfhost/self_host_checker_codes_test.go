@@ -2521,6 +2521,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-duplicate-member", "struct A { v: i32 }\ntype X = A | A;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"resource-beside-a-union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		// A built-in struct or enum name is taken before any resource.
 		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
