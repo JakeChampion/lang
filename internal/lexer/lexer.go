@@ -282,12 +282,12 @@ func Tokenize(src string) ([]Token, []ast.Comment, error) {
 		return nil, nil, err
 	}
 	l := &lexer{src: src, line: 1, col: 1}
-	// One token per 7 source bytes, plus a floor for files too short for the
+	// One token per 6 source bytes, plus a floor for files too short for the
 	// division to reserve anything. The repository's own Fern sources average
-	// 7.46 bytes per token by volume, so the reserve covers 106% of the
-	// corpus's tokens and nearly all the growth goes away in aggregate. It is
-	// not a bound per file: the median file is denser, at 6.63, and grows once.
-	out := make([]Token, 0, len(src)/7+16)
+	// 6.94 bytes per token by volume, so the reserve covers the corpus's
+	// tokens with room to spare and nearly all the growth goes away in
+	// aggregate. It is not a bound per file: a dense file grows once.
+	out := make([]Token, 0, len(src)/6+16)
 	for {
 		tok, err := l.next()
 		if err != nil {
