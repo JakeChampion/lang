@@ -12164,33 +12164,44 @@ function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean 
     return true;
 }
 
-pub function monomorphize_module(mod: Module): Module {
+// monomorphize_all runs the four monomorphisation passes. A generic promoted
+// because a fn-typed param binds its var is only as cloneable as its call
+// sites are inferable: a function value whose type no declaration spells
+// (`fs[i]`, a match arm) keys nothing, and the call would name the dropped
+// template. Such a template is left erased, as it was before the fn-param
+// binding promoted it, and the passes run again. The scan reads the result of
+// all four, so a call from a generic-struct method (rewritten by
+// monomorphize_structs) or a top-level statement is judged as it ends up.
+pub function monomorphize_all(mod: Module): Module {
+    var candidates: string[] = [];
+    for fd in mod.funcs { if (is_bg_template(fd) && fn_param_promoted(fd)) { candidates = candidates.append(fd.name); } }
     var erased: string[] = [];
-    var out: Module = monomorphize_module_with(mod, erased);
-    var stranded: string[] = stranded_fn_promotions(out.funcs, erased);
+    var out: Module = monomorphize_chain(mod, erased);
+    var stranded: string[] = stranded_names(out, candidates, erased);
     while (stranded.len() > 0) {
         erased = util.append_all(erased, stranded);
-        out = monomorphize_module_with(mod, erased);
-        stranded = stranded_fn_promotions(out.funcs, erased);
+        out = monomorphize_chain(mod, erased);
+        stranded = stranded_names(out, candidates, erased);
     }
     return out;
 }
 
-// A generic promoted because a fn-typed param binds its var is only as
-// cloneable as its call sites are inferable: a function value whose type no
-// declaration spells (`fs[i]`, a match arm) keys nothing, and the call would
-// name the dropped template. Such a template is left erased, as it was before
-// the fn-param binding promoted it, and the whole pass runs again.
-function stranded_fn_promotions(funcs: FuncDecl[], erased: string[]): string[] {
+function monomorphize_chain(mod: Module, erased: string[]): Module {
+    return monomorphize_enum_structs(monomorphize_enums(monomorphize_structs(monomorphize_module(mod, erased))));
+}
+
+// The candidates a call in the monomorphised module still names bare: every
+// clone has a mangled name, so a bare one is the dropped template.
+function stranded_names(mod: Module, candidates: string[], erased: string[]): string[] {
     var out: string[] = [];
-    for t in funcs {
-        if (!is_bg_template(t) || !fn_param_promoted(t) || util.has_str(erased, t.name)) { continue; }
-        var scan: NameScan = NameScan { name: t.name, hit: false };
-        for fd in funcs {
-            if (is_bg_template(fd)) { continue; }
+    for name in candidates {
+        if (util.has_str(erased, name)) { continue; }
+        var scan: NameScan = NameScan { name: name, hit: false };
+        for fd in mod.funcs {
             for st in fd.body { scan = astwalk.fold_stmt_nodes(st, scan, name_scan_stmt, name_scan_expr, astwalk.descend_all); }
         }
-        if (scan.hit) { out = out.append(t.name); }
+        for st in mod.top_stmts { scan = astwalk.fold_stmt_nodes(st, scan, name_scan_stmt, name_scan_expr, astwalk.descend_all); }
+        if (scan.hit) { out = out.append(name); }
     }
     return out;
 }
@@ -12231,7 +12242,7 @@ function erase_promotions(funcs: FuncDecl[], erased: string[]): FuncDecl[] {
     return out;
 }
 
-function monomorphize_module_with(mod: Module, erased: string[]): Module {
+function monomorphize_module(mod: Module, erased: string[]): Module {
     var funcs: FuncDecl[] = erase_promotions(promote_erased_forwarders(mod.funcs), erased);
     // Nothing to do if there are no bounded generics.
     var any_bg: boolean = false;
@@ -18510,7 +18521,7 @@ pub function module_with_builtins_typed(mod: Module): Module {
     // Prepare defaults, ranges, return types and resource drops before generic
     // specialization. Deferred actions retain their source scopes until the
     // IR consumer resolves binding identities and expands cleanup.
-    var mono: Module = monomorphize_enum_structs(monomorphize_enums(monomorphize_structs(monomorphize_module(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod))))))))));
+    var mono: Module = monomorphize_all(register_struct_method_generics(register_map_method_generics(register_array_method_generics(lower_defers_prepass_module(hoist_local_funcs_module(desugar_prepass_module(mod)))))));
     return Module { ...mono, structs: inject_builtin_enums(mono.structs) };
 }
 

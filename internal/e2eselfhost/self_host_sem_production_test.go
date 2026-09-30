@@ -6446,6 +6446,29 @@ function main(): i32 {
     return s.size() + n.size() + n.cleared().size() + s.cleared().size() + 5;
 }
 `},
+	// A call from a generic-struct method is rewritten only per struct
+	// instantiation, after monomorphize_module; the stranded-call scan reads
+	// the finished module, so a keyable call there is cloned, not erased.
+	{name: "a-fn-param-bound-generic-called-from-a-generic-method", atLeast: 10, noLeak: true, src: `
+struct Slot[T] { v: T }
+
+pub function hold[T](f: () => T): i32 {
+    var c: Slot[T] = Slot[T] { v: f() };
+    return 1;
+}
+
+struct Box[U] { u: U }
+
+pub function (b: Box[U]) held(): i32 {
+    return hold((): i32 => 7) + hold((): string => "ab" + "c");
+}
+
+function main(): i32 {
+    var b: Box[i32] = Box[i32] { u: 1 };
+    var w: Box[string] = Box[string] { u: "x" };
+    return b.held() + w.held() + hold((): i32 => 2);
+}
+`},
 	// The same through a function-typed parameter's parameter.
 	{name: "a-generic-struct-over-a-function-parameters-parameter", atLeast: 5, noLeak: true, src: `
 struct Slot[T] { v: T[] }

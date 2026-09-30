@@ -114,6 +114,31 @@ function main(): i32 {
 		t.Fatalf("the same without strict: exit %d, want the AST lowering's compile\n%s", code, out)
 	}
 
+	// The same call from a top-level statement: the scan reads the module's
+	// statements as well as its functions.
+	script := `struct Slot[T] { v: T }
+pub function hold[T](f: () => T): i32 { var c: Slot[T] = Slot[T] { v: f() }; return 1; }
+var fs: (() => i32)[] = [(): i32 => 7];
+return hold(fs[0]) + hold((): string => "x");
+`
+	if code, out := compile(script, "FERN_SEM_IR_STRICT=1"); code != 3 || !strings.Contains(out, "FERN_SEM_IR: hold$i32: record field type") {
+		t.Fatalf("a top-level call to a generic over an unspelled function value: exit %d under strict, want 3 naming the refusal\n%s", code, out)
+	}
+	scriptSrc := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(scriptSrc, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	scriptBin := filepath.Join(t.TempDir(), "prog")
+	build := exec.Command(fernBin, "-target", "x86-64-linux", scriptSrc, stdlibRoot, "-o", scriptBin)
+	build.Env = append(os.Environ(), "FERN_SEM_IR_STRICT=")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("the top-level call without strict: %v, want the AST lowering's compile\n%s", err, out)
+	}
+	var scriptExit *exec.ExitError
+	if err := exec.Command(scriptBin).Run(); !errors.As(err, &scriptExit) || scriptExit.ExitCode() != 2 {
+		t.Fatalf("the top-level call without strict: %v, want exit 2", err)
+	}
+
 	// A generic callee's result spells the callee's own variable, so it binds
 	// nothing: no clone is keyed on `0_K`, and hold stays erased as above.
 	genericPick := `struct Slot[T] { v: T }
