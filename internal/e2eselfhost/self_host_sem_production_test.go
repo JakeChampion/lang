@@ -5911,6 +5911,24 @@ function main(): i32 {
     return make(7) + keep(1) + s.len() + t.len();
 }
 `},
+	// A nested function returning `(T) => (T) => T` spells its result's result
+	// as a whole function type, respelled with the template's variables, and
+	// the nested template `__lam_0$wrap0$wrap0` is produced per instance.
+	{name: "a-nested-generic-function-returning-a-curried-function", atLeast: 5, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => (T) => T {
+        return (x: T): (T) => T => (y: T): T => y;
+    }
+    var f: (T) => (T) => T = outer(seed);
+    var g: (T) => T = f(seed);
+    return g(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    return make(7) + s.len();
+}
+`},
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
