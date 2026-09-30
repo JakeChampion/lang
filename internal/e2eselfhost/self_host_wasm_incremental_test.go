@@ -60,8 +60,10 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 		t.Fatalf("write entry.fern: %v", err)
 	}
 	// value is kept out of line so a body edit to it leaves entry's unit alone;
-	// small is inlined into entry.
-	writeLeaf(t, "@noinline pub function value(): i32 { return 10; }\npub function small(): i32 { return 1; }")
+	// small is inlined into entry. holder is a struct no function uses.
+	const holder = "pub struct Holder { f: (i32) => i32 }"
+	const holderI64 = "pub struct Holder { f: (i32) => i64 }"
+	writeLeaf(t, "@noinline pub function value(): i32 { return 10; }\npub function small(): i32 { return 1; }\n"+holder)
 
 	entryPath := filepath.Join(proj, "entry.fern")
 
@@ -146,7 +148,7 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// THE CLAIM. leaf's body changes; its signature does not. leaf must be
 	// re-emitted and entry must NOT be.
 	t.Run("body_only_edit_reemits_only_that_module", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 1; }")
+		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 1; }\n"+holder)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its body changed, want cache-miss", got["leaf"])
@@ -159,13 +161,28 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// A body edit to a callee entry INLINED: entry's own code changed, so
 	// reusing its unit would ship the old body.
 	t.Run("inlined_body_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }")
+		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holder)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its body changed, want cache-miss", got["leaf"])
 		}
 		if v := entryVerdict(t, got); v != "cache-miss" {
 			t.Errorf("entry reported %s after the body of a function it inlines changed, want cache-miss (full map: %v)", v, got)
+		}
+	})
+
+	// A struct-only edit that moves no signature and no lowered body: the
+	// function type of an unused struct's field. The emit reads the struct
+	// table whole, so every unit's key covers all of it, and re-emitting every
+	// unit on a struct edit is deliberate.
+	t.Run("struct_only_edit_also_invalidates_the_importer", func(t *testing.T) {
+		writeLeaf(t, "@noinline pub function value(): i32 { return 20 + 2 - 2; }\npub function small(): i32 { return 2; }\n"+holderI64)
+		got := emitBoth(t)
+		if got["leaf"] != "cache-miss" {
+			t.Errorf("leaf reported %s after its struct changed, want cache-miss", got["leaf"])
+		}
+		if v := entryVerdict(t, got); v != "cache-miss" {
+			t.Errorf("entry reported %s after a struct decl changed, want cache-miss (full map: %v)", v, got)
 		}
 	})
 
@@ -178,7 +195,7 @@ function main(): i32 { return leaf.value() + leaf.small() + 1; }`
 	// leaves the importer unable to lower is refused at emit, and the verdicts
 	// this asserts are never reached.
 	t.Run("signature_edit_also_invalidates_the_importer", func(t *testing.T) {
-		writeLeaf(t, "@noinline pub function value(bump: i32 = 5): i32 { return 20 + bump; }\npub function small(): i32 { return 2; }")
+		writeLeaf(t, "@noinline pub function value(bump: i32 = 5): i32 { return 20 + bump; }\npub function small(): i32 { return 2; }\n"+holderI64)
 		got := emitBoth(t)
 		if got["leaf"] != "cache-miss" {
 			t.Errorf("leaf reported %s after its signature changed, want cache-miss", got["leaf"])
