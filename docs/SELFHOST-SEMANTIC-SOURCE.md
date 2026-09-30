@@ -2245,7 +2245,8 @@ into four groups:
   substitution. `asm_run`, `asm_load_run` and `asm_modload_run` call the
   backends' plain entry points (`asm_ir.emit_module_or_error` and the rest),
   which pass `ircore.no_sub()`, so they take the AST lowering whatever the
-  environment says. `wasm_modload_run` is per-module only: each unit lowers
+  environment says, except `asm_load_run -target wasm32-wasi`, which emits
+  over the typed path as the CLI does. `wasm_modload_run` is per-module only: each unit lowers
   its window through `wasm_ir.lower_all_for_view`, which takes no
   substitution, so it is AST-lowered too; moving it needs a typed lowering of
   one module against the whole program's view, as the asm drivers'
