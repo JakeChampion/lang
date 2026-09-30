@@ -80,7 +80,8 @@ struct State {
     handers: string[],
     // The builtin names a module declaration takes over (`shadowed_builtins`).
     shadows: string[],
-    // The module's declared records and unions that hold a view (`view_types`).
+    // What in the module holds a view (`view_types`): declared records and
+    // unions by name, function types as `fn <type_key>`.
     views: string[],
     // The symbol this body defines: the declaration's name, or the instance's.
     name: string,
@@ -3966,12 +3967,22 @@ function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
 // ---- record schemas ---------------------------------------------------------
 
 // The module's declared records and unions whose values hold a `str` view, by
-// name, to a fixpoint over the declaration tables every scope shares. Asked
-// once per module; each schema entry then carries its answer, so a value's
-// question stops at the first record or enum it meets rather than walking a
-// declaration graph again (`ssasem.holds_view`).
-function view_types(scope: checker.Scope, impls: parser.ImplInfo[], closures: ssasem.Contract[]): string[] {
+// name, and its function types that do, as `fn <type_key>`, to a fixpoint over
+// the declaration tables every scope shares and the contract table. Asked once
+// per module; each schema entry then carries its answer, so a value's question
+// stops at the first record or enum it meets rather than walking a declaration
+// graph again (`ssasem.holds_view`).
+function view_types(scope: checker.Scope, impls: parser.ImplInfo[], contracts: ssasem.Contract[]): string[] {
     var names: string[] = [];
+    // Each closure body's function-type key and captures, which no round of the
+    // fixpoint changes.
+    var fn_keys: string[] = [];
+    var fn_captures: typeinfo.Type[][] = [];
+    for c in contracts {
+        if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
+        fn_keys = fn_keys.append(func_view_key(ssasem.closure_type(c)));
+        fn_captures = fn_captures.append(semtypes.env_captures(c.params[0]));
+    }
     var changed: boolean = true;
     while (changed) {
         changed = false;
@@ -3988,11 +3999,13 @@ function view_types(scope: checker.Scope, impls: parser.ImplInfo[], closures: ss
         // A function type holds a view when a closure of that type captures
         // one, however deep in a captured record: its environment is its
         // contract's first parameter, whose type arguments are the captures.
-        for c in closures {
-            if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) { continue; }
-            var key: string = func_view_key(ssasem.closure_type(c));
-            if (util.index_of_str(names, key) >= 0) { continue; }
-            if (types_hold_view(semtypes.env_captures(c.params[0]), names, impls)) { names = names.append(key); changed = true; }
+        var k: i32 = 0;
+        while (k < fn_keys.len()) {
+            if (util.index_of_str(names, fn_keys[k]) < 0 && types_hold_view(fn_captures[k], names, impls)) {
+                names = names.append(fn_keys[k]);
+                changed = true;
+            }
+            k = k + 1;
         }
         for u in scope.unions.unions {
             if (util.index_of_str(names, u.name) >= 0) { continue; }
@@ -4005,7 +4018,9 @@ function view_types(scope: checker.Scope, impls: parser.ImplInfo[], closures: ss
 }
 
 // A function type's entry in `view_types`' answer, which no declaration name
-// can spell.
+// can spell. `type_key` is a conservative identity, not an exact one: it
+// collapses some leaf types, so distinct function types can share an answer,
+// and only ever toward holding a view.
 function func_view_key(t: typeinfo.Type): string { return "fn " + ssasem.type_key(t); }
 
 function fields_hold_view(fields: semrecords.Field[], views: string[], impls: parser.ImplInfo[]): boolean {

@@ -96,8 +96,9 @@ function main(): i32 {
 	// a merge (ssasem.copyable), so one merged past its source is refused
 	// rather than read after the source is released. A closure capturing a
 	// bare view is refused where it is built; one reaching a view through a
-	// captured record is built, holds that view, and is refused where it would
-	// outlive the source, returned or merged.
+	// captured record is built and holds that view. Merged past its source in a
+	// record, it compiled whole until view_types answered function types;
+	// returned past it, it was already refused through Func.envs.
 	for _, c := range []struct{ name, src, why string }{
 		{"dyn-view-merged", `import "std/i32";
 trait Size { function size(self: Self): i32; }

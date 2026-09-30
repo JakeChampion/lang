@@ -45,10 +45,20 @@ whose bytes it reads, and no copy was made at a merge. Each declared record
 and union now carries the answer, worked out once per module as a fixpoint
 over the declarations (`semsource.view_types`). A dyn holds one when a type
 implementing its traits does, and a function type when a closure of that type
-captures one. Without that, a closure over a view-holding record was a value
-holding no view: returned past its source it answered 55 where the
-interpreter answers 31, and merged past it in a record, 553 for 313. Both are
-refused now. The same predicate decides which self-tail
+captures one. Without the function arm, a record holding a closure over a
+view-holding record counted as holding no view: merged past its source it
+answered 553 where the interpreter answers 313, and it is refused now. A closure
+over a view-holding record returned past its source was already refused, since
+`holds_view` reads the frame's own closure environments (`Func.envs`).
+
+The function answer is per module and per whole `type_key`, so one closure that
+captures a view marks every record with a field of that function type,
+whatever that field's own closures capture. That is the trade records make by
+name. The key is a conservative identity rather than an exact one: `type_key`
+collapses some leaf types, so distinct function types can share the answer,
+only ever toward holding a view.
+
+The same predicate decides which self-tail
 arguments cross a jump (`ssasem.crosses_jump`), so a recursive argument that
 holds views is now declined: a walk down a cons list of `str` payloads keeps a
 frame per cell.
@@ -88,8 +98,9 @@ went from 24 allocations to 39.
 - a dyn holding a view merged past its source;
 - a closure capturing a bare view;
 - a record holding a closure over a view-holding record, merged past its
-  source;
-- a closure over a view-holding record returned past its source.
+  source (compiled whole before the function arm);
+- a closure over a view-holding record returned past its source (already
+  refused through `Func.envs`; pinned alongside).
 
 `TestSelfHostSemanticTrmc`: `count` over a cons list of `str` payloads keeps
 its self-call.
