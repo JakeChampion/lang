@@ -32,12 +32,16 @@ func TestSelfHostTypedFoldValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
 			want := interpExit(t, interpBin, src)
-			if got, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", src)); got != want {
-				t.Errorf("x86-64 exited %d, want %d (interp oracle)", got, want)
-			}
-			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != want {
-				t.Errorf("wasm exited %d, want %d (interp oracle)", got, want)
-			}
+			t.Run("x86-64", func(t *testing.T) {
+				if got, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", src)); got != want {
+					t.Errorf("exited %d, want %d (interp oracle)", got, want)
+				}
+			})
+			t.Run("wasm", func(t *testing.T) {
+				if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != want {
+					t.Errorf("exited %d, want %d (interp oracle)", got, want)
+				}
+			})
 		})
 	}
 }
@@ -81,7 +85,6 @@ func TestSelfHostTypedFoldShape(t *testing.T) {
 // still come out of the header exactly as they do on the AST lowering.
 func TestSelfHostTypedLICM(t *testing.T) {
 	cli := newStrictCLI(t)
-	arm64gcc, qemu := arm64Tooling(t)
 	for _, tc := range licmPrograms {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.src + "\n"
@@ -92,12 +95,17 @@ func TestSelfHostTypedLICM(t *testing.T) {
 			if got, _ := cli.runX86(t, asm); got != tc.want {
 				t.Errorf("x86-64 exited %d, want %d", got, tc.want)
 			}
-			if got, _ := runArm64(t, arm64gcc, qemu, cli.emit(t, "arm64-linux", src)); got != tc.want {
-				t.Errorf("arm64 exited %d, want %d", got, tc.want)
-			}
-			if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != tc.want {
-				t.Errorf("wasm exited %d, want %d", got, tc.want)
-			}
+			t.Run("arm64", func(t *testing.T) {
+				arm64gcc, qemu := arm64Tooling(t)
+				if got, _ := runArm64(t, arm64gcc, qemu, cli.emit(t, "arm64-linux", src)); got != tc.want {
+					t.Errorf("exited %d, want %d", got, tc.want)
+				}
+			})
+			t.Run("wasm", func(t *testing.T) {
+				if got, _ := runWasm(t, cli.emit(t, "wasm32-wasi", src)); got != tc.want {
+					t.Errorf("exited %d, want %d", got, tc.want)
+				}
+			})
 		})
 	}
 }

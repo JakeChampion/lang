@@ -136,7 +136,14 @@ function main(): i32 {
     //     condition, which falls through, so the length is still in the header.
     //     Slots 0 = s, 1 = i, 3 = the lowering's temp; frame 4 -> 5.
     var tb: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), load(0), slen(), store(3), load(1), load(3), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
-    out = out + "licm_typed_block_header: " + show(ir.hoist_loop_invariants(tb, 4)) + "\n";
+    var tb_h: ir.OptimizedOps = ir.hoist_loop_invariants(tb, 4);
+    out = out + "licm_typed_block_header: " + show(tb_h) + "\n";
+    out = out + "licm_typed_block_header_stack_neutral=" + util.i32_to_string(stack_neutral(tb_h.ops)) + "\n";
+
+    // 7c. `exit` ends the header like `return`: the length read after it is
+    //     unreachable, so it stays. Slots 0 = s, 1 = i.
+    var tx: ir.Op[] = cat(cat([ir.op_block(0), ir.op_loop(0), ir.op_block(0), ir.op_const_i32(134), ir.op_exit(), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(2), ir.op_end()], inc(1)), [ir.op_br(0), ir.op_end(), ir.op_end()]);
+    out = out + "licm_exit_refused: " + show(ir.hoist_loop_invariants(tx, 3)) + "\n";
 
     // 8. Nested loops: each header hoists to just before ITS loop, and the
     //    later (inner) loop is rewritten first, so it takes the first fresh
