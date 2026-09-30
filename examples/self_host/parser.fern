@@ -16118,7 +16118,7 @@ pub function is_reserved_enum_name(name: string): boolean {
 // `struct` declaration shadowing one of these is E010, the struct half of the
 // rule is_reserved_enum_name above carries for enums.
 //
-// A LIST rather than an `||` chain: 25 names is where the chain stops reading,
+// A LIST rather than an `||` chain: at 27 names the chain stops reading,
 // and it gives the parity test in internal/checker one thing to compare
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
@@ -16153,8 +16153,9 @@ function user_struct_tparams(mod: Module, name: string): (boolean, string[]) {
 }
 
 // union_alias_errors lists the E016 messages the Go checker reports while
-// desugaring a union alias into an enum. The alias is registered only when
-// the list is empty.
+// desugaring a union alias into an enum; the alias desugars only when the list
+// is empty. A desugared alias can still be refused as E006, which
+// alias_redeclares_enum reports.
 pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
     var out: string[] = [];
     var (named_struct, _) = user_struct_tparams(mod, al.name);
@@ -16187,6 +16188,30 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
     return out;
 }
 
+// alias_redeclares_enum reports whether mod.aliases[idx] desugars into an enum
+// whose name is already an enum's: a user or built-in enum, or an earlier alias
+// that registers. The Go checker adds desugared unions after the declared
+// enums, so the alias is the one refused, as E006, whatever the source order.
+pub function alias_redeclares_enum(mod: Module, idx: i32): boolean {
+    var al: TypeAlias = mod.aliases[idx];
+    if (union_alias_errors(mod, al).len() > 0) { return false; }
+    if (is_reserved_enum_name(al.name)) { return true; }
+    for ed in mod.enums {
+        if (ed.name == al.name) { return true; }
+    }
+    var j: i32 = 0;
+    while (j < idx) {
+        if (mod.aliases[j].name == al.name && alias_registers(mod, j)) { return true; }
+        j = j + 1;
+    }
+    return false;
+}
+
+// alias_registers reports whether mod.aliases[idx] becomes an enum.
+pub function alias_registers(mod: Module, idx: i32): boolean {
+    return union_alias_errors(mod, mod.aliases[idx]).len() == 0 && !alias_redeclares_enum(mod, idx);
+}
+
 // resource_collision names what an earlier declaration makes resources[idx]'s
 // name already mean — "resource", "struct" or "enum" (a union alias that
 // registers is an enum, and a built-in counts as declared) — or "" when the name is free. The Go checker registers only the free ones.
@@ -16205,8 +16230,10 @@ pub function resource_collision(mod: Module, idx: i32): string {
     for ed in mod.enums {
         if (ed.name == name) { return "enum"; }
     }
-    for al in mod.aliases {
-        if (al.name == name && union_alias_errors(mod, al).len() == 0) { return "enum"; }
+    var ai: i32 = 0;
+    while (ai < mod.aliases.len()) {
+        if (mod.aliases[ai].name == name && alias_registers(mod, ai)) { return "enum"; }
+        ai = ai + 1;
     }
     return "";
 }

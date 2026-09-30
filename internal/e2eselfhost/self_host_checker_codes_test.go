@@ -2523,6 +2523,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"union-generic-member-without-arguments", "struct Box[T] { v: T }\nstruct B { w: i32 }\ntype X = Box | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-cell-member", "struct B { w: i32 }\ntype X = Cell | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"union-bare-map-member", "struct B { w: i32 }\ntype X = Map | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		{"union-bare-mapiter-member", "struct B { w: i32 }\ntype X = MapIter | B;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
+		// A union that desugars joins the enums after the declared ones, so a
+		// name already an enum's is E006 on the alias, in either source order.
+		{"union-alias-after-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-an-enum-of-its-name-used", "struct A { v: i32 }\nstruct B { w: i32 }\nenum X { P, Q }\ntype X = A | B;\nfunction main(): i32 { var x: X = A { v: 1 }; return 0; }\n", []string{"E003", "E006"}},
+		{"union-alias-before-an-enum-of-its-name", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\nenum X { P, Q }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-named-option", "struct A { v: i32 }\nstruct B { w: i32 }\ntype Option = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-redeclared", "struct A { v: i32 }\nstruct B { w: i32 }\ntype X = A | B;\ntype X = A | B;\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"union-alias-after-a-refused-one", "enum A { P, Q }\nstruct B { w: i32 }\nstruct C { u: i32 }\ntype X = A | B;\ntype X = B | C;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		{"resource-beside-a-union-over-enums", "enum A { P, Q }\nenum B { R, T }\ntype X = A | B;\n@import(\"local:test/res@0.1.0\", \"x\")\nresource X;\nfunction main(): i32 { return 0; }\n", []string{"E016"}},
 		// A built-in struct or enum name is taken before any resource.
 		{"resource-named-like-builtin-reader", "@import(\"local:test/res@0.1.0\", \"reader\")\nresource Reader;\nfunction f(r: Reader): i32 { return r.fd; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},

@@ -6577,13 +6577,6 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
   return (ns, ts);
 }
 
-// collect_union_sigs builds the union-alias table from the
-// module's TypeAlias list. Variants are stored as bare names;
-// resolution-time validation (each variant must be a declared
-// struct) happens in `validate_union_sigs` after both tables
-// exist. An alias whose name collides with a declared struct
-// is silently dropped — collect_struct_sigs runs first and the
-// duplicate-name check would otherwise need a tri-state.
 // declared_union_names is the names-only union set the STRUCT table is built
 // with: type aliases and enums both name a union, and a field typed by either
 // resolves through it. The full UnionSig table (with variants) comes after,
@@ -6595,23 +6588,17 @@ function declared_union_names(mod: parser.Module): string[] {
   return out;
 }
 
-function collect_union_sigs(aliases: parser.TypeAlias[], struct_names: string[]): UnionSig[] {
+// collect_union_sigs is one union per alias that registers as an enum; a
+// refused one (E016 or E006) leaves its name to whatever else declares it.
+function collect_union_sigs(mod: parser.Module): UnionSig[] {
   var out: UnionSig[] = [];
-  for a in aliases {
-    // Skip aliases that shadow a declared struct — the
-    // struct wins, and the alias is treated as a no-op.
-    var k: i32 = 0;
-    var dup: boolean = false;
-    while (k < struct_names.len()) {
-      if (struct_names[k] == a.name) {
-        dup = true;
-        break;
-      }
-      k = k + 1;
-    }
-    if (!dup) {
+  var i: i32 = 0;
+  while (i < mod.aliases.len()) {
+    var a: parser.TypeAlias = mod.aliases[i];
+    if (parser.alias_registers(mod, i)) {
       out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [] });
     }
+    i = i + 1;
   }
   return out;
 }
@@ -13510,12 +13497,19 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
-  // E016: a `type X = …` union alias the Go checker refuses to desugar,
-  // reported at the alias's `type` keyword; the alias is then not an enum.
-  for alias in mod.aliases {
+  // E016: a `type X = …` union alias the Go checker refuses to desugar, and
+  // E006: one that desugars into an enum whose name is taken. Both are reported
+  // at the alias's `type` keyword, and the alias is then not an enum.
+  var ak: i32 = 0;
+  while (ak < mod.aliases.len()) {
+    var alias: parser.TypeAlias = mod.aliases[ak];
     for msg in parser.union_alias_errors(mod, alias) {
       out = out.append(dg_at("E016", msg, alias.line, alias.col));
     }
+    if (parser.alias_redeclares_enum(mod, ak)) {
+      out = out.append(dg_at("E006", "enum \"" + alias.name + "\" redeclared", alias.line, alias.col));
+    }
+    ak = ak + 1;
   }
   // E054: an `@export(...)` function bound to a WIT world export cannot be
   // generic (a world export is lifted with a single concrete canonical
@@ -18364,7 +18358,7 @@ function check_module_pass(mod: parser.Module, fda_diags: util.Diag[], focus: st
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   // Register enum decls as union sigs (variants = variant names) so an
   // enum-typed scrutinee types to TypeUnion and the E030 exhaustiveness
   // check (plus union-variant assignability) covers enums the same way
@@ -18809,7 +18803,7 @@ function module_env(mod: parser.Module): ModuleEnv {
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }
@@ -19907,7 +19901,7 @@ function build_module_tables(mod: parser.Module): ModuleTables {
   for sd in structs {
     struct_names = struct_names.append(sd.name);
   }
-  var unions: UnionSig[] = collect_union_sigs(mod.aliases, struct_names);
+  var unions: UnionSig[] = collect_union_sigs(mod);
   for ed in mod.enums {
     unions = unions.append(enum_union_sig(ed));
   }
