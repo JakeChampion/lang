@@ -59,7 +59,7 @@ targets).
 | #10760 (closed by #10821 after this measurement) | typed lowering: a declared `str[]` holds a `string[]` (`graphemes`, `words`) | 6 |
 | #10766 (closed by #10821 after this measurement) | parser: `@` binding with a braceless arm, braceless `if let`, `let … else` in a `var` | 6 |
 | #10763 (closed by this change after this measurement) | typed lowering: empty array literal at a view parameter, `?` on a unit-payload success, a value block with no live edge, a `use` callback wrapper | 6 |
-| #10757 | typed lowering: f32 values typed f64 | 5 |
+| #10757 (closed after this measurement; the checker typed a suffixed float literal f64) | typed lowering: f32 values typed f64 | 5 |
 | #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
 | #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
