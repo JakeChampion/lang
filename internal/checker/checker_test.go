@@ -2316,6 +2316,17 @@ func TestOuterRebindOfFunctionFreeCaptureAllowed(t *testing.T) {
 			n = 99;
 			return f();
 		}`},
+		// The stored value's type is judged, not the variable's: a struct that
+		// reaches no function stored into a captured dyn closes nothing.
+		{"struct-into-dyn", `trait Shape { function area(self: Self): i32; }
+		struct Sq { s: i32 }
+		impl Shape for Sq { function area(self: Self): i32 { return self.s; } }
+		function main(): i32 {
+			var d: dyn Shape = Sq { s: 3 };
+			var f: () => i32 = (): i32 => { return d.area(); };
+			d = Sq { s: 5 };
+			return f();
+		}`},
 	}
 	for _, tc := range cases {
 		if err := checkSource(t, tc.src); err != nil {

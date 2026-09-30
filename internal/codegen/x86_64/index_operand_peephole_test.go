@@ -19,7 +19,6 @@ func runPeephole(lines ...string) []string {
 	}
 	return append([]string(nil), g.peepWin...)
 }
-
 func sameLines(got []string, want ...string) bool {
 	if len(got) != len(want) {
 		return false
@@ -408,6 +407,24 @@ func TestPeepholeLooksThroughDirectives(t *testing.T) {
 	got = runPeephole("\t.cfi_def_cfa_register rbp", "\tpush rax", "\tpop rcx")
 	if !sameLines(got, "\t.cfi_def_cfa_register rbp", "\tmov rcx, rax") {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A data directive takes a place in the window like an instruction, so the
+// -cover table — one `.quad` pair per instrumented line, after a label — is
+// flushed as it goes rather than held and re-split on every put (#8921).
+func TestPeepholeWindowHoldsBoundedData(t *testing.T) {
+	g := &generator{}
+	g.put("__fern_cov_table:")
+	const n = 50000
+	for i := 0; i < n; i++ {
+		g.put("\t.quad 1")
+	}
+	if len(g.peepWin) > peepWindow {
+		t.Fatalf("window holds %d lines after %d data directives, want at most %d", len(g.peepWin), n, peepWindow)
+	}
+	if got := strings.Count(g.out.String(), "\t.quad 1\n") + len(g.peepWin); got != n {
+		t.Errorf("emitted %d directives, want %d", got, n)
 	}
 }
 

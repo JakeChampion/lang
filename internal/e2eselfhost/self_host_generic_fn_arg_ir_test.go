@@ -40,6 +40,27 @@ function gen(p: i32): i32 {
     return v(1i32);
 }
 function main(): i32 { return gen(6i32) & 255i32; }`, 2},
+	// A passthrough of a passthrough hands back the same box, so the binding
+	// is a closure local however deep the chain (nightly seed 70696, #8921).
+	{"capturing-through-nested-generic", `function id[T](x: T): T { return x; }
+function gen(p: i32): i32 {
+    var v: (i32) => i32 = id(id(((a: i32) => (a + p))));
+    return v(1i32);
+}
+function main(): i32 { return gen(6i32) & 255i32; }`, 7},
+	{"non-capturing-through-nested-generic", `function id[T](x: T): T { return x; }
+function gen(p: i32): i32 {
+    var v: (i32) => i32 = id(id(((a: i32) => (a + 1i32))));
+    return v(1i32);
+}
+function main(): i32 { return gen(6i32) & 255i32; }`, 2},
+	{"through-generic-of-pick", `function id[T](x: T): T { return x; }
+function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+function gen(p: i32): i32 {
+    var v: (i32) => i32 = id(pick(false, ((a: i32) => 40i32), ((b: i32) => (b + p))));
+    return v(1i32);
+}
+function main(): i32 { return gen(6i32) & 255i32; }`, 7},
 	// Controls from the issue's isolation table — each already worked, and each
 	// is a neighbouring position the widened gate must not disturb.
 	{"bound-directly-control", `function gen(p: i32): i32 {
