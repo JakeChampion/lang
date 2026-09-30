@@ -3395,12 +3395,48 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
+  // counted string is retained and answered. An arena view box, whose
+  // immortal rc cannot count a second holder, is answered as a fresh box
+  // over the same bytes. A view box outside the arena (a literal) is never
+  // freed, so it is answered as is.
+  if (s.has_need("str_own")) {
+    s = s.write("__fn___fern_str_own:\n");
+    s = s.write("    movq 8(%rsp), %rax\n");
+    s = s.write("    testb $1, %al\n");
+    s = s.write("    jnz .Lso_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");  // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .Lso_view\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    popq %rax\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lso_view:\n");
+    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
+    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
+    s = s.write("    jb .Lso_ret\n");
+    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
+    s = s.write("    jae .Lso_ret\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    movq $24, %rdi\n");
+    s = s.write("    call __fern_alloc\n");
+    s = s.write("    popq %rcx\n");  // the shared box
+    s = s.write("    movq $-1, (%rax)\n");
+    s = s.write("    movq (%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 8(%rax)\n");  // data
+    s = s.write("    movq 8(%rcx), %rdx\n");
+    s = s.write("    movq %rdx, 16(%rax)\n");  // len
+    s = s.write("    addq $8, %rax\n");
+    s = s.write(".Lso_ret:\n");
+    s = s.write("    ret\n");
+  }
   // __fern_arr_own_elems(dst@16(%rsp), src@8(%rsp)) -> dst: dst's first
-  // len(src) elements alias src's, and dst takes its own unit on each. A
-  // counted element is retained; an arena string view box, whose immortal
-  // rc cannot count a second holder, is replaced in dst by a fresh box over
-  // the same bytes. A view box outside the arena (a literal) is never freed,
-  // so it is shared as is. %rbx/%r12/%r13 hold dst/len/i.
+  // len(src) elements alias src's, and each is replaced by the unit
+  // __fern_str_own answers for it. %rbx/%r12/%r13 hold dst/len/i.
   if (s.has_need("arr_own_elems")) {
     s = s.write("__fn___fern_arr_own_elems:\n");
     s = s.write("    movq 16(%rsp), %rax\n");  // dst (also the result)
@@ -3418,37 +3454,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laoe_loop:\n");
     s = s.write("    cmpq %r12, %r13\n");
     s = s.write("    jge .Laoe_done\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");  // element i
-    s = s.write("    testb $1, %al\n");
-    s = s.write("    jnz .Laoe_next\n");
-    s = s.write("    cmpq $0x10000, %rax\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    movl -8(%rax), %ecx\n");  // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Laoe_view\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_inc\n");
+    s = s.write("    pushq 8(%rbx,%r13,8)\n");  // element i
+    s = s.write("    call __fn___fern_str_own\n");
     s = s.write("    addq $8, %rsp\n");
-    s = s.write("    jmp .Laoe_next\n");
-    s = s.write(".Laoe_view:\n");
-    s = s.write("    leaq -8(%rax), %rdx\n");  // box base
-    s = s.write("    cmpq __fern_heap_base(%rip), %rdx\n");
-    s = s.write("    jb .Laoe_next\n");
-    s = s.write("    cmpq __fern_heap_end(%rip), %rdx\n");
-    s = s.write("    jae .Laoe_next\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    movq $24, %rdi\n");
-    s = s.write("    call __fern_alloc\n");
-    s = s.write("    popq %rcx\n");  // the shared box
-    s = s.write("    movq $-1, (%rax)\n");
-    s = s.write("    movq (%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 8(%rax)\n");  // data
-    s = s.write("    movq 8(%rcx), %rdx\n");
-    s = s.write("    movq %rdx, 16(%rax)\n");  // len
-    s = s.write("    addq $8, %rax\n");
     s = s.write("    movq %rax, 8(%rbx,%r13,8)\n");
-    s = s.write(".Laoe_next:\n");
     s = s.write("    incq %r13\n");
     s = s.write("    jmp .Laoe_loop\n");
     s = s.write(".Laoe_done:\n");
@@ -9332,6 +9341,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_arr_own_elems") {
     s = s.need("arr_own_elems");
+  }
+  if (name == "__fern_str_own") {
+    s = s.need("str_own");
   }
   // The VIEW-aware string[] element walk (#6544) is gated the same way
   // and for the same reason: its body's inner
