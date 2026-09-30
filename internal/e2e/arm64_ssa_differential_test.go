@@ -52,7 +52,6 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -466,24 +465,12 @@ func runSSADiffBinary(runner, bin string) ssaDiffRun {
 	so, se := &cappedBuffer{limit: ssaDiffMaxCapture}, &cappedBuffer{limit: ssaDiffMaxCapture}
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout, cmd.Stderr = so, se
-	// Its own process group, so a timeout reaches the processes a program
-	// forks (a handler program's serve workers) as well: they hold the
-	// output pipes, and Wait returns only once every holder is gone.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
+	started := time.Now()
+	timedOut, err := runBounded(cmd, ssaDiffRunTimeout)
+	if cmd.ProcessState == nil && err != nil {
 		return ssaDiffRun{stderr: err.Error(), exit: -1, state: err.Error()}
 	}
-	started := time.Now()
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-	r := ssaDiffRun{exit: -1}
-	select {
-	case <-done:
-	case <-time.After(ssaDiffRunTimeout):
-		r.timedOut = true
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
-	}
+	r := ssaDiffRun{exit: -1, timedOut: timedOut}
 	r.elapsed = time.Since(started)
 	r.stdout, r.stderr = so.String(), se.String()
 	if ps := cmd.ProcessState; ps != nil {
