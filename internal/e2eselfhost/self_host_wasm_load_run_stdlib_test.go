@@ -163,6 +163,36 @@ var wasmLoadRunStdlibCases = []struct {
 	{"map-value-closure-captured", "import \"core/map\"; function main(): i32 { var n = 10; var m: Map[i32, () => i32] = map_new(4); m = m.insert(1, (): i32 => { return n + 7; }); match (m.get(1)) { Some(f) => { return f(); }, None => { return 0; } } }", 17, ""},
 }
 
+// wasmStdlibLoader compiles programs that import the standard library to WAT
+// through asm_load_run's wasm32-wasi leg with the stdlib root.
+type wasmStdlibLoader struct {
+	runner []string
+	bin    string
+	root   string
+}
+
+func newWasmStdlibLoader(t *testing.T) *wasmStdlibLoader {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	root, err := filepath.Abs("../../internal/stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &wasmStdlibLoader{runner: runner, bin: buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "asm_load_run"), root: root}
+}
+
+// emit compiles src and returns the WAT.
+func (l *wasmStdlibLoader) emit(t *testing.T, src string) []byte {
+	t.Helper()
+	mainPath := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return runDriverFile(t, l.runner, l.bin, mainPath, l.root, "-target", "wasm32-wasi")
+}
+
 // TestSelfHostWasmLoadRunStdlib compiles each case with asm_load_run -target
 // wasm32-wasi and runs the module under wasmtime, checking its exit code and
 // stdout.
@@ -170,25 +200,12 @@ func TestSelfHostWasmLoadRunStdlib(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
-	gcc, runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "asm_load_run")
-	root, err := filepath.Abs("../../internal/stdlib")
-	if err != nil {
-		t.Fatal(err)
-	}
+	l := newWasmStdlibLoader(t)
 	for _, tc := range wasmLoadRunStdlibCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			tdir := t.TempDir()
-			mainPath := filepath.Join(tdir, "main.fern")
-			if err := os.WriteFile(mainPath, []byte(withPrintInt(tc.src)), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			wat := runDriverFile(t, runner, bin, mainPath, root, "-target", "wasm32-wasi")
-			watPath := filepath.Join(tdir, "main.wat")
-			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+			watPath := filepath.Join(t.TempDir(), "main.wat")
+			if err := os.WriteFile(watPath, l.emit(t, withPrintInt(tc.src)), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("wasmtime", "run", watPath)

@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +25,7 @@ func TestSelfHostStrArrElemReclaimWasmIR(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	l := newWasmStdlibLoader(t)
 
 	cases := []struct {
 		name     string
@@ -118,23 +118,17 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0; while (
 		// admissible to the credit. `v` is another ELEMENT, so without the
 		// retain the exit walk would free one box through two slots → 99.
 		// 8 + 23 + 23 = 54 each build.
-		{"strarr-with-rebind-wasm", `function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
+		{"strarr-with-rebind-wasm", `import "std/i32";
+function mks(pre: string): string[] { var out: string[] = []; var i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { var a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }
 function churn(n: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < n) { if (build(pre) != 54) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0, "yes"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin, "-ir")
-			} else {
-				cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), "-ir")...)
-			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			wat, err := cmd.Output()
-			if err != nil || len(wat) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.src, err)
+			wat := l.emit(t, tc.src)
+			if len(wat) == 0 {
+				t.Fatalf("no WAT for %q", tc.src)
 			}
 			// Count a $__fern_arr_dec_ptr call only inside a USER function:
 			// since #4355 slice 9 the runtime's $__fern_arr_dec_ptr2 body
@@ -143,9 +137,10 @@ function main(): i32 { var v: i32 = churn(5000); if (__rc_underflow_count() != 0
 			// compile as "admitted". Track the enclosing (func $name ...)
 			// and skip runtime ($__*) bodies; require a non-ident char after
 			// the helper name so $__fern_arr_dec_ptr2 never matches.
+			// The SARR admission is the AST lowering's, so it is read from that lowering.
 			hasCall := false
 			inUser := false
-			for _, ln := range strings.Split(string(wat), "\n") {
+			for _, ln := range strings.Split(string(runCaptureAST(t, runner, driverBin, []byte(tc.src), "-ir")), "\n") {
 				if i := strings.Index(ln, "(func $"); i >= 0 {
 					inUser = !strings.HasPrefix(ln[i+len("(func $"):], "__")
 					continue
