@@ -426,28 +426,38 @@ function top_fn_index(mod: parser.Module, name: string): i32 {
 // `__fern_handle_result` and a `handle` of the plain shape is synthesised
 // over it, `return http.respond(__fern_handle_result(req, plat));`, or
 // `http.respond_with` for the stateful pair; `http` is whatever the entry
-// imports std/http as.
+// imports std/http as. A handler whose errors are `dyn error.Error` is
+// adapted with `respond_error` / `respond_error_with`, handed the
+// handler's platform too.
 pub function with_result_handler(entry: parser.Module): parser.Module {
     var hi: i32 = top_fn_index(entry, "handle");
     if (hi < 0) { return entry; }
     var handle: parser.FuncDecl = entry.funcs[hi];
     var ret: string = "";
     var adapter: string = "";
+    var result: string = "";
     if (handle.params.len() == 2 && result_of_response(handle.ret_type)) {
         ret = "HttpResponse";
         adapter = "respond";
+        result = handle.ret_type;
     } else if (handle.params.len() == 3) {
         var (state, second) = tuple_halves(handle.ret_type);
         if (state.len() > 0 && result_of_response(second)) {
             ret = "(" + state + ", HttpResponse)";
             adapter = "respond_with";
+            result = second;
         }
     }
     if (adapter.len() == 0) { return entry; }
     var args: ast.Expr[] = [];
     for p in handle.params { args = args.append(ast.ExprIdent { name: p.name, line: 0, col: 0, ty: "" }); }
     var inner: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__fern_handle_result", line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_args: [], ty: "" };
-    var call: ast.Expr = ast.ExprCall { callee: tcp_ref(std_qualifier(entry, "http"), adapter), args: [inner], line: 0, col: 0, type_args: [], ty: "" };
+    var adapter_args: ast.Expr[] = [inner];
+    if (result_err_is_dyn_error(entry, result)) {
+        adapter = "respond_error" + slice_unchecked(adapter, 7, adapter.len());
+        adapter_args = adapter_args.append(ast.ExprIdent { name: handle.params[handle.params.len() - 1].name, line: 0, col: 0, ty: "" });
+    }
+    var call: ast.Expr = ast.ExprCall { callee: tcp_ref(std_qualifier(entry, "http"), adapter), args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
     var wrapper: parser.FuncDecl = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], type_params: [], all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_slice: false, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
     var funcs: parser.FuncDecl[] = [];
     var i: i32 = 0;
@@ -457,6 +467,15 @@ pub function with_result_handler(entry: parser.Module): parser.Module {
         i = i + 1;
     }
     return parser.Module { ...entry, funcs: funcs.append(wrapper) };
+}
+
+// result_err_is_dyn_error reports whether the type text `Result[HttpResponse, E]`
+// has an `E` of `dyn error.Error`, spelled through whatever the entry imports
+// std/error as.
+function result_err_is_dyn_error(entry: parser.Module, result: string): boolean {
+    var q: string = std_qualifier(entry, "error");
+    if (q.len() == 0) { return false; }
+    return strip_spaces(result) == "Result[HttpResponse,dyn" + q + ".Error]";
 }
 
 // result_of_response reports whether the type text is `Result[HttpResponse, E]`.

@@ -4525,6 +4525,12 @@ func TestResultHandlerIsAdapted(t *testing.T) {
 	const decls = serveStubDecls + `function respond(r: Result[HttpResponse, string]): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
 function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResponse) { return (pair.0, respond(pair.1)); }
 `
+	const dynDecls = serveStubDecls + `trait Error { function message(self: Self): string; }
+struct Oops { why: string }
+impl Error for Oops { function message(self: Self): string { return self.why; } }
+function respond_error(r: Result[HttpResponse, dyn Error], plat: Platform): HttpResponse { return HttpResponse { status: 500, body: BodyText(""), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }; }
+function respond_error_with(pair: (i32, Result[HttpResponse, dyn Error]), plat: Platform): (i32, HttpResponse) { return (pair.0, respond_error(pair.1, plat)); }
+`
 	cases := []struct {
 		name, src, adapter string
 		params             int
@@ -4532,6 +4538,9 @@ function respond_with(pair: (i32, Result[HttpResponse, string])): (i32, HttpResp
 		{"stateless", decls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2},
 		{"stateful", decls + `function init(): i32 { return 0; }
 function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3},
+		{"dyn-error", dynDecls + `function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2},
+		{"dyn-error-stateful", dynDecls + `function init(): i32 { return 0; }
+function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResponse, dyn Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4559,6 +4568,9 @@ function handle(n: i32, req: HttpRequest, plat: Platform): (i32, Result[HttpResp
 			}
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.adapter {
 				t.Fatalf("handle calls %v, want %s", call.Callee, tc.adapter)
+			}
+			if wantArgs := 1 + strings.Count(tc.adapter, "error"); len(call.Args) != wantArgs {
+				t.Fatalf("%s is handed %d args, want %d", tc.adapter, len(call.Args), wantArgs)
 			}
 			inner, ok := call.Args[0].(*ast.Call)
 			if !ok {

@@ -36,6 +36,15 @@ func TestServeInitProvidedStateX86_64(t *testing.T) {
 	e2eharness.CheckInitState(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
 
+// A handler failing with `dyn error.Error` (#9854): the error's message is
+// logged through the platform and the answer is a bare 500.
+func TestServeDynErrorHandlerX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.DynErrorHandlerServerSource())
+	_, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckDynErrorHandler(t, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
 // A handler answering a Result (#9854): the checker wraps it so `?`
 // works in the handler and the failure is answered as a problem, with
 // and without state.
