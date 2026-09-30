@@ -244,3 +244,13 @@ func TestProcForkWaitpidInterpENOSYS(t *testing.T) {
 		t.Errorf("interp exit = %d, want 0", code)
 	}
 }
+
+// A handler that blocks stalls its worker (#9854): with one worker, a
+// request behind /slow waits for it. The phase that runs handlers off the
+// worker's thread of control inherits this as a failing test.
+func TestSupervisedServeHandlerStallsItsWorker(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.StallServerSource(port))
+	startSupervisedServer(t, bin, runner)
+	e2eharness.CheckHandlerStallsItsWorker(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

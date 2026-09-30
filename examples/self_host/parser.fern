@@ -9775,9 +9775,11 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
 
 // builtin_variant_arg_binds is variant_arg_binds for the builtin `Some`, `Ok`
 // and `Err`: the payload binds the matching argument of an `Option[..]` or
-// `Result[..]` parameter, and the other half stays for another argument.
+// `Result[..]` parameter, and the other half stays for another argument. A
+// number literal payload binds nothing, as its width is the parameter's to
+// decide.
 function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
-    if (c.args.len() != 1) { return binds; }
+    if (c.args.len() != 1 || number_literal_tree(c.args[0])) { return binds; }
     var slot: i32 = 0 - 1;
     var base: string = "";
     if let ast.ExprIdent(cid) = c.callee {
@@ -9786,12 +9788,13 @@ function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, 
         if (cid.name == "Err") { base = "Result"; slot = 1; }
     }
     var pb: i32 = first_bracket(pattern);
-    if (slot < 0 || pb <= 0 || slice_unchecked(pattern, 0, pb) != base) { return binds; }
+    if (slot < 0 || pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") { return binds; }
+    if (slice_unchecked(pattern, 0, pb) != base) { return binds; }
     var pargs: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
     if (slot >= pargs.len()) { return binds; }
     var pt: string = mono_infer(c.args[0], env, funcs);
     if (pt.len() == 0) { return binds; }
-    return bind_unify(pargs[slot], pt, vars, binds);
+    return bind_unify(strip_ws(pargs[slot]), pt, vars, binds);
 }
 
 // func_ret_of returns the return type of a plain function by name.
@@ -10289,14 +10292,18 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // is unknown, for the same reason as the index arm's element guard.
         ast.ExprFieldAccess(fa) => {
             var ot: string = mono_infer(fa.obj, env, funcs);
-            if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
-            // A tuple index reads that element of a tuple-typed value.
+            if (ot.len() == 0) { return ""; }
+            // A tuple index reads that element of a tuple-typed value
+            // (#10683). Only the element read may not mention a type
+            // variable: an erased, unbounded `S` beside it in
+            // `(S, Result[i32, E])` is no reason to leave the call generic.
             if (util.is_all_digits(fa.field) && util.is_tuple_type_name(ot)) {
-                var elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1));
+                var elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1) + "");
                 var k: i32 = util.digits_to_i32(fa.field);
-                if (k >= elems.len()) { return ""; }
+                if (k >= elems.len() || mono_ty_mentions_var(elems[k])) { return ""; }
                 return elems[k];
             }
+            if (mono_ty_mentions_var(ot)) { return ""; }
             var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
             if (mono_ty_mentions_var(ft)) { return ""; }
             return ft;

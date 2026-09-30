@@ -1,0 +1,107 @@
+import "std/test";
+import "std/http";
+import "std/json";
+import "std/mock_platform";
+
+// examples/tests/http_respond_test.fern — a handler that fails with `?`
+// (#9854): its helpers answer `Result[HttpResponse, http.HttpError]`, and
+// `http.respond` turns the failure into the RFC 9457 problem reply.
+
+function lookup(path: string): Result[string, http.HttpError] {
+    if (path == "/items/1") { return Ok("first"); }
+    if (path == "/items/locked") { return Err(http.HttpError { status: 403, title: "Locked", detail: "item 'locked' is read-only" }); }
+    return Err(http.fail(404, "no item at " + path));
+}
+
+function serve(req: HttpRequest): Result[HttpResponse, http.HttpError] {
+    var name: string = lookup(req.path)?;
+    return Ok(http.http_response_ok(name));
+}
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.respond(serve(req));
+}
+
+function test_ok_passes_through(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("GET", "/items/1"), m.as_platform());
+    match (test.assert_status(resp, 200)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "first");
+}
+
+function test_fail_answers_a_problem(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("GET", "/items/9"), m.as_platform());
+    match (test.assert_status(resp, 404)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    match (test.assert_header(resp, "content-type", "application/problem+json")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Not Found\",\"status\":404,\"detail\":\"no item at /items/9\"}");
+}
+
+function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var resp: HttpResponse = handle(http.request("GET", "/items/locked"), m.as_platform());
+    match (test.assert_status(resp, 403)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Locked\",\"status\":403,\"detail\":\"item 'locked' is read-only\"}");
+}
+
+function test_problem_quotes_its_text(): test.TestOutcome {
+    var resp: HttpResponse = http.problem(422, "Bad \"name\"", "line\nbreak");
+    match (test.assert_status(resp, 422)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad \\\"name\\\"\",\"status\":422,\"detail\":\"line\\nbreak\"}");
+}
+
+function test_problem_without_detail(): test.TestOutcome {
+    var resp: HttpResponse = http.problem(503, "", "");
+    return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
+}
+
+function decode(text: string): Result[HttpResponse, json.JsonError] {
+    var v: JsonValue = json.json_parse_result(text)?;
+    return Ok(http.http_response_ok("parsed"));
+}
+
+function test_json_error_answers_400(): test.TestOutcome {
+    var resp: HttpResponse = http.respond(decode("{\"n\": "));
+    match (test.assert_status(resp, 400)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    match (test.assert_header(resp, "content-type", "application/problem+json")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    if (!resp.body.contains("\"title\":\"Malformed JSON\"")) { return test.fail("body: " + resp.body); }
+    if (!resp.body.contains(" at line 1, column ")) { return test.fail("body: " + resp.body); }
+    return test.assert_status(http.respond(decode("{\"n\": 1}")), 200);
+}
+
+function failing(): Result[HttpResponse, string] {
+    return Err("the database is on fire");
+}
+
+function test_string_error_answers_500_without_the_message(): test.TestOutcome {
+    var resp: HttpResponse = http.respond(failing());
+    match (test.assert_status(resp, 500)) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}");
+}
+
+function counted(n: i32, ok: boolean): (i32, Result[HttpResponse, http.HttpError]) {
+    if (!ok) { return (n, Err(http.fail(409, "conflict"))); }
+    return (n + 1, Ok(http.http_response_ok("counted")));
+}
+
+function test_respond_with_keeps_the_state(): test.TestOutcome {
+    var good: (i32, HttpResponse) = http.respond_with(counted(1, true));
+    if (good.0 != 2) { return test.fail("state after Ok: " + good.0.to_string()); }
+    match (test.assert_body(good.1, "counted")) { Fail(msg) => { return test.fail(msg); }, Pass => {} }
+    var bad: (i32, HttpResponse) = http.respond_with(counted(2, false));
+    if (bad.0 != 2) { return test.fail("state after Err: " + bad.0.to_string()); }
+    return test.assert_status(bad.1, 409);
+}
+
+function main(): i32 {
+    var t: test.TestRunner = test.test_new("HTTP respond");
+    t = t.it("an Ok response passes through", test_ok_passes_through);
+    t = t.it("a failed lookup answers a problem", test_fail_answers_a_problem);
+    t = t.it("an error keeps its own title, and the detail is quoted", test_error_keeps_its_own_title_and_escapes);
+    t = t.it("problem quotes its title and detail", test_problem_quotes_its_text);
+    t = t.it("a problem without detail leaves the member out", test_problem_without_detail);
+    t = t.it("a JSON error answers 400 with where the text broke", test_json_error_answers_400);
+    t = t.it("a string error answers 500 without the message", test_string_error_answers_500_without_the_message);
+    t = t.it("respond_with keeps the state beside the answer", test_respond_with_keeps_the_state);
+    return t.finish();
+}

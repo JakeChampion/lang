@@ -342,7 +342,7 @@ func socketHostBody(operation, moduleName, name string) string {
 		phase, own = 3, "streams"
 	case strings.HasSuffix(name, ".accept"):
 		phase, own = 1, "accepted"
-	case strings.HasSuffix(name, ".local-address"):
+	case strings.HasSuffix(name, ".local-address"), strings.HasSuffix(name, ".remote-address"):
 		phase = 1
 	case strings.HasSuffix(name, ".start-listen"):
 		phase, errAt = 4, 1

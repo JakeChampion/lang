@@ -32,7 +32,7 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
-            var merged: parser.Module = flatten.bundle(entry, loaded);
+            var merged: parser.Module = flatten.bundle(entry, loaded, "");
             // NB: no merge_builtins here — the checker knows the built-in
             // types itself (is_builtin_variant / built-in enum table), and
             // injecting real JsonValue/IoError decls would be flagged as

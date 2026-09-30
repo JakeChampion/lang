@@ -80,8 +80,8 @@ function shaken_program(typed: parser.Module, prune: boolean): parser.Module {
 // (~2040 funcs) would accumulate every unit's working set in a single process
 // and OOM (that path uses the batched, file-based per-module emit instead), so
 // the caller only routes here for merged sizes comfortably below it.
-function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[]): string {
-    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
+function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.LoadedModule[], reach: string[], target: string): string {
+    var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
     var infmods: parser.Module[] = [];
     var all_funcs: parser.FuncDecl[] = [];
     var all_structs: parser.StructDecl[] = [];
@@ -281,7 +281,7 @@ function main(): i32 {
     // invocation (cheap: parse + analysis, no codegen) so every per-module emit
     // tags cross-module calls by the callee's real signature.
     if (pm_mode.len() > 0) {
-        var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded);
+        var parts: flatten.PerModule[] = flatten.bundle_per_module(entry_mod, loaded, target);
         if (pm_mode == "count") {
             print(util.i32_to_string(parts.len()) + "\n");
             return 0;
@@ -353,7 +353,7 @@ function main(): i32 {
         return 0;
     }
 
-    var merged: parser.Module = flatten.bundle(entry_mod, loaded);
+    var merged: parser.Module = flatten.bundle(entry_mod, loaded, target);
 
     // Prune unreachable functions (sound, name-based reachability from main)
     // so a stdlib-importing program's merged module fits the IR budget. Raw
@@ -463,7 +463,7 @@ function main(): i32 {
         var reach: string[] = [];
         var ri: i32 = 0;
         while (ri < merged.funcs.len()) { reach = reach.append(treeshake.reach_key(merged.funcs[ri])); ri = ri + 1; }
-        var pmc: string = emit_per_module_concat(entry_mod, loaded, reach);
+        var pmc: string = emit_per_module_concat(entry_mod, loaded, reach, target);
         if (pmc.len() > 0) { write(pmc); return 0; }
     }
     // Last resort, and no longer a fallback: a module the per-module concat rescue

@@ -74,3 +74,12 @@ func TestServeResponseRateKeepsSteadyReaderX86_64(t *testing.T) {
 	startSupervisedServer(t, bin, runner)
 	e2eharness.CheckResponseRateKeepsSteadyReader(t, fmt.Sprintf("127.0.0.1:%d", port))
 }
+
+// A `shutdown(reason, state)` hook (#9854): the synthesised main wires it
+// to the loop, which hands it the reason and the state once it stopped.
+func TestServeShutdownHookX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, e2eharness.ShutdownHookServerSource())
+	cmd, stderrPath := startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}

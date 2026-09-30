@@ -385,3 +385,221 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 		t.Fatalf("post-crash /ok: want 200 (the other worker should have answered), got\n%s", resp)
 	}
 }
+
+// InitStateServerSource is ThreadedStateServerSource with no `main`: an
+// `init(): S` and a state-taking `handle` are the two-phase lifecycle the
+// compilers synthesise a main for, which serves on `PORT` and hands
+// init()'s value to the loop rather than building the state per request
+// or dropping it.
+func InitStateServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n),
+            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+}
+`
+}
+
+// HandleOnlyServerSource is a handler program with neither `init` nor
+// `main`: the synthesised main serves `handle` on `PORT`.
+func HandleOnlyServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("path=" + req.path);
+}
+`
+}
+
+// CheckInitState is CheckThreadedState's first half: one path's count
+// climbs and a second path starts at one.
+func CheckInitState(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for want := 1; want <= 3; want++ {
+		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != fmt.Sprintf("/a=%d", want) {
+			t.Fatalf("request %d to /a: body %q, want %q (init's state did not reach the next request)", want, got, fmt.Sprintf("/a=%d", want))
+		}
+	}
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/b", 5*time.Second)); got != "/b=1" {
+		t.Fatalf("first request to /b: body %q, want \"/b=1\"", got)
+	}
+}
+
+// CheckHandleOnly asks the handle-only server for one path.
+func CheckHandleOnly(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/hello", 5*time.Second)); got != "path=/hello" {
+		t.Fatalf("/hello: body %q, want \"path=/hello\"", got)
+	}
+}
+
+// ResultHandlerServerSource is a handler program whose `handle` answers
+// `Result[HttpResponse, http.HttpError]` and fails with `?`: the
+// compilers wrap it so the failure is answered as a problem.
+func ResultHandlerServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+
+function lookup(path: string): Result[string, http.HttpError] {
+    if (path == "/items/1") { return Ok("first"); }
+    return Err(http.fail(404, "no item at " + path));
+}
+
+function handle(req: HttpRequest, plat: Platform): Result[HttpResponse, http.HttpError] {
+    var name: string = lookup(req.path)?;
+    return Ok(http.http_response_ok(name));
+}
+`
+}
+
+// StatefulResultHandlerServerSource threads a count through a handler
+// answering `(Map[string, i32], Result[HttpResponse, http.HttpError])`:
+// a failure is answered as a problem and the state survives it.
+func StatefulResultHandlerServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], Result[HttpResponse, http.HttpError]) {
+    if (req.path == "/boom") { return (hits, Err(http.fail(404, "nothing here"))); }
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n), Ok(http.http_response_ok(req.path + "=" + int.int_to_string(n))));
+}
+`
+}
+
+// CheckResultHandler drives ResultHandlerServerSource: /items/1 answers
+// 200 with its name, and another path the 404 problem the lookup failed
+// with.
+func CheckResultHandler(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/items/1", 5*time.Second)); got != "first" {
+		t.Fatalf("/items/1: body %q, want \"first\"", got)
+	}
+	resp := HTTPRoundTrip(t, addr, "/items/9", 5*time.Second)
+	if !strings.HasPrefix(resp, "HTTP/1.1 404") || !strings.Contains(resp, "application/problem+json") {
+		t.Fatalf("/items/9: want a 404 problem, got\n%s", resp)
+	}
+	if got := ResponseBodyTail(resp); got != `{"type":"about:blank","title":"Not Found","status":404,"detail":"no item at /items/9"}` {
+		t.Fatalf("/items/9: body %q", got)
+	}
+}
+
+// CheckStatefulResultHandler drives StatefulResultHandlerServerSource:
+// the count climbs, /boom answers a 404 problem, and the count climbs on
+// from where it was.
+func CheckStatefulResultHandler(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != "/a=1" {
+		t.Fatalf("first /a: body %q, want \"/a=1\"", got)
+	}
+	if resp := HTTPRoundTrip(t, addr, "/boom", 5*time.Second); !strings.HasPrefix(resp, "HTTP/1.1 404") || !strings.Contains(resp, `"detail":"nothing here"`) {
+		t.Fatalf("/boom: want a 404 problem, got\n%s", resp)
+	}
+	if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/a", 5*time.Second)); got != "/a=2" {
+		t.Fatalf("second /a: body %q, want \"/a=2\" (the state did not survive the failure)", got)
+	}
+}
+
+// ShutdownHookServerSource threads a request count and declares a
+// `shutdown(reason, state)` hook: the compilers wire it to the loop, which
+// calls it once it has stopped with the reason and the count as the last
+// request left it, and the hook reports both on stderr.
+func ShutdownHookServerSource() string {
+	return `import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): i32 {
+    return 0;
+}
+
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, http.http_response_ok("hit " + int.int_to_string(hits + 1)));
+}
+
+function shutdown(reason: string, hits: i32): void {
+    eprint("shutdown reason=" + reason + " hits=" + int.int_to_string(hits));
+}
+`
+}
+
+// CheckShutdownHook drives ShutdownHookServerSource: two requests, then
+// SIGTERM; the process exits 0 and its stderr carries the hook's line
+// with the reason and the count.
+func CheckShutdownHook(t *testing.T, cmd *exec.Cmd, addr, stderrPath string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	for i := 1; i <= 2; i++ {
+		if got := ResponseBodyTail(HTTPRoundTrip(t, addr, "/", 5*time.Second)); got != fmt.Sprintf("hit %d", i) {
+			t.Fatalf("request %d: body %q, want \"hit %d\"", i, got, i)
+		}
+	}
+	sigterm(t, cmd)
+	if code := waitExit(t, cmd, 10*time.Second); code != 0 {
+		t.Fatalf("exit code %d, want 0", code)
+	}
+	if stderr := readFileString(stderrPath); !strings.Contains(stderr, "shutdown reason=sigterm hits=2") {
+		t.Fatalf("the shutdown hook did not report on stderr:\n%s", stderr)
+	}
+}
+
+// StallServerSource is WorkersServerSource with one worker: the shape
+// whose handler, running to completion, holds the whole worker.
+func StallServerSource(port int) string {
+	return strings.Replace(WorkersServerSource(port), "workers: 2", "workers: 1", 1)
+}
+
+// CheckHandlerStallsItsWorker drives StallServerSource: a request on a
+// second connection is answered only once the first worker's /slow has
+// run to completion, since a handler runs on the worker's own thread of
+// control and nothing else runs there meanwhile. This pins what P1
+// documents so that the phase which changes it inherits a failing test.
+func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	slow, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slow.Close()
+	if _, err := io.WriteString(slow, "GET /slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	time.Sleep(200 * time.Millisecond)
+	if resp := HTTPRoundTrip(t, addr, "/ok", 20*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
+		t.Fatalf("/ok behind /slow: want 200 once the worker is free, got\n%s", resp)
+	}
+	if waited := time.Since(started); waited < 500*time.Millisecond {
+		t.Fatalf("/ok behind /slow was answered after %v, before the one worker could have finished /slow", waited)
+	}
+	if b, err := io.ReadAll(slow); err != nil || !strings.Contains(string(b), "slow") {
+		t.Fatalf("/slow itself: %q, %v", b, err)
+	}
+}

@@ -998,6 +998,11 @@ func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
+	// Before any signature is collected: the adapted handler is a renamed
+	// declaration and a new one, and both have to be registered by name.
+	if hasHandleDecl(prog) {
+		adaptResultHandler(prog)
+	}
 	return checkImpl(ctx, prog)
 }
 
@@ -20815,6 +20820,21 @@ func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
 			"`init` returns a value, but the handler takes no state parameter to thread it through")
 		return false
 	}
+	// `shutdown(reason)` or `shutdown(reason, state)`: the state parameter
+	// follows the handler's, since the loop hands the hook the state as
+	// the last request left it.
+	if shutdown := findDecl(prog, "shutdown"); shutdown != nil {
+		switch {
+		case len(shutdown.Params) == 2 && !handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes a state parameter, but no `init` produces the state to hand it")
+			return false
+		case len(shutdown.Params) == 1 && handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes no state parameter, but the handler threads a state it would drop")
+			return false
+		}
+	}
 	return true
 }
 
@@ -20861,6 +20881,84 @@ func initProvidesState(prog *ast.Program) bool {
 		return false
 	}
 	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
+}
+
+// resultHandlerName is what a handler written as a `Result[HttpResponse, E]`
+// is renamed to, so that `handle` stays the HttpResponse-shaped entry every
+// consumer (the synthesised main, the wasi-http wrapper) calls.
+const resultHandlerName = "__fern_handle_result"
+
+// resultHandlerShape reports whether `handle` answers a Result: a
+// two-parameter handler returning `Result[HttpResponse, E]`, or a
+// three-parameter one returning `(S, Result[HttpResponse, E])`.
+func resultHandlerShape(handle *ast.FuncDecl) bool {
+	isResult := func(t ast.Type) bool {
+		e, ok := t.(ast.EnumType)
+		if !ok || e.Name != "Result" || len(e.Args) != 2 {
+			return false
+		}
+		st, ok := e.Args[0].(ast.StructType)
+		return ok && st.Name == "HttpResponse" && len(st.Args) == 0
+	}
+	switch len(handle.Params) {
+	case 2:
+		return isResult(handle.ReturnType)
+	case 3:
+		tt, ok := handle.ReturnType.(ast.TupleType)
+		return ok && len(tt.Elems) == 2 && isResult(tt.Elems[1])
+	}
+	return false
+}
+
+// adaptResultHandler lets a handler fail with `?`: a `handle` answering
+// `Result[HttpResponse, E]` (or `(S, Result[HttpResponse, E])` with state)
+// is renamed to resultHandlerName and a `handle` of the plain shape is
+// synthesised over it,
+//
+//	function handle(req: HttpRequest, plat: Platform): HttpResponse {
+//	    return respond(__fern_handle_result(req, plat));
+//	}
+//
+// or `respond_with` for the stateful pair, std/http's answers to a Result
+// (`E: ToResponse`). The names resolve bare or under std/http's mangling
+// as synthesiseHandleMain's do.
+func adaptResultHandler(prog *ast.Program) {
+	handle := findDecl(prog, "handle")
+	if handle == nil || !resultHandlerShape(handle) {
+		return
+	}
+	handle.Name = resultHandlerName
+	pos := handle.P
+	resolve := func(bare, mangled string) string {
+		if findDecl(prog, bare) != nil {
+			return bare
+		}
+		if findDecl(prog, mangled) != nil {
+			return mangled
+		}
+		return bare
+	}
+	adapter := "respond"
+	var ret ast.Type = ast.StructType{Name: "HttpResponse"}
+	if len(handle.Params) == 3 {
+		adapter = "respond_with"
+		ret = ast.TupleType{Elems: []ast.Type{handle.Params[0].Type, ast.StructType{Name: "HttpResponse"}}}
+	}
+	params := make([]ast.Param, len(handle.Params))
+	args := make([]ast.Expr, len(handle.Params))
+	for i, p := range handle.Params {
+		params[i] = ast.Param{Name: p.Name, Type: p.Type}
+		args[i] = &ast.Ident{P: pos, Name: p.Name}
+	}
+	inner := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resultHandlerName}, Args: args}
+	call := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(adapter, "http__"+adapter)}, Args: []ast.Expr{inner}}
+	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+		P:          pos,
+		Name:       "handle",
+		Params:     params,
+		ReturnType: ret,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
+	})
 }
 
 // platformCtorName is the compiler-owned Platform constructor. The `__fern_`
@@ -20923,6 +21021,13 @@ func synthesisePlatformCtor() *ast.FuncDecl {
 //	    return tcp_serve_with(__port_from_env("PORT", 8080), init(), handle);
 //	}
 //
+// and with a `shutdown` hook declared, the `_shutdown` entry of either,
+// handed `serve_options()` and the hook:
+//
+//	function main(): i32 {
+//	    return tcp_serve_with_shutdown(__port_from_env("PORT", 8080), serve_options(), init(), handle, shutdown);
+//	}
+//
 // — the canonical entry point for handler-shaped programs on
 // CLI / arm64 targets. The wasi-http target has its own
 // `wasi:http/incoming-handler.handle` export wrapper that
@@ -20968,6 +21073,12 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 
 	var stmts []ast.Stmt
 	var serveCall *ast.Call
+	// A `shutdown` hook goes to the `_shutdown` entry, which takes the
+	// options too (`serve_options()`, the defaults) and calls the hook once
+	// the loop has stopped.
+	hasShutdown := findDecl(prog, "shutdown") != nil
+	optsCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve("serve_options", "tcp__serve_options")}, Args: nil}
+	shutdownRef := &ast.Ident{P: pos, Name: "shutdown"}
 	if initProvidesState(prog) {
 		// `init(): S` + `handle(state: S, req, plat): (S, HttpResponse)`
 		// — the two-phase lifecycle: build the state once, thread it
@@ -20983,6 +21094,13 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 				&ast.Ident{P: pos, Name: "handle"},
 			},
 		}
+		if hasShutdown {
+			serveCall = &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with_shutdown", "tcp__tcp_serve_with_shutdown")},
+				Args:   []ast.Expr{portCall, optsCall, initCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
+			}
+		}
 	} else {
 		serveCall = &ast.Call{
 			P:      pos,
@@ -20991,6 +21109,13 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 				portCall,
 				&ast.Ident{P: pos, Name: "handle"},
 			},
+		}
+		if hasShutdown {
+			serveCall = &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_shutdown", "tcp__tcp_serve_shutdown")},
+				Args:   []ast.Expr{portCall, optsCall, &ast.Ident{P: pos, Name: "handle"}, shutdownRef},
+			}
 		}
 		// A void `init` runs for its side effects before the loop —
 		// logging "starting", reading env vars, warming a cache the

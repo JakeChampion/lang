@@ -201,6 +201,15 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    `fsmode`, and E066 declines it because the component-model filesystem has no
    permission bits (#6133). That is a target property rather than a gap, so this
    witness is not one to wait for.
+5. **`internal/e2e` passing through the self-host compiler.** The native
+   suite is the language's spec on three targets, and it keeps that job:
+   its run helpers compile with the self-host compiler once the programs
+   they hold compile and answer there. Measured 2026-09-30 by running the
+   whole package that way: 137 of 4,125 tests fail, 108 on twenty self-host
+   gaps (filed by cause) and 29 on native-only instrumentation whose
+   properties `internal/e2eselfhost` already gates. The work list, the
+   disposition of the 115 files that call a Go emitter directly, and the
+   order of the deletion PRs: `docs/NATIVE-RETIREMENT.md`.
 
 ## Freeze preconditions (all must be green before native is frozen)
 

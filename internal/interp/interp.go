@@ -1692,8 +1692,9 @@ func builtinTcpConnect(i *Interp, args []Value) (Value, error) {
 
 // builtinTcpSocketCtl is the interpreter's `tcp_socket_ctl(fd, op, arg)`,
 // over the net package's own controls: op 1 SetNoDelay, 2 SetKeepAlive, 3
-// the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both.
-// 0, -1 for a handle that is not a connection, -22 for an unknown op.
+// the non-blocking flag tcp_recv honours, 4 CloseRead / CloseWrite / both,
+// 6 the host's send queue, 7 the peer's address key (peerKey). 0, -1 for
+// a handle that is not a connection, -22 for an unknown op.
 func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected 3 args, got %d", len(args))
@@ -1710,8 +1711,22 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 6 {
+	if op < 1 || op > 7 {
 		return Number(-22), nil
+	}
+	if op == 7 {
+		if _, isDatagram := i.udpSocks[int64(id)]; isDatagram {
+			return Number(0), nil
+		}
+		conn, ok := i.tcpConns[int64(id)]
+		if !ok {
+			return Number(0), nil
+		}
+		ta, ok := conn.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			return Number(0), nil
+		}
+		return Number(peerKey(ta.IP)), nil
 	}
 	if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
 		return r, nil
@@ -1815,6 +1830,29 @@ func builtinWasmTimerPollable(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("wasm_timer_pollable: expected 1 arg, got %d", len(args))
 	}
 	return Number(-1), nil
+}
+
+// peerKey is the 32-bit key socket control op 7 answers for a peer's
+// address: an IPv4 address packed as `tcp_connect` takes it (the first
+// octet in the low byte, a v4-mapped IPv6 address counting as IPv4), any
+// other IPv6 address the two words of its first eight bytes XORed and
+// never 0, so the peers of one /64 share a key. The native runtimes
+// compute the same value from the sockaddr.
+func peerKey(ip net.IP) int32 {
+	word := func(b []byte) int32 {
+		return int32(uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24)
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return word(v4)
+	}
+	v6 := ip.To16()
+	if v6 == nil {
+		return 0
+	}
+	if k := word(v6[0:4]) ^ word(v6[4:8]); k != 0 {
+		return k
+	}
+	return 1
 }
 
 // builtinTcpLocalPort is the interpreter's `tcp_local_port(handle)` — the

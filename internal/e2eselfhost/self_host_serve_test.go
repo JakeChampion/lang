@@ -149,3 +149,65 @@ func TestSelfHostSupervisedServeCrashLoopGivesUp(t *testing.T) {
 	stderrPath := e2eharness.StartServerProcess(t, cmd)
 	e2eharness.CheckCrashLoopGivesUp(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
 }
+
+// The self-host compiler synthesises the serve `main` of a handler
+// program as the native checker does: with `init`'s state threaded, and
+// for a bare `handle`.
+func TestSelfHostServeInitProvidedState(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.InitStateServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckInitState(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeHandleOnly(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.HandleOnlyServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckHandleOnly(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeResultHandler(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ResultHandlerServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeStatefulResultHandler(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StatefulResultHandlerServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckStatefulResultHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostServeShutdownHook(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.ShutdownHookServerSource())
+	cmd := binCmd(runner, bin)
+	cmd.Env = append(cmd.Environ(), fmt.Sprintf("PORT=%d", port))
+	stderrPath := e2eharness.StartServerProcess(t, cmd)
+	e2eharness.CheckShutdownHook(t, cmd, fmt.Sprintf("127.0.0.1:%d", port), stderrPath)
+}
+
+func TestSelfHostServePerIPCap(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.PerIPCapServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckPerIPCap(t, fmt.Sprintf("127.0.0.1:%d", port))
+}
+
+func TestSelfHostSupervisedServeHandlerStallsItsWorker(t *testing.T) {
+	port := selfHostFreePort(t)
+	bin, runner := selfHostServer(t, e2eharness.StallServerSource(port))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckHandlerStallsItsWorker(t, fmt.Sprintf("127.0.0.1:%d", port))
+}

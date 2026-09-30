@@ -3863,6 +3863,44 @@ func TestRunnerHttpRequestBytesExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/mock_platform_canned_test.fern` pins the mock's canned
+// answers (#9854): `env_set`, `now_set`, `random_set` and `fetch_set` reach
+// the handler through the bag, the fixed values apply without them, a
+// canned row is not a call and survives `reset`, and a value with tabs and
+// newlines round-trips.
+func TestRunnerMockPlatformCannedExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/mock_platform_canned_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: MockPlatform canned answers", "# pass 7", "# fail 0", "1..7"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// `examples/tests/http_respond_test.fern` pins the error side of a handler
+// (#9854): helpers that fail with `?` over `HttpError`, `http.respond`
+// answering the failure as an RFC 9457 problem, `http.problem`'s body,
+// the `ToResponse` impls for `JsonError` and `string`, and `respond_with`
+// keeping the state beside the answer.
+func TestRunnerHttpRespondExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_respond_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: HTTP respond", "# pass 8", "# fail 0", "1..8"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_request_builder_test.fern` pins the handler test
 // seam (#9854): a request from `http.request` with its body methods, a
 // `MockPlatform`'s bag, and the HTTP assertions of `std/test` reading the

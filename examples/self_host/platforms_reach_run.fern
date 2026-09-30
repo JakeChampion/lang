@@ -43,7 +43,7 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
-            var merged: parser.Module = flatten.bundle(entry, loaded);
+            var merged: parser.Module = flatten.bundle(entry, loaded, "");
             var caps: string[] = platforms.reach(merged);
             var i: i32 = 0;
             while (i < caps.len()) {

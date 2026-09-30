@@ -191,6 +191,7 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 			gImport{iface: tcp, name: "[method]tcp-socket.finish-listen", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.accept", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.local-address", kind: gMem, params: composeTcpSelfRetParams},
+			gImport{iface: tcp, name: "[method]tcp-socket.remote-address", kind: gMem, params: composeTcpSelfRetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.set-listen-backlog-size", kind: gMem, params: composeTcpSelfI64RetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.set-keep-alive-enabled", kind: gMem, params: composeTcpSelfI32RetParams},
 			gImport{iface: tcp, name: "[method]tcp-socket.shutdown", kind: gMem, params: composeTcpSelfI32RetParams},
