@@ -726,6 +726,7 @@ pub struct FnSigs {
 // b.tuple_ret_fns b.arrtup_ret_fns b.map_ret_fns b.f64_ret_fns b.f64arr_ret_fns
 // b.i64arr_ret_fns b.erased_elem_ret_fns b.ret_type_fns b.ret_fn_sigs
 // b.closure_fns b.const_fns b.fn_names b.own_positions b.own_scalar_arr_positions
+// b.assoc_fns
 pub function wp_fact_rows(b: FnSigs, all_funcs: parser.FuncDecl[], all_stab: StructTab): string[] {
     var regs: SigReg[] = [b.str_ret_fns, b.i64_ret_fns, b.struct_ret_fns, b.fn_param_sigs, b.noesc_ret_fns, b.opt_fresh_ret_fns];
     var cols: string[][] = [b.closurearr_ret_fns, b.borrowable_params, b.borrow_bare, b.fresh_struct_ret_fns, b.consume_safe_params, b.return_fresh_struct_ret_fns, b.recv_borrow_fns, b.str_fresh_ret_fns, b.strfld_ok_types, b.tuple_fresh_ret_fns, b.own_consumed_positions, b.consumed_arr_positions, b.param_counted, b.trmc_consume_fns, b.handback_params, b.cnt_struct_ret_fns, b.cnt_handback_params, b.handback_carry_params, b.str_handback_ret, b.grow_recv_fns, b.grow_field_positions, structfld_reclaim_ok_types_of(all_funcs, all_stab, b.borrowable_params)];
