@@ -15086,12 +15086,12 @@ function emit_wasm_dyn_box(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o:
     return parts;
 }
 
-// The wasm value type a primitive `dyn` box holds at @8: a 64-bit integer or
-// a float at its own width, everything else (an i32, a boolean, a string box
-// pointer) as one i32.
+// The wasm value type a primitive `dyn` box holds at @8: a 64-bit integer at
+// its own width, a float as the f64 this backend holds every float in, and
+// everything else (an i32, a boolean, a string box pointer) as one i32.
 function dyn_prim_valtype(name: string): string {
     if (name == "i64" || name == "u64") { return "i64"; }
-    if (name == "f64" || name == "float") { return "f64"; }
+    if (name == "f64" || name == "f32" || name == "float") { return "f64"; }
     return "i32";
 }
 
