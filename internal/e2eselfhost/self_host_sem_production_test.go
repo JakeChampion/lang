@@ -315,10 +315,10 @@ var semProductionPrograms = []struct {
 	// the array moves into the write and is written in place rather than
 	// copied (#9849); TestSelfHostSemanticAllocationParity pins the count.
 	{name: "element-read-outlives-the-array-write", atLeast: 2, noLeak: true, src: semHeldElementSource},
-	// A bodied `async function` is an ordinary function whose only extra
-	// meaning is a component export; the interpreter answers
-	// 16|4 squares ending 9. semsource refused the modifier (#10794).
-	{name: "async-function", atLeast: 4, noLeak: true, src: `
+	// A bodied `async function` is an ordinary function; on this path the bit
+	// only keeps it alive as a tree-shake root. semsource refused the
+	// modifier (#10794).
+	{name: "async-function", atLeast: 4, noLeak: true, want: "16|4 squares ending 9\n\n", astAnswers: "16|4 squares ending 9\n\n", src: `
 import "std/i32";
 async function compute(): i32 { return 7; }
 pub async function squares(n: i32): i32[] {
