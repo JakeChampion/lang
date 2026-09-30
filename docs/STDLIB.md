@@ -1118,7 +1118,8 @@ serializer.
   persistent connection needs, answering `Framed(HttpFramed)`,
   `Incomplete` (keep reading), `Continue` (the header block has arrived
   and says `Expect: 100-continue`, the body has not: the loop sends
-  `100 Continue` once and keeps reading, RFC 9110 §10.1.1) or
+  `100 Continue` once and keeps reading, RFC 9110 §10.1.1; an HTTP/1.0
+  request's expectation is ignored, as that section asks) or
   `Malformed(status)` (the loop answers `status` with an empty body and
   `Connection: close`, then closes; a malformed request behind an
   answered one gets no answer, since that answer already said close,
@@ -1162,11 +1163,14 @@ serializer.
   a body over 1 MiB is malformed, and a violation is refused as soon as it
   is known: a request past a cap once the cap is passed, a bad request
   line once its CRLF has arrived, before the rest of the request. The
-  status names the violation: 400 for the grammar and the `Host` rule,
+  status names the violation: 400 for the grammar, the `Host` rule and a
+  `Transfer-Encoding` list whose last coding is not `chunked` (RFC 9112
+  §6.3),
   413 for a body past its cap, 414 for a request line past its cap, 417
   for an `Expect` other than `100-continue`, 431
   for a header block past its byte or field cap or chunk framing past its
-  budget, 501 for a transfer coding the parser cannot decode, 505 for
+  budget, 501 for a coding under the final `chunked` the parser cannot
+  decode, 505 for
   another major version. One empty line before the request line is
   ignored, as §2.2 asks, and counted in `len`; a second is refused. A
   chunked body (§7.1, HTTP/1.1 only) is decoded into `request.body`:
