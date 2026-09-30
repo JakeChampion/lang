@@ -169,16 +169,12 @@ function main(): i32 {
 }`, "snap_param_scalar_churn_arm64", 7, true)
 }
 
-// TestSelfHostSnapshotParamReclaimWasm is the wasm32 correctness gate for the
-// (already-real) wasm `$__fern_snapshot_dec`: the snapshot-param consume-rebind
-// frees the dead `old` box on a rebind, guarded so it never frees the live
-// result (`old != new`, cow), the caller's still-owned entry box (`old != snap`),
-// or a shared box (rc != 1 — a borrowed param carries no count to release). The
-// wasm body was landed without a wasm-level test (only x86 + arm64 were covered);
-// this fills that gap. Verified by CORRECTNESS under wasmtime — a wrong free of
-// the caller's snapshot corrupts the read-back — plus a WAT-content check that
-// the real guarded free body (rc==1 guard + `$__fern_arr_dec (local.get $old)`)
-// is emitted and dispatched. The heavy OOM-churn is x86-only.
+// TestSelfHostSnapshotParamReclaimWasm is the wasm32 correctness gate for
+// rebinding a borrowed struct parameter: each rebind frees the dead intermediate
+// box and never the caller's still-owned entry box. Verified by CORRECTNESS under
+// wasmtime — a wrong free of the caller's box corrupts the read-back — plus a
+// WAT-content check that the rebinding function releases its intermediates
+// (`call $__fern_arr_dec` in its body). The heavy OOM-churn is x86-only.
 func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm snapshot-param reclaim e2e")
@@ -188,24 +184,20 @@ func TestSelfHostSnapshotParamReclaimWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "wasm_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
 
-	run := func(t *testing.T, prog, name string, want int, wantFree bool) {
+	run := func(t *testing.T, prog, name, rebinder string, want int) {
 		t.Helper()
 		wat := runCapture(t, gcc, runner, driverBin, []byte(prog))
 		if len(wat) == 0 {
 			t.Fatalf("%s: wasm emitter produced 0 bytes", name)
 		}
 		ws := string(wat)
-		// The real snapshot_dec body guards rc==1 (the borrow leave-shared check)
-		// then frees `old` via $__fern_arr_dec; a leak-safe pass-through body would
-		// be just `(local.get $new)` with neither substring. Both are unique to it.
-		if wantFree {
-			if !strings.Contains(ws, "(i32.ne (i32.load (i32.sub (local.get $old) (i32.const 8))) (i32.const 1))") ||
-				!strings.Contains(ws, "(call $__fern_arr_dec (local.get $old))") {
-				t.Errorf("%s: real $__fern_snapshot_dec free body not found in WAT (a pass-through?)", name)
-			}
-			if !strings.Contains(ws, "call $__fern_snapshot_dec") {
-				t.Errorf("%s: snapshot_dec not dispatched (struct-param consume-rebind did not lower through the wasm IR path?)", name)
-			}
+		at := strings.Index(ws, "(func $"+rebinder+" ")
+		if at < 0 {
+			t.Fatalf("%s: no $%s in the WAT", name, rebinder)
+		}
+		body, _, _ := strings.Cut(ws[at:], "\n  (func ")
+		if !strings.Contains(body, "call $__fern_arr_dec") {
+			t.Errorf("%s: $%s releases no intermediate box\n%s", name, rebinder, body)
 		}
 		watPath := filepath.Join(dir, name+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
@@ -226,10 +218,10 @@ function main(): i32 {
     var seed: C = C { a: 5, n: 0 };
     var t: i32 = thread(seed);
     return seed.a + t;
-}`, "snap_param_caller_intact_wasm", 40, true)
+}`, "snap_param_caller_intact_wasm", "thread", 40)
 
 	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method receiver,
-	// so $__fern_snapshot_dec frees 50 intermediate boxes; returns an i32 (not c).
+	// so each rebind frees an intermediate box; returns an i32 (not c).
 	// A double-free / wrong free across the 50 rebinds would corrupt the read-back.
 	// sum(0..49) = 1225, so build == 1225 and the program returns 7.
 	run(t, `struct C { a: i32, n: i32 }
@@ -242,5 +234,5 @@ function build(c: C): i32 {
 function main(): i32 {
     var seed: C = C { a: 0, n: 0 };
     return build(seed) - 1218;
-}`, "snap_param_scalar_churn_wasm", 7, true)
+}`, "snap_param_scalar_churn_wasm", "build", 7)
 }

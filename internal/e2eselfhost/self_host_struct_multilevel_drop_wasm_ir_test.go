@@ -9,19 +9,15 @@ import (
 )
 
 // TestSelfHostStructMultiLevelDropWasm is the wasm mirror of the MULTI-LEVEL
-// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64). The
-// reclaim decision is the shared irlower `nested_field_deep_drop_ok` (now an
-// acyclic-closure gate), so wasm gets multi-level for free; wasm_ir's
-// struct_drop_types scan plus its index-driven transitive closure emit
-// `$__struct_drop_A/_B/_C` — the closure re-reads its worklist length as it appends,
-// so it chains beyond depth-1.
+// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64): the
+// typed lowering's drop helpers `$__sem_drop_A/_B/_C` chain through every level.
 //
 // Reclaim is proven by a memory-cap differential: a long alloc->drop churn over a
 // fresh 3-level `A -> B -> C{ items }` stays bounded under a tight max-memory-size cap
 // with trap-on-grow-failure (the whole chain's boxes + the items buffer recycle onto
 // the freelist); a regression to the leaf-only drop leaks B.c + C.items past the cap
-// and traps. The WAT assertion pins that the recursive $__struct_drop_B (the non-leaf
-// inner) is emitted.
+// and traps. The WAT assertion pins that the non-leaf inner's $__sem_drop_B is
+// emitted.
 func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm multi-level deep-drop e2e")
@@ -48,8 +44,8 @@ function main(): i32 {
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
 	}
-	if !strings.Contains(string(wat), "$__struct_drop_B") {
-		t.Fatalf("emitted WAT missing $__struct_drop_B — the multi-level nested field did not deep-drop\n--- WAT ---\n%s", wat)
+	if !strings.Contains(string(wat), "$__sem_drop_B") {
+		t.Fatalf("emitted WAT missing $__sem_drop_B — the multi-level nested field did not deep-drop\n--- WAT ---\n%s", wat)
 	}
 	watPath := filepath.Join(dir, "struct_multilevel_drop.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {

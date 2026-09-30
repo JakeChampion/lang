@@ -10,17 +10,14 @@ import (
 
 // TestSelfHostStructArrElemDropWasm is the wasm mirror of the ARRAY-ELEMENT deep-drop
 // (the x86 sibling is TestSelfHostStructArrElemDropIRX86_64). A struct-array field
-// `S { elems: Inner[] }` now releases each element's OWN rc fields via the per-element
-// helper $__struct_arr_elems_drop_<Inner> (a uniquely-owned buffer + element walk that
-// calls $__struct_drop_<Inner> per element) before $__fern_arr_dec_ptr frees the boxes.
-// struct_drop_types adds Inner as a struct_drop type so its body exists, and
-// struct_arr_elems_drop_types drives the helper emission.
+// `S { elems: Inner[] }` releases each element's OWN rc fields: $__sem_drop_S walks
+// a uniquely-owned buffer and calls $__sem_release_Inner per element.
 //
 // Reclaim is proven by a memory-cap differential: a long alloc->drop churn over a fresh
 // `S{ elems: [Inner{items:[..]}, ..] }` stays bounded under a tight max-memory-size cap
 // with trap-on-grow-failure (each element's items buffer + boxes recycle onto the
 // freelist); a regression to the shallow element walk leaks the items past the cap and
-// traps. The WAT assertion pins that the helper $__struct_arr_elems_drop_Inner is emitted.
+// traps. The WAT assertion pins the per-element $__sem_release_Inner.
 func TestSelfHostStructArrElemDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm array-element deep-drop e2e")
@@ -46,8 +43,8 @@ function main(): i32 {
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
 	}
-	if !strings.Contains(string(wat), "$__struct_arr_elems_drop_Inner") {
-		t.Fatalf("emitted WAT missing $__struct_arr_elems_drop_Inner — the struct-array element did not deep-drop\n--- WAT ---\n%s", wat)
+	if !strings.Contains(string(wat), "$__sem_release_Inner") {
+		t.Fatalf("emitted WAT missing $__sem_release_Inner — the struct-array element did not deep-drop\n--- WAT ---\n%s", wat)
 	}
 	watPath := filepath.Join(dir, "struct_arr_elem_drop.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {

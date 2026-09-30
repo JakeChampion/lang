@@ -222,8 +222,8 @@ func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {
 // at all, so where x86-64/arm64 shallow-freed the enum box and leaked only its
 // payload, wasm leaked the box too. Releasing the payload alone left the shape
 // still growing, so the wasm sibling of the register backends' k_enum arm landed
-// with it. The WAT assertion pins the emitted arm; a payload-only fix would keep
-// the growth check red on this leg while the other two passed.
+// with it. On the typed lowering the struct's sweep is $__sem_drop_S, which the
+// WAT assertion pins.
 func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-field payload-drop e2e")
@@ -254,9 +254,9 @@ func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 	}
 
 	flat, balanced := heapFlatMain("200000"), balancedMain("200000")
-	// $__struct_drop_S is what carries the new k_enum arm; its absence would mean
-	// the struct is not swept at all and the growth check proves nothing.
-	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed", "$__struct_drop_S")
+	// Without $__sem_drop_S the struct is not swept at all and the growth check
+	// proves nothing.
+	run(t, churnEnumFieldFresh+flat, "enum-field-fresh-payload-reclaimed", "$__sem_drop_S")
 	run(t, churnEnumFieldAliasedPayload+flat, "enum-field-aliased-payload-balanced", "")
 	run(t, churnEnumFieldAliasedBox+balanced, "enum-field-aliased-box-balanced", "")
 	run(t, churnEnumFieldBaseCopy+balanced, "enum-field-base-copy-balanced", "")
