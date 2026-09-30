@@ -13,6 +13,8 @@
 //   -per-module-manifest        one line per module: ns|src_hash|sig_hash|deps
 //   -per-module-emit N          emit module N's unit (function bodies) to stdout
 //     [-cache-dir DIR]          serve it from / populate an object cache
+//   -per-module-emit-all        emit every unit of the link plan into the cache
+//     -cache-dir DIR [-plan F]  in one process, which lowers the program once
 //
 // The cache key is modloader.module_unit_cache_key: a module's own source hash
 // folded with the SIGNATURE hashes of everything it depends on, plus the function
@@ -25,10 +27,11 @@
 // hit/miss is reported on stderr (one ns per line) so a build orchestrator, or a
 // test, can observe the reuse set; stdout stays exactly the unit text.
 //
-// What makes the emit cheap enough to be worth caching: producing unit N parses
-// every module (cheap — no codegen) to build the whole-program VIEW its side
-// tables need, but LOWERS only module N. Lowering is the expensive part, and a
-// cache hit skips it entirely along with the emit.
+// On the AST lowering (FERN_SEM_IR=), producing unit N parses every module to
+// build the whole-program VIEW its side tables need, but LOWERS only module N,
+// and a cache hit skips the lowering along with the emit. The typed lowering is
+// whole-program, so on it every emit and link lowers the whole program once
+// (see TypedView), and a hit skips only the emit.
 
 import "./util";
 import "./lexer";
@@ -40,6 +43,8 @@ import "./irlower";
 import "./ircore";
 import "./modloader";
 import "./wasm_objfile";
+import "./semlower";
+import "core/map";
 
 // unit_ns namespaces module `idx`'s base globals. Module 0 keeps the historical
 // unnamespaced names so a single-module program's unit is byte-identical to the
@@ -145,7 +150,13 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
     // program for its side tables, so a call into a function outside the window
     // (another shard, another module) still tags correctly.
     var sub: parser.Module = with_builtin_enums(sub_module(infmods[idx], lo, hi));
-    var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(sub, all_funcs, all_stab);
+    return unit_obj(ns, sub, wasm_ir.lower_all_for_view(sub, all_funcs, all_stab), all_funcs, all_stab);
+}
+
+// unit_obj emits a unit's lowered bodies and packages them with the metadata
+// link needs. cache[i] lowers unit.funcs[i]; entries past them are bodies with
+// no declaration.
+function unit_obj(ns: string, unit: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab): wasm_objfile.UnitObj {
     return wasm_objfile.UnitObj {
         strs: wasm_ir.str_values(cache),
         caggs: wasm_ir.const_agg_values(cache),
@@ -155,7 +166,7 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
         frt: wasm_ir.field_reclaim_types(cache),
         sdt: wasm_ir.struct_drop_types(cache, all_stab),
         aet: wasm_ir.struct_arr_elems_drop_types(cache, all_stab),
-        text: wasm_ir.emit_functions_view(ns, sub, cache, all_funcs, all_stab),
+        text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab),
     };
 }
 
@@ -167,16 +178,19 @@ function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], 
     if (lk.found) { return lk.obj; }
     var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_stab, idx, lo, hi);
     if (cache_dir.len() > 0 && sighashes.len() > 0) {
-        var ck: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
-        if (ck.len() > 0) {
-            eprint("cache-miss " + parts[idx].ns + "\n");
-            match (write_file(ck, wasm_objfile.encode(obj))) {
-                Err(werr) => { eprint("wasm per-module: cache write failed for " + parts[idx].ns + "\n"); },
-                Ok(_) => { },
-            }
-        }
+        write_cached(cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir), parts[idx].ns, obj);
     }
     return obj;
+}
+
+// write_cached stores a unit built on a miss; an empty path is a unit with no key.
+function write_cached(cf: string, ns: string, obj: wasm_objfile.UnitObj): void {
+    if (cf.len() == 0) { return; }
+    eprint("cache-miss " + ns + "\n");
+    match (write_file(cf, wasm_objfile.encode(obj))) {
+        Err(werr) => { eprint("wasm per-module: cache write failed for " + ns + "\n"); },
+        Ok(_) => { },
+    }
 }
 
 // cache_file_for returns the object path for module idx, or "" when the module
@@ -198,7 +212,10 @@ function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModul
 // module in one process exhausts the bump arena (#3425). A miss returns
 // found=false; the caller decides whether to build (-emit) or error (-link).
 function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], fh: modloader.FactHashes, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.MaybeUnit {
-    var cf: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir);
+    return read_cached(cache_file_for(dir, entry_path, parts, infmods, sighashes, fh, idx, lo, hi, cache_dir), parts[idx].ns);
+}
+
+function read_cached(cf: string, ns: string): wasm_objfile.MaybeUnit {
     if (cf.len() > 0) {
         match (read_file(cf)) {
             Ok(cached) => {
@@ -208,10 +225,10 @@ function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[
                 // decode reads its sections positionally, so a stale file would
                 // yield a wrong-but-plausible unit rather than an error.
                 if (!wasm_objfile.is_current(cached)) {
-                    eprint("cache-stale " + parts[idx].ns + "\n");
+                    eprint("cache-stale " + ns + "\n");
                     return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
                 }
-                eprint("cache-hit " + parts[idx].ns + "\n");
+                eprint("cache-hit " + ns + "\n");
                 return wasm_objfile.MaybeUnit { found: true, obj: wasm_objfile.decode(cached) };
             },
             Err(e) => { },
@@ -220,11 +237,238 @@ function cache_lookup(dir: string, entry_path: string, parts: flatten.PerModule[
     return wasm_objfile.MaybeUnit { found: false, obj: wasm_objfile.empty_unit() };
 }
 
+// read_plan is the link plan: one whole-module unit per module, or the exact
+// shard windows the orchestrator chose (-plan). A big module that OOMs emitted
+// whole is split into function windows, each a separate unit here — the
+// assembly is identical whether a module arrived as one unit or several, since
+// every unit carries its own namespaced bases (#5508).
+function read_plan(plan_file: string, nmods: i32): ShardRef[] {
+    if (plan_file.len() == 0) { return whole_module_plan(nmods); }
+    match (read_file(plan_file)) {
+        Ok(ptxt) => { return parse_plan(ptxt); },
+        Err(e) => { },
+    }
+    eprint("wasm_modload_run: could not read plan " + plan_file + "\n");
+    exit(1);
+    return [];
+}
+
+// Linked is a link's units in plan order, the union of what their objects
+// need, and the units the cache did not have.
+struct Linked { units: wasm_ir.WasmUnit[], needs: string[], fn_sigs: string[], frt: string[], sdt: string[], aet: string[], missing: string }
+
+function no_units(): Linked {
+    return Linked { units: [], needs: [], fn_sigs: [], frt: [], sdt: [], aet: [], missing: "" };
+}
+
+function add_found(l: Linked, parts: flatten.PerModule[], u: ShardRef, lk: wasm_objfile.MaybeUnit): Linked {
+    var ns: string = unit_ns(u.idx, u.lo);
+    if (!lk.found) { return Linked { ...l, missing: l.missing + " " + parts[u.idx].ns + ns }; }
+    var obj: wasm_objfile.UnitObj = lk.obj;
+    return Linked {
+        units: l.units.append(wasm_ir.WasmUnit { ns: ns, text: obj.text, strs: obj.strs, caggs: obj.caggs, fns: obj.fns }),
+        needs: wasm_ir.union_strs(l.needs, obj.needs),
+        fn_sigs: wasm_ir.union_strs(l.fn_sigs, obj.fn_sigs),
+        frt: wasm_ir.union_strs(l.frt, obj.frt),
+        sdt: wasm_ir.union_strs(l.sdt, obj.sdt),
+        aet: wasm_ir.union_strs(l.aet, obj.aet),
+        missing: l.missing,
+    };
+}
+
+function link_missing(l: Linked): boolean {
+    if (l.missing.len() == 0) { return false; }
+    eprint("wasm -link: no cached object for:" + l.missing + "\n");
+    eprint("  emit each with `-per-module-emit N -cache-dir DIR`, or the plan with `-per-module-emit-all`, first.\n");
+    return true;
+}
+
+// link_text is the linked module. The RC helper bodies are emitted once, since
+// every unit shares the struct world, and heap_base is a whole-LINK quantity:
+// it sits past every unit's literals.
+function link_text(l: Linked, merged: parser.Module): string {
+    var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, l.frt, l.sdt, l.aet, wasm_ir.heap_base_for_units(l.units));
+    return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, rc, 0);
+}
+
+// TypedView is the program as the typed lowering sees it, whole. The typed
+// lowering is whole-program (a body reads the ownership inferred for every
+// function it calls), so every typed step lowers the whole program once and
+// keeps the units it asked for, as wasm_units_probe does. Module j's units
+// cover the view's functions module j declares or lifted, in view order; the
+// rest (generic clones, and the instances and drop helpers on the cache tail)
+// are the entry's, whose import closure is the whole program.
+struct TypedView {
+    im: parser.Module,
+    stab: irlower.StructTab,
+    // owner[i] is the module im.funcs[i] belongs to.
+    owner: i32[],
+    // Module j with its own functions from the view, and their signature hashes.
+    mods: parser.Module[],
+    sighashes: string[],
+    // A hash of the signatures of the functions no module declares, which any
+    // unit can call.
+    unowned: string,
+}
+
+function func_key(f: parser.FuncDecl): string {
+    return util.base_type_name(parser.erase_str_spelling(f.receiver_type)) + "." + f.name;
+}
+
+// A lifted function (`<fd>$cloN`, `<fd>$wrapN`) is named before its `$` for the
+// declaration it was lifted from, and belongs to that declaration's module.
+function declaring_module(declared: Map[string, i32], f: parser.FuncDecl): i32 {
+    var own: i32 = declared.get_or(func_key(f), 0);
+    if (own > 0) { return own - 1; }
+    var cut: i32 = 0;
+    while (cut < f.name.len() && f.name[cut] != b'$') { cut = cut + 1; }
+    if (cut == 0 || cut == f.name.len()) { return 0 - 1; }
+    return declared.get_or(func_key(parser.FuncDecl { ...f, name: slice_unchecked(f.name, 0, cut) + "" }), 0) - 1;
+}
+
+function typed_view(parts: flatten.PerModule[], full: parser.Module): TypedView {
+    var im: parser.Module = parser.infer_ret_types_module(wasm_ir.route_normalized(full));
+    var declared: Map[string, i32] = map_new(im.funcs.len() + 1);
+    var j: i32 = 0;
+    while (j < parts.len()) {
+        for f in parts[j].mod.funcs { declared = declared.insert(func_key(f), j + 1); }
+        j = j + 1;
+    }
+    var entry_idx: i32 = parts.len() - 1;
+    var owner: i32[] = [];
+    var unowned: parser.FuncDecl[] = [];
+    for f in im.funcs {
+        var o: i32 = declaring_module(declared, f);
+        if (o < 0) {
+            o = entry_idx;
+            unowned = unowned.append(f);
+        }
+        owner = owner.append(o);
+    }
+    var mods: parser.Module[] = [];
+    var sighashes: string[] = [];
+    j = 0;
+    while (j < parts.len()) {
+        var fs: parser.FuncDecl[] = [];
+        for r in owned_rows(owner, j) { fs = fs.append(im.funcs[r]); }
+        var m: parser.Module = parser.Module { ...parts[j].mod, funcs: fs };
+        mods = mods.append(m);
+        sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(m)));
+        j = j + 1;
+    }
+    return TypedView {
+        im: im, stab: irlower.struct_tab(im.structs), owner: owner, mods: mods, sighashes: sighashes,
+        unowned: util.hash_key(modloader.module_sig_string(parser.Module { ...im, funcs: unowned })),
+    };
+}
+
+function owned_rows(owner: i32[], idx: i32): i32[] {
+    var rows: i32[] = [];
+    var i: i32 = 0;
+    while (i < owner.len()) {
+        if (owner[i] == idx) { rows = rows.append(i); }
+        i = i + 1;
+    }
+    return rows;
+}
+
+// typed_cache is the whole program lowered once: each body the substitution
+// produced, the AST lowering's for the rest, then the declaration-less bodies.
+function typed_cache(tv: TypedView, sub: ircore.Sub): irlower.LowerResult[] {
+    var g: ircore.Lowered = wasm_ir.lower_all_gated(tv.im, tv.stab, ircore.sub_base(sub, tv.im.funcs, tv.stab), sub);
+    if (!g.ok) {
+        ircore.eprint_ir_ineligible();
+        exit(1);
+    }
+    return ircore.sub_cache(sub, g.cache);
+}
+
+struct TypedUnit { mod: parser.Module, cache: irlower.LowerResult[] }
+
+// typed_unit is module idx's functions [lo, hi) with their bodies. The unit
+// that ends the entry module also carries the cache tail.
+function typed_unit(tv: TypedView, whole: irlower.LowerResult[], idx: i32, lo: i32, hi: i32): TypedUnit {
+    var rows: i32[] = owned_rows(tv.owner, idx);
+    var end: i32 = hi;
+    if (end < 0 || end > rows.len()) { end = rows.len(); }
+    var fs: parser.FuncDecl[] = [];
+    var cache: irlower.LowerResult[] = [];
+    var k: i32 = lo;
+    while (k < end) {
+        fs = fs.append(tv.im.funcs[rows[k]]);
+        cache = cache.append(whole[rows[k]]);
+        k = k + 1;
+    }
+    if (idx == tv.mods.len() - 1 && end == rows.len()) {
+        var x: i32 = tv.im.funcs.len();
+        while (x < whole.len()) { cache = cache.append(whole[x]); x = x + 1; }
+    }
+    return TypedUnit { mod: parser.Module { ...tv.im, funcs: fs }, cache: cache };
+}
+
+function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[], tv: TypedView, u: TypedUnit, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
+    if (cache_dir.len() == 0) { return ""; }
+    var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+    var key: string = modloader.typed_unit_cache_key(parts, tv.mods, tv.sighashes, idx, src_hash, lo, hi, ircore.lowered_key(u.cache) + ":" + tv.unowned);
+    if (key.len() == 0) { return ""; }
+    return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__t" + util.hash_key(key) + ".wu";
+}
+
+function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
+    var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
+    if (pm_mode == "func-counts") {
+        var cv: TypedView = typed_view(parts, semlower.driven_module(merged, "wasm32-wasi"));
+        var ci: i32 = 0;
+        while (ci < parts.len()) { print(util.i32_to_string(owned_rows(cv.owner, ci).len())); ci = ci + 1; }
+        return 0;
+    }
+    var d: semlower.Driven = semlower.driven(merged, "wasm32-wasi");
+    var tv: TypedView = typed_view(parts, d.full);
+    var whole: irlower.LowerResult[] = typed_cache(tv, d.sub);
+    if (pm_mode == "link") {
+        // Hit-only, as the AST link is: a unit's key hashes its lowered bodies,
+        // so link lowers to find each object, but it builds none.
+        var l: Linked = no_units();
+        for u in read_plan(plan_file, parts.len()) {
+            var lu: TypedUnit = typed_unit(tv, whole, u.idx, u.lo, u.hi);
+            l = add_found(l, parts, u, read_cached(typed_file(dir, entry_path, parts, tv, lu, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
+        }
+        if (link_missing(l)) { return 1; }
+        write(link_text(l, tv.im));
+        return 0;
+    }
+    if (pm_mode == "emit-all") {
+        for u in read_plan(plan_file, parts.len()) { typed_obj(dir, entry_path, parts, tv, whole, u, cache_dir); }
+        return 0;
+    }
+    if (pm_index < 0 || pm_index >= parts.len()) {
+        eprint("wasm per-module: emit index out of range\n");
+        return 1;
+    }
+    write(wasm_objfile.encode(typed_obj(dir, entry_path, parts, tv, whole, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
+    return 0;
+}
+
+// typed_obj is unit u's object, served from the cache when its key matches and
+// emitted, and cached, otherwise.
+function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], tv: TypedView, whole: irlower.LowerResult[], u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
+    var tu: TypedUnit = typed_unit(tv, whole, u.idx, u.lo, u.hi);
+    var cf: string = typed_file(dir, entry_path, parts, tv, tu, u.idx, u.lo, u.hi, cache_dir);
+    var lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
+    if (lk.found) { return lk.obj; }
+    var obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, tv.im.funcs, tv.stab);
+    write_cached(cf, parts[u.idx].ns, obj);
+    return obj;
+}
+
 function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
     var parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, "wasm32-wasi");
     if (pm_mode == "count") {
         print(util.i32_to_string(parts.len()) + "\n");
         return 0;
+    }
+    if (semlower.sem_ir_on() && pm_mode != "manifest") {
+        return run_typed(dir, entry_path, entry, loaded, parts, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
     }
 
     var infmods: parser.Module[] = whole_program_view(parts);
@@ -250,7 +494,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // only then: computing them is a whole-program string walk the self-host
     // runtime does not yet reclaim (#3425), so an uncached emit must not pay it.
     var sighashes: string[] = [];
-    if (pm_mode == "manifest" || ((pm_mode == "emit" || pm_mode == "link") && cache_dir.len() > 0)) {
+    if (pm_mode == "manifest" || ((pm_mode == "emit" || pm_mode == "emit-all" || pm_mode == "link") && cache_dir.len() > 0)) {
         var shi: i32 = 0;
         while (shi < parts.len()) {
             sighashes = sighashes.append(util.hash_key(modloader.module_sig_string(infmods[shi])));
@@ -282,63 +526,19 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // lowers ONLY the modules that actually changed — the benefit the rest of
         // #5331 was building toward. Link itself consults no ir_cache at all: the
         // needs, fn_sigs and RC type lists all come from the objects.
-        var units: wasm_ir.WasmUnit[] = [];
-        var needs: string[] = [];
-        var fn_sigs: string[] = [];
-        var frt: string[] = [];
-        var sdt: string[] = [];
-        var aet: string[] = [];
-        // The link plan: one unit per whole module by default, or the exact
-        // shard windows the orchestrator chose (-plan). A big module that OOMs
-        // emitted whole is split into function windows, each a separate unit
-        // here — the assembly is identical whether a module arrived as one unit
-        // or several, since every unit carries its own namespaced bases (#5508).
-        var plan: ShardRef[] = whole_module_plan(parts.len());
-        if (plan_file.len() > 0) {
-            match (read_file(plan_file)) {
-                Ok(ptxt) => { plan = parse_plan(ptxt); },
-                Err(e) => { eprint("wasm -link: could not read plan " + plan_file + "\n"); return 1; },
-            }
-        }
         // Hit-only: -link reads every unit from the cache and lowers NOTHING.
         // A missing unit is an error naming it, not a silent in-process build —
         // that is the design that keeps a whole-compiler link under the arena limit
         // (#3425). The orchestrator emits each miss with -per-module-emit (its
         // own process) and links again.
-        var missing: string = "";
-        var li: i32 = 0;
-        while (li < plan.len()) {
-            var pidx: i32 = plan[li].idx;
-            var plo: i32 = plan[li].lo;
-            var phi: i32 = plan[li].hi;
-            var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, pidx, plo, phi, cache_dir);
-            if (!lk.found) {
-                missing = missing + " " + parts[pidx].ns + unit_ns(pidx, plo);
-                li = li + 1;
-                continue;
-            }
-            var obj: wasm_objfile.UnitObj = lk.obj;
-            units = units.append(wasm_ir.WasmUnit { ns: unit_ns(pidx, plo), text: obj.text,
-                strs: obj.strs, caggs: obj.caggs, fns: obj.fns });
-            needs = wasm_ir.union_strs(needs, obj.needs);
-            frt = wasm_ir.union_strs(frt, obj.frt);
-            sdt = wasm_ir.union_strs(sdt, obj.sdt);
-            aet = wasm_ir.union_strs(aet, obj.aet);
-            fn_sigs = wasm_ir.union_strs(fn_sigs, obj.fn_sigs);
-            li = li + 1;
+        var l: Linked = no_units();
+        for u in read_plan(plan_file, parts.len()) {
+            l = add_found(l, parts, u, cache_lookup(dir, entry_path, parts, infmods, sighashes, fh, u.idx, u.lo, u.hi, cache_dir));
         }
-        if (missing.len() > 0) {
-            eprint("wasm -link: no cached object for:" + missing + "\n");
-            eprint("  emit each with `-per-module-emit N -cache-dir DIR` first (one process per module).\n");
-            return 1;
-        }
-        // The struct world is shared by every unit, so the RC helper bodies are
-        // emitted once against the merged module. heap_base is a whole-LINK
-        // quantity: it sits past every unit's literals.
+        if (link_missing(l)) { return 1; }
         var merged: parser.Module = flatten.bundle(entry, loaded, "wasm32-wasi");
         merged = parser.infer_ret_types_module(wasm_ir.lift_lambdas(with_builtin_enums(modloader.merge_builtins(dir, merged))));
-        var rc: string = wasm_ir.emit_ir_rc_bodies_from(merged, frt, sdt, aet, wasm_ir.heap_base_for_units(units));
-        write(wasm_ir.emit_ir_module_units(units, merged, needs, fn_sigs, rc, 0));
+        write(link_text(l, merged));
         return 0;
     }
 
@@ -348,6 +548,14 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // hardcoded per-source count. Mirrors asm's -per-module-func-counts.
         var fci: i32 = 0;
         while (fci < infmods.len()) { print(util.i32_to_string(infmods[fci].funcs.len())); fci = fci + 1; }
+        return 0;
+    }
+
+    if (pm_mode == "emit-all") {
+        var stab: irlower.StructTab = irlower.struct_tab(all_structs);
+        for u in read_plan(plan_file, parts.len()) {
+            load_unit(dir, entry_path, parts, infmods, sighashes, fh, all_funcs, stab, u.idx, u.lo, u.hi, cache_dir);
+        }
         return 0;
     }
 
@@ -376,6 +584,7 @@ function main(): i32 {
         else if (a[ai] == "-per-module-manifest") { pm_mode = "manifest"; }
         else if (a[ai] == "-per-module-func-counts") { pm_mode = "func-counts"; }
         else if (a[ai] == "-link") { pm_mode = "link"; }
+        else if (a[ai] == "-per-module-emit-all") { pm_mode = "emit-all"; }
         else if (a[ai] == "-per-module-emit" && ai + 1 < a.len()) { pm_mode = "emit"; pm_index = util.digits_to_i32(a[ai + 1]); ai = ai + 1; }
         else if (a[ai] == "-cache-dir" && ai + 1 < a.len()) { cache_dir = a[ai + 1]; ai = ai + 1; }
         else if (a[ai] == "-plan" && ai + 1 < a.len()) { plan_file = a[ai + 1]; ai = ai + 1; }
@@ -392,7 +601,11 @@ function main(): i32 {
         ai = ai + 1;
     }
     if (entry_path == "" || pm_mode == "") {
-        eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-func-counts | -per-module-emit N [-func-range LO:HI] | -link [-plan FILE]] [-cache-dir DIR]\n");
+        eprint("usage: wasm_modload_run <entry.fern> [-per-module-count | -per-module-manifest | -per-module-func-counts | -per-module-emit N [-func-range LO:HI] | -per-module-emit-all [-plan FILE] | -link [-plan FILE]] [-cache-dir DIR]\n");
+        return 2;
+    }
+    if (pm_mode == "emit-all" && cache_dir == "") {
+        eprint("wasm_modload_run: -per-module-emit-all writes the cache, so it needs -cache-dir\n");
         return 2;
     }
     var dir: string = modloader.dirname(entry_path);

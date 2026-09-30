@@ -784,6 +784,17 @@ pub function module_unit_cache_key(parts: flatten.PerModule[], infmods: parser.M
     return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "|f" + fh.global + ":" + fh.per_mod[idx];
 }
 
+// typed_unit_cache_key keys a unit the typed lowering built. Its bodies depend
+// on facts about every function they call (the inferred ownership modes and
+// grow masks), which no source or signature hash covers, so the key folds in
+// `lowered`: a hash of the unit's lowered bodies and of anything else its emit
+// reads beyond its dependencies' signatures.
+pub function typed_unit_cache_key(parts: flatten.PerModule[], mods: parser.Module[], sighashes: string[], idx: i32, src_hash: string, lo: i32, hi: i32, lowered: string): string {
+    var key: string = module_cache_key(parts, mods, sighashes, idx, src_hash, []);
+    if (key.len() == 0) { return ""; }
+    return key + "|r" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "|typed|" + lowered;
+}
+
 // module_concat_unit_cache_key keys ONE unit of the single-process per-module
 // concat. Its units are tree-shaken against a whole-program reach set, so a
 // change anywhere can change what a module contributes without touching its
