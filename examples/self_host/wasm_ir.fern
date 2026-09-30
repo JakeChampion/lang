@@ -1245,11 +1245,12 @@ pub function module_uses_map_w64(cache: irlower.LowerResult[]): boolean {
 // 129 or map_delete 130, or the key-wide flag on map_keys 131, map_iter 133 or
 // mapiter_key 135), so emit_ir_module_units emits map_k64_helpers (#10005).
 pub function module_uses_map_k64(cache: irlower.LowerResult[]): boolean {
-    function is_map_k64(o: ir.Op): boolean {
-        if ((o.kind_tag == 124 || o.kind_tag == 125 || o.kind_tag == 127 || o.kind_tag == 128 || o.kind_tag == 129 || o.kind_tag == 130) && o.i32_imm == 3) { return true; }
-        return (o.kind_tag == 131 || o.kind_tag == 133 || o.kind_tag == 135) && o.width == 1;
-    }
-    return any_op(cache, is_map_k64);
+    return any_op(cache, is_map_k64_op);
+}
+
+function is_map_k64_op(o: ir.Op): boolean {
+    if ((o.kind_tag == 124 || o.kind_tag == 125 || o.kind_tag == 127 || o.kind_tag == 128 || o.kind_tag == 129 || o.kind_tag == 130) && o.i32_imm == 3) { return true; }
+    return (o.kind_tag == 131 || o.kind_tag == 133 || o.kind_tag == 135) && o.width == 1;
 }
 
 // module_uses_str_case reports whether any function emits an ASCII case-transform
@@ -3889,12 +3890,6 @@ pub function pipe_after(s: string): string {
     return slice_unchecked(s, i + 1, s.len()) + "";
 }
 
-// map_set_vkind3: the op's value column is a column of boxes (width bits 4 and
-// 5 both set), whose release `str` names.
-pub function map_set_vkind3(o: ir.Op): boolean {
-    return o.kind_tag == 125 && (o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1;
-}
-
 pub function fn_value_table(cache: irlower.LowerResult[]): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
@@ -4234,9 +4229,9 @@ function emit_map_op_wat(o: ir.Op, cx: WasmOpCtx): string {
         // A wide key (key kind 3, #10005) is an i64 on the stack and its column
         // owes no release the op names: the runtime frees the removed cell itself.
         if (o.i32_imm == 3) {
-            parts = parts.append(map_delete_value_releases_wat(o, cx) + "    call $__fern_map_delete_k64\n");
+            parts = parts.append(map_value_release_wat(o, cx) + "    call $__fern_map_delete_k64\n");
         } else {
-            parts = parts.append(map_delete_releases_wat(o, cx) + "    call $__fern_map_delete\n");
+            parts = parts.append(map_value_release_wat(o, cx) + map_key_release_wat(o, cx) + "    call $__fern_map_delete\n");
         }
         return util.str_join_chunks(parts);
     }
@@ -14840,34 +14835,34 @@ function emit_wasm_map_set(o: ir.Op, cx: WasmOpCtx, parts: string[]): string[] {
     // for the same purpose.
     // A keyed column (keykind 2) names the key release the same way, called
     // through its slot on a discarded consumed key (kdeep 2, the slot in kf).
-    var syms: string[] = ir.map_op_symbols(o);
-    var kdeep: string = "0";
-    var kf: string = "    i32.const 0\n";
-    if (o.i32_imm == 2 && syms[2] != "") {
-        kdeep = "2";
-        kf = fn_slot_push(cx, syms[2]);
-    }
-    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n" + map_set_value_release_wat(o, cx) + "    i32.const " + kdeep + "\n" + kf + "    call $__fern_map_set\n");
+    parts = parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n    i32.const " + kcons + "\n" + map_value_release_wat(o, cx) + map_key_release_wat(o, cx) + "    call $__fern_map_set\n");
 
     return parts;
 }
 
-// map_delete_releases_wat pushes the four release operands $__fern_map_delete
-// takes after the map and the key: `vdeep` and `vf` as map_set spells them,
-// then `kdeep` and `kf` for a keyed column.
-// map_set_value_release_wat pushes what the map owes the value it supersedes on
-// an overwrite: `vdeep` and `vf` — a string column (vkind 1) takes the shallow
-// dec (0), a column of string ARRAYS (vkind 2) the deep one (1), and a column
-// of boxes (vkind 3) the function o.str names, through its table slot (2).
-function map_set_value_release_wat(o: ir.Op, cx: WasmOpCtx): string {
-    var syms: string[] = ir.map_op_symbols(o);
+// map_value_release_wat pushes what the map owes a value it lets go of, on an
+// overwrite or a delete: `vdeep` and `vf` — a string column (vkind 1) takes the
+// shallow dec (0), a column of string ARRAYS (vkind 2) the deep one (1), and a
+// column of boxes (vkind 3) the function the op's symbols name, through its
+// table slot (2).
+function map_value_release_wat(o: ir.Op, cx: WasmOpCtx): string {
     var vdeep: string = "0";
     var vf: string = "    i32.const 0\n";
-    if (map_set_vkind3(o)) {
+    if ((o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1) {
         vdeep = "2";
-        vf = fn_slot_push(cx, syms[1]);
+        vf = fn_slot_push(cx, ir.map_op_symbols(o)[1]);
     } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
     return "    i32.const " + vdeep + "\n" + vf;
+}
+
+// map_key_release_wat is the key half: a keyed column (keykind 2) calls the
+// release its symbols name through its table slot (`kdeep` 2, the slot in `kf`).
+function map_key_release_wat(o: ir.Op, cx: WasmOpCtx): string {
+    var syms: string[] = ir.map_op_symbols(o);
+    if (o.i32_imm == 2 && syms[2] != "") {
+        return "    i32.const 2\n" + fn_slot_push(cx, syms[2]);
+    }
+    return "    i32.const 0\n    i32.const 0\n";
 }
 
 // emit_wasm_map_set_k64 is emit_wasm_map_set for an 8-byte KEY column (#10005):
@@ -14884,31 +14879,7 @@ function emit_wasm_map_set_k64(o: ir.Op, cx: WasmOpCtx, parts: string[]): string
     if (o.unsigned) { vis = "1"; }
     var vcons: string = "0";
     if (o.width % 2 == 1) { vcons = "1"; }
-    return parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n" + map_set_value_release_wat(o, cx) + "    call $__fern_map_set_k64\n");
-}
-
-// map_delete_value_releases_wat is the value half of map_delete_releases_wat:
-// `vdeep` and `vf` for the removed entry's value.
-function map_delete_value_releases_wat(o: ir.Op, cx: WasmOpCtx): string {
-    var syms: string[] = ir.map_op_symbols(o);
-    var vdeep: string = "0";
-    var vf: string = "    i32.const 0\n";
-    if ((o.width / 16) % 2 == 1 && (o.width / 32) % 2 == 1) {
-        vdeep = "2";
-        vf = fn_slot_push(cx, syms[1]);
-    } else if ((o.width / 32) % 2 == 1) { vdeep = "1"; }
-    return "    i32.const " + vdeep + "\n" + vf;
-}
-
-function map_delete_releases_wat(o: ir.Op, cx: WasmOpCtx): string {
-    var syms: string[] = ir.map_op_symbols(o);
-    var kdeep: string = "0";
-    var kf: string = "    i32.const 0\n";
-    if (o.i32_imm == 2 && syms[2] != "") {
-        kdeep = "2";
-        kf = fn_slot_push(cx, syms[2]);
-    }
-    return map_delete_value_releases_wat(o, cx) + "    i32.const " + kdeep + "\n" + kf;
+    return parts.append("    i32.const " + vis + "\n    i32.const " + vcons + "\n" + map_value_release_wat(o, cx) + "    call $__fern_map_set_k64\n");
 }
 
 // fn_slot_push pushes the funcref-table slot of the function `name` spells.

@@ -429,8 +429,8 @@ map_struct_enum_keys                                 13
 map_struct_key_grow                                  26
 map_struct_value_field                               2
 map_u8_column                                        0
-map_wide_int_keys                                    0
 map_values_str                                       0
+map_wide_int_keys                                    0
 match_arm_tuple                                      0
 match_expr_arm_width                                 1
 match_expr_array                                     0
