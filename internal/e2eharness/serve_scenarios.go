@@ -1,6 +1,7 @@
 package e2eharness
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
@@ -891,5 +892,50 @@ func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 	}
 	if elapsed >= 30*time.Second {
 		t.Fatalf("fetch deadline client took %v: the deadline was not enforced", elapsed)
+	}
+}
+
+// LimitsServerSource serves with the parser's caps lowered through
+// `ServeOptions.limits`: a 16-byte body and three header fields.
+func LimitsServerSource(port int) string {
+	return fmt.Sprintf(`import "std/http";
+import "std/tcp";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.ok("ok");
+}
+function main(): i32 {
+    var limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
+    return tcp.tcp_serve_opts(%d, tcp.ServeOptions { ...tcp.serve_options(), limits: limits }, handle);
+}
+`, port)
+}
+
+// CheckServeLimits drives LimitsServerSource: a request inside the caps
+// is answered 200, a body past 16 bytes 413 and a fourth header field
+// 431, each before the handler runs.
+func CheckServeLimits(t *testing.T, addr string) {
+	t.Helper()
+	WaitServerReady(t, addr, 10*time.Second)
+	ask := func(req string) string {
+		conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.WriteString(conn, req); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := bufio.NewReader(conn).ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 16\r\nConnection: close\r\n\r\n0123456789abcdef"); got != "HTTP/1.1 200 OK" {
+		t.Errorf("a 16-byte body: %q, want 200", got)
+	}
+	if got := ask("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 17\r\nConnection: close\r\n\r\n0123456789abcdefg"); !strings.HasPrefix(got, "HTTP/1.1 413") {
+		t.Errorf("a 17-byte body: %q, want 413", got)
+	}
+	if got := ask("GET / HTTP/1.1\r\nHost: x\r\nA: 1\r\nB: 2\r\nC: 3\r\n\r\n"); !strings.HasPrefix(got, "HTTP/1.1 431") {
+		t.Errorf("four header fields: %q, want 431", got)
 	}
 }
