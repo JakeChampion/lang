@@ -37,8 +37,8 @@ The result, on the `#10729` head (main at f8f0bc6dc):
 | skip, as before | 43 |
 | pass | the rest |
 
-Of the 137, 108 are self-host gaps and 29 are tests of native-only
-instrumentation. The 108 are the retirement's remaining engineering: each is
+Of the 137, 108 are self-host gaps (the table below sums to 108) and 29 are
+tests of native-only instrumentation. The 108 are the retirement's remaining engineering: each is
 a program native compiles and runs to the answer the test pins, and the
 self-host does not. They are filed by cause below. Two failures the sweep saw
 were already fixed on main the same day (#10728 closed
@@ -62,7 +62,7 @@ targets).
 | #10757 | typed lowering: f32 values typed f64 | 5 |
 | #10768 | wasm: the core module exports only `_start`, so a main result of 126 or more is unreadable | 5 |
 | #10771 | runtime: allocation-size overflow does not abort with 134; `__memcpy` size classes copy the wrong count | 5 |
-| #10737 (#10741 in flight) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
+| #10737 (closed by #10741 after this measurement; re-measure before planning it) | typed lowering: `usize / usize`, `f64 as usize` | 4 |
 | #10759 | typed lowering: for-each pattern bindings are not semantic values | 4 |
 | #10764 | union type aliases: members have no semantic contract; the generic form does not parse | 4 |
 | #10765 | typed lowering: `async` functions; a `dyn` std Error's `message` | 4 |
@@ -95,7 +95,7 @@ named in the commit.
 |---|---|---|
 | `TestX86_64Rc*` / `TestArm64Rc*` (18: `RcBuiltins`, `RcAliasInc*`, `RcClosureCaptureInc`, `RcDecOnOverwrite`, `RcDecAtExit`, `RcDropArrayElements`, `RcDropStructFields`) | `__rc_get`, a native builtin the self-host does not declare (`call target has no semantic contract: __rc_get`); the self-host's counterpart is `__rc` | the `FERN_LEAKCHECK` census legs (245 files) and the sanitize legs (109 files): the same retain and release shapes, judged by what is live at exit rather than by a counter read mid-program |
 | `Test*RcUnderflowDetector` (2) | `__rc_underflow_count` answers 2 on the self-host where native answers 1 for the same double release | the self-host's own underflow rows (345 files read the counter); whether 1 or 2 is right for that program is #10771's neighbour and is decided there, not by keeping a native test |
-| `Test*ArrayPushInPlaceFastPath`, `Test*ArrayIndexSetInPlaceFastPath`, `TestX86_64StructFieldWithInPlaceFastPath` (5) | native's in-place fast path when `rc == 1` | the in-place rows in `internal/e2eselfhost` (99 files) and the allocation gate's cliff column |
+| `Test*ArrayPushInPlaceFastPath`, `Test*ArrayIndexSetInPlaceFastPath`, `TestX86_64StructFieldWithInPlaceFastPath` (5) | native's in-place fast path when `rc == 1` | the six `*InPlace*` tests in `internal/e2eselfhost` and the allocation gate's cliff column |
 | `TestArm64ArrPushCliffCounter`, `TestArm64CallResultMaterialiseCliff`, `TestArm64ArrPushCliffBytes`, `TestArm64DeadAliasAppendNoCopy` (4) | `__arr_push_shared_count` at native's figures | `TestSelfHostArrPushCliffIR*` and the alloc gate, which hold the self-host to its recorded figures (7 files) |
 
 ## The direct Go-emitter callers
