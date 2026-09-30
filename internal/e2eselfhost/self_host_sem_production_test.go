@@ -6332,6 +6332,114 @@ function main(): i32 {
     return make(7);
 }
 `},
+	// An instance of a lifted generic lambda that returns a call to another
+	// lifted lambda reads that callee's result under its own binding, not as
+	// the template's `T`.
+	{name: "a-lambda-inside-a-lifted-generic-lambda", atLeast: 9, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => ((y: T): T => y)(x);
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+pub function keep[T](seed: T): T {
+    function outer(base: T): (T) => T {
+        return (x: T): T => {
+            var inner: (T) => T = (y: T): T => y;
+            return inner(x);
+        };
+    }
+    var f: (T) => T = outer(seed);
+    return f(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var t: string = keep("de" + "f");
+    return make(7) + keep(1) + s.len() + t.len();
+}
+`},
+	// A nested function returning `(T) => (T) => T` spells its result's result
+	// as a whole function type, respelled with the template's variables, and
+	// the nested template `__lam_0$wrap0$wrap0` is produced per instance.
+	{name: "a-nested-generic-function-returning-a-curried-function", atLeast: 5, noLeak: true, src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (T) => (T) => T {
+        return (x: T): (T) => T => (y: T): T => y;
+    }
+    var f: (T) => (T) => T = outer(seed);
+    var g: (T) => T = f(seed);
+    return g(seed);
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    return make(7) + s.len();
+}
+`},
+	// A lambda returned out of a nested generic function that names no type
+	// variable is an ordinary declaration row, `__lam_0$wrap0` or
+	// `__lam_0$clo0`. Its creator `__lam_0` is a template: not kept, yet no
+	// AST-lowered body either, so the value it builds is produced. Under
+	// the skip knob the template's erased body stands and builds the box,
+	// so there the lambda keeps the AST lowering.
+	{name: "a-nested-generic-function-returning-a-lambda-that-names-no-type-variable", atLeast: 7, noLeak: true,
+		skip: "main", refuses: "__lam_0$wrap0: is a function value __lam_0 builds, which the AST lowering defines", src: `
+pub function make[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        return (s: string): i32 => s.len() + 1;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("ab" + "c");
+    return seed;
+}
+
+pub function keep[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        var k: i32 = 2;
+        return (s: string): i32 => s.len() + k;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("de" + "f");
+    return seed;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    var t: string = keep("gh" + "i");
+    return make(7) + keep(1) + s.len() + t.len();
+}
+`},
+	// An AST-lowered hoisted body that calls a generic calls its erased
+	// body, so the indirect cone runs through the template row it never
+	// seeds from and reaches `helper`.
+	{name: "the-indirect-cone-runs-through-an-erased-generic-body", atLeast: 6, noLeak: true,
+		skip: "__lam_0$wrap0", refuses: "helper: is reached by a direct call from pick", src: `
+function helper(own xs: string[]): i32 {
+    return xs.len();
+}
+
+pub function pick[T](seed: T): T {
+    var n: i32 = helper(["a" + "b"]);
+    return seed;
+}
+
+pub function make[T](seed: T): T {
+    function outer(base: T): (string) => i32 {
+        return (s: string): i32 => pick(s).len() + 1;
+    }
+    var f: (string) => i32 = outer(seed);
+    var n: i32 = f("ab" + "c");
+    return seed;
+}
+
+function main(): i32 {
+    var s: string = make("ab" + "c");
+    return make(7) + s.len() + pick(2);
+}
+`},
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
