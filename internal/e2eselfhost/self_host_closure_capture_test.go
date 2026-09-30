@@ -245,7 +245,100 @@ function main(): i32 {
 	}
 }
 
+// A closure that outlives the frame building it holds a count of each
+// capture and gives it back when it is freed (#9657). The value is checked on
+// the leakcheck build, which runs without the sanitizer that hid the fault.
+func closureOwnedCaptureCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			// A returned closure reads its captured array after the frame that built it
+			// returned, while a fresh allocation could reuse a freed block.
+			name: "returned_closure_array_capture",
+			src: `@noinline
+function mk(i: i32): (i32) => i32 {
+    var keep: i32[] = [i, i + 1];
+    var f = (j: i32): i32 => keep[j];
+    return f;
+}
+@noinline
+function churn(i: i32): i32 { var z: i32[] = [i * 7, i * 9]; return z[0] + z[1]; }
+function main(): i32 {
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var g = mk(i);
+        var t: i32[] = [555, 666];
+        if (g(1) != i + 1) { bad = bad + 1; }
+        if (t[0] != 555) { bad = bad + 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return bad;
+}`,
+			want: 0,
+		},
+		{
+			// The same over a string[], an i32[][] and a string.
+			name: "returned_closure_heap_captures",
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+@noinline
+function mk(i: i32): (i32) => i32 {
+    var names: string[] = [w(i), w(i + 1)];
+    var rows: i32[][] = [[i], [i + 1]];
+    var tag: string = w(i + 2);
+    return (j: i32): i32 => names[j].len() + rows[j][0] + tag.len();
+}
+@noinline
+function churn(i: i32): i32 { var z: string[] = [w(i * 7), w(i * 9)]; return z[0].len() + z[1].len(); }
+function main(): i32 {
+    var bad: i32 = 0;
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var g = mk(i);
+        x = x + churn(i);
+        if (g(1) != w(i + 1).len() + i + 1 + w(i + 2).len()) { bad = bad + 1; }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (x < 0) { return 98; }
+    return bad;
+}`,
+			want: 0,
+		},
+		{
+			// The two-closure shape #9657 was filed with.
+			name: "returned_closures_in_one_loop",
+			src: `function array_capture(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n + 1, n + 2];
+    return (x: i32): i32 => { return x + xs[0] + xs[2]; };
+}
+function two_captures(n: i32): (i32) => i32 {
+    var xs: i32[] = [n, n];
+    var ys: i32[] = [n, n];
+    return (x: i32): i32 => { return x + xs[0] + ys[1]; };
+}
+function churn(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var f: (i32) => i32 = array_capture(i);
+        var g: (i32) => i32 = two_captures(i);
+        t = t + f(0) % 3 + g(0) % 3;
+        i = i + 1;
+    }
+    return t;
+}
+function main(): i32 { return churn() % 7; }`,
+			want: 3,
+		},
+	}
+}
+
 func TestSelfHostClosureCaptureX86_64(t *testing.T) {
 	cases := append(closureArgBoxCases(), closureCaptureCreditCases()...)
-	runBalancedRows(t, "clocap", append(cases, fnValueArrResultCases()...))
+	cases = append(cases, fnValueArrResultCases()...)
+	runBalancedRows(t, "clocap", append(cases, closureOwnedCaptureCases()...))
 }
