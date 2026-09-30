@@ -6056,9 +6056,6 @@ function main(): i32 {
     return make(7);
 }
 `},
-	// The lambda binds only the variable its type mentions, so its one
-	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
-	// whose names carry a second binding it does not spell.
 	// A body hoisted out of a hoisted body is named `<creator>$clo0$clo0`;
 	// its creator is the body before the last marker, not the declaration
 	// before the first.
@@ -6091,6 +6088,9 @@ function main(): i32 {
     return g(3) + boxed(3) + listed(7, 1);
 }
 `},
+	// The lambda binds only the variable its type mentions, so its one
+	// instance `__lam_0$wrap0$i32` is built by both instances of `__lam_0`,
+	// whose names carry a second binding it does not spell.
 	{name: "a-lambda-binding-fewer-variables-than-its-creator", atLeast: 2, src: `
 pub function make[A, B](a: A, b: B): A {
     function idmaker(base: A, other: B): (A) => A {
