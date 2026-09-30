@@ -424,18 +424,23 @@ func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 }
 
 // WorkersServerSource is a supervised server with two workers: /slow
-// burns pure work for well over a second, /boom traps, /ok answers at
+// burns pure work until 1.5 s of the bag's monotonic clock has passed, so
+// it holds its worker that long on any runner; /boom traps, /ok answers at
 // once.
 func WorkersServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/tcp";
+import "std/platform";
 import "core/int";
-function burn(n: i32): i32 {
+function burn(plat: Platform, ns: i64): i32 {
     var x: i32 = 12345;
-    var i: i32 = 0;
-    while (i < n) {
-        x = (x * 1103515245 + 12345) & 2147483647;
-        i = i + 1;
+    var until: i64 = plat.elapsed_ns() + ns;
+    while (plat.elapsed_ns() < until) {
+        var i: i32 = 0;
+        while (i < 100000) {
+            x = (x * 1103515245 + 12345) & 2147483647;
+            i = i + 1;
+        }
     }
     return x;
 }
@@ -447,7 +452,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
         return http.ok("unreachable " + int.int_to_string(x));
     }
     if (req.path == "/slow") {
-        if (burn(400000000) == 0 - 1) { return http.ok("never"); }
+        if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
         return http.ok("slow");
     }
     return http.ok("ok");
@@ -739,8 +744,8 @@ func CheckHandlerStallsItsWorker(t *testing.T, addr string) {
 	if r.err != nil || !strings.Contains(r.body, "slow") {
 		t.Fatalf("/slow itself: %q, %v", r.body, r.err)
 	}
-	// /slow is a CPU burn, so its length varies by runner; the proof is the
-	// order, and it needs /slow to outlast the 200 ms head start by far.
+	// The proof is the order; /slow's 1.5 s deadline keeps it well past the
+	// 200 ms head start, and this floor catches a source that loses that.
 	if held := r.done.Sub(started); held < 400*time.Millisecond {
 		t.Fatalf("/slow held its worker for only %v; too short to show /ok waited behind it", held)
 	}
