@@ -13247,8 +13247,9 @@ function keyed_by_mangle(t: string): boolean {
 
 // ge_tuple_mangle names a tuple type argument as native's mangleArg does:
 // `tup`, then each element after a `_`, an array element suffixed `_arr`.
-// Only nominal elements, arrays and tuples of them are named; a tuple holding
-// a generic enum has no name, so its enum stays out of the pass.
+// Only nominal elements, arrays and tuples of them are named. A tuple holding
+// a generic enum gets no name, so the enclosing instantiation bails; the enum
+// inside it is still collected and rewritten through the tuple's elements.
 function ge_tuple_mangle(arg: string): string {
     if (arg.len() < 2 || arg[0] != b'(' || arg[arg.len() - 1] != b')') { return ""; }
     var parts: string[] = split_top_commas(slice_unchecked(arg, 1, arg.len() - 1));
