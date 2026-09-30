@@ -3829,7 +3829,7 @@ function builtin_sigs(): string[] {
 
 // builtin_sig is `name`'s signature from builtin_sigs() as a TypeFunc, or
 // unknown when no surface builtin has that name.
-function builtin_sig(name: string): typeinfo.Type {
+pub function builtin_sig(name: string): typeinfo.Type {
   var head: string = name + "(";
   for row in builtin_sigs() {
     if (row.len() > head.len() && slice_unchecked(row, 0, head.len()) == head) {
@@ -10248,7 +10248,7 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 // per-argument loop it runs for an ordinary function, and no other pass looked
 // at the arguments, so `Wrap("x")` for `enum W { Wrap(i32) }` was accepted.
 //
-// Only a variant of a DECLARED enum with a `__ev` payload marker is checked.
+// Only an enum variant with a `__ev` payload marker is checked.
 // A builtin `Ok` / `Some` / `Err` has no backing StructSig, and a variant
 // without `__ev` is either payload-less (`Nil`) or a struct-union member
 // (`type U = A | B`) — indistinguishable here, which is why
@@ -10261,7 +10261,9 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
   var vname: string = variant_pattern_name(qname);
   var out: util.Diag[] = [];
-  if (union_of_variant(vname, s.unions).len() == 0) {
+  // An injected enum (JsonValue, IoError) has no union declaration; its
+  // variants are known by their owner in the struct table.
+  if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs.structs, qname).enum_owner.len() == 0) {
     return out;
   }
   if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
@@ -15349,6 +15351,7 @@ function e049_find(stmts: ast.Stmt[], enclosing: NameTy[]): util.Diag[] {
 }
 
 pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
+  var env: ModuleEnv = module_env(mod);
   var out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) { continue; }
@@ -15358,7 +15361,7 @@ pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
     }
     encl = e049_append_nt(encl, e049_scope(fn.body));
     out = util.append_diags(out, e049_find(fn.body, encl));
-    out = util.append_diags(out, e049_cell_stores(fn, mod));
+    out = util.append_diags(out, e049_cell_stores(fn, mod, env));
   }
   return out;
 }
@@ -15367,17 +15370,42 @@ pub function e049_diags(mod: parser.Module, focus: string[]): util.Diag[] {
 // checkCaptureCycleStores. A `var` some closure captures is shared by
 // reference through one cell, so storing into it from the enclosing scope a
 // value that can reach a function can close cell -> closure -> env -> cell.
-// Judged on the variable's declared type (a stored value is assignable to it,
-// so a type that reaches no function holds none), except for a closure
-// literal that captures neither the target nor anything that could.
-function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module): util.Diag[] {
+// Judged on the stored value's own type, as native judges it: a `Ci` stored
+// into a captured `dyn Shape` reaches no function whatever the variable could
+// hold. The variable's declared type stands in where the checker has no type
+// for the value, and a closure literal that captures neither the target nor
+// anything that could is exempt.
+//
+// A lambda body is a body of its own, whose locals another closure can capture,
+// so each one is checked the same way.
+function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
+  var out: util.Diag[] = e049_body_stores(fn, mod, env);
+  var lams: ast.ExprLambda[] = [];
+  for st in fn.body { lams = astwalk.fold_stmt_nodes(st, lams, e049_no_stmt_lambdas, e049_lambda_at, e049_into_all); }
+  for lm in lams {
+    out = util.append_diags(out, e049_body_stores(parser.FuncDecl { ...fn, params: lm.params, ret_type: lm.ret_type, body: lm.body }, mod, env));
+  }
+  return out;
+}
+
+function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
   var vars: NameTy[] = e049_lambda_var_types(fn.body, e049_scope(fn.body));
   var captured: string[] = [];
   for st in fn.body { captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda); }
   for st in fn.body { captured = e049_nested_stmt_captures(st, captured); }
   if (captured.len() == 0) { return []; }
-  return e049_store_walk(fn.body, vars, captured, fn.type_params, mod, []);
+  var sc: Scope = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+  return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
+
+function e049_lambda_at(n: ast.Expr, own acc: ast.ExprLambda[]): ast.ExprLambda[] {
+  if let ast.ExprLambda(lm) = n { return acc.append(lm); }
+  return acc;
+}
+
+function e049_no_stmt_lambdas(st: ast.Stmt, own acc: ast.ExprLambda[]): ast.ExprLambda[] { return acc; }
+
+function e049_into_all(n: ast.Expr): boolean { return true; }
 
 // e049_nested_stmt_captures reaches the lambdas in nested statement blocks,
 // which fold_stmt_own_pruned leaves to the caller.
@@ -15442,27 +15470,39 @@ function e049_var_init_is_lambda(stmts: ast.Stmt[], name: string): boolean {
   return found;
 }
 
-function e049_store_walk(stmts: ast.Stmt[], vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
+function e049_store_walk(stmts: ast.Stmt[], sc: Scope, vars: NameTy[], captured: string[], tparams: string[], mod: parser.Module, own out: util.Diag[]): util.Diag[] {
   for st in stmts {
     match (st) {
       ast.StmtAssign(a) => {
         var ty: string = e049_var_type(vars, a.target);
-        if (util.has_str(captured, a.target) && e049_is_ref(ty) && e049_type_reaches_fn(ty, tparams, mod, [])
+        var vty: string = e049_value_type(a.value, sc, ty);
+        if (util.has_str(captured, a.target) && e049_is_ref(ty) && e049_type_reaches_fn(vty, tparams, mod, [])
             && !e049_lambda_cannot_reach(a.value, a.target, vars, tparams, mod)) {
-          out = out.append(dg_at("E049", "cannot assign a value of type " + ty + " to captured \"" + a.target + "\": a captured variable is shared by reference, so storing a value that can reach a closure would close a reference cycle the runtime cannot collect; keep the closure in a variable it does not capture", a.target_line, a.target_col));
+          out = out.append(dg_at("E049", "cannot assign a value of type " + vty + " to captured \"" + a.target + "\": a captured variable is shared by reference, so storing a value that can reach a closure would close a reference cycle the runtime cannot collect; keep the closure in a variable it does not capture", a.target_line, a.target_col));
         }
       },
       ast.StmtIf(f) => {
-        out = e049_store_walk(f.then_body, vars, captured, tparams, mod, out);
-        out = e049_store_walk(f.else_body, vars, captured, tparams, mod, out);
+        out = e049_store_walk(f.then_body, sc, vars, captured, tparams, mod, out);
+        out = e049_store_walk(f.else_body, sc, vars, captured, tparams, mod, out);
       },
-      ast.StmtWhile(w) => { out = e049_store_walk(w.body, vars, captured, tparams, mod, out); },
-      ast.StmtFor(fr) => { out = e049_store_walk(fr.body, vars, captured, tparams, mod, out); },
-      ast.StmtMatch(m) => { for arm in m.arms { out = e049_store_walk(arm.body, vars, captured, tparams, mod, out); } },
+      ast.StmtWhile(w) => { out = e049_store_walk(w.body, sc, vars, captured, tparams, mod, out); },
+      ast.StmtFor(fr) => { out = e049_store_walk(fr.body, sc, vars, captured, tparams, mod, out); },
+      ast.StmtMatch(m) => { for arm in m.arms { out = e049_store_walk(arm.body, sc, vars, captured, tparams, mod, out); } },
       _ => {}
     }
+    sc = bind_stmt(st, sc);
   }
   return out;
+}
+
+// e049_value_type spells the checked type of a stored value, or `declared`
+// when the checker has none for it.
+function e049_value_type(v: ast.Expr, sc: Scope, declared: string): string {
+  var vt: typeinfo.Type = check_expr(v, sc);
+  if (is_unknown(vt)) { return declared; }
+  var sp: string = typeinfo.spelling(vt);
+  if (sp.len() == 0) { return declared; }
+  return sp;
 }
 
 function e049_var_type(vars: NameTy[], name: string): string {

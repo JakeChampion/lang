@@ -162,11 +162,14 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    own direct calls into the Go emitters went the same day: the hand-built
    drivers, the module self-tests (both Linux targets), the wasm consumer
    cores, the Mach-O and the cross-host mmc gates all go through the pin.
-   What the suite still reaches the Go backends for is the oracle role above:
-   the 31 `compileAndRunX86_64` / `compileAndRunArm64` /
-   `compileAndRunWasmbinMain` sites that compare self-host output against
-   native output go with the backends or are re-anchored on the interpreter,
-   in the deletion PRs.
+   The 31 `compileAndRun*` oracle sites followed: the answer oracles ask the
+   interpreter (`e2eharness.RunInterp`), the rows the interpreter has no model
+   of (the bump allocator, the rc==1 cliff counter, process exec, the
+   `__store_i64` pair) carry their expected values, and the allocation-volume
+   gate holds the self-host to its own recorded figures, so
+   `internal/e2eselfhost` calls no Go emitter at all. The `CompileAndRun*`
+   helpers stay in `internal/e2eharness` for `internal/e2e`, which is where
+   the backends' remaining test callers are.
 4. **The non-compiler consumers.** ~~`internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
    need the self-host compiler compiled to wasm instead.~~ **Moved

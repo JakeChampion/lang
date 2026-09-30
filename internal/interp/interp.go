@@ -7423,9 +7423,9 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 func shiftCount(rn Number, width int) Number {
 	// Sub-i32 and i32 values all shift in 32-bit lanes (the codegen
 	// backends widen u8 to i32 for arithmetic), so their count masks
-	// to 0..31; only i64 masks to 0..63. Width 0 (REPL, pre-checker)
-	// keeps the historical 64-bit masking.
-	if width == 64 || width == 0 {
+	// to 0..31; i64 and usize, which runs at the host's 64 bits, mask to
+	// 0..63. Width 0 (REPL, pre-checker) keeps the historical 64-bit masking.
+	if width == 64 || width == 0 || width == ast.WidthPtr {
 		return rn & 63
 	}
 	return rn & 31

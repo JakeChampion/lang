@@ -259,7 +259,7 @@ TestSelfHostFloatBitsIRX86_64 2
 TestSelfHostFloatMathIRArm64 2
 TestSelfHostFloatMathIRX86_64 2
 TestSelfHostFloatNanIR 2
-TestSelfHostFloatToU8SaturatesLikeNative 2
+TestSelfHostFloatToU8Saturates 2
 TestSelfHostFloatTranscendentalsIRX86_64 2
 TestSelfHostFloatTypeContracts 3
 TestSelfHostFloatWidthCheckerX86_64 4

@@ -41,7 +41,7 @@ import (
 // new `.need("x")` root added there should be added here so its helper's
 // dependency closure is link-checked.
 var allRuntimeNeedRoots = []string{
-	"alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
+	"alloc_u8", "args", "arr_own_elems", "arr_push", "arr_push_owned", "arr_slice",
 	"arr_str_join", "chr", "eprint", "heap",
 	"i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
 	"putchar", "random_bytes", "random_i32", "read_file",

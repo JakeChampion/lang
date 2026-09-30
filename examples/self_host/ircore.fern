@@ -134,6 +134,10 @@ function is_rc_helper(name: string): boolean {
         // __fn___fern_arr_inc_elems; wasm_helper_symbol to $__fern_arr_inc_elems.
         // Never user-callable — only the in-place field append / with emit it.
         || name == "__fern_arr_inc_elems"
+        // The same over a copy whose elements may be string views: the copy
+        // takes a fresh box for each arena view it shares (register backends),
+        // and the element retain otherwise. Only ssarc's copy sites emit it.
+        || name == "__fern_arr_own_elems"
         // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
         // when its cap matches, else freelists it and allocs fresh — so a reuse
         // site guarded by __fern_rc_is_unique degrades instead of corrupting.
@@ -1085,7 +1089,7 @@ pub function lift_lambdas_parts(mods: parser.Module[]): parser.Module[] {
 pub function all_runtime_need_roots(): string[] {
     return [
         "alloc_u8", "args", "arr_push", "arr_push_owned", "arr_slice",
-        "arr_str_join", "arr_inc_elems", "arrarr_free", "chr", "env", "eprint", "heap",
+        "arr_str_join", "arr_inc_elems", "arr_own_elems", "arrarr_free", "chr", "env", "eprint", "heap",
         "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
         // The map roots that "maps" does NOT reach. Each is marked directly by
         // the arm64 emitter, and runtime_need_deps declares no root with any of

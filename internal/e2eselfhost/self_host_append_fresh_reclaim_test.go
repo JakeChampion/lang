@@ -60,9 +60,12 @@ func TestSelfHostAppendFreshReclaimIRX86_64(t *testing.T) {
 
 	src := []byte(selfHostAppendFreshReclaimMain)
 
-	// Native cross-check: the Go x86-64 backend is the oracle for the exit code.
-	if _, code := compileAndRunX86_64(t, selfHostAppendFreshReclaimMain); code != 42 {
-		t.Fatalf("native exited %d, want 42", code)
+	// The interpreter witnesses the length and value phases (20/21) and that
+	// the program reaches 42. It cannot judge the bump phases (11/12/13): its
+	// `__heap_bump_bytes` is a constant 0, so those are held to 42 by the
+	// self-host run alone.
+	if code := runInterpExit(t, selfHostAppendFreshReclaimMain); code != 42 {
+		t.Fatalf("interpreter exited %d, want 42", code)
 	}
 	if path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src))); path != "ir" {
 		t.Fatalf("routed through %q path, want \"ir\"", path)

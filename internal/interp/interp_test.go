@@ -874,3 +874,21 @@ func TestSliceUncheckedStillTraps(t *testing.T) {
 		t.Errorf("got %#v, want the single byte", v)
 	}
 }
+
+// A usize runs at the host's 64 bits, so a shift count masks mod 64 like
+// i64's rather than mod 32 like i32's (#10742).
+func TestInterpUsizeShiftsAtSixtyFourBits(t *testing.T) {
+	v := evalProgramValue(t, `function main(): i32 {
+    var one: usize = 1 as usize;
+    var top: usize = one << 63;
+    var a: usize = 70000000000 as usize;
+    var got: i32 = 0;
+    if (top > a && a < top) { got = got + 1; }
+    if ((top >> 62) as i32 == 2) { got = got + 2; }
+    if ((a >> 32) as i32 == 16) { got = got + 4; }
+    return got;
+}`)
+	if n, ok := v.(Number); !ok || n != 7 {
+		t.Errorf("got %v, want 7", v)
+	}
+}

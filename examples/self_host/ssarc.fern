@@ -2086,12 +2086,27 @@ function tuple_kinds(t: typeinfo.Type): string {
 }
 
 // The window copy the runtime hands back aliases every element pointer it
-// copied, so a counted element is retained once per slot — the same retain
+// copied, so the copy takes its own unit on each — the same `own_copied`
 // `sole_owned_base` makes over the same copy.
-function arr_slice(own r: irlower.LowerResult, elem: typeinfo.Type): irlower.LowerResult {
+function arr_slice(own r: irlower.LowerResult, f: ssasem.Func, elem: typeinfo.Type): irlower.LowerResult {
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
     if (!ssasem.reference(elem)) { return r; }
-    return emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1));
+    var copy: i32 = scratch_base(f);
+    r = reserve(r, copy + 1);
+    r = emit(r, ir.op_store_local(copy));
+    r = own_copied(r, elem, copy, copy);
+    return emit(r, ir.op_load_local(copy));
+}
+
+// `copy`'s first len(`source`) elements alias `source`'s, and each needs a
+// unit of its own: a count on a counted element, and on a string view a fresh
+// box, since a view box carries the immortal rc and cannot be counted.
+function own_copied(own r: irlower.LowerResult, elem: typeinfo.Type, copy: i32, source: i32): irlower.LowerResult {
+    if (!ssasem.is_view(elem)) { return helper(r, source, "__fern_arr_inc_elems"); }
+    r = emit(r, ir.op_load_local(copy));
+    r = emit(r, ir.op_load_local(source));
+    r = emit(r, ir.op_call_direct("__fern_arr_own_elems", 2));
+    return emit(r, ir.op_drop());
 }
 
 // A record box is named by its declaration, a variant box by its variant. The
@@ -2109,7 +2124,7 @@ function container(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SInst, s
         return emit(r, ir.op_arr_len());
     }
     if (ins.kind_tag == ssasem.slice()) { return emit(r, ir.op_str_slice()); }
-    if (ins.kind_tag == ssasem.arr_slice()) { return arr_slice(r, elem_type(f.values[ins.result])); }
+    if (ins.kind_tag == ssasem.arr_slice()) { return arr_slice(r, f, elem_type(f.values[ins.result])); }
     if (ins.kind_tag == ssasem.str_bytes()) { return emit(r, ir.packed(ir.op_str_bytes())); }
     if (ins.kind_tag == ssasem.str_index() && ins.imm == 1) { return emit(r, ir.op_str_index_nc()); }
     if (ins.kind_tag == ssasem.str_index()) { return emit(r, ir.op_str_index()); }
@@ -2773,8 +2788,8 @@ function sole_owned_base(own r: irlower.LowerResult, f: ssasem.Func, base: i32, 
     r = emit(r, ir.op_load_local(base));
     r = emit(r, ir.op_arr_len());
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
-    if (ssasem.reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
     r = emit(r, ir.op_store_local(scratch));
+    if (ssasem.reference(elem)) { r = own_copied(r, elem, scratch, scratch); }
     return emit(r, ir.op_end());
 }
 
@@ -2811,7 +2826,7 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, arr_push_borrowed_op(elem));
     r = emit(r, ir.op_store_local(res));
-    if (ssasem.reference(elem)) { r = helper(r, ins.args[0], "__fern_arr_inc_elems"); }
+    if (ssasem.reference(elem)) { r = own_copied(r, elem, res, ins.args[0]); }
     r = release(r, ins.args[0], f.values[ins.args[0]]);
     r = emit(r, ir.op_end());
     return emit(r, ir.op_load_local(res));
@@ -2831,7 +2846,7 @@ function append_push(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // releasing the old buffer — the LOAD-BEARING LEAK comment in asm_ir.fern, and
 // why the AST build leaks 524 KB on #9365's reproducer. This frame's caller
 // does release it, because the plan balances every unit, so the aliased
-// elements have to be counted for: `__fern_arr_inc_elems` over the RECEIVER
+// elements have to be counted for: `own_copied` over the RECEIVER's length
 // names exactly the boxes the fresh one aliases, since the receiver is
 // untouched and the element just pushed is not among them. O(n) per grow, so
 // amortised O(1) against the doubling, and the same shape `sole_owned_base`
@@ -2863,7 +2878,7 @@ function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     if (out) {
         r = emit(r, ir.op_bin("ne", 0, false));
         r = emit(r, ir.op_if(0));
-        r = helper(r, ins.args[0], "__fern_arr_inc_elems");
+        r = own_copied(r, elem, scratch, ins.args[0]);
         return emit(r, ir.op_end());
     }
     r = emit(r, ir.op_bin("eq", 0, false));
@@ -2871,7 +2886,7 @@ function borrowed_push(own r: irlower.LowerResult, f: ssasem.Func, ins: ssa.SIns
     r = helper(r, scratch, "__fern_rc_inc");
     if (aliased) {
         r = emit(r, ir.op_else());
-        r = helper(r, ins.args[0], "__fern_arr_inc_elems");
+        r = own_copied(r, elem, scratch, ins.args[0]);
     }
     return emit(r, ir.op_end());
 }
@@ -3115,7 +3130,7 @@ function append_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
     if (ssasem.reference(elem)) {
         r = emit(r, ir.op_else());
-        r = helper(r, ins.args[0], "__fern_arr_inc_elems");
+        r = own_copied(r, elem, res, ins.args[0]);
     }
     r = emit(r, ir.op_end());
     return emit(r, ir.op_load_local(res));
@@ -3197,8 +3212,8 @@ function with_field(own r: irlower.LowerResult, f: ssasem.Func, p: ssaunits.Plan
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_arr_len());
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
-    if (ssasem.reference(elem)) { r = emit(r, ir.op_call_direct("__fern_arr_inc_elems", 1)); }
     r = emit(r, ir.op_store_local(res));
+    if (ssasem.reference(elem)) { r = own_copied(r, elem, res, res); }
     r = emit(r, ir.op_end());
     if (ssasem.reference(elem)) { r = drop_replaced(r, f, ins, res, elem); }
     r = emit(r, ir.op_load_local(res));
@@ -4128,7 +4143,7 @@ pub function caller_sigs(sg: irlower.FnSigs, callees: Callee[]): irlower.FnSigs 
     // `index_of_str(...return_fresh_struct_ret_fns, "<prefix>" + name)` sites
     // in irlower; grep that shape when adding one.
     var arrays: string[] = without_rows(sg.return_fresh_struct_ret_fns, row_keys(names,
-        ["", "ARR:", "ARROWN:", "SARRC:", "STRARR:", "ENUM:", "STRFLDF:",
+        ["", "ARR:", "ARROWN:", "SARRC:", "SARRH:", "STRARR:", "ENUM:", "STRFLDF:",
          "CNTRET:", "ARRTUPF:", "ARRSTRUCTF:", "STRUCTARRF:", "ARENUMF:"]), false);
     // The counted-return class ("CNTRET:") is read through two more fields of
     // its own, so erasing the prefixed row alone would leave the caller still

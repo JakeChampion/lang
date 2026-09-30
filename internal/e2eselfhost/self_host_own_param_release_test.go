@@ -459,14 +459,191 @@ function pass(own xs: i32[][]): i32[][] {
     return xs;
 }
 @noinline
-function churn(i: i32): i32[][] { var c: i32[][] = []; return c; }
+function churn(i: i32): i32[][] { var c: i32[][] = [[i]]; return c; }
 @noinline
 function build(i: i32): i32[][] {
     var xs: i32[][] = [];
     return pass(xs);
 }
 ` + ownParamReleaseMain(`var ys: i32[][] = build(i); var c: i32[][] = churn(i); if (ys.len() != 0) { return 77; } x = x + ys.len() + c.len() + 1;`),
+			want: 34,
+		},
+	}
+}
+
+// Pointer-element arrays whose elements the heap holds (#10721): strings built
+// at run time and rows appended in a loop. A callee that hands its `own`
+// argument back, or returns a fresh array in its place, gives the caller the
+// release of every element; so does a local built by appends and returned bare.
+const ownHandbackHeapHead = ownParamReleaseHead + `@noinline
+function spass(own xs: string[]): string[] { return xs; }
+@noinline
+function spick(own xs: string[], i: i32): string[] {
+    if (i % 2 == 0) { return xs; }
+    return [w(i), w(i + 1)];
+}
+@noinline
+function smk(i: i32): string[] { return [w(i), w(i + 2)]; }
+@noinline
+function rpass(own xs: i32[][]): i32[][] { return xs; }
+@noinline
+function rpick(own xs: i32[][], i: i32): i32[][] {
+    if (i % 2 == 0) { return xs; }
+    return [[i, i], [i]];
+}
+`
+
+func ownHandbackHeapStrBuild(tail string) string {
+	return `@noinline
+function build(i: i32): string[] {
+    var xs: string[] = [];
+    var k: i32 = 0;
+    while (k < i % 3 + 2) { xs = xs.append(w(i + k)); k = k + 1; }
+    ` + tail + `
+}
+`
+}
+
+func ownHandbackHeapRowsBuild(tail string) string {
+	return `@noinline
+function build(i: i32): i32[][] {
+    var xs: i32[][] = [];
+    var k: i32 = 0;
+    while (k < i % 3 + 2) { xs = xs.append([k, k + i]); k = k + 1; }
+    ` + tail + `
+}
+`
+}
+
+const ownHandbackHeapStrMain = `var ys: string[] = build(i); if (ys[1].len() < 40) { return 77; } x = x + ys.len() + ys[1].len();`
+
+const ownHandbackHeapRowsMain = `var ys: i32[][] = build(i); if (ys[1].len() == 0) { return 77; } x = x + ys.len() + ys[1][0];`
+
+func ownHandbackHeapCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{name: "strings_handed_back", src: ownHandbackHeapHead + ownHandbackHeapStrBuild("return spass(xs);") + ownParamReleaseMain(ownHandbackHeapStrMain), want: 60},
+		{name: "strings_replaced", src: ownHandbackHeapHead + ownHandbackHeapStrBuild("return spick(xs, i);") + ownParamReleaseMain(ownHandbackHeapStrMain), want: 11},
+		{name: "strings_rebound_through_handback", src: ownHandbackHeapHead + ownHandbackHeapStrBuild("xs = spick(xs, i); return xs;") + ownParamReleaseMain(ownHandbackHeapStrMain), want: 11},
+		{name: "strings_rebound_from_producer", src: ownHandbackHeapHead + ownHandbackHeapStrBuild("if (i % 2 == 1) { xs = smk(i); } return xs;") + ownParamReleaseMain(ownHandbackHeapStrMain), want: 11},
+		{name: "rows_literal_handed_back", src: ownHandbackHeapHead + `@noinline
+function build(i: i32): i32[][] {
+    var xs: i32[][] = [[i, 1], [2, i], [3, 3]];
+    return rpass(xs);
+}
+` + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 2},
+		{name: "rows_appended_returned", src: ownHandbackHeapHead + ownHandbackHeapRowsBuild("return xs;") + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 67},
+		{name: "rows_appended_handed_back", src: ownHandbackHeapHead + ownHandbackHeapRowsBuild("return rpass(xs);") + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 67},
+		{name: "rows_appended_replaced", src: ownHandbackHeapHead + ownHandbackHeapRowsBuild("return rpick(xs, i);") + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 61},
+		{name: "rows_appended_rebound_through_handback", src: ownHandbackHeapHead + ownHandbackHeapRowsBuild("xs = rpick(xs, i); return xs;") + ownParamReleaseMain(ownHandbackHeapRowsMain), want: 61},
+	}
+}
+
+// A closure handing back a value it captured (#10740). The lifted body reads
+// the capture out of the env box, which keeps the reference, so returning it
+// retains: the caller binds a closure call's array result as a count it owns.
+// Without the retain the caller's release took the env box's count, and the
+// owner's own release underflowed.
+func closureCaptureReturnCases() []ownParamReleaseCase {
+	return []ownParamReleaseCase{
+		{
+			name: "closure_returns_captured_arrarr",
+			src: `@noinline
+function usr(f: (i32) => i32[][], i: i32): i32 {
+    var g: i32[][] = f(i);
+    return g.len() + 1;
+}
+@noinline
+function round(keep: i32[][], i: i32): i32 {
+    var f = (j: i32): i32[][] => keep;
+    return usr(f, i);
+}
+function main(): i32 {
+    var keep: i32[][] = [];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(keep, i); i = i + 1; }
+    if (keep.len() != 0) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
 			want: 17,
+		},
+		{
+			name: "closure_hands_back_captured_strarr",
+			src: `@noinline
+function usr(hb: (string[]) => string[], i: i32): i32 {
+    var xs: string[] = ["ab", "cd"];
+    xs = hb(xs);
+    return xs.len() + xs[1].len();
+}
+@noinline
+function round(keep: string[], i: i32): i32 {
+    var hb = (a: string[]): string[] => keep;
+    return usr(hb, i);
+}
+function main(): i32 {
+    var keep: string[] = ["s-a-wide-payload-past-any-inline-threshold-1", "s-a-wide-payload-past-any-inline-threshold-2"];
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round(keep, i); i = i + 1; }
+    if (keep[1].len() != 44) { return 77; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 35,
+		},
+		{
+			// An `own` capture: the callee does not consume it, so the caller releases
+			// the literal it passed after the call, and the closure's return retains.
+			name: "closure_returns_captured_own_arrarr",
+			src: `@noinline
+function usr(f: (i32) => i32[][], i: i32): i32 {
+    var g: i32[][] = f(i);
+    return g.len() + g[0][0];
+}
+@noinline
+function round(own keep: i32[][], i: i32): i32 {
+    var f = (j: i32): i32[][] => keep;
+    return usr(f, i);
+}
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        x = x + round([[5], [6]], i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 36,
+		},
+		{
+			// The same with string[], beside a plain `own` callee.
+			name: "closure_returns_captured_own_strarr",
+			src: `import "std/i32";
+@noinline
+function w(i: i32): string { return "s-a-wide-payload-past-any-inline-threshold-" + i.to_string(); }
+@noinline
+function usr(f: (i32) => string[], i: i32): i32 {
+    var g: string[] = f(i);
+    return g.len() + g[1].len();
+}
+@noinline
+function round(own keep: string[], i: i32): i32 {
+    var f = (j: i32): string[] => keep;
+    return usr(f, i);
+}
+@noinline
+function plain(own keep: string[]): i32 { return keep[0].len(); }
+function main(): i32 {
+    var x: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) { x = x + round([w(i), w(i + 1)], i) + plain([w(i)]); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return x % 83;
+}`,
+			want: 52,
 		},
 	}
 }
@@ -478,7 +655,7 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	dir := t.TempDir()
 	for _, lw := range []struct{ name, env string }{{"semantic", "FERN_SEM_IR=1"}, {"ast", "FERN_SEM_IR="}} {
-		for _, tc := range ownHandbackReturnCases() {
+		for _, tc := range append(append(ownHandbackReturnCases(), ownHandbackHeapCases()...), closureCaptureReturnCases()...) {
 			t.Run(lw.name+"/"+tc.name, func(t *testing.T) {
 				asm := cli.emit(t, "x86-64-linux", tc.src, lw.env, "FERN_LEAKCHECK=1")
 				progBin := buildBin(t, cli.gcc, dir, "ownhb_"+lw.name+"_"+tc.name, asm)
@@ -493,6 +670,9 @@ func TestSelfHostOwnHandbackReturnX86_64(t *testing.T) {
 				var allocs, frees, live int64
 				if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 					t.Fatalf("parse %q: %v", summary, err)
+				}
+				if allocs == 0 {
+					t.Fatalf("allocated nothing — the probe is not exercising the path")
 				}
 				if live != 0 || allocs != frees {
 					t.Errorf("%s — must balance at live_bytes 0", summary)

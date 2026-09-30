@@ -643,6 +643,13 @@ function lift_int_narrow_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], cu
     return LiftVals { nvals: nvals, stack: stack, insts: cur_insts, ok: ok };
 }
 
+// Both lifted ISAs are 64-bit, so a pointer-width binary runs at 64: its
+// shift count masks mod 64 and its divide takes the 64-bit register pair.
+function register_width(width: i32): i32 {
+    if (width == ir.width_ptr()) { return 64; }
+    return width;
+}
+
 // sign_extended32 says `v` was defined in this block by a signed 32-bit wrap,
 // extend, cast or load, so its register already holds what a further signed
 // 32-bit wrap or extend would produce.
@@ -830,7 +837,7 @@ function lift_impl(name: string, nparams: i32, nslots: i32, ops: ir.Op[]): LResu
                 var l: i32 = stack[stack.len() - 2];
                 stack = drop_last2(stack);
                 var bv: i32 = nvals; nvals = nvals + 1;
-                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: op.width, str: k });
+                cur_insts = cur_insts.append(ssa.SInst { kind_tag: 9, result: bv, args: [l, r], imm: register_width(op.width), str: k });
                 stack = stack.append(bv);
             }
         } else if (tag == t_not) {

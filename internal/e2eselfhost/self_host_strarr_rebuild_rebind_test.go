@@ -30,11 +30,11 @@ import (
 //
 // The failure mode is an over-release rather than a leak — the store now frees
 // element boxes another holder could still reach — so the refused rows below
-// are essential. Five shapes escape the array, bind an element out of it,
-// rebind from a live local, rebuild from the array's own element, or store it
-// into a container; each reads its value back after 200 rounds of churn have
-// recycled the freelist and answers identically on native x86-64,
-// `bin/fern -interp` and the self-host. On the typed lowering every row
+// are essential. Five shapes return the array after rebuilding it, bind an
+// element out of it, rebind from a live local, rebuild from the array's own
+// element, or store it into a container; each reads its value back after 200
+// rounds of churn have recycled the freelist and answers identically on native
+// x86-64, `bin/fern -interp` and the self-host. On the typed lowering every row
 // balances.
 //
 // `alias_before_rebind` is the row that proves the arbitration rather than the
@@ -171,8 +171,9 @@ function round(i: i32): i32 {
 			want: 51,
 		},
 		{
-			// The array escapes the frame.
-			name: "refused_array_escapes",
+			// A local returned bare after its rebuild (#10721): the rebind releases
+			// the superseded array and the return moves the rebuilt one out.
+			name: "returned_after_rebuild",
 			src: strarrRebuildDecl + `function grab(i: i32): string[] { var x: string[] = [mkstr("x")]; x = [mkstr("y"), mkstr("z")]; return x; }
 function round(i: i32): i32 {
     var want: i32 = mkstr("y").len();

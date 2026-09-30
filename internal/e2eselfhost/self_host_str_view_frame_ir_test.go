@@ -1,11 +1,6 @@
 package e2eselfhost
 
-import (
-	"os"
-	"os/exec"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 // strViewFrameCases pin #6713: a string slice `s[a:b]` is a zero-copy VIEW, and on the
 // register backends the self-host materialised its 24-byte box — [rc=-1, data, len] —
@@ -341,61 +336,30 @@ function main(): i32 {
 }`, 0},
 }
 
-// TestSelfHostStrViewFrameIRX86_64 drives the cases through the self-hosted x86-64
-// compiler (asm_run), heap-bump + underflow + value guarded.
-func TestSelfHostStrViewFrameIRX86_64(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
-	if err != nil {
-		t.Fatalf("read asm_run.fern: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
-		t.Fatalf("write asm_run.fern: %v", err)
-	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+const strViewFrameFailFmt = "%s = %d, want %d (98 = view box still per-evaluation; 99 = over-release/underflow; 94-97 = value corrupted)"
 
+// TestSelfHostStrViewFrameIRX86_64 runs the cases through the self-hosted CLI
+// for x86-64, heap-bump, underflow and value guarded.
+func TestSelfHostStrViewFrameIRX86_64(t *testing.T) {
+	cli := newStrictCLI(t)
 	for _, tc := range strViewFrameCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src+"\n"))
-			if len(asm) == 0 {
-				t.Fatal("self-host compiler emitted 0 bytes")
-			}
-			bin := buildBin(t, gcc, dir, tc.name, string(asm))
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(bin)
-			} else {
-				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = view box still per-evaluation; 99 = over-release/underflow; 94-97 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := cli.runX86(t, cli.emit(t, "x86-64-linux", tc.src)); code != tc.want {
+				t.Errorf(strViewFrameFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}
 }
 
-// TestSelfHostStrViewFrameIRArm64 is the arm64 leg — the other backend that boxes a
-// slice view, and so the other one that allocated per evaluation.
+// TestSelfHostStrViewFrameIRArm64 is the arm64 leg, the other backend that
+// boxes a slice view.
 func TestSelfHostStrViewFrameIRArm64(t *testing.T) {
-	arm64gcc, qemu := arm64Tooling(t)
-	x86gcc, x86runner := x86_64Tooling(t)
-	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
-
+	gcc, qemu := arm64Tooling(t)
+	cli := newStrictCLI(t)
 	for _, tc := range strViewFrameCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux")
-			if len(asm) == 0 {
-				t.Fatal("self-host arm64 compiler emitted 0 bytes")
-			}
-			bin := buildBinArm64(t, arm64gcc, dir, tc.name, string(asm))
-			cmd := runArm64Bin(qemu, bin)
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != tc.want {
-				t.Errorf("%s = %d, want %d (98 = view box still per-evaluation; 99 = over-release/underflow; 94-97 = value corrupted)", tc.name, code, tc.want)
+			if code, _ := runArm64(t, gcc, qemu, cli.emit(t, "arm64-linux", tc.src)); code != tc.want {
+				t.Errorf(strViewFrameFailFmt, tc.name, code, tc.want)
 			}
 		})
 	}

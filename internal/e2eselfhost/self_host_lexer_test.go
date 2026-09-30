@@ -1,7 +1,7 @@
 package e2eselfhost
 
 import (
-	"os"
+	"github.com/jakechampion/lang/internal/e2eharness"
 	"testing"
 )
 
@@ -21,23 +21,25 @@ import (
 // means every assertion passed; non-zero codes identify which
 // arm failed.
 func TestSelfHostLexerX86_64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/lexer.fern")
-	if err != nil {
-		t.Fatalf("read lexer.fern: %v", err)
-	}
-	_, code := compileAndRunX86_64(t, string(src))
-	if code != 0 {
+	runner := x86_64Runner(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "lexer.fern")
+	binPath := buildSelfHostBinFor(t, dir, "lexer.fern", "prog", e2eharness.TargetX86_64Linux)
+	cmd := runX86_64Bin(runner, binPath)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port lexer assertion %d failed", code)
 	}
 }
 
 func TestSelfHostLexerArm64(t *testing.T) {
-	src, err := os.ReadFile("../../examples/self_host/lexer.fern")
-	if err != nil {
-		t.Fatalf("read lexer.fern: %v", err)
-	}
-	_, code := compileAndRunArm64(t, string(src))
-	if code != 0 {
+	qemu := arm64Runner(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "lexer.fern")
+	binPath := buildSelfHostBinFor(t, dir, "lexer.fern", "prog", e2eharness.TargetArm64Linux)
+	cmd := runArm64Bin(qemu, binPath)
+	_, _ = cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port lexer assertion %d failed", code)
 	}
 }

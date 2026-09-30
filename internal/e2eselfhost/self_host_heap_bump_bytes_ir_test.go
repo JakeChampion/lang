@@ -16,8 +16,7 @@ import (
 //
 // The interpreter has no bump-allocator model (it always returns 0), so it
 // cannot be the oracle here — these assert the relational contract directly with
-// exact exit codes (cross-checked against the native backend, which lowers the
-// builtin via __fern_heap_bump_bytes), mirroring the native rc_heap_bump_* style.
+// exact exit codes, in the rc_heap_bump_* style the native suite established.
 // Every result stays ≤ 120 (wasmtime exit-code clamp #2908). Each allocating
 // literal takes a runtime element, since a literal of constants is a static box.
 var heapBumpBytesIRCases = []struct {
@@ -42,17 +41,14 @@ var heapBumpBytesIRCases = []struct {
 }
 
 // TestSelfHostHeapBumpBytesIR runs each case through the self-host CLI on
-// x86-64 and wasm (the `$heap − heap_base` lowering) and checks the exit code
-// against the native backend's. Native is the oracle here, since the
-// interpreter has no bump-allocator model.
+// x86-64 and wasm (the `$heap − heap_base` lowering) against each row's
+// expected exit code; the rows are the oracle, since the interpreter has no
+// bump-allocator model.
 func TestSelfHostHeapBumpBytesIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range heapBumpBytesIRCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := tc.main + "\n"
-			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != tc.want {
-				t.Fatalf("%s native exited %d, want %d", tc.name, code, tc.want)
-			}
 			for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
 				if stderr, code := cli.exitOf(t, src, target); code != tc.want {
 					t.Errorf("%s on %s exited %d, want %d\n%s", tc.name, target, code, tc.want, stderr)
@@ -129,11 +125,9 @@ var heapBumpFixpointCases = []struct {
 
 // TestSelfHostHeapBumpFixpointX86_64 asserts the bounded-high-water fixpoint on
 // the self-host x86-64 IR path: each shape's growth at N=50 must equal its
-// growth at N=5000 (reclaimed loops don't grow with the trip count). Native is
-// the oracle for "the behavior is real + bounded" (small==large, non-zero); the
-// self-host must reproduce the fixpoint. Absolute growth differs between the two
-// (box layouts differ), so this checks the RELATION per backend, not equality
-// across them.
+// growth at N=5000 (reclaimed loops don't grow with the trip count), and the
+// growth must be non-zero, so a probe that allocates nothing cannot pass
+// vacuously. The RELATION is the contract; no absolute figure is.
 func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -168,15 +162,6 @@ func TestSelfHostHeapBumpFixpointX86_64(t *testing.T) {
 	const small, large = "50", "5000"
 	for _, tc := range heapBumpFixpointCases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Native oracle: the behavior must be real and bounded there.
-			_, nS := compileAndRunX86_64(t, tc.src(small)+"\n")
-			_, nL := compileAndRunX86_64(t, tc.src(large)+"\n")
-			if nS != nL {
-				t.Fatalf("%s: native not bounded (N=50 -> %d, N=5000 -> %d) — probe is not a reclaim fixpoint", tc.name, nS, nL)
-			}
-			if nS == 0 {
-				t.Fatalf("%s: native growth is 0 — probe does not allocate", tc.name)
-			}
 			// Self-host IR path must reproduce the fixpoint.
 			shS := shGrowth(t, tc.name+"-50", tc.src(small))
 			shL := shGrowth(t, tc.name+"-5000", tc.src(large))

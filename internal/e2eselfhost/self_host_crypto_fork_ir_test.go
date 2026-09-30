@@ -83,9 +83,6 @@ func testSelfHostCryptoForkIR(t *testing.T, target string) {
 				if _, code := runFixtureInterp(t, entry, ""); code != 0 {
 					t.Fatalf("interpreter snapshot contract: exit %d", code)
 				}
-				if _, code := compileAndRunX86_64(t, source); code != 0 {
-					t.Fatalf("native snapshot contract: exit %d", code)
-				}
 			}
 			cmd := runX86_64Bin(runner, driver, "-target", target, "-emit", "asm", entry, root)
 			var diagnostics bytes.Buffer

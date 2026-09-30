@@ -229,25 +229,6 @@ function main(): i32 {
 `
 }
 
-func TestSelfHostOwnArrayLifetimeNativeOracle(t *testing.T) {
-	for _, tc := range withAliasIRCases {
-		if !strings.HasPrefix(tc.name, "own-caller-") && tc.name != "borrowed-to-own-caller-live" {
-			continue
-		}
-		// These semantic cases already fail in the unchanged Go backend.
-		// They remain interpreter-checked on all three self-host targets.
-		if tc.name == "own-caller-operand-order" || tc.name == "own-caller-higher-order" || tc.name == "own-caller-lifetime-option-projection" {
-			continue
-		}
-		tc.main = withAliasCheckedSource(tc.name, tc.main)
-		t.Run(tc.name, func(t *testing.T) {
-			if _, code := compileAndRunX86_64(t, tc.main+"\n"); code != 0 {
-				t.Fatalf("native violated ownership lifetime contract: exit %d", code)
-			}
-		})
-	}
-}
-
 func TestSelfHostWithAliasIRArm64(t *testing.T) {
 	armGCC, armRunner := arm64Tooling(t)
 	gcc, runner := x86_64Tooling(t)

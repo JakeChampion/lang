@@ -124,6 +124,11 @@ const (
 	TargetX86_64Linux = "x86-64-linux"
 	TargetArm64Linux  = "arm64-linux"
 	TargetArm64Darwin = "arm64-darwin"
+	// TargetWasm32Wasi builds the raw WASI core module (`-emit core-module`),
+	// which `wasmtime run` executes with main's result as the exit code; the
+	// default output form for the target is a cli/run component, whose
+	// result is only ok or err.
+	TargetWasm32Wasi = "wasm32-wasi"
 )
 
 // CompileWithSelfHost runs `compiler -target target -o binPath src <stdlib>`
@@ -132,7 +137,11 @@ func CompileWithSelfHost(t testing.TB, compiler, target, src, binPath string, we
 	t.Helper()
 	stdlib := SelfHostStdlibRoot(t)
 	return withBuildMemory(weightMB, func() error {
-		cmd := exec.Command(compiler, "-target", target, "-o", binPath, src, stdlib)
+		args := []string{"-target", target}
+		if target == TargetWasm32Wasi {
+			args = append(args, "-emit", "core-module")
+		}
+		cmd := exec.Command(compiler, append(args, "-o", binPath, src, stdlib)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%s -target %s %s: %v\n%s", filepath.Base(compiler), target, filepath.Base(src), err, out)
 		}
@@ -267,4 +276,16 @@ func fileSHA256(t testing.TB, path string) string {
 		t.Fatalf("hash %s: %v", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// RunWasmCore builds the exec.Cmd that runs a WASI core module under
+// wasmtime; the process exit code is main's result. It skips when wasmtime is
+// not on PATH.
+func RunWasmCore(t testing.TB, corePath string, args ...string) *exec.Cmd {
+	t.Helper()
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	return exec.Command(wasmtime, append([]string{"run", corePath}, args...)...)
 }

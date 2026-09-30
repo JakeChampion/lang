@@ -120,11 +120,11 @@ function __str_to_bytes(s: string): u8[] {
 // mul / shl, plus __rotr's `x << (32-n)`) must mask back to 32 bits and a u32
 // `>>` must be a LOGICAL shift; this is what local_is_u32 / op_u32_wrap drive.
 //
-// The oracle is the NATIVE compiler (compileAndRunX86_64), NOT the AST path:
-// the legacy self-host AST backend has the SAME u32-overflow bug, so the IR
-// path now intentionally diverges from (is more correct than) it. For an
-// overflow program the AST path's answer differs, so IR == native also proves
-// the program took the IR path.
+// The oracle is the interpreter (runInterpExit), NOT the AST path: the legacy
+// self-host AST backend has the SAME u32-overflow bug, so the IR path now
+// intentionally diverges from (is more correct than) it. For an overflow
+// program the AST path's answer differs, so IR == interpreter also proves the
+// program took the IR path.
 func TestSelfHostU32WrapIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -200,7 +200,8 @@ function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c:
 		// local) is the form that miscompiled in the SHA schedule.
 		{"rotr-inline", `function __rotr(x: u32, n: u32): u32 { return (x >> n) | (x << (32 - n)); } function main(): i32 { var x: u32 = 0x7da86405; var r: u32 = __rotr(x, 17) ^ __rotr(x, 19) ^ (x >> 10); return ((r >> 24) & 255) as i32; }`},
 		// SHA-256("abc") — byte 0 (0xba) of ba7816bf… The whole schedule +
-		// compression depend on u32 wrapping; native is the known-correct vector.
+		// compression depend on u32 wrapping; the interpreter computes the
+		// reference vector.
 		{"sha256-abc-b0", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[0] as i32; }`},
 		// SHA-256("abc") byte 31 (0xad) — exercises the last state word.
 		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { var d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
@@ -209,15 +210,15 @@ function main(): i32 { var a: u32 = 1; var b: u32 = a + (0xfffffffe + 1); var c:
 		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked. (Not in the
 		// IR≡AST differential test: the legacy asm_ir_run AST fallback referenced
 		// __fern_alloc_u8 without emitting it, so its link failed there; the IR
-		// path compiles them, validated here against native.)
+		// path compiles them, validated here against the interpreter.)
 		{"alloc-u8", `function main(): i32 { var m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
 		{"str-from-bytes", `function main(): i32 { var m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); var s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, want := compileAndRunX86_64(t, tc.src) // native = the correct oracle
+			want := runInterpExit(t, tc.src) // the interpreter is the oracle
 			if got := emitAndRunIR(t, tc.src); got != want {
-				t.Errorf("self-host IR %q: exit = %d, want %d (native)", tc.name, got, want)
+				t.Errorf("self-host IR %q: exit = %d, want %d (interpreter)", tc.name, got, want)
 			}
 		})
 	}
