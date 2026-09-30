@@ -2306,17 +2306,17 @@ pub struct MergeCopy { at: i32, edge: boolean, consumer: i32, slot: i32, value: 
 // (docs/STR-VIEW-CONTRACT.md §5). Both read a body carrying the module's
 // anchor table, through which a call's roots are found.
 pub function with_merge_copies(f: Func, copies: MergeCopy[]): Func {
-    var s: Splice = Splice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph) };
+    var s: CopySplice = CopySplice { values: f.values, done: [], id: 0, preds: [], insts: [], next_block: next_block_id(f.graph) };
     var made: i32[] = [];
     for _ in copies { made = made.append(0 - 1); }
     var last: i32[] = [];
     var pi: i32 = 0;
     while (pi < f.graph.blocks.len()) {
         var b: ssa.SBlock = f.graph.blocks[pi];
-        s = Splice { ...s, id: b.id, preds: b.preds, insts: [] };
+        s = CopySplice { ...s, id: b.id, preds: b.preds, insts: [] };
         for ins in b.insts {
             var k: Made = copies_at(f, s, made, copies, pi, false, ins.result);
-            s = Splice { ...k.s, insts: k.s.insts.append(ins) };
+            s = CopySplice { ...k.s, insts: k.s.insts.append(ins) };
             made = k.made;
         }
         var e: Made = copies_at(f, s, made, copies, pi, true, 0 - 1);
@@ -2357,11 +2357,11 @@ function next_block_id(g: ssa.SFunc): i32 {
     return n;
 }
 
-struct Made { s: Splice, made: i32[] }
+struct Made { s: CopySplice, made: i32[] }
 
 // The copies made at block position `at`: those on its outgoing edges, or
 // those just before the instruction defining `consumer`.
-function copies_at(f: Func, s: Splice, made: i32[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): Made {
+function copies_at(f: Func, s: CopySplice, made: i32[], copies: MergeCopy[], at: i32, edge: boolean, consumer: i32): Made {
     var ci: i32 = 0;
     while (ci < copies.len()) {
         var c: MergeCopy = copies[ci];
@@ -2389,24 +2389,24 @@ function with_copied_operands(ins: ssa.SInst, copies: MergeCopy[], made: i32[]):
 
 // A graph being extended: the finished blocks, the open block's id,
 // predecessors and instructions, and the next free block id.
-struct Splice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32 }
+struct CopySplice { values: typeinfo.Type[], done: ssa.SBlock[], id: i32, preds: i32[], insts: ssa.SInst[], next_block: i32 }
 
-struct Copied { s: Splice, value: i32 }
+struct Copied { s: CopySplice, value: i32 }
 
-function sp_emit(s: Splice, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Copied {
+function sp_emit(s: CopySplice, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Copied {
     var v: i32 = s.values.len();
     var ins: ssa.SInst = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
-    return Copied { s: Splice { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, value: v };
+    return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, value: v };
 }
 
-function sp_close(s: Splice, term: ssa.STerm): Splice {
+function sp_close(s: CopySplice, term: ssa.STerm): CopySplice {
     var b: ssa.SBlock = ssa.SBlock { id: s.id, insts: s.insts, term: term, preds: s.preds };
-    return Splice { ...s, done: s.done.append(b), insts: [] };
+    return CopySplice { ...s, done: s.done.append(b), insts: [] };
 }
 
-function sp_open(s: Splice, id: i32, preds: i32[]): Splice { return Splice { ...s, id: id, preds: preds, insts: [] }; }
+function sp_open(s: CopySplice, id: i32, preds: i32[]): CopySplice { return CopySplice { ...s, id: id, preds: preds, insts: [] }; }
 
-function sp_blocks(s: Splice, n: i32): Splice { return Splice { ...s, next_block: s.next_block + n }; }
+function sp_blocks(s: CopySplice, n: i32): CopySplice { return CopySplice { ...s, next_block: s.next_block + n }; }
 
 function t_br(target: i32): ssa.STerm { return ssa.STerm { kind_tag: 2, cond: 0, target: target, t: 0, f: 0, value: 0 }; }
 
@@ -2478,7 +2478,7 @@ function enum_copyable(f: Func, t: typeinfo.Type): boolean {
 
 // `v` rebuilt in the open block and any it adds, each view it holds replaced
 // by a counted copy (`view_copy`) and every other part read out of it.
-function deep_copy(f: Func, s: Splice, v: i32): Copied {
+function deep_copy(f: Func, s: CopySplice, v: i32): Copied {
     var t: typeinfo.Type = s.values[v];
     if (!holds_view(f, t)) { return Copied { s: s, value: v }; }
     if (is_view(t)) {
@@ -2487,7 +2487,7 @@ function deep_copy(f: Func, s: Splice, v: i32): Copied {
         for vt in view_copy_types() { values = values.append(vt); }
         var insts: ssa.SInst[] = s.insts;
         for ins in view_copy(first, v) { insts = insts.append(ins); }
-        return Copied { s: Splice { ...s, values: values, insts: insts }, value: first + 2 };
+        return Copied { s: CopySplice { ...s, values: values, insts: insts }, value: first + 2 };
     }
     if let typeinfo.TypeArray(a) = t { return copy_array(f, s, v, t, a.elem); }
     if let typeinfo.TypeTuple(tup) = t { return copy_tuple(f, s, v, t, tup.elements); }
@@ -2495,7 +2495,7 @@ function deep_copy(f: Func, s: Splice, v: i32): Copied {
     return copy_enum(f, s, v, t);
 }
 
-function copy_record(f: Func, s: Splice, v: i32, t: typeinfo.Type): Copied {
+function copy_record(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
     var fields: semrecords.Field[] = f.records[semrecords.find(f.records, t)].fields;
     var parts: i32[] = [];
     var i: i32 = 0;
@@ -2509,7 +2509,7 @@ function copy_record(f: Func, s: Splice, v: i32, t: typeinfo.Type): Copied {
     return sp_emit(s, record_new(), t, parts, 0, "");
 }
 
-function copy_tuple(f: Func, s: Splice, v: i32, t: typeinfo.Type, elements: typeinfo.Type[]): Copied {
+function copy_tuple(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elements: typeinfo.Type[]): Copied {
     var parts: i32[] = [];
     var i: i32 = 0;
     while (i < elements.len()) {
@@ -2526,7 +2526,7 @@ function copy_tuple(f: Func, s: Splice, v: i32, t: typeinfo.Type, elements: type
 //   pre:    n = len v; acc0 = []; br head
 //   head:   i = phi(0, i + 1); acc = phi(acc0, acc'); brif i < n, body, exit
 //   body:   acc' = append(acc, copy(v[i])); br head
-function copy_array(f: Func, s: Splice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
+function copy_array(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, elem: typeinfo.Type): Copied {
     var n: Copied = sp_emit(s, length(), i32_type(), [v], 0, "");
     var zero: Copied = sp_emit(n.s, 1, i32_type(), [], 0, "");
     var one: Copied = sp_emit(zero.s, 1, i32_type(), [], 1, "");
@@ -2539,7 +2539,7 @@ function copy_array(f: Func, s: Splice, v: i32, t: typeinfo.Type, elem: typeinfo
     var i: i32 = s.values.len();
     var acc: i32 = i + 1;
     var cond: i32 = i + 2;
-    s = Splice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
+    s = CopySplice { ...sp_blocks(s, 3), values: s.values.append(i32_type()).append(t).append(boolean_type()) };
     s = sp_close(s, t_br(head));
     var head_at: i32 = s.done.len();
     s = sp_open(s, body, [head]);
@@ -2554,7 +2554,7 @@ function copy_array(f: Func, s: Splice, v: i32, t: typeinfo.Type, elem: typeinfo
         ssa.SInst { kind_tag: 8, result: i, args: [zero.value, i1.value], imm: 0, str: "" },
         ssa.SInst { kind_tag: 8, result: acc, args: [acc0.value, acc1.value], imm: 0, str: "" },
         ssa.SInst { kind_tag: 9, result: cond, args: [i, n.value], imm: 0, str: "<" }] };
-    s = Splice { ...s, done: inserted(s.done, head_at, header) };
+    s = CopySplice { ...s, done: inserted(s.done, head_at, header) };
     s = sp_open(s, exit, [head]);
     return Copied { s: s, value: acc };
 }
@@ -2573,7 +2573,7 @@ function inserted(blocks: ssa.SBlock[], at: i32, b: ssa.SBlock): ssa.SBlock[] {
 
 // Each variant tested in turn, the last known by exclusion, and rebuilt with
 // its fields copied; the rebuilt values meet in a phi.
-function copy_enum(f: Func, s: Splice, v: i32, t: typeinfo.Type): Copied {
+function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
     var variants: semrecords.Variant[] = f.enums[semrecords.find_enum(f.enums, t)].variants;
     var join: i32 = s.next_block;
     s = sp_blocks(s, 1);
@@ -2603,10 +2603,10 @@ function copy_enum(f: Func, s: Splice, v: i32, t: typeinfo.Type): Copied {
     s = sp_open(s, join, froms);
     var out: i32 = s.values.len();
     var phi: ssa.SInst = ssa.SInst { kind_tag: 8, result: out, args: built, imm: 0, str: "" };
-    return Copied { s: Splice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
+    return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
-function rebuilt_variant(f: Func, s: Splice, v: i32, t: typeinfo.Type, variant: semrecords.Variant): Copied {
+function rebuilt_variant(f: Func, s: CopySplice, v: i32, t: typeinfo.Type, variant: semrecords.Variant): Copied {
     var parts: i32[] = [];
     var j: i32 = 0;
     while (j < variant.fields.len()) {
@@ -2826,7 +2826,7 @@ function without_cons(kinds: i32[]): i32[] {
 function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boolean {
     if (a < 0 || a >= parents.len() || parents[a].len() == 0) { return true; }
     var t: typeinfo.Type = f.values[a];
-    if (!reference(t) || semtypes.holds_view(t) || is_map(t)) { return false; }
+    if (!reference(t) || holds_view(f, t) || is_map(t)) { return false; }
     var k: i32 = defs[a].kind_tag;
     return k == variant_get() || k == record_get() || k == tuple_get() || k == array_get();
 }
