@@ -97,6 +97,7 @@ pub function provided_names(): string[] {
         "__fern_map_free_kfvsa",
         "__fern_map_free_kfvf",
         "__fern_snapshot_dec",
+        "__fern_mapiter_free",
         // FBIP reuse degrade
         "__fern_alloc_reuse",
         // stringifiers
