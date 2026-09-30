@@ -11239,6 +11239,8 @@ func (b *builder) expr(e ast.Expr) error {
 					loadOp = OpLoadByte
 				case 64:
 					loadWidth = 64
+				case WidthPtr:
+					loadWidth = WidthPtr
 				}
 			}
 			if ft, ok := elemType.(ast.FloatType); ok {
@@ -21352,6 +21354,9 @@ func arrayElemStoreOpFor(t ast.Type, ptrW int) Op {
 	if _, isDyn := t.(ast.DynTraitType); isDyn && ptrW == 4 {
 		return Op{Kind: OpStore, Width: WidthString}
 	}
+	if n, ok := t.(ast.NumberType); ok && n.IsPointerWidth() {
+		return Op{Kind: OpStore, Width: WidthPtr}
+	}
 	if ast.IsPointerType(t) {
 		return Op{Kind: OpStore, Width: WidthPtr}
 	}
@@ -22272,6 +22277,8 @@ func arraySetStoreOp(t ast.Type, ptrW int) (OpKind, int) {
 			storeOp = OpStoreI8
 		case 64:
 			storeWidth = 64
+		case WidthPtr:
+			storeWidth = WidthPtr
 		}
 	}
 	if ast.IsPointerType(t) {
