@@ -603,6 +603,8 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     // A map's own release reads the count and walks its columns, so no guard
     // is emitted around it here.
     if (ssasem.is_map(t)) { return false; }
+    // A finalizer is a child the box owes whatever its fields hold.
+    if (ssasem.finalizer_of(f, t) != "") { return true; }
     if let typeinfo.TypeStruct(_) = t { return fields_have_children(record_fields(t, f)); }
     if let typeinfo.TypeUnion(_) = t {
         for v in variants_of(t, f) { if (fields_have_children(v.fields)) { return true; } }
@@ -1011,6 +1013,8 @@ struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
 // the slots the block has are not the slots its type names.
 function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     if (semtypes.is_env(t) || semtypes.is_cell(t)) { return 0 - 1; }
+    // A box handed on is not freed, and a finalizer is owed at the free.
+    if (ssasem.finalizer_of(f, t) != "") { return 0 - 1; }
     if let typeinfo.TypeTuple(tup) = t { return tup.elements.len(); }
     if let typeinfo.TypeStruct(_) = t {
         if (semrecords.find(f.records, t) < 0) { return 0 - 1; }
@@ -1624,6 +1628,8 @@ function env_release_helper(t: typeinfo.Type): irlower.LowerResult {
 function one_helper(t: typeinfo.Type, f: ssasem.Func): irlower.LowerResult {
     var r: irlower.LowerResult = irlower.LowerResult { ...empty(""), ok: true,
         n_params: 1, n_locals: 1, name: drop_helper_name(t) };
+    // The finalizer runs first, while every field is still live.
+    if (ssasem.finalizer_of(f, t) != "") { r = helper(r, 0, ssasem.finalizer_of(f, t)); }
     if let typeinfo.TypeStruct(_) = t { r = drop_record_fields(r, 0, record_fields(t, f), 1, f, semtypes.is_env(t)); }
     if let typeinfo.TypeUnion(_) = t {
         if (self_tail_enum(t, f)) { r = drop_variant_chain(r, t, f); }

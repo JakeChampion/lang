@@ -548,7 +548,7 @@ pub struct ParamDecl { name: string, type_name: string, is_view: boolean, own: b
 // `scrut >= lo && scrut <op> hi` instead of `scrut == lit`.
 // alt_cont — see MatchArm.alt_cont. `0 | 1 => …` parses to one LitArm per
 // alternative sharing a guard and body.
-pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean }
+pub struct LitArm { is_wild: boolean, lit: Expr, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32, range_hi: Expr, has_range: boolean, range_inclusive: boolean, alt_cont: boolean, at_binding: string }
 
 // ---- Tuple-pattern match (`match (pair) { (0, y) => …, (x, y) => … }`) ----
 //
@@ -587,3 +587,27 @@ pub struct TupArm { is_wild: boolean, elem_kinds: i32[], binds: string[], lits: 
 // rest_written records the arm pattern's trailing `..` — see
 // PatVariant.rest_written; it binds nothing at either site.
 pub struct StructArm { is_wild: boolean, type_name: string, binds: string[], fields: string[], field_kinds: i32[], field_lits: Expr[], field_pats: Pattern[], at_binding: string, rest_written: boolean, guard: Expr, has_guard: boolean, body: Stmt[], line: i32, col: i32 }
+
+// operator_method is the method a binary operator dispatches through when its
+// operands are a struct or an enum: `a + b` is `a.add(b)`, `a & b` is
+// `a.bitand(b)`, as native's checker desugars them (#2706). "" for an operator
+// with no overload form.
+pub function operator_method(op: string): string {
+  if (op == "+") { return "add"; }
+  if (op == "-") { return "sub"; }
+  if (op == "*") { return "mul"; }
+  if (op == "/") { return "div"; }
+  if (op == "%") { return "rem"; }
+  if (op == "&") { return "bitand"; }
+  if (op == "|") { return "bitor"; }
+  if (op == "^") { return "bitxor"; }
+  if (op == "<<") { return "shl"; }
+  if (op == ">>") { return "shr"; }
+  return "";
+}
+
+// is_operator_method reports whether `name` is one operator_method answers.
+pub function is_operator_method(name: string): boolean {
+  return name == "add" || name == "sub" || name == "mul" || name == "div" || name == "rem"
+    || name == "bitand" || name == "bitor" || name == "bitxor" || name == "shl" || name == "shr";
+}
